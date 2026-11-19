@@ -489,6 +489,23 @@ private slots:
         QCOMPARE(sink.count(Cmd::VoiceOn), 1);
     }
 
+    void aFingerLostForAFewFramesCarriesOn() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        pad.land({1, 0.4f, 0.4f});
+        pad.run(0.3);
+        Finger f = *pad.finger(1);
+        pad.lift(1);
+        pad.run(0.024); // three frames without it
+        f.id = 77;
+        pad.land(f);
+        pad.run(0.2);
+        QCOMPARE(sink.count(Cmd::VoiceOff), 0);
+        QCOMPARE(sink.count(Cmd::Strike), 1);
+    }
+
     void aQuickRetapOnTheSameSpotStrikes() {
         RecordingSink sink;
         Gesture g(&sink);

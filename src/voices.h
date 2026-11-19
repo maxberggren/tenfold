@@ -457,15 +457,16 @@ struct StrikeVoice {
             // Higher modes and higher notes ring shorter, as in any real body;
             // a hard hit drives the upper modes harder, so they also last
             // longer above the noise.
-            float t60 = t60base / (1.0f + slope * float(i) * ratio * 0.25f / (1.0f + 3.0f * vel * vel));
+            const float force = std::pow(vel, 1.2f); // close to linear: a medium tap sounds medium
+            float t60 = t60base / (1.0f + slope * float(i) * ratio * 0.25f / (1.0f + 3.0f * force));
             t60 *= clampf(std::pow(220.0f / std::max(f, 20.0f), 0.3f), 0.25f, 2.5f);
             w0[i] = kTwoPi * f / rate;
             hz[i] = f;
             rad[i] = (f > rate * 0.45f || f < 18.0f) ? 0.0f : std::exp(-6.9078f / (t60 * rate));
             // Soft hits lose their upper modes; hard ones with a small contact
             // lift them, for the whole ring, not just the click.
-            const float lift = 1.0f + 4.0f * vel * vel * clampf((ratio - 1.0f) / 3.0f, 0.0f, 1.0f) / clampf(contact, 0.8f, 2.0f);
-            float a = amp * lift * std::pow(std::max(ratio, 0.5f), -soft * hard);
+            const float lift = 1.0f + 4.0f * force * clampf((ratio - 1.0f) / 3.0f, 0.0f, 1.0f) / clampf(contact, 0.8f, 2.0f);
+            float a = amp * lift * std::pow(std::max(ratio, 0.5f), -soft * soft * hard);
             if (rad[i] == 0.0f)
                 a = 0;
             re[i] = 0;
@@ -481,7 +482,8 @@ struct StrikeVoice {
             drive[i] *= g;
         // Contact time: 5 ms for a soft, flat finger down to a third of a
         // millisecond for a hard fingertip.
-        const float contactMs = lerpf(5.0f, 0.33f, std::pow(vel, 0.7f)) * clampf(0.55f + 0.45f * contact, 0.6f, 2.2f);
+        // On a log scale, so every step of force is a step of brightness.
+        const float contactMs = 4.0f * std::pow(0.33f / 4.0f, vel) * clampf(0.55f + 0.45f * contact, 0.6f, 2.2f);
         pulseLen = std::max(1, int(contactMs * 0.001f * rate));
         pulsePos = 0;
         pulseNorm = 0;

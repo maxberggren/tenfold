@@ -113,9 +113,10 @@ void Gesture::frame(const Frame &f) {
                 // merely lost comes back as it was.
                 if (std::fabs(t.pressure - o.pressure) > 0.3f || std::fabs(t.size - o.size) > 0.4f * std::max(o.size, 0.3f))
                     continue;
-                // And only straight away: a frame lost is one frame (8 ms);
-                // anything longer is a finger that left and came back.
-                if (f.t - o.missingSince > 0.012)
+                // And only within the lift grace: a pad can lose a held finger
+                // for a few frames. A fresh tap gives itself away by landing
+                // light and small, which the check above already catches.
+                if (f.t - o.missingSince > kLiftGrace)
                     continue;
                 const float dx = (o.x - t.x) * m_aspect, dy = o.y - t.y;
                 const float d = std::sqrt(dx * dx + dy * dy);

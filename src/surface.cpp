@@ -354,6 +354,18 @@ void Surface::paint(QPainter *p) {
         const QPointF c(std::clamp(home.x(), pad.left() + r + 4, pad.right() - r - 4),
                         std::clamp(home.y(), pad.top() + r + 4, pad.bottom() - r - 4));
         const float alpha = 0.25f + 0.75f * l.level;
+        // Its wetness, as a haze around the ring: the higher a loop sits,
+        // the more of it goes to the echo and the room.
+        {
+            const float wetness = std::pow(std::clamp(l.homeY, 0.0f, 1.0f), 1.3f);
+            const qreal hr = r * (1.15 + 0.9 * wetness);
+            QRadialGradient haze(c, hr);
+            haze.setColorAt(r / hr, withAlpha(QColor("#93c5fd"), 0.18f * wetness * alpha));
+            haze.setColorAt(1, withAlpha(QColor("#93c5fd"), 0));
+            p->setPen(Qt::NoPen);
+            p->setBrush(haze);
+            p->drawEllipse(c, hr, hr);
+        }
         QColor ring = l.held ? m_accent : QColor(255, 255, 255);
         p->setBrush(Qt::NoBrush);
         p->setPen(QPen(withAlpha(ring, alpha * (l.held ? 0.9f : 0.45f)), l.pinned ? 3.0 : 1.2,

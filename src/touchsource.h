@@ -49,6 +49,8 @@ private:
     int m_xmin = 0, m_xmax = 1, m_ymin = 0, m_ymax = 1, m_majorMax = 0;
     int m_omin = 0, m_omax = 0, m_pmin = 0, m_pmax = 0;
     float m_fingerSize = 0, m_pressureRef = 0;
+    int m_learned = 0;
+    int m_contactAge[256] = {}, m_lastSeen[256] = {};
 };
 
 }

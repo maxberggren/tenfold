@@ -255,7 +255,8 @@ private slots:
             pad.run(0.008);
         }
         const float after = g.view().knobs[Filter][0];
-        QVERIFY(std::fabs(after - std::min(1.0f, before + 0.15f * 1.6f)) < 0.01f);
+        // A small dead zone first, so a resting finger doesn't move the knob.
+        QVERIFY(std::fabs(after - std::min(1.0f, before + (0.15f - 0.035f) * 1.6f)) < 0.01f);
         for (int i = 0; i < 10; ++i) {
             pad.finger(1)->angle += 0.05f;
             pad.run(0.008);
@@ -405,7 +406,7 @@ private slots:
                 role = v.contacts[i].role;
         QCOMPARE(role, int(Echo));
         const float before = g.view().knobs[Filter][0];
-        pad.finger(1)->y -= 0.15f;
+        pad.finger(1)->y -= 0.2f;
         pad.run(0.05);
         QVERIFY(g.view().knobs[Filter][0] < before - 0.2f);
     }
@@ -515,6 +516,40 @@ private slots:
             g.frame(f);
         }
         QVERIFY(std::fabs(g.view().knobs[Filter][1] - before) < 0.02f);
+    }
+
+    void aRestingFingerLeavesItsKnobAlone() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        Pad pad(g);
+        pad.land({1, 0.3f, kLead});
+        pad.run(0.3);
+        const float before = g.view().knobs[Filter][0];
+        // A slow drift of 3% of the pad's height, as a finger resting on a
+        // note does.
+        for (int i = 0; i < 30; ++i) {
+            pad.finger(1)->y -= 0.001f;
+            pad.run(0.03);
+        }
+        QCOMPARE(g.view().knobs[Filter][0], before);
+    }
+
+    void aFingerPressedFlatIsNotAPalm() {
+        // A held note pressed hard grows to three times a fingertip: still a
+        // note, never the damper.
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        pad.land({1, 0.3f, kChords, 0.5f, 1.0f});
+        pad.run(0.3);
+        for (int i = 0; i < 30; ++i) {
+            pad.finger(1)->size = std::min(3.0f, pad.finger(1)->size + 0.1f);
+            pad.finger(1)->p = 1.0f;
+            pad.run(0.008);
+        }
+        QCOMPARE(sink.count(Cmd::Damper), 0);
+        QCOMPARE(pad.held(), 1);
     }
 
     void palmDampsAndPalmPressClears() {

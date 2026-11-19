@@ -174,14 +174,22 @@ void TouchSource::handle(char *line) {
             const float major = float(std::max(v[3], v[4])), minor = float(std::min(v[3], v[4]));
             // Contact size relative to this player's own fingertip, learned as
             // they play, so a palm is "much bigger than your finger" on any pad.
-            if (major > 0) {
-                if (m_fingerSize <= 0)
+            // A contact is smallest on its first frames, while the finger is
+            // still arriving, so only settled contacts (their fourth frame
+            // on) teach the fingertip size, averaged over many touches; until
+            // a few have, nothing counts as big.
+            int &age = m_contactAge[t.id & 255];
+            age = m_lastSeen[t.id & 255] + 1 == m_frames.load() ? age + 1 : 1;
+            m_lastSeen[t.id & 255] = m_frames.load();
+            if (major > 0 && age == 4) {
+                if (m_learned == 0)
                     m_fingerSize = major;
-                else if (major < m_fingerSize * 1.8f)
-                    m_fingerSize += (major - m_fingerSize) * 0.002f;
-                m_fingerSize = std::max(m_fingerSize, float(std::max(1, m_majorMax)) * 0.02f);
+                else if (major < m_fingerSize * 2.0f)
+                    m_fingerSize += (major - m_fingerSize) * (m_learned < 10 ? 0.3f : 0.08f);
+                ++m_learned;
+                m_fingerSize = std::max(m_fingerSize, float(std::max(1, m_majorMax)) * 0.04f);
             }
-            t.size = major > 0 && m_fingerSize > 0 ? major / m_fingerSize : 1.0f;
+            t.size = major > 0 && m_learned >= 3 ? major / m_fingerSize : 1.0f;
             t.eccentricity = major > 0 && minor > 0 ? 1.0f - minor / major : 0.0f;
             if (m_omax > m_omin) {
                 const float mid = 0.5f * float(m_omin + m_omax), half = 0.5f * float(m_omax - m_omin);

@@ -13,7 +13,16 @@ constexpr float kHalfPi = 1.5707963f;
 constexpr float kTwistRange = 3.14159265f / 3.0f; // a 60° twist sweeps a knob end to end
 constexpr float kTwistDeadband = 0.06f;           // ≈3.5°: a still finger's wobble isn't a twist
 constexpr float kSlideGain = 1.6f;                // 60% of the pad's height sweeps a knob
-constexpr float kPalmSize = 2.3f;
+constexpr float kSlideDeadband = 0.035f;          // a resting finger's drift isn't a slide
+constexpr float kPalmSize = 2.6f;                 // a palm is far bigger than a pressed fingertip
+constexpr float kPalmFromVoice = 3.2f;            // and a note already held needs more to become one
+
+// Slide distance with the dead zone taken out, so knobs only move when the
+// finger means to move them.
+float slideOf(float dy) {
+    const float mag = std::max(0.0f, std::fabs(dy) - kSlideDeadband);
+    return dy < 0 ? -mag : mag;
+}
 constexpr float kSwipeDistance = 0.12f;
 constexpr int kMaxLanes = 4;
 
@@ -288,8 +297,8 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
         c.smoothAngle = 0.5f * std::atan2(c.vy, c.vx);
 
     // A palm can arrive slowly; catch it whenever it becomes one.
-    c.bigFrames = t.size > kPalmSize ? c.bigFrames + 1 : 0;
-    if (c.bigFrames >= 3 && (c.state == TouchState::Landing || c.state == TouchState::Voice)) {
+    c.bigFrames = t.size > (c.state == TouchState::Voice ? kPalmFromVoice : kPalmSize) ? c.bigFrames + 1 : 0;
+    if (c.bigFrames >= 5 && (c.state == TouchState::Landing || c.state == TouchState::Voice)) {
         stopSound(c);
         c.role = -1;
         c.state = TouchState::Palm;
@@ -298,7 +307,7 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
 
     const float twist = twistOf(c);
     if ((c.state == TouchState::Voice || c.state == TouchState::Spent) && c.role >= 0) {
-        const float a = std::clamp(c.refKnob[0] + (c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
+        const float a = std::clamp(c.refKnob[0] + slideOf(c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
         const float b = std::clamp(c.refKnob[1] + twist / kTwistRange, 0.0f, 1.0f);
         if (std::fabs(a - m_knob[c.role][0]) > 0.001f || std::fabs(b - m_knob[c.role][1]) > 0.001f) {
             m_knob[c.role][0] = a;
@@ -354,7 +363,7 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     } else if (c.state == TouchState::Layer) {
         if (LayerState *l = layerState(c.layer)) {
             l->transpose = int(std::lround((c.x - c.refX) * float(cells())));
-            l->bright = std::clamp(c.refBright + (c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
+            l->bright = std::clamp(c.refBright + slideOf(c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
             l->width = std::clamp(c.refWidth + twist / kTwistRange, 0.0f, 1.0f);
             Command m;
             m.type = Cmd::LayerMod;

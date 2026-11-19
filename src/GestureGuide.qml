@@ -100,7 +100,9 @@ Rectangle {
                                 ["0", qsTr("Knobs back to the start")],
                                 ["R", qsTr("Record to ~/Music/tenfold")],
                                 ["F", qsTr("Full screen")],
-                                ["?", qsTr("This page")],
+                                ["T", qsTr("Tutorial on or off")],
+                        ["N  B", qsTr("Tutorial: next or back")],
+                        ["?", qsTr("This page")],
                                 ["Q", qsTr("Quit")]
                             ]
                             delegate: Row {

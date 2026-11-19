@@ -13,6 +13,7 @@
 #include "enginesink.h"
 #include "gesture.h"
 #include "touchsource.h"
+#include "tutorial.h"
 #include "wav.h"
 
 // The app's state for QML: owns the engine, the gesture layer, the touch
@@ -40,6 +41,12 @@ class Backend : public QObject {
     Q_PROPERTY(double level READ level NOTIFY changed)
     Q_PROPERTY(int octave READ octave NOTIFY changed)
     Q_PROPERTY(double damper READ damper NOTIFY changed)
+    Q_PROPERTY(bool tutorialActive READ tutorialActive NOTIFY changed)
+    Q_PROPERTY(int tutorialStep READ tutorialStep NOTIFY changed)
+    Q_PROPERTY(int tutorialCount READ tutorialCount NOTIFY changed)
+    Q_PROPERTY(QString tutorialTitle READ tutorialTitle NOTIFY changed)
+    Q_PROPERTY(QString tutorialText READ tutorialText NOTIFY changed)
+    Q_PROPERTY(bool tutorialDone READ tutorialDone NOTIFY changed)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
 
 public:
@@ -71,6 +78,15 @@ public:
     double level() const { return m_engine->view().rms; }
     int octave() const { return m_gv.octave; }
     double damper() const { return m_gv.damper; }
+    bool tutorialActive() const { return m_tutorial.active(); }
+    int tutorialStep() const { return m_tutorial.index() + 1; }
+    int tutorialCount() const { return m_tutorial.count(); }
+    QString tutorialTitle() const { return m_tutorial.active() ? m_tutorial.step().title : QString(); }
+    QString tutorialText() const { return m_tutorial.active() ? m_tutorial.step().text : QString(); }
+    bool tutorialDone() const { return m_tutorial.justDone(); }
+    // The part of the pad the current step is about (pad coordinates, y up).
+    QRectF tutorialHighlight() const { return m_tutorial.active() ? m_tutorial.step().highlight : QRectF(); }
+    QString tutorialHighlightLabel() const { return m_tutorial.active() ? m_tutorial.step().highlightLabel : QString(); }
     QString notice() const { return QString::fromUtf8(m_gv.notice); }
 
     tf::Engine *engine() const { return m_engine.get(); }
@@ -84,6 +100,10 @@ public:
     Q_INVOKABLE void shiftRoot(int fifths);
     Q_INVOKABLE void shiftFamily(int step);
     Q_INVOKABLE void toggleJust();
+    Q_INVOKABLE void toggleTutorial();
+    Q_INVOKABLE void tutorialNext();
+    Q_INVOKABLE void tutorialBack();
+    void startTutorialAt(int step);
     Q_INVOKABLE void shiftOctave(int step);
     Q_INVOKABLE void resetKnobs();
     Q_INVOKABLE void dissolve();
@@ -120,6 +140,9 @@ private:
     bool m_pausedByFocus = false;
     bool m_simulated = false;
     uint32_t m_noticeSeq = 0;
+    Tutorial m_tutorial;
+    QElapsedTimer m_tickClock;
+    bool m_metronome = false;
 
     bool m_recording = false;
     QString m_recordPath, m_lastRecording;

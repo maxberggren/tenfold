@@ -74,6 +74,9 @@ ApplicationWindow {
     Shortcut { sequences: ["PgUp", "]"]; context: Qt.ApplicationShortcut; onActivated: backend.shiftOctave(1) }
     Shortcut { sequences: ["PgDown", "["]; context: Qt.ApplicationShortcut; onActivated: backend.shiftOctave(-1) }
     Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleRecording() }
+    Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; onActivated: backend.toggleTutorial() }
+    Shortcut { sequence: "N"; context: Qt.ApplicationShortcut; enabled: backend.tutorialActive; onActivated: backend.tutorialNext() }
+    Shortcut { sequence: "B"; context: Qt.ApplicationShortcut; enabled: backend.tutorialActive; onActivated: backend.tutorialBack() }
     Shortcut { sequence: "Backspace"; context: Qt.ApplicationShortcut; onActivated: backend.dissolve() }
     Shortcut { sequence: "Shift+Backspace"; context: Qt.ApplicationShortcut; onActivated: backend.dissolveAll() }
     Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; onActivated: backend.resetKnobs() }
@@ -128,6 +131,16 @@ ApplicationWindow {
                     Layout.preferredWidth: 170
                     Layout.preferredHeight: 72
                     Layout.alignment: Qt.AlignTop
+                    label: qsTr("Tutorial")
+                    key: "T"
+                    color: win.green
+                    active: backend.tutorialActive
+                    onClicked: backend.toggleTutorial()
+                }
+                PanelButton {
+                    Layout.preferredWidth: 170
+                    Layout.preferredHeight: 72
+                    Layout.alignment: Qt.AlignTop
                     label: qsTr("Gestures")
                     key: "?"
                     color: win.cyan
@@ -166,8 +179,84 @@ ApplicationWindow {
                         accent: win.amber
                     }
 
+                    // The tutorial, in place of the banner while it runs.
+                    Rectangle {
+                        visible: backend.tutorialActive
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: tutorialColumn.implicitHeight + 20
+                        color: "#000000"
+                        border.color: win.green
+                        border.width: 3
+
+                        ColumnLayout {
+                            id: tutorialColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 10
+                            spacing: 8
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                Rectangle {
+                                    color: backend.tutorialDone ? win.amber : win.green
+                                    implicitWidth: stepLabel.implicitWidth + 20
+                                    implicitHeight: 28
+                                    Text {
+                                        id: stepLabel
+                                        anchors.centerIn: parent
+                                        text: backend.tutorialDone
+                                              ? qsTr("Done ✓")
+                                              : qsTr("Step %1 / %2").arg(backend.tutorialStep).arg(backend.tutorialCount)
+                                        color: "#0a0806"
+                                        font.family: win.mono
+                                        font.pixelSize: 15
+                                        font.weight: Font.Bold
+                                        font.capitalization: Font.AllUppercase
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: backend.tutorialTitle
+                                    color: win.green
+                                    font.family: win.wide
+                                    font.pixelSize: 22
+                                    font.weight: Font.Bold
+                                    font.letterSpacing: 2
+                                    font.capitalization: Font.AllUppercase
+                                    elide: Text.ElideRight
+                                }
+                                PanelButton {
+                                    Layout.preferredWidth: 96; Layout.preferredHeight: 34
+                                    label: qsTr("Back"); key: "B"; color: win.green; labelSize: 13
+                                    onClicked: backend.tutorialBack()
+                                }
+                                PanelButton {
+                                    Layout.preferredWidth: 96; Layout.preferredHeight: 34
+                                    label: qsTr("Next"); key: "N"; color: win.green; labelSize: 13
+                                    onClicked: backend.tutorialNext()
+                                }
+                                PanelButton {
+                                    Layout.preferredWidth: 96; Layout.preferredHeight: 34
+                                    label: qsTr("Exit"); key: "T"; color: win.green; labelSize: 13
+                                    onClicked: backend.toggleTutorial()
+                                }
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: backend.tutorialText
+                                color: win.green
+                                wrapMode: Text.Wrap
+                                font.family: win.mono
+                                font.pixelSize: 16
+                            }
+                        }
+                    }
+
                     // The mode banner.
                     Rectangle {
+                        visible: !backend.tutorialActive
                         Layout.fillWidth: true
                         Layout.preferredHeight: 54
                         color: "transparent"
@@ -464,7 +553,16 @@ ApplicationWindow {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Tap to strike. Hold to bloom a voice. Tap a rhythm and hold on the next beat to loop it. Press down to keep what you hold.")
+                    text: qsTr("New here? Press T for the tutorial: it builds a track with you step by step.")
+                    color: win.green
+                    font.family: win.mono
+                    font.pixelSize: 15
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.Wrap
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("Drums on the bottom row, then bass, chords, lead and arp. Tap to play, hold to sustain and turn a knob. Tap a rhythm and hold on the next beat to loop it. Press down to keep what you hold.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14

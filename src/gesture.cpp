@@ -338,6 +338,8 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     if (c.state == TouchState::Voice || (c.state == TouchState::Landing && c.sounding)) {
         if (c.row == DrumRow) {
             if (c.rolling) {
+                if (c.pressure > 0.75f)
+                    m_rollStrong += float(dt);
                 Command v;
                 v.type = Cmd::RollMove;
                 v.id = c.id;
@@ -346,10 +348,14 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
             }
         } else {
             c.midi = voicePitch(c, float(dt));
+            const int degree = voiceDegree(c);
+            if (c.row == ChordRow && c.state == TouchState::Voice && c.lastDegree >= 0 && degree != c.lastDegree)
+                ++m_chordMoves;
+            c.lastDegree = degree;
             Command v;
             v.type = Cmd::NoteMove;
             v.id = c.id;
-            v.i2 = voiceDegree(c);
+            v.i2 = degree;
             v.f[0] = c.midi;
             v.f[1] = c.pressure;
             v.f[2] = c.x;
@@ -490,6 +496,10 @@ void Gesture::strike(Contact &c) {
     if (c.state == TouchState::Palm)
         return;
     c.vel = std::clamp(0.25f + 0.85f * c.peakPressure, 0.15f, 1.0f);
+    if (c.row == DrumRow)
+        ++m_hits[std::clamp(c.value, 0, kDrumPieces - 1)];
+    else
+        ++m_notes[c.row];
     if (c.row == DrumRow) {
         Command h;
         h.type = Cmd::Hit;
@@ -678,6 +688,8 @@ void Gesture::hold(Contact &c, double now) {
             c.refAngle = c.smoothAngle;
             c.refDensity = 0;
             m_activeHandle = id;
+            for (const Tap &t : m_phrase)
+                m_loopRows |= 1u << t.row;
             m_phrase.clear();
             ++m_loopsMade;
             return;
@@ -745,6 +757,7 @@ void Gesture::lift(Contact &c, double now) {
             o.f[1] = c.x0;
             o.f[2] = length;
             send(o);
+            ++m_overdubs;
         } else {
             m_phrase.push_back({c.t0, c.x0, c.y0, c.row, c.value, c.vel, length});
             while (m_phrase.size() > 64 || (m_phrase.size() > 1 && c.t0 - m_phrase.front().t > 8.0))
@@ -984,6 +997,19 @@ void Gesture::publish() {
     v.freezes = m_freezes;
     v.swipes = m_swipes;
     v.grabs = m_grabs;
+    for (int i = 0; i < kDrumPieces; ++i)
+        v.hits[i] = m_hits[i];
+    for (int r = 0; r < RowCount; ++r) {
+        v.notes[r] = m_notes[r];
+        v.heldSeconds[r] = 0;
+    }
+    for (auto &c : m_contacts)
+        if (c.live && c.state == TouchState::Voice)
+            v.heldSeconds[c.row] = std::max(v.heldSeconds[c.row], float(m_now - c.t0));
+    v.overdubs = m_overdubs;
+    v.chordMoves = m_chordMoves;
+    v.loopRows = m_loopRows;
+    v.rollStrong = m_rollStrong;
     v.noticeSeq = m_noticeSeq;
     std::memcpy(v.notice, m_notice, sizeof(v.notice));
 }

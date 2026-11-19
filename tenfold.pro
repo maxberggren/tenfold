@@ -30,6 +30,7 @@ HEADERS += \
     src/touchsource.h \
     src/translator.h \
     src/tuning.h \
+    src/tutorial.h \
     src/voices.h \
     src/wav.h
 
@@ -47,6 +48,7 @@ SOURCES += \
     src/theme.cpp \
     src/touchsource.cpp \
     src/translator.cpp \
-    src/tuning.cpp
+    src/tuning.cpp \
+    src/tutorial.cpp
 
 RESOURCES += src/resources.qrc

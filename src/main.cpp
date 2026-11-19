@@ -31,7 +31,7 @@ static void usage(FILE *out) {
                "  tenfold demo <out.wav> [--json]         render the built-in demo\n"
                "  tenfold demo-script                     print the demo's script\n"
                "  tenfold bench [--json]                  time the worst case\n"
-               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--help-page]\n"
+               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--help-page] [--tutorial STEP]\n"
                "                                          draw the window mid-performance\n",
                out);
 }
@@ -84,6 +84,8 @@ static int screenshot(int argc, char **argv) {
         ss << f.rdbuf();
         script = ss.str();
     }
+    if (const char *step = option(argc, argv, "--tutorial"))
+        backend.startTutorialAt(std::atoi(step) - 1);
     const char *at = option(argc, argv, "--at");
     std::string error;
     if (!backend.simulate(script, at ? std::atof(at) : 50.5, &error)) {

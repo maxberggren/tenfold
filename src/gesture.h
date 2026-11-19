@@ -87,6 +87,13 @@ struct GestureView {
     int root = 2, family = 1, brightness = 3, octave = 0;
     bool just = true;
     int loopsMade = 0, freezes = 0, swipes = 0, grabs = 0;
+    // Running counts, for the tutorial to see what the player has done.
+    int hits[kDrumPieces] = {};
+    int notes[RowCount] = {};
+    int overdubs = 0, chordMoves = 0;
+    unsigned loopRows = 0;           // a bit per row that has been looped
+    float rollStrong = 0;            // seconds rolled with a hard press
+    float heldSeconds[RowCount] = {}; // longest finger held right now, per row
     uint32_t noticeSeq = 0;
     char notice[64] = {}; // the last thing a swipe changed, for the screen
 };
@@ -160,6 +167,7 @@ private:
         float slowDeg = 0, slowSpeed = 0, motion = 0;
         float loopDensity = 0;
         int lane = -1, laneLoop = -1;
+        int lastDegree = -1;
         float midi = 0;
     };
     struct Tap {
@@ -223,6 +231,10 @@ private:
     int m_activeHandle = -1; // the loop overdubs go into
     int m_loopsMade = 0, m_freezes = 0, m_swipes = 0, m_grabs = 0;
     bool m_palmClicked = false;
+    int m_hits[kDrumPieces] = {}, m_notes[RowCount] = {};
+    int m_overdubs = 0, m_chordMoves = 0;
+    unsigned m_loopRows = 0;
+    float m_rollStrong = 0;
     SwipeGroup m_swipe;
     uint32_t m_noticeSeq = 0;
     char m_notice[64] = {};

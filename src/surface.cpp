@@ -675,6 +675,55 @@ void Surface::paint(QPainter *p) {
         p->drawText(lr, Qt::AlignCenter, legend);
     }
 
+    // The bar: four beats, the current one lit, the one brighter. Always
+    // there, so a player can see where the next ONE falls.
+    {
+        const qreal box = 14, gap = 6;
+        const qreal x0 = pad.right() - 16 - 4 * box - 3 * gap;
+        const QRectF back(x0 - 6, pad.top() - 10, 4 * box + 3 * gap + 12, 20);
+        p->fillRect(back, QColor(0, 0, 0));
+        const int beat = std::clamp(int(ev.barPhase * 4.0f), 0, 3);
+        const QColor col = ev.tempoSet ? QColor("#FF4FD8") : withAlpha(m_accent, 0.7f);
+        for (int b = 0; b < 4; ++b) {
+            const QRectF r(x0 + b * (box + gap), pad.top() - 7, box, box);
+            if (b == beat)
+                p->fillRect(r, b == 0 ? col : withAlpha(col, 0.75f));
+            else {
+                p->setBrush(Qt::NoBrush);
+                p->setPen(QPen(withAlpha(col, 0.6f), 1.5));
+                p->drawRect(r);
+            }
+        }
+    }
+
+    // The tutorial's target: a frame around the part of the pad the step is
+    // about, breathing so it catches the eye, with its instruction on a tag.
+    if (m_backend->tutorialActive()) {
+        const QRectF h = m_backend->tutorialHighlight();
+        if (!h.isEmpty()) {
+            const QRectF r(pad.left() + h.left() * pad.width(), pad.bottom() - h.bottom() * pad.height(),
+                           h.width() * pad.width(), h.height() * pad.height());
+            const float breathe = 0.55f + 0.45f * std::sin(float(now) * 0.006f);
+            const QColor g("#39FF88");
+            p->setBrush(withAlpha(g, 0.06f * breathe));
+            p->setPen(QPen(withAlpha(g, 0.5f + 0.5f * breathe), 3));
+            p->drawRect(r.adjusted(2, 2, -2, -2));
+            const QString label = m_backend->tutorialHighlightLabel();
+            if (!label.isEmpty()) {
+                const QFont f = consoleFont(14, true);
+                p->setFont(f);
+                const qreal tw = QFontMetricsF(f).horizontalAdvance(label) + 14;
+                QRectF tag(r.center().x() - tw / 2, r.top() - 24, tw, 20);
+                if (tag.top() < pad.top() + 2)
+                    tag.moveTop(r.top() + 6);
+                tag.moveLeft(std::clamp(tag.left(), pad.left() + 2, pad.right() - tw - 2));
+                p->fillRect(tag, g);
+                p->setPen(QColor::fromRgb(kInk));
+                p->drawText(tag, Qt::AlignCenter, label);
+            }
+        }
+    }
+
     // The ten knobs, always in view, so a player learns them by looking down:
     // a console button each, lit while a finger holds it, with a segmented
     // gauge for the slide and one for the twist.

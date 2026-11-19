@@ -375,8 +375,11 @@ struct SynthVoice {
                     fL.set(fc, res, rate);
                     fR.set(fc, res, rate);
                 }
-                sl = fL.step(sl) * a * gainBase;
-                sr = fR.step(sr) * a * gainBase;
+                // A ladder loses low end as resonance rises; give some back so
+                // a squelchy acid line keeps its weight.
+                const float resComp = 1.0f + 0.7f * res * res;
+                sl = fL.step(sl) * a * gainBase * resComp;
+                sr = fR.step(sr) * a * gainBase * resComp;
                 if (chordish()) {
                     sl = hpL.step(sl).high;
                     sr = hpR.step(sr).high;
@@ -548,7 +551,10 @@ struct DrumVoice {
                 }
                 m = m / 6.0f * 0.35f + noise * 0.8f;
                 const float v = lp.step(hp.step(bp.step(m).band + 0.5f * m).high).low;
-                s = v * envNoise * (kind == Drum::HatClosed ? 1.8f : 1.3f);
+                // A millisecond of attack: crisp, without a spike that would
+                // nudge the limiter every time a hat lands with the kick.
+                const float attack = std::min(1.0f, t / (0.001f * rate));
+                s = v * envNoise * attack * (kind == Drum::HatClosed ? 1.8f : 1.3f);
                 envNoise *= decayNoise;
                 break;
             }

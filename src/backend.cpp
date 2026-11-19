@@ -149,6 +149,32 @@ void Backend::shiftRoot(int fifths) { m_gesture->shiftRoot(fifths); }
 void Backend::shiftFamily(int step) { m_gesture->shiftFamily(step); }
 void Backend::toggleJust() { m_gesture->toggleJust(); }
 void Backend::shiftOctave(int step) { m_gesture->shiftOctave(step); }
+
+void Backend::toggleTutorial() {
+    if (m_tutorial.active())
+        m_tutorial.stop();
+    else
+        m_tutorial.start(m_gesture->view());
+    emit changed();
+}
+
+void Backend::tutorialNext() {
+    if (m_tutorial.active())
+        m_tutorial.next(m_gesture->view());
+    emit changed();
+}
+
+void Backend::tutorialBack() {
+    if (m_tutorial.active())
+        m_tutorial.back(m_gesture->view());
+    emit changed();
+}
+
+void Backend::startTutorialAt(int step) {
+    m_tutorial.start(m_gesture->view());
+    for (int i = 0; i < step; ++i)
+        m_tutorial.next(m_gesture->view());
+}
 void Backend::resetKnobs() { m_gesture->resetKnobs(); }
 void Backend::dissolve() { m_gesture->dissolve(); }
 void Backend::dissolveAll() { m_gesture->dissolveAll(); }
@@ -221,6 +247,27 @@ void Backend::tick() {
     }
     m_engine->fetchView();
     m_gv = m_gesture->view();
+
+    // The tutorial watches what's been played, and runs a click while the
+    // player learns to tap a loop (until the first loop sets the tempo).
+    const double dt = m_tickClock.isValid() ? m_tickClock.restart() / 1000.0 : 0.016;
+    if (!m_tickClock.isValid())
+        m_tickClock.start();
+    Tutorial::State ts;
+    ts.playing = padState() == Playing;
+    ts.recording = m_recording;
+    ts.gesture = &m_gv;
+    ts.engine = &m_engine->view();
+    m_tutorial.update(ts, std::min(dt, 0.1));
+    const bool click = m_tutorial.active() && m_tutorial.step().metronome && !m_engine->view().tempoSet;
+    if (click != m_metronome) {
+        m_metronome = click;
+        tf::Command c;
+        c.type = tf::Cmd::Metronome;
+        c.f[0] = click ? 1.0f : 0.0f;
+        m_engine->send(c);
+    }
+
     if (m_gv.noticeSeq != m_noticeSeq) {
         m_noticeSeq = m_gv.noticeSeq;
         emit noticeChanged();

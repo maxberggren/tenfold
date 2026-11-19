@@ -16,6 +16,12 @@ built from sines, noise and square-wave metal. It runs at 48 kHz in
 
 ## Playing
 
+New to it? Press **T** for the tutorial. In sixteen short steps it builds a
+track with you: the kit, your first loop (with a click to tap along to),
+adding to a loop, a bass loop, chords, latching, knobs, a melody, the
+arpeggiator, the pump, a build-up and a key change. Each step highlights
+where on the pad to play and finishes itself when you've done it.
+
 Space hands the trackpad to tenfold: the pointer stops and the pad becomes the
 instrument. Esc gives it back. tenfold also gives it back whenever its window
 loses focus. Reading the pad needs root, so the first Space asks for your
@@ -77,6 +83,8 @@ finger that's still plays exactly in tune; a quick slide glides.
 | Shift+Backspace | Dissolve everything |
 | 0 | Knobs back to where they started |
 | R | Record to `~/Music/tenfold/` (24-bit WAV) |
+| T | Tutorial on or off |
+| N / B | Tutorial: next step / back |
 | F | Full screen |
 | ? | All of this, in the window |
 | Q | Quit |

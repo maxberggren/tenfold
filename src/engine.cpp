@@ -147,6 +147,9 @@ struct Engine::Impl {
     int duckAt = -1; // sample in the coming block where a kick lands
     Svf drumFilterL, drumFilterR;
     float damperTarget = 0, damper = 0;
+    bool metronome = false;
+    float clickEnv = 0, clickPhase = 0, clickHz = 1000;
+    int lastBeat = -1;
 
     Reverb reverb;
     TapeEcho echo;
@@ -713,6 +716,9 @@ void Engine::apply(const Command &c) {
     case Cmd::SetTuning:
         s.tuning.set(c.i1, c.i2, c.i3, c.f[0] > 0.5f);
         break;
+    case Cmd::Metronome:
+        s.metronome = c.f[0] > 0.5f;
+        break;
     case Cmd::Hush: {
         const float window = c.f[0] * s.rate;
         for (auto &v : s.drums)
@@ -1009,6 +1015,25 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
         }
         s.duckAt = -1;
     }
+    // The metronome: a short blip on every beat, higher on the one.
+    if (s.metronome)
+        for (int i = 0; i < n; ++i) {
+            const double pos = floorMod(blockStart + i - s.barAnchor, s.bar) / (s.bar / 4.0);
+            const int beat = int(pos);
+            if (beat != s.lastBeat) {
+                s.lastBeat = beat;
+                s.clickEnv = 1.0f;
+                s.clickHz = beat == 0 ? 1760.0f : 1320.0f;
+            }
+            if (s.clickEnv > 1e-4f) {
+                s.clickPhase += s.clickHz / s.rate;
+                s.clickPhase -= std::floor(s.clickPhase);
+                const float c = std::sin(kTwoPi * s.clickPhase) * s.clickEnv * 0.12f;
+                s.clickEnv *= std::exp(-1.0f / (0.012f * s.rate));
+                dl[i] += c;
+                dr[i] += c;
+            }
+        }
     // The drum row's filter is a DJ filter over the whole kit.
     const float drumCut = s.knob[DrumRow][Filter][0];
     const bool drumFilter = drumCut < 0.97f;

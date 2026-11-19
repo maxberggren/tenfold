@@ -84,6 +84,7 @@ enum class Cmd : uint8_t {
     Damper,      // f0 0..1, a palm on the pad
     SetTuning,   // i1 root, i2 family, i3 brightness, f0 just
     Hush,        // f0 seconds: fade out hits and notes younger than that (a swipe's own notes)
+    Metronome,   // f0 1: a soft click on every beat (for learning to tap a loop), 0: off
 };
 
 struct Command {

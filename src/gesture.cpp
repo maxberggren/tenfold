@@ -108,6 +108,11 @@ void Gesture::frame(const Frame &f) {
             for (auto &o : m_contacts) {
                 if (!o.live || o.missingSince < 0)
                     continue;
+                // Only if it carries on as the same finger would: a fresh tap
+                // on the same spot lands light and small, a finger the pad
+                // merely lost comes back as it was.
+                if (std::fabs(t.pressure - o.pressure) > 0.3f || std::fabs(t.size - o.size) > 0.4f * std::max(o.size, 0.3f))
+                    continue;
                 const float dx = (o.x - t.x) * m_aspect, dy = o.y - t.y;
                 const float d = std::sqrt(dx * dx + dy * dy);
                 if (d < best) {
@@ -147,8 +152,9 @@ void Gesture::frame(const Frame &f) {
         if (!c.live)
             continue;
         if (c.state == TouchState::Swipe) {
-            if (f.t - c.swipeStart > 0.32) {
-                // Not a swipe after all: the fingers were landing a chord.
+            if (f.t - c.swipeStart > 0.5) {
+                // Still down: not a flick but a chord being placed and moved.
+                m_swipe.active = false;
                 becomeVoice(c);
             }
             continue;
@@ -160,7 +166,7 @@ void Gesture::frame(const Frame &f) {
         // may be a palm arriving: give it a few more milliseconds to decide.
         const double age = f.t - c.t0;
         if (!c.struck) {
-            const bool growing = c.size > 1.5f;
+            const bool growing = c.size > 1.5f || c.size - c.firstSize > 0.25f;
             if ((!growing && (c.frames >= 2 || age >= 0.012)) || age >= 0.036) {
                 if (c.size > kPalmSize)
                     c.state = TouchState::Palm;
@@ -231,7 +237,10 @@ void Gesture::land(Contact &c, const Touch &t, double now) {
     c.y0 = c.y = t.y;
     c.size = c.peakSize = t.size;
     c.pressure = c.peakPressure = t.pressure;
-    c.lastAngle = t.angle;
+    c.firstSize = t.size;
+    c.vx = std::cos(2 * t.angle);
+    c.vy = std::sin(2 * t.angle);
+    c.smoothAngle = c.refAngle = t.angle;
     c.frames = 1;
     c.degree0 = strikeDegree(t.x);
     c.material0 = std::clamp(t.y * 4.0f, 0.0f, 4.0f);
@@ -240,7 +249,7 @@ void Gesture::land(Contact &c, const Touch &t, double now) {
 }
 
 float Gesture::twistOf(const Contact &c) const {
-    const float d = c.smoothAngle - c.refAngle;
+    const float d = wrapHalfTurn(c.smoothAngle - c.refAngle);
     const float mag = std::max(0.0f, std::fabs(d) - kTwistDeadband);
     return d < 0 ? -mag : mag;
 }
@@ -258,14 +267,19 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     if (!c.struck)
         c.peakPressure = std::max(c.peakPressure, t.pressure);
 
-    // Twist: the contact ellipse's angle. Every change is counted exactly
-    // (so noise cancels instead of adding up), only while the contact is long
-    // enough to have a direction, then smoothed, then measured from where it
-    // was when the knob was picked up, with a small deadband.
-    if (t.eccentricity >= 0.22f)
-        c.unwrapped += wrapHalfTurn(t.angle - c.lastAngle);
-    c.lastAngle = t.angle;
-    c.smoothAngle += (c.unwrapped - c.smoothAngle) * float(1.0 - std::exp(-dt / 0.06));
+    // Twist: the contact ellipse's angle, which only means anything while the
+    // contact is long enough to have a direction. Each frame nudges a running
+    // average of the angle (as a vector at twice the angle, since an ellipse
+    // turned half a turn is the same ellipse) by as much as it can be
+    // trusted. The twist is that average measured from where it was when the
+    // knob was picked up, with a small deadband. Nothing is summed, so noise
+    // can't walk it anywhere.
+    const float trust = std::clamp((t.eccentricity - 0.1f) / 0.3f, 0.0f, 1.0f);
+    const float k = float(1.0 - std::exp(-dt / 0.06)) * trust;
+    c.vx += (std::cos(2 * t.angle) - c.vx) * k;
+    c.vy += (std::sin(2 * t.angle) - c.vy) * k;
+    if (c.vx * c.vx + c.vy * c.vy > 1e-4f)
+        c.smoothAngle = 0.5f * std::atan2(c.vy, c.vx);
 
     // A palm can arrive slowly; catch it whenever it becomes one.
     c.bigFrames = t.size > kPalmSize ? c.bigFrames + 1 : 0;
@@ -299,6 +313,8 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
             }
         }
     }
+    if (c.state == TouchState::Spent && c.role >= 0)
+        recordMotion(c, now, false);
     if (c.state == TouchState::Voice) {
         c.midi = voicePitch(c, float(dt));
         Command v;
@@ -311,33 +327,7 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
         v.f[4] = c.y;
         v.f[5] = float(voiceDegree(c));
         send(v);
-        // Held while a loop is held: this finger's line goes into the loop.
-        bool handleHeld = false;
-        for (auto &o : m_contacts)
-            if (o.live && o.state == TouchState::Handle && o.loop == m_activeHandle)
-                handleHeld = true;
-        if (handleHeld && m_activeHandle > 0) {
-            if (c.laneLoop != m_activeHandle) {
-                int &used = m_lanesUsed[m_activeHandle & 255];
-                c.lane = used < kMaxLanes ? used++ : -1;
-                c.laneLoop = m_activeHandle;
-            }
-            if (c.lane >= 0) {
-                Command m;
-                m.type = Cmd::Motion;
-                m.id = m_activeHandle;
-                m.i1 = c.lane;
-                m.i2 = c.role;
-                m.t = now;
-                m.f[0] = c.midi;
-                m.f[1] = c.pressure;
-                m.f[2] = c.role >= 0 ? m_knob[c.role][0] : 0;
-                m.f[3] = c.role >= 0 ? m_knob[c.role][1] : 0;
-                m.f[4] = float(voiceDegree(c));
-                m.f[5] = c.x;
-                send(m);
-            }
-        }
+        recordMotion(c, now, true);
     } else if (c.state == TouchState::Handle) {
         Command m;
         m.type = Cmd::LoopMod;
@@ -366,31 +356,59 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
             m.f[4] = c.y;
             send(m);
         }
-    } else if (c.state == TouchState::Swipe) {
-        finishSwipe(c, now);
     }
 }
 
-void Gesture::finishSwipe(Contact &c, double now) {
-    // The group is every finger that landed with this one.
-    float sx = 0, sy = 0;
-    int n = 0;
+void Gesture::recordMotion(Contact &c, double now, bool voice) {
+    // Held while a loop is held: this finger goes into the loop, as a voice
+    // line, or (for a finger whose chord froze) as its knob's sweep alone.
+    bool handleHeld = false;
     for (auto &o : m_contacts)
-        if (o.live && o.state == TouchState::Swipe && std::fabs(o.swipeStart - c.swipeStart) < 1e-9) {
-            sx += (o.x - o.x0) * m_aspect;
-            sy += o.y - o.y0;
-            ++n;
-        }
-    if (n < 3)
+        if (o.live && o.state == TouchState::Handle && o.loop == m_activeHandle)
+            handleHeld = true;
+    if (!handleHeld || m_activeHandle <= 0)
         return;
-    sx /= float(n);
-    sy /= float(n);
+    if (c.laneLoop != m_activeHandle) {
+        int &used = m_lanesUsed[m_activeHandle & 255];
+        c.lane = used < kMaxLanes ? used++ : -1;
+        c.laneLoop = m_activeHandle;
+    }
+    if (c.lane < 0)
+        return;
+    Command m;
+    m.type = Cmd::Motion;
+    m.id = m_activeHandle;
+    m.i1 = c.lane;
+    m.i2 = c.role;
+    m.i3 = voice ? 1 : 0;
+    m.t = now;
+    m.f[0] = c.midi;
+    m.f[1] = c.pressure;
+    m.f[2] = c.role >= 0 ? m_knob[c.role][0] : 0;
+    m.f[3] = c.role >= 0 ? m_knob[c.role][1] : 0;
+    m.f[4] = float(voiceDegree(c));
+    m.f[5] = c.x;
+    send(m);
+}
+
+void Gesture::finishSwipe(Contact &c, double now) {
+    // A swipe is a flick: three or more fingers that landed together, moved
+    // together, and all left the pad within half a second. Decided when the
+    // last of them lifts.
+    (void)now;
+    if (!m_swipe.active || std::fabs(c.swipeStart - m_swipe.start) > 1e-9)
+        return;
+    m_swipe.sx += (c.x - c.x0) * m_aspect;
+    m_swipe.sy += c.y - c.y0;
+    if (++m_swipe.lifted < m_swipe.members)
+        return;
+    m_swipe.active = false;
+    const float sx = m_swipe.sx / float(m_swipe.members), sy = m_swipe.sy / float(m_swipe.members);
     if (std::sqrt(sx * sx + sy * sy) < kSwipeDistance)
         return;
-    (void)now;
     char text[64];
     if (std::fabs(sx) > std::fabs(sy)) {
-        if (n >= 4) {
+        if (m_swipe.members >= 4) {
             doShiftFamily(sx > 0 ? 1 : -1);
             std::snprintf(text, sizeof(text), "%s", m_tuning.familyName());
         } else {
@@ -403,11 +421,6 @@ void Gesture::finishSwipe(Contact &c, double now) {
     }
     notice(text);
     ++m_swipes;
-    for (auto &o : m_contacts)
-        if (o.live && o.state == TouchState::Swipe && std::fabs(o.swipeStart - c.swipeStart) < 1e-9) {
-            o.state = TouchState::Spent;
-            o.role = -1;
-        }
 }
 
 int Gesture::voiceDegree(const Contact &c) const {
@@ -463,14 +476,15 @@ void Gesture::hold(Contact &c, double now) {
                 std::fabs(o.t0 - c.t0) < 0.09)
                 ++together;
         const float mx = (c.x - c.x0) * m_aspect, my = c.y - c.y0;
-        if (together >= 3 && std::sqrt(mx * mx + my * my) > 0.02f) {
+        if (together >= 3 && std::sqrt(mx * mx + my * my) > 0.04f && !m_swipe.active) {
+            m_swipe = {true, c.t0, 0, 0, 0, 0};
             for (auto &o : m_contacts)
                 if (o.live && (o.state == TouchState::Landing || o.state == TouchState::Swipe) &&
                     std::fabs(o.t0 - c.t0) < 0.09) {
                     o.state = TouchState::Swipe;
                     o.swipeStart = c.t0;
+                    ++m_swipe.members;
                 }
-            finishSwipe(c, now);
             return;
         }
     }
@@ -531,17 +545,28 @@ void Gesture::hold(Contact &c, double now) {
         // beat: as far after the last tap as some gap inside the phrase (or
         // twice that), or land back where the phrase began. A single tap
         // only loops with a hold right on top of it (a steady pulse).
+        // A finger laid down flat or barely pressing is reaching for a
+        // drone, never closing a rhythm.
+        const bool voiceFirst = c.peakSize > 1.5f || c.peakPressure < 0.18f;
         bool closes = false;
-        if (gap > 0 && gap <= 2.2) {
+        if (gap > 0 && gap <= 2.2 && !voiceFirst) {
             if (m_phrase.size() == 1) {
                 closes = nearLast < 0.08f && gap >= 0.12;
             } else {
-                for (size_t i = 1; i < m_phrase.size() && !closes; ++i) {
+                // Twice an interval only counts for an even pulse.
+                double mean = 0, var = 0;
+                const int n = int(m_phrase.size()) - 1;
+                for (int i = 1; i <= n; ++i)
+                    mean += m_phrase[i].t - m_phrase[i - 1].t;
+                mean /= n;
+                for (int i = 1; i <= n; ++i)
+                    var += std::pow(m_phrase[i].t - m_phrase[i - 1].t - mean, 2);
+                const bool even = n >= 2 && std::sqrt(var / n) < 0.12 * mean;
+                for (int i = 1; i <= n && !closes; ++i) {
                     const double ioi = m_phrase[i].t - m_phrase[i - 1].t;
-                    for (int k = 1; k <= 2 && !closes; ++k)
-                        closes = std::fabs(gap - k * ioi) < 0.28 * k * ioi;
+                    closes = std::fabs(gap - ioi) < 0.15 * ioi || (even && std::fabs(gap - 2 * ioi) < 0.15 * ioi);
                 }
-                closes = closes || nearFirst < 0.07f;
+                closes = closes || (nearFirst < 0.07f && gap <= 2.0 * mean + 0.2);
             }
         }
         const double length = c.t0 - first.t;
@@ -675,9 +700,11 @@ void Gesture::lift(Contact &c, double now) {
         send(r);
         break;
     }
+    case TouchState::Swipe:
+        finishSwipe(c, now);
+        break;
     case TouchState::Palm:
     case TouchState::Spent:
-    case TouchState::Swipe:
         break;
     }
     c.live = false;

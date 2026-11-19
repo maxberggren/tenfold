@@ -141,7 +141,11 @@ private:
         double t0 = 0, last = 0, missingSince = -1, swipeStart = 0;
         float x0 = 0, y0 = 0, x = 0, y = 0;
         float size = 0, pressure = 0, peakPressure = 0, peakSize = 0;
-        float lastAngle = 0, unwrapped = 0, smoothAngle = 0, refAngle = 0;
+        // Orientation as a doubled-angle vector, averaged with each frame
+        // weighted by how elongated the contact is: no accumulation, so
+        // nothing to drift.
+        float vx = 1, vy = 0, smoothAngle = 0, refAngle = 0;
+        float firstSize = 0;
         float travel = 0;
         int frames = 0, bigFrames = 0;
         bool struck = false;
@@ -162,6 +166,12 @@ private:
         int degree;
         float material, vel;
     };
+    struct SwipeGroup {
+        bool active = false;
+        double start = 0;
+        int members = 0, lifted = 0;
+        float sx = 0, sy = 0;
+    };
     struct LayerState {
         int group = -1, transpose = 0;
         float bright = 0.5f, width = 0.3f;
@@ -176,6 +186,7 @@ private:
     void strike(Contact &c);
     void click(double now);
     void finishSwipe(Contact &c, double now);
+    void recordMotion(Contact &c, double now, bool voice);
     void processLifts(double now);
     void sendTuning();
     void sendKnob(int role);
@@ -206,6 +217,7 @@ private:
     int m_activeHandle = -1; // the loop overdubs go into
     int m_loopsMade = 0, m_freezes = 0, m_swipes = 0, m_grabs = 0;
     bool m_palmClicked = false;
+    SwipeGroup m_swipe;
     uint32_t m_noticeSeq = 0;
     char m_notice[64] = {};
 

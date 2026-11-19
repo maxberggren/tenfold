@@ -38,7 +38,7 @@ public:
         m_shimLp.set(9000.0f, rate);
         for (int i = 0; i < L; ++i)
             m_lowLp[i].set(110.0f, rate);
-        m_shimHp.set(320.0f, 0.7f, rate);
+        m_shimHp.set(600.0f, 0.7f, rate);
         m_inHpL.set(30.0f, 0.7f, rate);
         m_inHpR.set(30.0f, 0.7f, rate);
         set(0.35f, 0.0f);
@@ -49,12 +49,13 @@ public:
         m_amount = amount;
         m_shimmer = shimmer;
         m_size = 0.55f + 0.95f * amount;
+        m_highKeep = lerpf(0.8f, 0.55f, amount);
         // From a small room (1 s) to effectively endless (≈ 90 s).
         const float t60 = 1.0f * std::pow(90.0f, amount * amount);
         for (int i = 0; i < L; ++i) {
             const float len = m_base[i] * m_size;
             m_gain[i] = std::pow(10.0f, -3.0f * len / (t60 * m_rate));
-            m_damp[i].set(lerpf(12500.0f, 5500.0f, amount), m_rate);
+            m_damp[i].set(lerpf(9000.0f, 4500.0f, amount), m_rate);
         }
     }
 
@@ -80,7 +81,7 @@ public:
             // Only what sits well above the bass climbs: a pitch shifter keeps
             // DC and rumble where they are, and in a near-endless tail that
             // would feed on itself.
-            const float sh = fastTanh(m_shimLp.step(m_shimHp.step(up).high) * m_shimmer * 0.9f);
+            const float sh = fastTanh(m_shimLp.step(m_shimHp.step(up).high) * m_shimmer * 1.25f);
             l += sh;
             r += sh;
         }
@@ -96,7 +97,12 @@ public:
             if (m_lfoPhase[i] >= 1.0f)
                 m_lfoPhase[i] -= 1.0f;
             const float mod = (0.0004f * m_rate) * std::sin(kTwoPi * m_lfoPhase[i]);
-            float v = m_damp[i].step(m_lines[i].read(m_base[i] * m_size + mod));
+            // Damping is a shelf, not a lowpass: highs lose a fixed share per
+            // pass, mids keep their full level, so the decay time is what it
+            // says it is.
+            float v = m_lines[i].read(m_base[i] * m_size + mod);
+            const float lp = m_damp[i].step(v);
+            v = lp + m_highKeep * (v - lp);
             // Lows lose a little more on every pass than mids do, so a long
             // tail stays a shimmer above the music instead of a rumble under it.
             v -= 0.3f * m_lowLp[i].step(v);
@@ -125,7 +131,7 @@ public:
     }
 
 private:
-    float m_rate = 48000, m_amount = 0, m_shimmer = 0, m_size = 1;
+    float m_rate = 48000, m_amount = 0, m_shimmer = 0, m_size = 1, m_highKeep = 0.7f;
     Delay m_lines[L];
     float m_base[L] = {}, m_gain[L] = {}, m_lfoPhase[L] = {}, m_lfoRate[L] = {};
     OnePoleLp m_damp[L], m_lowLp[L];

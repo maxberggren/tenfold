@@ -164,8 +164,8 @@ void Surface::updateSpectrum() {
 
 QRectF Surface::padRect() const {
     const float aspect = m_backend ? std::clamp(m_backend->padAspect(), 1.0f, 2.4f) : 1.6f;
-    const qreal margin = 18, bottom = 92;
-    const qreal availW = width() - 2 * margin, availH = height() - margin - bottom;
+    const qreal margin = 18, side = 40, bottom = 92;
+    const qreal availW = width() - 2 * side, availH = height() - margin - bottom;
     qreal w = availW, h = w / aspect;
     if (h > availH) {
         h = availH;
@@ -265,7 +265,8 @@ void Surface::paint(QPainter *p) {
             p->drawLine(QPointF(pad.left(), ly), QPointF(pad.right(), ly));
         }
         p->save();
-        p->translate(pad.left() + unit * 0.28, y);
+        p->setClipping(false);
+        p->translate(pad.left() - 16, y);
         p->rotate(-90);
         p->setPen(withAlpha(materialColor(m + 0.15f), 0.55f));
         p->drawText(QRectF(-unit, -unit * 0.2, 2 * unit, unit * 0.4), Qt::AlignCenter,
@@ -292,20 +293,29 @@ void Surface::paint(QPainter *p) {
 
     // Frozen chords as layers: a ring around each one's light, solid when
     // pinned, bright while a finger holds it.
+    // Each is a target: a ring of the size a fingertip can find, lettered,
+    // at the chord's centre.
+    int layerIndex = 0;
     for (const LayerView &l : ev.layers) {
         if (!l.active)
             continue;
         const QPointF c = at(l.x, l.y);
-        const qreal r = unit * (0.9 + 2.0 * std::sqrt(std::max(0.0f, l.level)));
-        p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(withAlpha(l.held ? m_accent : QColor(255, 255, 255), l.held ? 0.85f : 0.18f),
-                       l.pinned ? 2.4 : 1.0, l.pinned ? Qt::SolidLine : Qt::DotLine));
+        const qreal r = unit * 0.62;
+        const float vis = 0.35f + 0.65f * std::clamp(l.level * 12.0f, 0.0f, 1.0f);
+        p->setBrush(withAlpha(QColor(10, 10, 14), 0.55f));
+        p->setPen(QPen(withAlpha(l.held ? m_accent : QColor(255, 255, 255), (l.held ? 0.95f : 0.55f) * vis),
+                       l.pinned ? 2.4 : 1.2, l.pinned ? Qt::SolidLine : Qt::DashLine));
         p->drawEllipse(c, r, r);
-        if (l.transpose != 0) {
-            p->setPen(withAlpha(QColor(255, 255, 255), 0.7f));
-            p->drawText(QRectF(c.x() - r, c.y() + r * 0.2, 2 * r, unit * 0.4), Qt::AlignCenter,
-                        QString("%1%2").arg(l.transpose > 0 ? "+" : "").arg(l.transpose));
-        }
+        QFont f = small;
+        f.setBold(true);
+        p->setFont(f);
+        p->setPen(withAlpha(l.held ? m_accent : QColor(255, 255, 255), 0.85f * vis));
+        QString text = QString(QChar('A' + layerIndex % 26));
+        if (l.transpose != 0)
+            text += QString(" %1%2").arg(l.transpose > 0 ? "+" : "").arg(l.transpose);
+        p->drawText(QRectF(c.x() - 2 * r, c.y() - r, 4 * r, 2 * r), Qt::AlignCenter, text);
+        p->setFont(small);
+        ++layerIndex;
     }
     // Voices a loop is replaying: small lights that move as the recorded
     // finger did.
@@ -441,6 +451,9 @@ void Surface::paint(QPainter *p) {
         }
     }
 
+    // Fingers draw over the pad's edge rather than being cut by it.
+    p->setClipping(false);
+
     // Fingers.
     std::vector<QRectF> placedLabels;
     QFont label = p->font();
@@ -468,6 +481,23 @@ void Surface::paint(QPainter *p) {
             p->drawEllipse(QPointF(0, 0), r * 1.6, r * 1.2);
             break;
         }
+        case TouchState::Layer: {
+            QRadialGradient g(QPointF(0, 0), r * 2.2);
+            g.setColorAt(0, withAlpha(m_accent, 0.25f + 0.5f * c.pressure));
+            g.setColorAt(1, withAlpha(m_accent, 0));
+            p->setPen(Qt::NoPen);
+            p->setBrush(g);
+            p->drawEllipse(QPointF(0, 0), r * 2.2, r * 2.2);
+            p->setBrush(Qt::NoBrush);
+            p->setPen(QPen(m_accent, 2.0));
+            p->drawEllipse(QPointF(0, 0), r, r);
+            break;
+        }
+        case TouchState::Swipe:
+            p->setBrush(withAlpha(m_accent, 0.5f));
+            p->setPen(Qt::NoPen);
+            p->drawEllipse(QPointF(0, 0), r * 0.5, r * 0.5);
+            break;
         case TouchState::Spent:
             p->setBrush(Qt::NoBrush);
             p->setPen(QPen(QColor(255, 255, 255, 70), 1, Qt::DotLine));
@@ -542,7 +572,8 @@ void Surface::paint(QPainter *p) {
                 continue;
             p->setFont(small);
             p->setPen(QColor(255, 255, 255, 150));
-            p->drawText(QRectF(pos.x() - 3 * unit, pos.y() + kr + unit * 0.08, 6 * unit, unit * 0.35),
+            const qreal vx = std::clamp(pos.x(), pad.left() + 2.5 * unit, pad.right() - 2.5 * unit);
+            p->drawText(QRectF(vx - 3 * unit, pos.y() + kr + unit * 0.08, 6 * unit, unit * 0.35),
                         Qt::AlignCenter,
                         QString("%1 %2 · %3 %4")
                             .arg(m_backend->roleSlide(c.role))
@@ -554,6 +585,11 @@ void Surface::paint(QPainter *p) {
             p->setPen(m_accent);
             p->drawText(QRectF(pos.x() - 3 * unit, pos.y() - r * 1.5 - unit * 0.5, 6 * unit, unit * 0.4),
                         Qt::AlignCenter, tr("loop"));
+        } else if (c.state == TouchState::Layer) {
+            p->setFont(label);
+            p->setPen(m_accent);
+            p->drawText(QRectF(pos.x() - 3 * unit, pos.y() - r * 2.2 - unit * 0.3, 6 * unit, unit * 0.4),
+                        Qt::AlignCenter, tr("layer"));
         } else if (c.state == TouchState::Palm) {
             p->setFont(small);
             p->setPen(QColor(255, 255, 255, 140));

@@ -20,12 +20,12 @@ struct RoleInfo {
 const RoleInfo roles[RoleCount] = {
     {"Tone", "brightness", "hollow ↔ full", 0.55f, 0.5f},
     {"Shadow", "width", "sub & fifth", 0.3f, 0.25f},
-    {"Air", "voice", "vowel", 0.0f, 0.5f},
+    {"Air", "voice", "vowel", 0.12f, 0.4f},
     {"Space", "room", "shimmer", 0.35f, 0.0f},
     {"Pulse", "depth", "rate", 0.0f, 0.4f},
     {"Echo", "echo", "time", 0.0f, 0.55f},
     {"Grit", "drive", "fold", 0.0f, 0.0f},
-    {"Drift", "stretch", "life", 0.0f, 0.3f},
+    {"Drift", "stretch", "life", 0.0f, 0.45f},
     {"Swarm", "grains", "spread", 0.0f, 0.3f},
     {"Gravity", "pull", "mode", 0.7f, 0.5f},
 };
@@ -69,7 +69,7 @@ struct Loop {
     // (pitch, pressure, and the knob its role turns), one bin per 1/256 of
     // the loop.
     struct Lane {
-        bool used = false;
+        bool used = false, voice = true;
         int role = -1;
         float midi[kLaneBins], press[kLaneBins], ka[kLaneBins], kb[kLaneBins], x[kLaneBins];
         int deg[kLaneBins];
@@ -116,6 +116,7 @@ struct Engine::Impl {
     float override_[RoleCount][2] = {};
     float overrideWeight[RoleCount] = {};
     Svf damperL, damperR;
+    Svf mudL, mudR, airL, airR;
     DcBlock dcL, dcR;
     Rng rng{0x5EED};
     int strikesFired = 0;
@@ -127,6 +128,14 @@ struct Engine::Impl {
     float peakBlock = 0, rmsBlock = 0;
     uint64_t lastPublish = 0;
 };
+
+static void sympathetic(Engine::Impl &s, const StrikeVoice &strike, float vel) {
+    float hz[StrikeVoice::M], amp[StrikeVoice::M];
+    const int n = strike.modes(hz, amp);
+    for (auto &v : s.voices)
+        if (v.active && !v.releasing)
+            v.excite(hz, amp, n, vel);
+}
 
 Engine::Engine(float sampleRate) : m_rate(sampleRate), d(std::make_unique<Impl>()) {
     d->rate = sampleRate;
@@ -144,6 +153,10 @@ Engine::Engine(float sampleRate) : m_rate(sampleRate), d(std::make_unique<Impl>(
     d->echo.init(sampleRate);
     d->swarm.init(sampleRate);
     d->limiter.init(sampleRate);
+    d->mudL.set(300.0f, 0.8f, sampleRate);
+    d->mudR.set(300.0f, 0.8f, sampleRate);
+    d->airL.set(6500.0f, 0.7f, sampleRate);
+    d->airR.set(6500.0f, 0.7f, sampleRate);
     d->bar = 2.4 * sampleRate;
     m_record.assign(kRecordFrames * 2, 0.0f);
 }
@@ -174,6 +187,10 @@ static double floorMod(double a, double m) {
     const double r = std::fmod(a, m);
     return r < 0 ? r + m : r;
 }
+
+// A strike rings whatever is sounding near its modes: frozen chords, held
+// voices and loop voices are one resonating body with the drums.
+static void sympathetic(Engine::Impl &s, const StrikeVoice &strike, float vel);
 
 static StrikeVoice &takeStrike(Engine::Impl &s) {
     StrikeVoice *slot = nullptr;
@@ -224,6 +241,7 @@ void Engine::apply(const Command &c) {
         StrikeVoice &slot = takeStrike(s);
         const double midi = s.tuning.baseMidi() + s.tuning.degreeSemis(degree);
         slot.start(float(midi), mat, vel, clampf((x - 0.5f) * 1.3f, -0.8f, 0.8f), gain, delay, s.rate, contact);
+        sympathetic(s, slot, vel * gain * 2.0f);
         ++s.strikesFired;
     };
 
@@ -320,6 +338,7 @@ void Engine::apply(const Command &c) {
                 lane.lastIdx = -1;
             }
             lane.role = c.i2;
+            lane.voice = c.i3 != 0;
             const double at = (c.t - m_time0) * s.rate;
             const int idx = int(floorMod(at - l->anchor, l->length) / l->length * kLaneBins) % kLaneBins;
             // Fill the bins since the last sample too, so a moving finger
@@ -600,11 +619,19 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
                     if (v.active && !v.frozen && v.finger == finger && !v.releasing)
                         voice = &v;
                 const bool play = lane.on[idx] && m_sample >= lane.recordingUntil && w > 0.02f;
-                if (!play) {
+                if (!play || !lane.voice) {
                     if (voice)
                         voice->releasing = true;
-                    continue;
                 }
+                if (!play)
+                    continue;
+                if (lane.role >= 0 && lane.role < RoleCount) {
+                    s.override_[lane.role][0] = lane.ka[idx];
+                    s.override_[lane.role][1] = lane.kb[idx];
+                    s.overrideWeight[lane.role] = std::max(s.overrideWeight[lane.role], w);
+                }
+                if (!lane.voice)
+                    continue;
                 const int deg = lane.deg[idx];
                 const float midi = lane.midi[idx] + float(s.tuning.degreeSemis(deg + lp.transpose) - s.tuning.degreeSemis(deg));
                 if (!voice) {
@@ -744,6 +771,7 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
             const double midi = s.tuning.baseMidi() + s.tuning.degreeSemis(p.degree);
             slot.start(float(midi), p.material, p.vel, clampf((p.x - 0.5f) * 1.3f, -0.8f, 0.8f), p.gain,
                        int(std::max(0.0, p.at - blockStart)), s.rate);
+            sympathetic(s, slot, p.vel * p.gain * 2.0f);
             ++s.strikesFired;
             p = s.pending[--s.pendingCount];
         } else {
@@ -826,6 +854,10 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
             L = s.damperL.step(L).low * damperGain;
             R = s.damperR.step(R).low * damperGain;
         }
+        // A fixed master voicing: a little less boxiness around 300 Hz, a
+        // little more air above 6 kHz.
+        L += -0.28f * s.mudL.step(L).band + 0.45f * s.airL.step(L).high;
+        R += -0.28f * s.mudR.step(R).band + 0.45f * s.airR.step(R).high;
         L = s.dcL.step(L);
         R = s.dcR.step(R);
         s.limiter.process(L, R);

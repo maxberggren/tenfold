@@ -62,6 +62,9 @@ struct DroneVoice {
     alignas(16) float reL[K], imL[K], cL[K], sL[K], aL[K], daL[K];
     alignas(16) float reR[K], imR[K], cR[K], sR[K], aR[K], daR[K];
     float harm[K], logHarm[K], detune[K], panSeed[K], driftF[K], driftA[K];
+    // Sympathetic ring: how much each partial has been set ringing by a
+    // strike whose modes sit on it, decaying on its own.
+    float freq[K], sym[K];
     float driftPitch = 0;
 
     Delay comb;
@@ -123,6 +126,8 @@ struct DroneVoice {
             aL[i] = aR[i] = daL[i] = daR[i] = 0;
             driftF[i] = rng.bipolar();
             driftA[i] = rng.bipolar();
+            freq[i] = 0;
+            sym[i] = 0;
         }
         comb.clear();
         f1.reset();
@@ -191,6 +196,7 @@ struct DroneVoice {
             }
             const float stretchMul = h > 1.0f ? std::sqrt(1.0f + B * h * h) : 1.0f;
             const float fk = f0 * h * stretchMul * (1.0f + life * 0.0035f * driftF[i]);
+            freq[i] = (fk > 17000.0f || fk < 22.0f) ? 0.0f : fk;
             if (fk > 17000.0f || fk < 22.0f)
                 a = 0;
             else if (fk > 12000.0f)
@@ -221,11 +227,17 @@ struct DroneVoice {
         // quieter note.
         const float norm = energy > 1e-9f ? gain / std::sqrt(energy) : 0.0f;
         const float invN = 1.0f / float(n);
+        // A struck partial rings on top of the voice's own level, so a tap
+        // can wake a quiet frozen chord.
+        const float symGain = 0.06f * env * fade * std::sqrt(frozenDecay);
+        const float symDecay = std::exp(-dt / 2.2f);
         for (int i = 0; i < K; ++i) {
             const float pan = clampf(voicePan + panSeed[i] * tp.width * 0.85f * lowRamp(i), -1.0f, 1.0f);
             const float gl = std::sqrt(0.5f * (1.0f - pan)), gr = std::sqrt(0.5f * (1.0f + pan));
-            daL[i] = (amps[i] * norm * gl - aL[i]) * invN;
-            daR[i] = (amps[i] * norm * gr - aR[i]) * invN;
+            const float ring = freq[i] > 0 ? sym[i] * symGain : 0.0f;
+            sym[i] *= symDecay;
+            daL[i] = ((amps[i] * norm + ring) * gl - aL[i]) * invN;
+            daR[i] = ((amps[i] * norm + ring) * gr - aR[i]) * invN;
             // Keep each oscillator on the unit circle (float rounding would
             // otherwise grow or shrink it over minutes).
             const float gL2 = 1.5f - 0.5f * (reL[i] * reL[i] + imL[i] * imL[i]);
@@ -242,8 +254,9 @@ struct DroneVoice {
         // Breath: noise through a comb tuned to the note, then through the
         // first two formants. At low amounts it is air around the tone; at
         // high amounts the tone sings.
-        if (tp.voice > 0.002f) {
-            const float breath = tp.voice * tp.voice * gain * 2.2f;
+        const float voiceAmt = clampf(tp.voice + 0.1f * p * p, 0.0f, 1.0f);
+        if (voiceAmt > 0.002f) {
+            const float breath = voiceAmt * voiceAmt * gain * 2.2f;
             const float period = clampf(rate / f0, 2.0f, float(comb.mask) - 4.0f);
             const float fb = 0.55f + 0.4f * tp.voice;
             combLp.set(2500.0f + 6000.0f * tp.bright, rate);
@@ -259,6 +272,35 @@ struct DroneVoice {
                 l[i] += s * gl;
                 r[i] += s * gr;
             }
+        }
+    }
+
+    // A strike near this voice: every partial within about a third of a
+    // semitone of one of its modes is set ringing, more the closer it is.
+    void excite(const float *modeHz, const float *modeAmp, int modes, float vel) {
+        const float f0 = freq[1];
+        if (f0 <= 0)
+            return;
+        // Only the few partials that can sit near each mode are checked: the
+        // nearest harmonics, plus the sub and the fifth.
+        auto ring = [&](int i, float hz, float amp) {
+            if (i < 0 || i >= K || freq[i] <= 0)
+                return;
+            const float off = std::fabs(freq[i] / hz - 1.0f);
+            if (off < 0.02f)
+                sym[i] = std::min(2.5f, sym[i] + amp * (1.0f - off / 0.02f) * vel * 1.4f);
+        };
+        for (int m = 0; m < modes; ++m) {
+            if (modeAmp[m] <= 0)
+                continue;
+            const float h = modeHz[m] / f0;
+            if (h < 0.4f || h > float(K))
+                continue;
+            ring(0, modeHz[m], modeAmp[m]);
+            ring(2, modeHz[m], modeAmp[m]);
+            const int near = int(std::lround(h));
+            for (int k = near - 1; k <= near + 1; ++k)
+                ring(k <= 1 ? k : k + 1, modeHz[m], modeAmp[m]);
         }
     }
 
@@ -343,7 +385,7 @@ struct StrikeVoice {
     int delay = 0;
     uint32_t age = 0, life = 0;
     float level = 0;
-    float re[M], im[M], w0[M], rad[M], gL[M], gR[M], drive[M];
+    float re[M], im[M], w0[M], rad[M], gL[M], gR[M], drive[M], hz[M];
     float pitchEnv = 0, pitchDecay = 0;
     float noiseAmp = 0, noiseDecay = 0;
     float clickAmp = 0, clickDecay = 0;
@@ -374,12 +416,18 @@ struct StrikeVoice {
             const float f = f0 * ratio;
             const float t60base = std::exp(lerpf(std::log(A.t60), std::log(B.t60), t));
             const float slope = lerpf(A.t60Slope, B.t60Slope, t);
-            // Higher modes and higher notes ring shorter, as in any real body.
-            float t60 = t60base / (1.0f + slope * float(i) * ratio * 0.25f);
+            // Higher modes and higher notes ring shorter, as in any real body;
+            // a hard hit drives the upper modes harder, so they also last
+            // longer above the noise.
+            float t60 = t60base / (1.0f + slope * float(i) * ratio * 0.25f / (1.0f + 1.2f * vel * vel));
             t60 *= clampf(std::pow(220.0f / std::max(f, 20.0f), 0.3f), 0.25f, 2.5f);
             w0[i] = kTwoPi * f / rate;
+            hz[i] = f;
             rad[i] = (f > rate * 0.45f || f < 18.0f) ? 0.0f : std::exp(-6.9078f / (t60 * rate));
-            float a = amp * std::pow(std::max(ratio, 0.5f), -soft * hard * 0.6f);
+            // Soft hits lose their upper modes; hard ones with a small contact
+            // lift them, for the whole ring, not just the click.
+            const float lift = 1.0f + 3.0f * vel * vel * clampf((ratio - 1.0f) / 3.0f, 0.0f, 1.0f) / clampf(contact, 0.8f, 2.0f);
+            float a = amp * lift * std::pow(std::max(ratio, 0.5f), -soft * hard);
             if (rad[i] == 0.0f)
                 a = 0;
             re[i] = 0;
@@ -425,6 +473,18 @@ struct StrikeVoice {
         fade = 1;
         fadeStep = 0;
         active = true;
+    }
+
+    // The modes and their levels relative to the loudest, for sympathetic ringing.
+    int modes(float *outHz, float *outAmp) const {
+        float peak = 1e-9f;
+        for (int i = 0; i < M; ++i)
+            peak = std::max(peak, drive[i]);
+        for (int i = 0; i < M; ++i) {
+            outHz[i] = hz[i];
+            outAmp[i] = rad[i] > 0 ? drive[i] / peak : 0.0f;
+        }
+        return M;
     }
 
     void render(float *l, float *r, int n) {

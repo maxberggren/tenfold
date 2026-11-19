@@ -6,6 +6,7 @@
 #include "gesture.h"
 #include "offline.h"
 #include "tuning.h"
+#include "voices.h"
 
 using namespace tf;
 
@@ -403,11 +404,12 @@ private slots:
                 pad.finger(id)->x += 0.008f;
             pad.run(0.008);
         }
+        // A swipe is a flick: it counts when the fingers leave.
+        for (int id = 1; id <= 3; ++id)
+            pad.lift(id);
         QCOMPARE(g.view().root, (root + 7) % 12);
         QCOMPARE(sink.count(Cmd::VoiceOn), 0);
         // Vertical is the octave.
-        for (int id = 1; id <= 3; ++id)
-            pad.lift(id);
         pad.run(0.5);
         pad.land({4, 0.3f, 0.3f});
         pad.land({5, 0.4f, 0.3f});
@@ -417,7 +419,88 @@ private slots:
                 pad.finger(id)->y += 0.01f;
             pad.run(0.008);
         }
+        for (int id = 4; id <= 6; ++id)
+            pad.lift(id);
         QCOMPARE(g.view().octave, 1);
+    }
+
+    void aChordSlidUpTogetherStaysAChord() {
+        // Land a triad and slide it up at 0.6 pad heights a second, fingers
+        // staying down: that is three voices brightening, not a swipe.
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        pad.land({1, 0.3f, 0.2f});
+        pad.land({2, 0.4f, 0.2f});
+        pad.land({3, 0.5f, 0.2f});
+        for (int i = 0; i < 100; ++i) {
+            for (int id = 1; id <= 3; ++id)
+                pad.finger(id)->y += 0.6f * 0.008f;
+            pad.run(0.008);
+        }
+        QCOMPARE(sink.count(Cmd::VoiceOn), 3);
+        QCOMPARE(g.view().octave, 0);
+    }
+
+    void twistIgnoresAContactOnTheEdgeOfRound() {
+        // Eccentricity wandering across the trust threshold, 1° of noise,
+        // finger still: the knob must stay put.
+        RecordingSink sink;
+        Gesture g(&sink);
+        Pad pad(g);
+        pad.land({1, 0.3f, 0.3f, 0.6f, 1.0f, 0.4f});
+        pad.run(0.3);
+        const float before = g.view().knobs[Tone][1];
+        Rng rng(11);
+        for (int i = 0; i < 2500; ++i) {
+            Frame f;
+            f.t = pad.t += 0.008;
+            f.count = 1;
+            Touch &t = f.touches[0];
+            t.id = 1;
+            t.x = 0.3f;
+            t.y = 0.3f;
+            t.pressure = 0.6f;
+            t.size = 1.0f;
+            t.angle = 0.4f + rng.bipolar() * 0.018f;
+            t.eccentricity = 0.2f + 0.1f * rng.unit();
+            g.frame(f);
+            pad.down[0].angle = t.angle;
+        }
+        QVERIFY(std::fabs(g.view().knobs[Tone][1] - before) < 0.02f);
+    }
+
+    void aMelodyThenADroneIsADrone() {
+        // Four taps half a second apart, then a hold 0.9 s later on another
+        // note: that's not the next beat, so it's a voice.
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        for (int i = 0; i < 4; ++i) {
+            pad.tap(10 + i, 0.1f + 0.1f * i, 0.5f);
+            pad.run(0.5 - 0.058);
+        }
+        pad.run(0.4);
+        pad.land({20, 0.8f, 0.5f});
+        pad.run(0.3);
+        QCOMPARE(sink.count(Cmd::LoopBegin), 0);
+        QCOMPARE(sink.count(Cmd::VoiceOn), 1);
+    }
+
+    void aQuickRetapOnTheSameSpotStrikes() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        pad.land({1, 0.4f, 0.4f, 0.7f});
+        pad.run(0.3);
+        pad.lift(1);
+        pad.land({2, 0.405f, 0.4f, 0.1f, 0.5f}); // light and small: a new tap
+        pad.run(0.05);
+        QCOMPARE(sink.count(Cmd::Strike), 2);
+        QCOMPARE(sink.count(Cmd::VoiceOff), 1);
     }
 
     void aPalmThatGrowsSlowlyIsStillAPalm() {
@@ -500,6 +583,7 @@ private slots:
         };
         knob(Tone, 1.0f, 0.5f);
         knob(Space, 0.0f, 0.0f);
+        knob(Air, 0.0f, 0.5f);
         Command on;
         on.type = Cmd::VoiceOn;
         on.id = 1;
@@ -535,6 +619,40 @@ private slots:
             e.render(out.data(), 48000);
         const int dark = edges();
         QVERIFY(frozen > dark * 2);
+    }
+
+    void strikesRingTheDrones() {
+        // A drone, then a strike whose fundamental sits on the drone's
+        // second partial: that partial rings up above where it was.
+        DroneVoice a, b;
+        a.init(48000, 1);
+        b.init(48000, 1);
+        ToneParams tp;
+        tp.width = 0;
+        a.start(1, 0, 50.0f, 0.4f, 1.0f, 0.5f, 0.5f, 48000, 0);
+        b.start(1, 0, 50.0f, 0.4f, 1.0f, 0.5f, 0.5f, 48000, 0);
+        std::vector<float> l(64), r(64);
+        for (int i = 0; i < 400; ++i) {
+            std::fill(l.begin(), l.end(), 0.0f);
+            a.render(l.data(), r.data(), 64, tp, 48000);
+            b.render(l.data(), r.data(), 64, tp, 48000);
+        }
+        const float hz[1] = {a.freq[3]}; // harmonic 2
+        const float amp[1] = {1.0f};
+        a.excite(hz, amp, 1, 1.0f);
+        QVERIFY(a.sym[3] > 1.0f);
+        QCOMPARE(b.sym[3], 0.0f);
+        double ea = 0, eb = 0;
+        for (int i = 0; i < 200; ++i) {
+            std::vector<float> la(64, 0), ra(64, 0), lb(64, 0), rb(64, 0);
+            a.render(la.data(), ra.data(), 64, tp, 48000);
+            b.render(lb.data(), rb.data(), 64, tp, 48000);
+            for (int k = 0; k < 64; ++k) {
+                ea += double(la[k]) * la[k];
+                eb += double(lb[k]) * lb[k];
+            }
+        }
+        QVERIFY(ea > eb * 1.1);
     }
 
     void strikeRingsAndDiesAway() {

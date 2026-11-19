@@ -89,7 +89,7 @@ int Backend::loops() const {
 int Backend::voices() const {
     int n = 0;
     for (const auto &v : m_engine->view().voices)
-        n += v.active && !v.frozen;
+        n += v.active && !v.frozen && v.finger >= 0;
     return n;
 }
 

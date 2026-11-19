@@ -47,16 +47,22 @@ float wrapHalfTurn(float a) {
 }
 
 Gesture::Gesture(CommandSink *sink) : m_sink(sink) {
-    for (int r = 0; r < RoleCount; ++r)
-        for (int a = 0; a < 2; ++a)
-            m_knob[r][a] = roleDefault(r, a);
+    for (int row = 0; row < RowCount; ++row)
+        for (int r = 0; r < RoleCount; ++r)
+            for (int a = 0; a < 2; ++a)
+                m_knob[row][r][a] = rowDefault(row, r, a);
     // A minor, equal temperament: the key most electronic music lives in.
     m_tuning.set(9, 0, defaultBrightness(0), false);
     const int modes = family(m_tuning.familyIndex()).modeCount;
-    m_knob[Gravity][1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
+    knob(0, Gravity)[1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
     sendTuning();
-    for (int r = 0; r < RoleCount; ++r)
-        sendKnob(r);
+    for (int r = 0; r < RoleCount; ++r) {
+        if (rowRole(r))
+            for (int row = 0; row < RowCount; ++row)
+                sendKnob(row, r);
+        else
+            sendKnob(0, r);
+    }
     publish();
 }
 
@@ -87,12 +93,13 @@ Gesture::LayerState *Gesture::layerState(int group) {
     return nullptr;
 }
 
-void Gesture::sendKnob(int role) {
+void Gesture::sendKnob(int row, int role) {
     Command k;
     k.type = Cmd::Knob;
     k.i1 = role;
-    k.f[0] = m_knob[role][0];
-    k.f[1] = m_knob[role][1];
+    k.i2 = rowRole(role) ? row : -1;
+    k.f[0] = knob(row, role)[0];
+    k.f[1] = knob(row, role)[1];
     send(k);
 }
 
@@ -258,6 +265,7 @@ void Gesture::land(Contact &c, const Touch &t, double now) {
     c.smoothAngle = c.refAngle = t.angle;
     c.frames = 1;
     c.row = std::clamp(int(t.y * float(RowCount)), 0, RowCount - 1);
+    m_focusRow = c.row;
     c.value = c.row == DrumRow ? drumPieceAt(t.x) : strikeDegree(t.x);
     c.slowDeg = degreeAt(t.x);
     c.state = TouchState::Landing;
@@ -309,10 +317,12 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     if ((c.state == TouchState::Voice || c.state == TouchState::Spent) && c.role >= 0) {
         const float a = std::clamp(c.refKnob[0] + slideOf(c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
         const float b = std::clamp(c.refKnob[1] + twist / kTwistRange, 0.0f, 1.0f);
-        if (std::fabs(a - m_knob[c.role][0]) > 0.001f || std::fabs(b - m_knob[c.role][1]) > 0.001f) {
-            m_knob[c.role][0] = a;
-            m_knob[c.role][1] = b;
-            sendKnob(c.role);
+        float *k = knob(c.row, c.role);
+        if (std::fabs(a - k[0]) > 0.001f || std::fabs(b - k[1]) > 0.001f) {
+            k[0] = a;
+            k[1] = b;
+            sendKnob(c.row, c.role);
+            m_focusRow = c.row;
             if (c.role == Gravity) {
                 const int modes = family(m_tuning.familyIndex()).modeCount;
                 const int bright = std::clamp(int(std::lround(b * float(modes - 1))), 0, modes - 1);
@@ -404,8 +414,8 @@ void Gesture::recordMotion(Contact &c, double now, bool voice) {
     m.t = now;
     m.f[0] = c.midi;
     m.f[1] = c.pressure;
-    m.f[2] = c.role >= 0 ? m_knob[c.role][0] : 0;
-    m.f[3] = c.role >= 0 ? m_knob[c.role][1] : 0;
+    m.f[2] = c.role >= 0 ? knob(c.row, c.role)[0] : 0;
+    m.f[3] = c.role >= 0 ? knob(c.row, c.role)[1] : 0;
     m.f[4] = float(voiceDegree(c));
     m.f[5] = c.x;
     send(m);
@@ -469,7 +479,7 @@ float Gesture::voicePitch(Contact &c, double dt) {
     const double snapped = m_tuning.degreeSemis(int(std::lround(c.slowDeg)) + shift) +
                            (xd - c.slowDeg) * m_tuning.semisPerDegree(c.slowDeg + shift);
     const double cont = m_tuning.continuousSemis(xd + shift);
-    const double w = m_knob[Gravity][0] * (1.0f - c.motion);
+    const double w = knob(0, Gravity)[0] * (1.0f - c.motion);
     return float(m_tuning.baseMidi() + rowOffset(c.row) + cont + (snapped - cont) * w);
 }
 
@@ -578,7 +588,7 @@ void Gesture::hold(Contact &c, double now) {
                 stopSound(c);
                 LayerState *l = layerState(group);
                 if (!l) {
-                    m_layers.push_back({group, 0, m_knob[Filter][0], m_knob[Width][0]});
+                    m_layers.push_back({group, 0, knob(ChordRow, Filter)[0], knob(ChordRow, Width)[0]});
                     l = &m_layers.back();
                 }
                 c.state = TouchState::Layer;
@@ -604,7 +614,12 @@ void Gesture::hold(Contact &c, double now) {
         // only loops with a hold right on top of it (a steady pulse).
         // A finger laid down flat or barely pressing is reaching for a
         // drone, never closing a rhythm.
-        const bool voiceFirst = c.peakSize > 1.5f || c.peakPressure < 0.18f;
+        bool sameRow = false;
+        for (const Tap &t : m_phrase)
+            sameRow |= t.row == c.row;
+        // ...and only a finger on the phrase's own row closes it: a chord
+        // landing on the beat after a bass line is a chord.
+        const bool voiceFirst = c.peakSize > 1.5f || c.peakPressure < 0.18f || !sameRow;
         bool closes = false;
         if (gap > 0 && gap <= 2.2 && !voiceFirst) {
             if (m_phrase.size() == 1) {
@@ -690,9 +705,10 @@ void Gesture::becomeVoice(Contact &c) {
     c.refY = c.y;
     c.refAngle = c.smoothAngle;
     if (role >= 0) {
-        c.refKnob[0] = m_knob[role][0];
-        c.refKnob[1] = m_knob[role][1];
+        c.refKnob[0] = knob(c.row, role)[0];
+        c.refKnob[1] = knob(c.row, role)[1];
     }
+    m_focusRow = c.row;
     if (!c.struck)
         strike(c);
     if (c.row == DrumRow) {
@@ -813,7 +829,7 @@ void Gesture::click(double now) {
         f.type = Cmd::Freeze;
         f.id = group;
         send(f);
-        m_layers.push_back({group, 0, m_knob[Filter][0], m_knob[Width][0]});
+        m_layers.push_back({group, 0, knob(ChordRow, Filter)[0], knob(ChordRow, Width)[0]});
         if (m_layers.size() > 64)
             m_layers.erase(m_layers.begin());
         // The fingers go quiet but keep their roles (and keep turning their
@@ -849,8 +865,8 @@ void Gesture::doShiftFamily(int step) {
     const int fam = (m_tuning.familyIndex() + step + familyCount()) % familyCount();
     m_tuning.set(m_tuning.root(), fam, defaultBrightness(fam), m_tuning.just());
     const int modes = family(fam).modeCount;
-    m_knob[Gravity][1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
-    sendKnob(Gravity);
+    knob(0, Gravity)[1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
+    sendKnob(0, Gravity);
     sendTuning();
 }
 
@@ -883,20 +899,26 @@ void Gesture::toggleJust() {
 
 void Gesture::resetKnobs() {
     std::lock_guard lock(m_viewLock);
+    for (int row = 0; row < RowCount; ++row)
+        for (int r = 0; r < RoleCount; ++r)
+            for (int a = 0; a < 2; ++a)
+                m_knob[row][r][a] = rowDefault(row, r, a);
+    knob(0, Gravity)[1] = float(m_tuning.brightnessIndex()) /
+                          float(std::max(1, family(m_tuning.familyIndex()).modeCount - 1));
     for (int r = 0; r < RoleCount; ++r) {
-        m_knob[r][0] = roleDefault(r, 0);
-        m_knob[r][1] = r == Gravity ? float(m_tuning.brightnessIndex()) /
-                                          float(std::max(1, family(m_tuning.familyIndex()).modeCount - 1))
-                                    : roleDefault(r, 1);
-        sendKnob(r);
+        if (rowRole(r))
+            for (int row = 0; row < RowCount; ++row)
+                sendKnob(row, r);
+        else
+            sendKnob(0, r);
     }
     // Fingers still holding a role pick up from the new values.
     for (auto &c : m_contacts)
         if (c.live && (c.state == TouchState::Voice || c.state == TouchState::Spent) && c.role >= 0) {
             c.refY = c.y;
             c.refAngle = c.smoothAngle;
-            c.refKnob[0] = m_knob[c.role][0];
-            c.refKnob[1] = m_knob[c.role][1];
+            c.refKnob[0] = knob(c.row, c.role)[0];
+            c.refKnob[1] = knob(c.row, c.role)[1];
         }
     publish();
 }
@@ -945,9 +967,10 @@ void Gesture::publish() {
     if (m_phrase.size() >= 2)
         v.phraseNext = m_phrase.back().t + (m_phrase.back().t - m_phrase[m_phrase.size() - 2].t);
     for (int r = 0; r < RoleCount; ++r) {
-        v.knobs[r][0] = m_knob[r][0];
-        v.knobs[r][1] = m_knob[r][1];
+        v.knobs[r][0] = knob(m_focusRow, r)[0];
+        v.knobs[r][1] = knob(m_focusRow, r)[1];
     }
+    v.focusRow = m_focusRow;
     v.damper = m_damper;
     v.strikeSeq = m_strikeSeq;
     v.strikes = m_strikes;

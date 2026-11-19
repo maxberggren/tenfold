@@ -74,7 +74,8 @@ struct GestureView {
     int phraseCount = 0;
     bool phraseOpen = false;     // landing on the beat and holding would make a loop
     double phraseNext = 0;       // when the next beat of the phrase would land
-    float knobs[RoleCount][2] = {};
+    float knobs[RoleCount][2] = {}; // as they stand on focusRow
+    int focusRow = LeadRow;
     float damper = 0;
     uint32_t strikeSeq = 0;
     struct Strike {
@@ -191,7 +192,7 @@ private:
     void recordMotion(Contact &c, double now, bool voice);
     void processLifts(double now);
     void sendTuning();
-    void sendKnob(int role);
+    void sendKnob(int row, int role);
     void doShiftRoot(int fifths);
     void doShiftFamily(int step);
     void doShiftOctave(int step);
@@ -207,7 +208,10 @@ private:
     float m_aspect = 1.6f;
     Tuning m_tuning;
     int m_octave = 0;
-    float m_knob[RoleCount][2];
+    // Knob values per row; mix-wide roles live in row 0.
+    float m_knob[RowCount][RoleCount][2];
+    float *knob(int row, int role) { return m_knob[rowRole(role) ? std::clamp(row, 0, RowCount - 1) : 0][role]; }
+    int m_focusRow = LeadRow; // the row the knob strip shows
     std::array<Contact, 16> m_contacts{};
     std::vector<Tap> m_phrase;
     std::vector<LayerState> m_layers;

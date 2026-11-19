@@ -686,6 +686,18 @@ void Surface::paint(QPainter *p) {
         if ((gv.contacts[i].state == TouchState::Voice || gv.contacts[i].state == TouchState::Spent) &&
             gv.contacts[i].role >= 0)
             held[gv.contacts[i].role] = true;
+    {
+        // Which row the knobs are showing: a finger turns the knob of its own
+        // row (filter, env, width, wobble); the rest act on the whole mix.
+        const QFont legendFont = consoleFont(13, true);
+        p->setFont(legendFont);
+        const QString legend = tr("Knobs · %1").arg(QCoreApplication::translate("Surface", rowName(gv.focusRow)));
+        const qreal lw = QFontMetricsF(legendFont).horizontalAdvance(legend) + 16;
+        const QRectF lr(pad.right() - lw - 16, pad.bottom() - 9, lw, 18);
+        p->fillRect(lr, materialColor(float(gv.focusRow)));
+        p->setPen(QColor::fromRgb(kInk));
+        p->drawText(lr, Qt::AlignCenter, legend);
+    }
     const QFont head = consoleFont(int(std::clamp(cellW / 9.5, 9.0, 13.0)), true),
                 body = consoleFont(int(std::clamp(cellW / 12.0, 8.0, 10.0)));
     constexpr int kSegments = 10;

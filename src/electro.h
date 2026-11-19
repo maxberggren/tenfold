@@ -155,12 +155,14 @@ struct SynthVoice {
     float sinePhase = 0;
     float detune[kUnison], pan[kUnison];
     Ladder fL, fR;
+    Svf hpL, hpR; // chords are high-passed at 150 Hz
     Adsr amp, filt;
     float click = 0, pitchEnv = 0;
     float level = 0, fade = 1, fadeRate = 0, latchDecay = 1;
     float swell = 1, swellTarget = 1;
     SynthParams own; // a latched voice keeps the sound it was latched with
     float midiOffset = 0;
+    float slide = 0; // a legato slide's glide time, set when a note takes this voice over
     int lastArp = -1;
     Rng rng;
 
@@ -201,6 +203,10 @@ struct SynthVoice {
         sinePhase = 0;
         fL.reset();
         fR.reset();
+        hpL.reset();
+        hpR.reset();
+        hpL.set(150.0f, 0.7f, rate);
+        hpR.set(150.0f, 0.7f, rate);
         amp.rate = filt.rate = rate;
         switch (p) {
         case Patch::Kick808:
@@ -250,6 +256,7 @@ struct SynthVoice {
         swell = swellTarget = 1;
         transpose = 0;
         midiOffset = 0;
+        slide = 0;
         lastArp = -1;
     }
 
@@ -264,7 +271,7 @@ struct SynthVoice {
     // Adds n samples to l and r; duck is the sidechain gain for this block.
     void render(float *l, float *r, int n, const SynthParams &p, float rate, float duck) {
         const float dt = float(n) / rate;
-        midi.setTime(std::max(0.002f, p.glide), rate / 64.0f);
+        midi.setTime(std::max({0.002f, p.glide, slide}), rate / 64.0f);
         const float m = midi.step(midiTarget);
         const float pr = press.step(pressure);
         if (fadeRate > 0)
@@ -291,7 +298,7 @@ struct SynthVoice {
         const float wob = p.wobbleDepth > 0.001f ? p.wobbleDepth * (0.5f - 0.5f * std::cos(kTwoPi * p.wobblePhase)) : 0.0f;
         const float cutBase = p.cutoff + 0.12f * (pr - 0.5f) - 0.6f * wob * (patch == Patch::Bass ? 1.0f : 0.6f);
         const float res = p.res;
-        const float widthCents = (patch == Patch::Lead ? 28.0f : chordish() ? 18.0f : 10.0f) * (0.2f + p.width);
+        const float widthCents = (patch == Patch::Lead ? 28.0f : chordish() ? 18.0f : 25.0f) * (0.2f + p.width);
         const float gainBase = vel * swell * fade * latchDecay * duck;
 
         // Arpeggio: one chord tone at a time, retriggered on each step.
@@ -344,26 +351,37 @@ struct SynthVoice {
                         const float d = std::exp2(detune[u] * widthCents / 1200.0f);
                         const float inc = std::min(hz * d / rate, 0.45f);
                         const float v = saws[k][u].step(inc) * uniGain;
-                        const float pn = clampf(pan[u] * (0.45f + 0.75f * p.width), -1.0f, 1.0f);
+                        const float pn = patch == Patch::Bass ? 0.0f : clampf(pan[u] * (0.45f + 0.65f * p.width), -1.0f, 1.0f);
                         sl += v * (1.0f - pn) * 0.5f;
                         sr += v * (1.0f + pn) * 0.5f;
                     }
                 }
                 // Sub an octave down, square, dead centre.
                 const float subHz = baseHz * 0.5f * (arpNote >= 0 ? 1.0f : 1.0f);
-                const float sb = sub.step(std::min(subHz / rate, 0.45f)) * p.sub * (patch == Patch::Bass ? 0.55f : 0.25f);
+                // Chords leave the low end to the bass row: no sub under them.
+                const float sb = chordish() ? 0.0f
+                                           : sub.step(std::min(subHz / rate, 0.45f)) * p.sub * (patch == Patch::Bass ? 0.55f : 0.25f);
                 sl += sb;
                 sr += sb;
                 // The filter: cutoff in octaves above 60 Hz.
-                const float octaves = clampf(cutBase + p.envAmt * fe * 0.75f, 0.0f, 1.15f) * 8.1f;
-                const float fc = 60.0f * std::exp2(octaves);
+                // Accent: harder notes open the filter envelope further, the
+                // way an acid bass line bites on its accented steps.
+                const float accent = 0.55f + 0.9f * vel;
+                const float octaves = clampf(cutBase + p.envAmt * fe * 0.75f * accent, 0.0f, 1.15f) * 8.1f;
+                // At high resonance the ladder rings; keep it well below
+                // Nyquist so it never folds back.
+                const float fc = std::min(60.0f * std::exp2(octaves), rate * (0.45f - 0.12f * res));
                 if ((i & 15) == 0) {
                     fL.set(fc, res, rate);
                     fR.set(fc, res, rate);
                 }
                 sl = fL.step(sl) * a * gainBase;
                 sr = fR.step(sr) * a * gainBase;
-                const float g = patch == Patch::Bass ? 0.55f : patch == Patch::Lead ? 0.42f : 0.38f;
+                if (chordish()) {
+                    sl = hpL.step(sl).high;
+                    sr = hpR.step(sr).high;
+                }
+                const float g = patch == Patch::Bass ? 0.55f : patch == Patch::Lead ? 0.52f : 0.42f;
                 sl *= g;
                 sr *= g;
             }
@@ -401,7 +419,7 @@ struct DrumVoice {
     float envTone = 0, envNoise = 0, decayTone = 0, decayNoise = 0;
     float pitchEnv = 0, pitchDecay = 0;
     float level = 0;
-    Svf bp, hp, bp2;
+    Svf bp, hp, bp2, lp;
     Rng rng;
 
     void start(Drum d, float velocity, float tuning, float panning, float g, int startDelay, float rate) {
@@ -420,30 +438,36 @@ struct DrumVoice {
         bp.reset();
         hp.reset();
         bp2.reset();
+        lp.reset();
         envTone = envNoise = 1.0f;
         auto decay = [&](float s) { return std::exp(-1.0f / (s * rate)); };
         switch (d) {
+        // Decays are amplitude time constants: −20 dB comes at 2.3 of them.
         case Drum::Snare:
-            decayTone = decay(0.07f);
-            decayNoise = decay(0.16f + 0.08f * vel);
-            bp.set(4200.0f * tune, 0.6f, rate);
+            decayTone = decay(0.045f);
+            decayNoise = decay(0.065f + 0.02f * vel);
+            bp.set(3800.0f * tune, 0.7f, rate);
             hp.set(1000.0f, 0.7f, rate);
+            lp.set(8000.0f, 0.7f, rate);
             break;
         case Drum::Clap:
             decayTone = 0;
-            decayNoise = decay(0.22f);
+            decayNoise = decay(0.085f);
             bp.set(1150.0f * tune, 1.3f, rate);
             hp.set(600.0f, 0.7f, rate);
+            lp.set(7000.0f, 0.7f, rate);
             break;
         case Drum::HatClosed:
-            decayNoise = decay(0.035f + 0.04f * vel);
+            decayNoise = decay(0.016f + 0.01f * vel);
             bp.set(9500.0f, 0.9f, rate);
             hp.set(7000.0f * std::min(tune, 1.2f), 0.7f, rate);
+            lp.set(14000.0f, 0.7f, rate);
             break;
         case Drum::HatOpen:
-            decayNoise = decay(0.38f);
+            decayNoise = decay(0.16f);
             bp.set(9000.0f, 0.8f, rate);
             hp.set(6500.0f * std::min(tune, 1.2f), 0.7f, rate);
+            lp.set(13000.0f, 0.7f, rate);
             break;
         case Drum::Perc:
             decayTone = decay(0.18f);
@@ -491,7 +515,7 @@ struct DrumVoice {
                 phaseA -= std::floor(phaseA);
                 phaseB -= std::floor(phaseB);
                 const float tone = (std::sin(kTwoPi * phaseA) + 0.6f * std::sin(kTwoPi * phaseB)) * envTone;
-                const float nz = (bp.step(noise).band * 1.2f + hp.step(noise).high * 0.6f) * envNoise;
+                const float nz = lp.step(bp.step(noise).band * 1.2f + hp.step(noise).high * 0.6f).low * envNoise;
                 s = 0.55f * tone + 0.9f * nz;
                 envTone *= decayTone;
                 envNoise *= decayNoise;
@@ -509,7 +533,7 @@ struct DrumVoice {
                 const float env = std::max(burst, ms > 22 ? envNoise : 0.0f);
                 if (ms > 22)
                     envNoise *= decayNoise;
-                s = bp.step(noise).band * 2.4f * env + hp.step(noise).high * 0.3f * env;
+                s = lp.step(bp.step(noise).band * 2.4f + hp.step(noise).high * 0.3f).low * env;
                 break;
             }
             case Drum::HatClosed:
@@ -523,7 +547,7 @@ struct DrumVoice {
                     m += metal[k] < 0.5f ? 1.0f : -1.0f;
                 }
                 m = m / 6.0f * 0.35f + noise * 0.8f;
-                const float v = hp.step(bp.step(m).band + 0.5f * m).high;
+                const float v = lp.step(hp.step(bp.step(m).band + 0.5f * m).high).low;
                 s = v * envNoise * (kind == Drum::HatClosed ? 1.8f : 1.3f);
                 envNoise *= decayNoise;
                 break;
@@ -555,7 +579,9 @@ struct DrumVoice {
             case Drum::Count:
                 break;
             }
-            s = (kind == Drum::Kick ? s : fastTanh(s * (0.8f + vel))) * gain * vel;
+            // No saturation: it would flatten the decays into a hiss.
+            static const float pieceLevel[int(Drum::Count)] = {1.0f, 1.05f, 1.0f, 0.75f, 0.8f, 0.6f};
+            s *= gain * vel * pieceLevel[int(kind)];
             l[i] += s * gl;
             r[i] += s * gr;
             if (sendL) {

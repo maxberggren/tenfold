@@ -25,7 +25,7 @@ const RoleInfo roles[RoleCount] = {
     {"Drive", "drive", "fold", 0.12f, 0.0f},
     {"Pump", "sidechain", "arp rate", 0.5f, 0.7f},
     {"Echo", "echo", "time", 0.15f, 0.62f},
-    {"Space", "room", "shimmer", 0.22f, 0.0f},
+    {"Space", "room", "shimmer", 0.3f, 0.0f},
     {"Glide", "glide", "swing", 0.1f, 0.15f},
     {"Wobble", "depth", "rate", 0.0f, 0.5f},
     {"Gravity", "pull", "mode", 1.0f, 0.5f},
@@ -38,6 +38,25 @@ constexpr int kDrums = 48;
 constexpr int kPending = 512;
 constexpr int kRolls = 8;
 
+}
+
+// Filter, Env, Width and Wobble belong to a row: the lead's filter is not
+// the bass's. The rest act on the whole mix.
+bool rowRole(int role) { return role == Filter || role == Env || role == Width || role == Wobble; }
+
+float rowDefault(int row, int role, int axis) {
+    static const float d[RowCount][4][2] = {
+        // Filter      Env           Width         Wobble
+        {{1.0f, 0.1f}, {0.5f, 0.5f}, {0.5f, 0.0f}, {0.0f, 0.5f}},     // drums: the filter is a DJ filter
+        {{0.42f, 0.35f}, {0.55f, 0.28f}, {0.25f, 0.7f}, {0.0f, 0.5f}}, // bass
+        {{0.55f, 0.12f}, {0.25f, 0.65f}, {0.65f, 0.0f}, {0.0f, 0.5f}}, // chords
+        {{0.62f, 0.2f}, {0.45f, 0.4f}, {0.6f, 0.15f}, {0.0f, 0.5f}},   // lead
+        {{0.58f, 0.25f}, {0.5f, 0.22f}, {0.45f, 0.0f}, {0.0f, 0.5f}},  // arp
+    };
+    if (!rowRole(role))
+        return roleDefault(role, axis);
+    const int k = role == Filter ? 0 : role == Env ? 1 : role == Width ? 2 : 3;
+    return d[std::clamp(row, 0, RowCount - 1)][k][axis];
 }
 
 const char *roleName(int r) { return roles[std::clamp(r, 0, RoleCount - 1)].name; }
@@ -110,19 +129,23 @@ struct Engine::Impl {
     Roll rolls[kRolls];
     int nextSynthetic = 1 << 20; // fingers for loop notes, far above real ids
 
-    float knobTarget[RoleCount][2];
-    float knob[RoleCount][2];
+    // Knobs per row; the mix-wide ones hold the same value on every row.
+    float knobTarget[RowCount][RoleCount][2];
+    float knob[RowCount][RoleCount][2];
     float knobSmooth = 0;
-    uint64_t lastKnobCmd[RoleCount] = {};
-    float override_[RoleCount][2] = {};
-    float overrideWeight[RoleCount] = {};
+    uint64_t lastKnobCmd[RowCount][RoleCount] = {};
+    float override_[RowCount][RoleCount][2] = {};
+    float overrideWeight[RowCount][RoleCount] = {};
 
     double bar = 0;
     double barAnchor = 0;
     bool tempoSet = false;
     float lastChordCenter = 60.0f;
 
-    float duck = 0; // sidechain envelope, 1 right after a kick
+    // Sidechain: the envelope a kick sets, ramped per sample.
+    float duck = 0, duckTarget = 0;
+    int duckAt = -1; // sample in the coming block where a kick lands
+    Svf drumFilterL, drumFilterR;
     float damperTarget = 0, damper = 0;
 
     Reverb reverb;
@@ -177,9 +200,10 @@ Engine::Engine(float sampleRate) : m_rate(sampleRate), d(std::make_unique<Impl>(
         d->synths[i].init(0x1234567u + uint32_t(i) * 7919u);
     for (int i = 0; i < kDrums; ++i)
         d->drums[i].rng = Rng(0xBEEF + uint32_t(i) * 104729u);
-    for (int r = 0; r < RoleCount; ++r)
-        for (int a = 0; a < 2; ++a)
-            d->knob[r][a] = d->knobTarget[r][a] = roleDefault(r, a);
+    for (int row = 0; row < RowCount; ++row)
+        for (int r = 0; r < RoleCount; ++r)
+            for (int a = 0; a < 2; ++a)
+                d->knob[row][r][a] = d->knobTarget[row][r][a] = rowDefault(row, r, a);
     d->knobSmooth = 1.0f - std::exp(-64.0f / (0.05f * sampleRate));
     d->reverb.init(sampleRate);
     d->echo.init(sampleRate);
@@ -289,6 +313,19 @@ static DrumVoice &takeDrum(Engine::Impl &s) {
 
 static void startNote(Engine::Impl &s, int finger, int row, int degree, float midi, float vel, float x, float y,
                       uint64_t now) {
+    // The bass is mono and legato: a new note while one still sounds takes
+    // it over and slides there, without retriggering — the acid slide.
+    if (row == BassRow)
+        for (auto &v : s.synths)
+            if (v.active && !v.latched && !v.releasing && v.patch == Patch::Bass) {
+                v.finger = finger;
+                v.midiTarget = midi;
+                v.degree = degree;
+                v.vel = clampf(vel, 0.05f, 1.0f);
+                v.slide = 0.06f;
+                v.x = x;
+                return;
+            }
     SynthVoice &v = takeSynth(s);
     float tones[4] = {0, 0, 0, 0};
     int count = 1;
@@ -319,9 +356,22 @@ static void startDrum(Engine::Impl &s, int piece, float vel, float x, float gain
             hz *= 2.0f;
         tune = hz * (1.0f + 0.06f * (within - 0.5f));
         pan = 0;
-        s.duck = 1.0f; // every kick pumps the rest of the mix
+        s.duckAt = delay; // every kick pumps the rest of the mix
     }
-    v.start(kind, vel, tune, pan, gain * (kind == Drum::Kick ? 1.25f : 1.0f), delay, s.rate);
+    // High percussion spreads out: hats alternate a little left and right,
+    // the open hat leans right, perc bounces wider. Kick, snare and clap
+    // stay in the middle.
+    static int alternate = 0;
+    alternate ^= 1;
+    if (kind == Drum::HatClosed)
+        pan = alternate ? -0.3f : 0.3f;
+    else if (kind == Drum::HatOpen)
+        pan = 0.35f;
+    else if (kind == Drum::Perc)
+        pan = alternate ? -0.55f : 0.55f;
+    else if (kind != Drum::Kick)
+        pan *= 0.2f;
+    v.start(kind, vel, tune, pan, gain, delay, s.rate);
     // Each piece has its own send: the kick stays out of the room.
     static const float pieceWet[int(Drum::Count)] = {0.0f, 0.45f, 0.6f, 0.15f, 0.25f, 0.35f};
     v.wet = wet * pieceWet[int(kind)];
@@ -389,14 +439,13 @@ void Engine::apply(const Command &c) {
                 r.on = false;
         break;
     case Cmd::Freeze: {
-        const SynthParams now = currentParams(s.knob);
         for (auto &v : s.synths)
             if (v.active && !v.latched && !v.releasing && v.finger >= 0 && v.finger < (1 << 20)) {
                 v.latched = true;
                 v.finger = -1;
                 v.group = c.id;
                 v.born = m_sample;
-                v.own = now;
+                v.own = currentParams(s.knob[std::clamp(v.role, 0, RowCount - 1)]);
                 v.transpose = 0;
                 v.midiOffset = v.chordish()
                                    ? 0.0f
@@ -421,9 +470,14 @@ void Engine::apply(const Command &c) {
     }
     case Cmd::Knob:
         if (c.i1 >= 0 && c.i1 < RoleCount) {
-            s.knobTarget[c.i1][0] = clampf(c.f[0], 0, 1);
-            s.knobTarget[c.i1][1] = clampf(c.f[1], 0, 1);
-            s.lastKnobCmd[c.i1] = m_sample + 1;
+            // A row's own knob, or (row −1, or a mix-wide role) every row.
+            for (int row = 0; row < RowCount; ++row) {
+                if (rowRole(c.i1) && c.i2 >= 0 && c.i2 != row)
+                    continue;
+                s.knobTarget[row][c.i1][0] = clampf(c.f[0], 0, 1);
+                s.knobTarget[row][c.i1][1] = clampf(c.f[1], 0, 1);
+                s.lastKnobCmd[row][c.i1] = m_sample + 1;
+            }
         }
         break;
     case Cmd::LoopBegin: {
@@ -501,7 +555,7 @@ void Engine::apply(const Command &c) {
             for (int i = 0; i < l->count; ++i) {
                 Hit &h = l->hits[i];
                 const double slot = std::round(h.offset / sixteenth);
-                const double swing = (int(slot) & 1) ? 0.3 * s.knob[Glide][1] * sixteenth : 0.0;
+                const double swing = (int(slot) & 1) ? 0.3 * s.knob[0][Glide][1] * sixteenth : 0.0;
                 const double target = slot * sixteenth + swing;
                 h.offset = floorMod(h.offset + 0.85 * (target - h.offset), len);
             }
@@ -705,33 +759,37 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
     const double blockStart = double(m_sample);
     const double blockEnd = blockStart + n;
 
-    for (int r = 0; r < RoleCount; ++r) {
-        const bool live = s.lastKnobCmd[r] && m_sample < s.lastKnobCmd[r] + uint64_t(0.3 * s.rate);
-        const float w = live ? 0.0f : s.overrideWeight[r];
-        for (int a = 0; a < 2; ++a) {
-            const float target = lerpf(s.knobTarget[r][a], s.override_[r][a], w);
-            s.knob[r][a] += (target - s.knob[r][a]) * s.knobSmooth;
+    for (int row = 0; row < RowCount; ++row)
+        for (int r = 0; r < RoleCount; ++r) {
+            const bool live = s.lastKnobCmd[row][r] && m_sample < s.lastKnobCmd[row][r] + uint64_t(0.3 * s.rate);
+            const float w = live ? 0.0f : s.overrideWeight[row][r];
+            for (int a = 0; a < 2; ++a) {
+                const float target = lerpf(s.knobTarget[row][r][a], s.override_[row][r][a], w);
+                s.knob[row][r][a] += (target - s.knob[row][r][a]) * s.knobSmooth;
+            }
+            s.overrideWeight[row][r] = 0;
         }
-        s.overrideWeight[r] = 0;
-    }
-    const auto K = [&](int role, int axis) { return s.knob[role][axis]; };
-    SynthParams params = currentParams(s.knob);
+    // Mix-wide knobs are read from any row; they're the same on all.
+    const auto K = [&](int role, int axis) { return s.knob[0][role][axis]; };
+    SynthParams rowParams[RowCount];
 
     // Tempo-locked clocks for the wobble and the arpeggio.
     const double barPos = floorMod(blockStart - s.barAnchor, s.bar) / s.bar;
     static const double wobbleDiv[6] = {1, 2, 4, 8, 6, 12};
-    const double wobblePerBar = wobbleDiv[std::clamp(int(K(Wobble, 1) * 5.99f), 0, 5)];
-    params.wobblePhase = float(barPos * wobblePerBar - std::floor(barPos * wobblePerBar));
+    for (int row = 0; row < RowCount; ++row) {
+        rowParams[row] = currentParams(s.knob[row]);
+        const double perBar = wobbleDiv[std::clamp(int(s.knob[row][Wobble][1] * 5.99f), 0, 5)];
+        rowParams[row].wobblePhase = float(barPos * perBar - std::floor(barPos * perBar));
+    }
     static const double arpDiv[5] = {0, 4, 8, 16, 32};
-    // The arp row always arpeggiates (sixteenths unless the knob says
-    // otherwise); chords on the chord row only when the knob asks.
-    const double arpKnob = arpDiv[std::clamp(int(K(Pump, 1) * 4.99f), 0, 4)];
-    SynthParams arpParams = params;
+    // The arp row arpeggiates, sixteenths unless the knob says otherwise;
+    // the chord row always sustains.
     {
-        const double perBar = arpKnob > 0 ? arpKnob : 16.0;
+        const double knobRate = arpDiv[std::clamp(int(K(Pump, 1) * 4.99f), 0, 4)];
+        const double perBar = knobRate > 0 ? knobRate : 16.0;
         const double steps = barPos * perBar;
-        arpParams.arpPhase = float(steps - std::floor(steps));
-        arpParams.arpStep = int(std::floor(floorMod(blockStart - s.barAnchor, s.bar * 16) / s.bar * perBar));
+        rowParams[ArpRow].arpPhase = float(steps - std::floor(steps));
+        rowParams[ArpRow].arpStep = int(std::floor(floorMod(blockStart - s.barAnchor, s.bar * 16) / s.bar * perBar));
     }
 
     float *dl = s.bufDrumL, *dr = s.bufDrumR, *ml = s.bufMusicL, *mr = s.bufMusicR, *sl = s.bufSendL,
@@ -879,11 +937,14 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
                 const bool sounds = play && lane.on[idx] == 1;
                 if (!sounds && voice)
                     voice->noteOff();
-                if (play && lane.role >= 0 && lane.role < RoleCount) {
-                    s.override_[lane.role][0] = lane.ka[idx];
-                    s.override_[lane.role][1] = lane.kb[idx];
-                    s.overrideWeight[lane.role] = std::max(s.overrideWeight[lane.role], w);
-                }
+                if (play && lane.role >= 0 && lane.role < RoleCount)
+                    for (int row = 0; row < RowCount; ++row) {
+                        if (rowRole(lane.role) && row != std::clamp(lane.row, 0, RowCount - 1))
+                            continue;
+                        s.override_[row][lane.role][0] = lane.ka[idx];
+                        s.override_[row][lane.role][1] = lane.kb[idx];
+                        s.overrideWeight[row][lane.role] = std::max(s.overrideWeight[row][lane.role], w);
+                    }
                 if (!sounds)
                     continue;
                 const int deg = lane.deg[idx] + lp.transpose;
@@ -910,32 +971,51 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
                 v.noteOff();
         }
 
-    // Sidechain: every kick ducks the bass, the music and the room, and they
-    // swell back over a beat — the pump.
-    const float pumpDepth = K(Pump, 0);
-    const float duckGain = 1.0f - pumpDepth * 0.85f * s.duck;
-    const float bassDuck = 1.0f - pumpDepth * 0.7f * s.duck;
-    s.duck *= std::exp(-dt / float(0.09 + 0.05 * s.bar / s.rate));
-
     float bl[64] = {}, br[64] = {};
     for (auto &v : s.synths) {
         if (!v.active)
             continue;
-        const bool arp = v.patch == Patch::Arp;
+        const int row = std::clamp(v.role, 0, RowCount - 1);
         float *outL = v.patch == Patch::Bass ? bl : ml, *outR = v.patch == Patch::Bass ? br : mr;
         if (v.latched) {
             if (!v.chordish())
                 v.midiTarget = float(s.tuning.baseMidi() + rowOffset(v.role) + s.tuning.degreeSemis(v.degree + v.transpose)) +
                                v.midiOffset;
             SynthParams own = v.own;
-            own.wobblePhase = params.wobblePhase;
-            own.arpPhase = arp ? arpParams.arpPhase : (arpKnob > 0 && v.patch == Patch::Chord ? arpParams.arpPhase : -1);
-            own.arpStep = arpParams.arpStep;
-            v.render(outL, outR, n, own, s.rate, v.patch == Patch::Bass ? bassDuck : duckGain);
+            own.wobblePhase = rowParams[row].wobblePhase;
+            own.arpPhase = rowParams[row].arpPhase;
+            own.arpStep = rowParams[row].arpStep;
+            v.render(outL, outR, n, own, s.rate, 1.0f);
         } else {
-            const SynthParams &p = arp || (arpKnob > 0 && v.patch == Patch::Chord) ? arpParams : params;
-            v.render(outL, outR, n, p, s.rate, v.patch == Patch::Bass ? bassDuck : duckGain);
+            v.render(outL, outR, n, rowParams[row], s.rate, 1.0f);
         }
+    }
+
+    // Sidechain gains, per sample: every kick ducks the bass, the music and
+    // the room within a couple of milliseconds, and they swell back over a
+    // beat — the pump.
+    const float pumpDepth = K(Pump, 0);
+    float duckMusic[64], duckBass[64];
+    {
+        const float release = std::exp(-1.0f / (float(0.09 + 0.05 * s.bar / s.rate) * s.rate));
+        const float attack = 1.0f - std::exp(-1.0f / (0.002f * s.rate));
+        for (int i = 0; i < n; ++i) {
+            if (i == s.duckAt)
+                s.duckTarget = 1.0f;
+            s.duckTarget *= release;
+            s.duck += s.duckTarget > s.duck ? (s.duckTarget - s.duck) * attack : (s.duckTarget - s.duck);
+            duckMusic[i] = 1.0f - pumpDepth * 0.85f * s.duck;
+            duckBass[i] = 1.0f - pumpDepth * 0.7f * s.duck;
+        }
+        s.duckAt = -1;
+    }
+    // The drum row's filter is a DJ filter over the whole kit.
+    const float drumCut = s.knob[DrumRow][Filter][0];
+    const bool drumFilter = drumCut < 0.97f;
+    if (drumFilter) {
+        const float hz = 60.0f * std::exp2(drumCut * 8.3f);
+        s.drumFilterL.set(hz, 0.6f + 2.5f * s.knob[DrumRow][Filter][1], s.rate);
+        s.drumFilterR.set(hz, 0.6f + 2.5f * s.knob[DrumRow][Filter][1], s.rate);
     }
     for (auto &v : s.drums)
         if (v.active)
@@ -963,7 +1043,11 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
     double sumSq = 0;
     for (int i = 0; i < n; ++i) {
         // Music and bass through the drive; drums stay clean and punchy.
-        float L = ml[i] + bl[i], R = mr[i] + br[i];
+        float L = ml[i] * duckMusic[i] + bl[i] * duckBass[i], R = mr[i] * duckMusic[i] + br[i] * duckBass[i];
+        if (drumFilter) {
+            dl[i] = s.drumFilterL.step(dl[i]).low;
+            dr[i] = s.drumFilterR.step(dr[i]).low;
+        }
         if (gritMix > 0.0f) {
             const float gl = s.gritL.process(L, pre, fold) * gritComp;
             const float gr = s.gritR.process(R, pre, fold) * gritComp;
@@ -974,15 +1058,15 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
         R += dr[i];
         // Sends: chords, leads and arps as they are, drums at each piece's
         // own wetness. The bass stays dry: a bass in the room is mud.
-        const float sendL = ml[i] + sl[i], sendR = mr[i] + sr[i];
+        const float sendL = ml[i] * duckMusic[i] + sl[i], sendR = mr[i] * duckMusic[i] + sr[i];
 
         float eL, eR;
         s.echo.process(sendL, sendR, eL, eR);
         float rL, rR;
         s.reverb.process((sendL + eL) * send, (sendR + eR) * send, rL, rR);
         // The returns pump with the kick too.
-        L += (eL + rL * wet) * duckGain;
-        R += (eR + rR * wet) * duckGain;
+        L += (eL + rL * wet) * duckMusic[i];
+        R += (eR + rR * wet) * duckMusic[i];
 
         if (s.damper > 0.002f) {
             L = s.damperL.step(L).low * damperGain;
@@ -1009,8 +1093,8 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
             s.glueEnv += (lvl - s.glueEnv) * (lvl > s.glueEnv ? 0.003f : 0.00008f);
             constexpr float thr = 0.3f;
             const float g = s.glueEnv > thr ? std::pow(thr / s.glueEnv, 0.5f) : 1.0f;
-            L *= g * 1.5f;
-            R *= g * 1.5f;
+            L *= g * 2.0f;
+            R *= g * 2.0f;
         }
         L = s.dcL.step(L);
         R = s.dcR.step(R);
@@ -1158,8 +1242,8 @@ void Engine::publish() {
         o.midi = sv.midi.y;
     }
     for (int r = 0; r < RoleCount; ++r) {
-        v.knobs[r][0] = s.knob[r][0];
-        v.knobs[r][1] = s.knob[r][1];
+        v.knobs[r][0] = s.knob[LeadRow][r][0];
+        v.knobs[r][1] = s.knob[LeadRow][r][1];
     }
     v.cpu = s.cpu;
     v.cpuPeak = s.cpuPeak;

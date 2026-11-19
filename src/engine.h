@@ -37,6 +37,9 @@ const char *roleSlide(int role);
 const char *roleTwist(int role);
 // Where the knobs start, and where they go back to on a reset.
 float roleDefault(int role, int axis);
+// Filter, Env, Width and Wobble belong to the row of the finger turning them.
+bool rowRole(int role);
+float rowDefault(int row, int role, int axis);
 
 // The pad's rows, bottom to top, each one instrument: the kit, then bass,
 // chords, lead and arpeggio. On the drum row the columns choose the piece;
@@ -62,7 +65,7 @@ enum class Cmd : uint8_t {
     RollMove,    // id finger, f0 pressure
     RollOff,     // id finger
     Freeze,      // id layer: every note under a finger latches, with its own sound
-    Knob,        // i1 role, f0 slide, f1 twist
+    Knob,        // i1 role, i2 row (−1: every row), f0 slide, f1 twist
     LoopBegin,   // id loop, t onset of the handle (one), f0 length s, f1 home x, f2 home y
     LoopHit,     // id loop, f0 offset s, i1 row, i2 degree or piece, f1 velocity, f2 x, f3 length s
     LoopReady,   // id loop: quantise to the tempo and start

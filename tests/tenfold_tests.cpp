@@ -518,6 +518,51 @@ private slots:
         QVERIFY(std::fabs(g.view().knobs[Filter][1] - before) < 0.02f);
     }
 
+    void knobsBelongToTheirRow() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        pad.land({1, 0.3f, kLead - 0.05f});
+        pad.run(0.3);
+        for (int i = 0; i < 20; ++i) {
+            pad.finger(1)->y += 0.01f;
+            pad.run(0.008);
+        }
+        const Command *k = sink.last(Cmd::Knob);
+        QCOMPARE(k->i1, int(Filter));
+        QCOMPARE(k->i2, int(LeadRow)); // the lead's filter, not the bass's
+        pad.release(1);
+        // A mix-wide knob (Echo, the sixth role) goes to every row.
+        sink.clear();
+        for (int i = 0; i < 6; ++i)
+            pad.land({10 + i, 0.1f + 0.15f * i, kChords});
+        pad.run(0.3);
+        for (int i = 0; i < 20; ++i) {
+            pad.finger(15)->y += 0.01f;
+            pad.run(0.008);
+        }
+        bool echoToAll = false;
+        for (const auto &c : sink.commands)
+            echoToAll |= c.type == Cmd::Knob && c.i1 == Echo && c.i2 == -1;
+        QVERIFY(echoToAll);
+    }
+
+    void aChordOnTheBeatDoesNotCloseABassPhrase() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        for (int i = 0; i < 4; ++i) {
+            pad.tap(10 + i, 0.2f + 0.05f * i, kBass);
+            pad.run(0.5 - 0.058);
+        }
+        pad.land({20, 0.4f, kChords});
+        pad.run(0.3);
+        QCOMPARE(sink.count(Cmd::LoopBegin), 0);
+        QCOMPARE(pad.held(), 1);
+    }
+
     void aRestingFingerLeavesItsKnobAlone() {
         RecordingSink sink;
         Gesture g(&sink);

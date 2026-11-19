@@ -339,6 +339,47 @@ private slots:
         QCOMPARE(pad.held(), 1);
     }
 
+    void aLateOrFlatHoldStillClosesADrumLoop() {
+        // Kicks a beat apart, then the ONE held a quarter of a beat late
+        // with a finger that flattens as it presses: still a loop.
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        for (int i = 0; i < 4; ++i) {
+            pad.tap(10 + i, 0.05f, kDrums);
+            pad.run(0.484 - 0.058);
+        }
+        pad.run(0.11);
+        pad.land({20, 0.05f, kDrums, 0.3f, 1.0f});
+        for (int i = 0; i < 30; ++i) {
+            pad.finger(20)->size = std::min(2.0f, pad.finger(20)->size + 0.08f);
+            pad.run(0.008);
+        }
+        QCOMPARE(sink.count(Cmd::LoopBegin), 1);
+        QCOMPARE(sink.count(Cmd::RollOn), 0);
+    }
+
+    void aKickAndClapTogetherStillMakeALoop() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        for (int i = 0; i < 4; ++i) {
+            pad.land({10 + i, 0.05f, kDrums, 0.8f});
+            if (i % 2 == 1)
+                pad.land({30 + i, 0.4f, kDrums, 0.8f});
+            pad.run(0.05);
+            pad.lift(10 + i);
+            if (i % 2 == 1)
+                pad.lift(30 + i);
+            pad.run(0.5 - 0.058);
+        }
+        pad.land({20, 0.05f, kDrums});
+        pad.run(0.3);
+        QCOMPARE(sink.count(Cmd::LoopBegin), 1);
+    }
+
     void aMelodyThenADroneIsADrone() {
         RecordingSink sink;
         Gesture g(&sink);

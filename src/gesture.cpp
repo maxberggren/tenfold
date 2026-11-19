@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace tf {
@@ -622,34 +623,54 @@ void Gesture::hold(Contact &c, double now) {
         // beat: as far after the last tap as some gap inside the phrase (or
         // twice that), or land back where the phrase began. A single tap
         // only loops with a hold right on top of it (a steady pulse).
-        // A finger laid down flat or barely pressing is reaching for a
-        // drone, never closing a rhythm.
+        // Only a finger on the phrase's own row closes it: a chord landing on
+        // the beat after a bass line is a chord. Above the drums, a finger
+        // laid down very flat or barely touching is reaching for a sustained
+        // note rather than closing a rhythm; on the drum row a hold after a
+        // phrase is almost always the ONE, so it isn't second-guessed.
         bool sameRow = false;
         for (const Tap &t : m_phrase)
             sameRow |= t.row == c.row;
-        // ...and only a finger on the phrase's own row closes it: a chord
-        // landing on the beat after a bass line is a chord.
-        const bool voiceFirst = c.peakSize > 1.5f || c.peakPressure < 0.18f || !sameRow;
+        const bool voiceFirst =
+            !sameRow || (c.row != DrumRow && (c.peakSize > 2.2f || c.peakPressure < 0.08f));
         bool closes = false;
+        // The rhythm's intervals, leaving out hits played together (a kick
+        // and a clap on the same beat are one moment, not a gap).
+        std::vector<double> iois;
+        for (size_t i = 1; i < m_phrase.size(); ++i) {
+            const double ioi = m_phrase[i].t - m_phrase[i - 1].t;
+            if (ioi >= 0.06)
+                iois.push_back(ioi);
+        }
         if (gap > 0 && gap <= 2.2 && !voiceFirst) {
-            if (m_phrase.size() == 1) {
+            if (iois.empty()) {
                 closes = nearLast < 0.08f && gap >= 0.12;
             } else {
-                // Twice an interval only counts for an even pulse.
                 double mean = 0, var = 0;
-                const int n = int(m_phrase.size()) - 1;
-                for (int i = 1; i <= n; ++i)
-                    mean += m_phrase[i].t - m_phrase[i - 1].t;
-                mean /= n;
-                for (int i = 1; i <= n; ++i)
-                    var += std::pow(m_phrase[i].t - m_phrase[i - 1].t - mean, 2);
-                const bool even = n >= 2 && std::sqrt(var / n) < 0.12 * mean;
-                for (int i = 1; i <= n && !closes; ++i) {
-                    const double ioi = m_phrase[i].t - m_phrase[i - 1].t;
-                    closes = std::fabs(gap - ioi) < 0.15 * ioi || (even && std::fabs(gap - 2 * ioi) < 0.15 * ioi);
+                for (double v : iois)
+                    mean += v;
+                mean /= double(iois.size());
+                for (double v : iois)
+                    var += (v - mean) * (v - mean);
+                const bool even = iois.size() >= 2 && std::sqrt(var / double(iois.size())) < 0.15 * mean;
+                // Landing on the next beat: about one of the phrase's own
+                // intervals after the last tap, give or take 30% (a finger
+                // that lands and stays is rarely as tight as a tap), or two
+                // of them after an even pulse.
+                for (double ioi : iois) {
+                    closes |= std::fabs(gap - ioi) < 0.3 * ioi;
+                    closes |= even && std::fabs(gap - 2 * ioi) < 0.15 * ioi;
                 }
                 closes = closes || (nearFirst < 0.07f && gap <= 2.0 * mean + 0.2);
             }
+        }
+        if (std::getenv("TENFOLD_DEBUG")) {
+            std::fprintf(stderr, "tenfold: hold on row %d after %zu taps: gap %.3f s, intervals", c.row,
+                         m_phrase.size(), gap);
+            for (double v : iois)
+                std::fprintf(stderr, " %.3f", v);
+            std::fprintf(stderr, ", same row %d, size %.2f, pressure %.2f -> %s\n", int(sameRow), c.peakSize,
+                         c.peakPressure, closes ? "loop" : "no loop");
         }
         const double length = c.t0 - first.t;
         if (closes && length >= 0.12) {

@@ -10,7 +10,7 @@ CELLS = 16
 def X(deg):
     return round((deg + 0.5) / CELLS, 4)
 
-SKIN, WOOD, GLASS, AIR = 0.05, 0.38, 0.70, 0.95
+SKIN, SNARE, WOOD, GLASS, AIR = 0.05, 0.25, 0.5, 0.74, 0.95
 out = []
 def say(s): out.append(s)
 
@@ -33,8 +33,8 @@ say("click 12.5")
 for i in (1, 2, 3, 4):
     say(f"up 13.0 {i}")
 
-say("# 5. A drum pattern on the skin row, then land on the next one and stay: a loop.")
-for t, d, y, p in [(14.0, 0, SKIN, 0.95), (14.6, 0, SKIN, 0.55), (15.05, 2, 0.09, 0.7), (15.2, 0, SKIN, 0.9), (15.8, 3, 0.13, 0.5)]:
+say("# 5. Kick and snare, then land on the next one and stay: a loop (and the tempo).")
+for t, d, y, p in [(14.0, 0, SKIN, 0.95), (14.6, 5, SNARE, 0.8), (15.05, 0, SKIN, 0.7), (15.2, 0, SKIN, 0.9), (15.8, 5, SNARE, 0.85), (16.1, 5, SNARE, 0.35)]:
     say(f"tap {t} {X(d)} {y} p={p}")
 say(f"down 16.4 10 {X(0)} {SKIN} p=0.8")
 say("up 17.4 10")
@@ -45,7 +45,12 @@ for k, d in enumerate(mel):
     say(f"tap {19.6 + 0.3 * k:.2f} {X(d)} {WOOD} p={0.55 + 0.1 * (k % 2)}")
 say(f"down 22.0 11 {X(5)} {WOOD} p=0.7")
 say("# Still holding: twist to roll it into ratchets, slide right two notes and up towards glass.")
-say(f"glide 22.4 24.5 11 {X(7)} 0.55 twist=35 p=0.8")
+say(f"glide 22.4 24.5 11 {X(7)} 0.62 twist=35 p=0.8")
+say("# And a second finger, held while the loop is held, sings a line into it.")
+say(f"down 23.0 13 {X(8)} 0.45 p=0.5")
+say(f"glide 23.4 24.4 13 {X(10)} 0.5 p=0.8")
+say(f"glide 24.4 25.3 13 {X(7)} 0.42 p=0.4")
+say("up 25.4 13")
 say("up 26.0 11")
 
 say("# 7. Sparse glass bells, a third loop.")
@@ -64,14 +69,22 @@ say(f"glide 37.0 40.0 20 {X(4)} 0.4")
 for k in range(6):
     say(f"up {41.0 + 0.2 * k:.1f} {20 + k}")
 
-say("# 9. Change the key: every loop and frozen chord follows, re-harmonised.")
-say("key 43.0 root-")
+say("# 9. Tap once and hold on the first frozen chord: slide it up two notes and press to swell it.")
+say(f"tap 41.8 0.33 0.57 p=0.3")
+say(f"down 42.0 40 0.33 0.57 p=0.3")
+say(f"glide 42.3 43.3 40 {0.33 + 2/16:.3f} 0.62 p=0.9")
+say("up 44.0 40")
+say("# 10. Three fingers swipe right: the key moves a fifth. Every loop and frozen chord follows.")
+for k, x in enumerate((0.3, 0.4, 0.5)):
+    say(f"down 44.3 {50 + k} {x} 0.45 p=0.4")
+    say(f"glide 44.36 44.56 {50 + k} {x + 0.2} 0.45")
+    say(f"up 44.6 {50 + k}")
 
-say("# 10. All ten fingers. 7 Grit, 8 Drift stretches the partials into bells,")
+say("# 11. All ten fingers. 7 Grit, 8 Drift stretches the partials into bells,")
 say("#     9 sprays a grain cloud, 10 twists the mode from dark to bright.")
 degs = [0, 3, 5, 7, 8, 10, 11, 12, 14, 15]
 for k, d in enumerate(degs):
-    say(f"down {45.0 + 0.18 * k:.2f} {30 + k} {X(d)} 0.32 p=0.5")
+    say(f"down {45.5 + 0.18 * k:.2f} {30 + k} {X(d)} 0.32 p=0.5")
 say(f"glide 47.5 50.5 36 {X(11)} 0.42 twist=20")
 say(f"glide 47.5 51.0 37 {X(12)} 0.68 twist=30")
 say(f"glide 48.0 52.0 38 {X(14)} 0.72 twist=45")
@@ -80,10 +93,10 @@ say("click 54.0")
 for k in range(10):
     say(f"up 54.4 {30 + k}")
 
-say("# 11. A palm resting on the pad damps everything like a hand on strings.")
+say("# 12. A palm resting on the pad damps everything like a hand on strings.")
 say("down 56.5 90 0.5 0.15 p=0.6 size=3.0")
 say("up 59.0 90")
-say("# 12. Palm and press: the landscape dissolves into its own reverb.")
+say("# 13. Palm and press: the landscape dissolves into its own reverb.")
 say("down 60.0 91 0.5 0.15 p=0.6 size=3.2")
 say("click 60.4")
 say("up 61.0 91")

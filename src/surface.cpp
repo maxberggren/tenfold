@@ -1,5 +1,6 @@
 #include "surface.h"
 
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPainterPath>
 #include <QLinearGradient>
@@ -84,9 +85,10 @@ QColor Surface::roleColor(int role, const QColor &accent) {
 }
 
 QColor Surface::materialColor(float m) {
-    static const QColor c[4] = {QColor("#F59E0B"), QColor("#C08457"), QColor("#7DD3FC"), QColor("#E5E7EB")};
-    const float mc = std::clamp(m, 0.0f, 3.0f);
-    const int i = std::min(2, int(mc));
+    static const QColor c[5] = {QColor("#F59E0B"), QColor("#FB7185"), QColor("#C08457"), QColor("#7DD3FC"),
+                                QColor("#E5E7EB")};
+    const float mc = std::clamp(m, 0.0f, 4.0f);
+    const int i = std::min(3, int(mc));
     const float t = mc - float(i);
     return QColor::fromRgbF(c[i].redF() + (c[i + 1].redF() - c[i].redF()) * t,
                             c[i].greenF() + (c[i + 1].greenF() - c[i].greenF()) * t,
@@ -252,13 +254,14 @@ void Surface::paint(QPainter *p) {
         p->drawText(cell, Qt::AlignCenter, QString::fromUtf8(Tuning::noteName(pc)));
     }
     // Material rows.
-    static const char *materials[4] = {QT_TRANSLATE_NOOP("Surface", "skin"), QT_TRANSLATE_NOOP("Surface", "wood"),
-                                       QT_TRANSLATE_NOOP("Surface", "glass"), QT_TRANSLATE_NOOP("Surface", "air")};
-    for (int m = 0; m < 4; ++m) {
-        const qreal y = pad.bottom() - (m + 0.5) * pad.height() / 4;
+    static const char *materials[5] = {QT_TRANSLATE_NOOP("Surface", "skin"), QT_TRANSLATE_NOOP("Surface", "snare"),
+                                       QT_TRANSLATE_NOOP("Surface", "wood"), QT_TRANSLATE_NOOP("Surface", "glass"),
+                                       QT_TRANSLATE_NOOP("Surface", "air")};
+    for (int m = 0; m < 5; ++m) {
+        const qreal y = pad.bottom() - (m + 0.5) * pad.height() / 5;
         if (m > 0) {
             p->setPen(QPen(QColor(255, 255, 255, 12), 1, Qt::DashLine));
-            const qreal ly = pad.bottom() - m * pad.height() / 4;
+            const qreal ly = pad.bottom() - m * pad.height() / 5;
             p->drawLine(QPointF(pad.left(), ly), QPointF(pad.right(), ly));
         }
         p->save();
@@ -285,6 +288,39 @@ void Surface::paint(QPainter *p) {
         p->drawEllipse(c, r, r);
         p->setBrush(withAlpha(col, 0.8f));
         p->drawEllipse(c, 2.5, 2.5);
+    }
+
+    // Frozen chords as layers: a ring around each one's light, solid when
+    // pinned, bright while a finger holds it.
+    for (const LayerView &l : ev.layers) {
+        if (!l.active)
+            continue;
+        const QPointF c = at(l.x, l.y);
+        const qreal r = unit * (0.9 + 2.0 * std::sqrt(std::max(0.0f, l.level)));
+        p->setBrush(Qt::NoBrush);
+        p->setPen(QPen(withAlpha(l.held ? m_accent : QColor(255, 255, 255), l.held ? 0.85f : 0.18f),
+                       l.pinned ? 2.4 : 1.0, l.pinned ? Qt::SolidLine : Qt::DotLine));
+        p->drawEllipse(c, r, r);
+        if (l.transpose != 0) {
+            p->setPen(withAlpha(QColor(255, 255, 255), 0.7f));
+            p->drawText(QRectF(c.x() - r, c.y() + r * 0.2, 2 * r, unit * 0.4), Qt::AlignCenter,
+                        QString("%1%2").arg(l.transpose > 0 ? "+" : "").arg(l.transpose));
+        }
+    }
+    // Voices a loop is replaying: small lights that move as the recorded
+    // finger did.
+    for (const VoiceView &v : ev.voices) {
+        if (!v.active || v.frozen || v.finger > -1000)
+            continue;
+        const QPointF c = at(v.x, v.y);
+        const qreal r = unit * (0.3 + 3.0 * std::sqrt(v.level));
+        QRadialGradient g(c, r);
+        const QColor col = roleColor(v.role, m_accent);
+        g.setColorAt(0, withAlpha(col, 0.5f));
+        g.setColorAt(1, withAlpha(col, 0.0f));
+        p->setPen(Qt::NoPen);
+        p->setBrush(g);
+        p->drawEllipse(c, r, r);
     }
 
     // Strike ripples.
@@ -333,6 +369,30 @@ void Surface::paint(QPainter *p) {
             const qreal dot = 2.2 + 3.5 * lit;
             p->drawEllipse(hp, dot, dot);
         }
+        // Recorded voice lines, drawn inside the ring as the pitch the finger
+        // played at each moment around the bar.
+        for (int k = 0; k < l.laneCount; ++k) {
+            QPainterPath line;
+            bool open = false;
+            for (int b = 0; b <= 64; ++b) {
+                const float v = l.lane[k][b % 64];
+                if (v < 0) {
+                    open = false;
+                    continue;
+                }
+                const float ang = float(b) / 64.0f * 2 * kPiF - kPiF / 2;
+                const qreal rr = r * (0.3 + 0.55 * v);
+                const QPointF pt(c.x() + std::cos(ang) * rr, c.y() + std::sin(ang) * rr);
+                if (open)
+                    line.lineTo(pt);
+                else
+                    line.moveTo(pt);
+                open = true;
+            }
+            p->setBrush(Qt::NoBrush);
+            p->setPen(QPen(withAlpha(roleColor(l.laneRole[k], m_accent), alpha * 0.85f), 1.6));
+            p->drawPath(line);
+        }
         const float a = l.phase * 2 * kPiF - kPiF / 2;
         p->setPen(QPen(withAlpha(m_accent, alpha * 0.8f), 1.4));
         p->drawLine(c, QPointF(c.x() + std::cos(a) * r * 0.85, c.y() + std::sin(a) * r * 0.85));
@@ -358,7 +418,31 @@ void Surface::paint(QPainter *p) {
         p->drawEllipse(at(t.x, t.y), 3.0, 3.0);
     }
 
+    if (gv.phraseCount > 0) {
+        const auto &t = gv.phrase[gv.phraseCount - 1];
+        const QPointF c = at(t.x, t.y);
+        p->setPen(withAlpha(m_accent, 0.75f));
+        p->setFont(small);
+        const QString hint = gv.phraseCount == 1 ? tr("hold right here for a pulse")
+                                                 : tr("land on the next beat and hold: loop");
+        const qreal tx = std::clamp(c.x(), pad.left() + 3 * unit, pad.right() - 3 * unit);
+        p->drawText(QRectF(tx - 3 * unit, c.y() - unit * 0.75, 6 * unit, unit * 0.35), Qt::AlignCenter, hint);
+        if (gv.phraseNext > 0) {
+            // A beat clock: closes as the next beat arrives.
+            const float until = float(gv.phraseNext - gv.t);
+            const float span = float(gv.phraseNext - gv.phrase[gv.phraseCount - 1].t);
+            if (span > 0 && until > -0.15f) {
+                const float frac = std::clamp(1.0f - until / span, 0.0f, 1.0f);
+                p->setBrush(Qt::NoBrush);
+                p->setPen(QPen(withAlpha(m_accent, 0.8f), 2));
+                const qreal rr = unit * 0.35;
+                p->drawArc(QRectF(c.x() - rr, c.y() - rr, 2 * rr, 2 * rr), 90 * 16, int(-360 * 16 * frac));
+            }
+        }
+    }
+
     // Fingers.
+    std::vector<QRectF> placedLabels;
     QFont label = p->font();
     label.setPixelSize(std::max(10, int(unit * 0.26)));
     label.setBold(true);
@@ -413,10 +497,17 @@ void Surface::paint(QPainter *p) {
         }
         p->restore();
 
-        if (c.state == TouchState::Voice && c.role >= 0) {
+        if ((c.state == TouchState::Voice || c.state == TouchState::Spent) && c.role >= 0) {
             // The knob this finger is turning: slide on the outer arc, twist
-            // on the inner one.
-            const QColor col = roleColor(c.role, m_accent);
+            // on the inner one. A finger whose chord froze keeps its knob.
+            QColor col = roleColor(c.role, m_accent);
+            if (c.state == TouchState::Spent)
+                col = withAlpha(col, 0.6f);
+            if (c.recording) {
+                p->setBrush(Qt::NoBrush);
+                p->setPen(QPen(QColor("#ef4444"), 2, Qt::DashLine));
+                p->drawEllipse(pos, r * 1.25, r * 1.25);
+            }
             const qreal kr = r + unit * 0.5;
             const float a = gv.knobs[c.role][0], b = gv.knobs[c.role][1];
             p->setBrush(Qt::NoBrush);
@@ -432,12 +523,22 @@ void Surface::paint(QPainter *p) {
             p->setFont(label);
             p->setPen(col);
             const qreal lx = std::clamp(pos.x(), pad.left() + 1.4 * unit, pad.right() - 1.4 * unit);
-            p->drawText(QRectF(lx - 3 * unit, pos.y() - kr - unit * 0.55, 6 * unit, unit * 0.4),
-                        Qt::AlignCenter, QString("%1  %2").arg(c.role + 1).arg(m_backend->roleName(c.role)));
+            // Above the finger, unless another finger's label is already
+            // there; then below it.
+            const QString text = QString("%1  %2").arg(c.role + 1).arg(m_backend->roleName(c.role));
+            const qreal tw = QFontMetricsF(label).horizontalAdvance(text) + 8;
+            QRectF box(lx - tw / 2, pos.y() - kr - unit * 0.55, tw, unit * 0.4);
+            for (const QRectF &o : placedLabels)
+                if (o.intersects(box)) {
+                    box.moveTop(pos.y() + kr + unit * 0.12);
+                    break;
+                }
+            placedLabels.push_back(box);
+            p->drawText(box, Qt::AlignCenter, text);
             int voicesHeld = 0;
             for (int j = 0; j < gv.count; ++j)
                 voicesHeld += gv.contacts[j].state == TouchState::Voice;
-            if (voicesHeld > 3)
+            if (voicesHeld > 3 || c.state == TouchState::Spent)
                 continue;
             p->setFont(small);
             p->setPen(QColor(255, 255, 255, 150));

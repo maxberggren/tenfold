@@ -24,33 +24,39 @@ up 13.0 1
 up 13.0 2
 up 13.0 3
 up 13.0 4
-# 5. A drum pattern on the skin row, then land on the next one and stay: a loop.
+# 5. Kick and snare, then land on the next one and stay: a loop (and the tempo).
 tap 14.0 0.0312 0.05 p=0.95
-tap 14.6 0.0312 0.05 p=0.55
-tap 15.05 0.1562 0.09 p=0.7
+tap 14.6 0.3438 0.25 p=0.8
+tap 15.05 0.0312 0.05 p=0.7
 tap 15.2 0.0312 0.05 p=0.9
-tap 15.8 0.2188 0.13 p=0.5
+tap 15.8 0.3438 0.25 p=0.85
+tap 16.1 0.3438 0.25 p=0.35
 down 16.4 10 0.0312 0.05 p=0.8
 up 17.4 10
 # 6. A wooden melody, then hold on the one: the loop forms under the finger.
-tap 19.60 0.3438 0.38 p=0.55
-tap 19.90 0.4688 0.38 p=0.65
-tap 20.20 0.5312 0.38 p=0.55
-tap 20.50 0.6562 0.38 p=0.65
-tap 20.80 0.5312 0.38 p=0.55
-tap 21.10 0.4688 0.38 p=0.65
-tap 21.40 0.3438 0.38 p=0.55
-tap 21.70 0.2188 0.38 p=0.65
-down 22.0 11 0.3438 0.38 p=0.7
+tap 19.60 0.3438 0.5 p=0.55
+tap 19.90 0.4688 0.5 p=0.65
+tap 20.20 0.5312 0.5 p=0.55
+tap 20.50 0.6562 0.5 p=0.65
+tap 20.80 0.5312 0.5 p=0.55
+tap 21.10 0.4688 0.5 p=0.65
+tap 21.40 0.3438 0.5 p=0.55
+tap 21.70 0.2188 0.5 p=0.65
+down 22.0 11 0.3438 0.5 p=0.7
 # Still holding: twist to roll it into ratchets, slide right two notes and up towards glass.
-glide 22.4 24.5 11 0.4688 0.55 twist=35 p=0.8
+glide 22.4 24.5 11 0.4688 0.62 twist=35 p=0.8
+# And a second finger, held while the loop is held, sings a line into it.
+down 23.0 13 0.5312 0.45 p=0.5
+glide 23.4 24.4 13 0.6562 0.5 p=0.8
+glide 24.4 25.3 13 0.4688 0.42 p=0.4
+up 25.4 13
 up 26.0 11
 # 7. Sparse glass bells, a third loop.
-tap 28.4 0.6562 0.7 p=0.6
-tap 29.0 0.7812 0.7 p=0.6
-tap 29.9 0.7188 0.7 p=0.6
-tap 30.35 0.8438 0.7 p=0.6
-down 30.8 12 0.6562 0.7 p=0.5
+tap 28.4 0.6562 0.74 p=0.6
+tap 29.0 0.7812 0.74 p=0.6
+tap 29.9 0.7188 0.74 p=0.6
+tap 30.35 0.8438 0.74 p=0.6
+down 30.8 12 0.6562 0.74 p=0.5
 up 31.6 12
 # 8. A new chord of six: the fifth finger is Pulse, the sixth Echo.
 down 33.00 20 0.1562 0.4 p=0.45
@@ -69,20 +75,33 @@ up 41.4 22
 up 41.6 23
 up 41.8 24
 up 42.0 25
-# 9. Change the key: every loop and frozen chord follows, re-harmonised.
-key 43.0 root-
-# 10. All ten fingers. 7 Grit, 8 Drift stretches the partials into bells,
+# 9. Tap once and hold on the first frozen chord: slide it up two notes and press to swell it.
+tap 41.8 0.33 0.57 p=0.3
+down 42.0 40 0.33 0.57 p=0.3
+glide 42.3 43.3 40 0.455 0.62 p=0.9
+up 44.0 40
+# 10. Three fingers swipe right: the key moves a fifth. Every loop and frozen chord follows.
+down 44.3 50 0.3 0.45 p=0.4
+glide 44.36 44.56 50 0.5 0.45
+up 44.6 50
+down 44.3 51 0.4 0.45 p=0.4
+glide 44.36 44.56 51 0.6000000000000001 0.45
+up 44.6 51
+down 44.3 52 0.5 0.45 p=0.4
+glide 44.36 44.56 52 0.7 0.45
+up 44.6 52
+# 11. All ten fingers. 7 Grit, 8 Drift stretches the partials into bells,
 #     9 sprays a grain cloud, 10 twists the mode from dark to bright.
-down 45.00 30 0.0312 0.32 p=0.5
-down 45.18 31 0.2188 0.32 p=0.5
-down 45.36 32 0.3438 0.32 p=0.5
-down 45.54 33 0.4688 0.32 p=0.5
-down 45.72 34 0.5312 0.32 p=0.5
-down 45.90 35 0.6562 0.32 p=0.5
-down 46.08 36 0.7188 0.32 p=0.5
-down 46.26 37 0.7812 0.32 p=0.5
-down 46.44 38 0.9062 0.32 p=0.5
-down 46.62 39 0.9688 0.32 p=0.5
+down 45.50 30 0.0312 0.32 p=0.5
+down 45.68 31 0.2188 0.32 p=0.5
+down 45.86 32 0.3438 0.32 p=0.5
+down 46.04 33 0.4688 0.32 p=0.5
+down 46.22 34 0.5312 0.32 p=0.5
+down 46.40 35 0.6562 0.32 p=0.5
+down 46.58 36 0.7188 0.32 p=0.5
+down 46.76 37 0.7812 0.32 p=0.5
+down 46.94 38 0.9062 0.32 p=0.5
+down 47.12 39 0.9688 0.32 p=0.5
 glide 47.5 50.5 36 0.7188 0.42 twist=20
 glide 47.5 51.0 37 0.7812 0.68 twist=30
 glide 48.0 52.0 38 0.9062 0.72 twist=45
@@ -98,10 +117,10 @@ up 54.4 36
 up 54.4 37
 up 54.4 38
 up 54.4 39
-# 11. A palm resting on the pad damps everything like a hand on strings.
+# 12. A palm resting on the pad damps everything like a hand on strings.
 down 56.5 90 0.5 0.15 p=0.6 size=3.0
 up 59.0 90
-# 12. Palm and press: the landscape dissolves into its own reverb.
+# 13. Palm and press: the landscape dissolves into its own reverb.
 down 60.0 91 0.5 0.15 p=0.6 size=3.2
 click 60.4
 up 61.0 91

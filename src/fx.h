@@ -35,7 +35,9 @@ public:
         m_pre.init(size_t(0.05f * rate));
         m_shift.init(size_t(0.2f * rate));
         m_shiftWindow = 0.07f * rate;
-        m_shimLp.set(5200.0f, rate);
+        m_shimLp.set(9000.0f, rate);
+        for (int i = 0; i < L; ++i)
+            m_lowLp[i].set(110.0f, rate);
         m_shimHp.set(320.0f, 0.7f, rate);
         m_inHpL.set(30.0f, 0.7f, rate);
         m_inHpR.set(30.0f, 0.7f, rate);
@@ -52,7 +54,7 @@ public:
         for (int i = 0; i < L; ++i) {
             const float len = m_base[i] * m_size;
             m_gain[i] = std::pow(10.0f, -3.0f * len / (t60 * m_rate));
-            m_damp[i].set(lerpf(9500.0f, 3800.0f, amount), m_rate);
+            m_damp[i].set(lerpf(12500.0f, 5500.0f, amount), m_rate);
         }
     }
 
@@ -94,7 +96,11 @@ public:
             if (m_lfoPhase[i] >= 1.0f)
                 m_lfoPhase[i] -= 1.0f;
             const float mod = (0.0004f * m_rate) * std::sin(kTwoPi * m_lfoPhase[i]);
-            x[i] = m_damp[i].step(m_lines[i].read(m_base[i] * m_size + mod)) * m_gain[i];
+            float v = m_damp[i].step(m_lines[i].read(m_base[i] * m_size + mod));
+            // Lows lose a little more on every pass than mids do, so a long
+            // tail stays a shimmer above the music instead of a rumble under it.
+            v -= 0.3f * m_lowLp[i].step(v);
+            x[i] = v * m_gain[i];
         }
         // Fast Walsh–Hadamard transform, scaled to stay unitary.
         for (int h = 1; h < L; h <<= 1)
@@ -122,7 +128,7 @@ private:
     float m_rate = 48000, m_amount = 0, m_shimmer = 0, m_size = 1;
     Delay m_lines[L];
     float m_base[L] = {}, m_gain[L] = {}, m_lfoPhase[L] = {}, m_lfoRate[L] = {};
-    OnePoleLp m_damp[L];
+    OnePoleLp m_damp[L], m_lowLp[L];
     Allpass m_diffL[4], m_diffR[4];
     Delay m_pre, m_shift;
     float m_shiftPhase = 0, m_shiftWindow = 3000;
@@ -279,6 +285,38 @@ private:
     Grain m_grains[kGrains];
     float m_window[1024];
     Rng m_rng{0xA11CE};
+};
+
+// Drive and wavefold, run at four times the sample rate and with first-order
+// antiderivative anti-aliasing (the output is the slope of the shaper's
+// integral between two samples, not the shaper at one point), so even a full
+// fold of a high note stays harmonics rather than a fizz of aliases.
+class Saturator {
+public:
+    float process(float x, float pre, float fold) {
+        m_pre = pre;
+        m_fold = fold;
+        return m_outer.process(x, [&](float u) { return m_inner.process(u, [&](float v) { return adaa(v); }); });
+    }
+
+private:
+    static float logCosh(float u) {
+        const float a = std::fabs(u);
+        return a + std::log1p(std::exp(-2.0f * a)) - 0.69314718f;
+    }
+    float shape(float u) const { return (1.0f - m_fold) * std::tanh(u) + m_fold * 0.8f * std::sin(1.7f * u); }
+    float integral(float u) const {
+        return (1.0f - m_fold) * logCosh(u) - m_fold * 0.8f * std::cos(1.7f * u) / 1.7f;
+    }
+    float adaa(float v) {
+        const float u = v * m_pre;
+        const float d = u - m_prev;
+        const float y = std::fabs(d) > 1e-4f ? (integral(u) - integral(m_prev)) / d : shape(0.5f * (u + m_prev));
+        m_prev = u;
+        return y;
+    }
+    Oversampler2x m_outer, m_inner;
+    float m_prev = 0, m_pre = 1, m_fold = 0;
 };
 
 // Lookahead brickwall limiter: sliding-window minimum of the gain each sample

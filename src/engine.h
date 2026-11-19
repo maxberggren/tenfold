@@ -37,11 +37,11 @@ const char *roleTwist(int role);
 float roleDefault(int role, int axis);
 
 enum class Cmd : uint8_t {
-    Strike,      // i1 degree, f0 material, f1 velocity, f2 x, f3 y
-    VoiceOn,     // id finger, i1 role, f0 midi, f1 pressure, f2 size, f3 x, f4 y
-    VoiceMove,   // id finger, f0 midi, f1 pressure, f2 size, f3 x, f4 y
+    Strike,      // i1 degree, f0 material, f1 velocity, f2 x, f3 y, f4 contact size
+    VoiceOn,     // id finger, i1 role, f0 midi, f1 pressure, f2 size, f3 x, f4 y, f5 degree
+    VoiceMove,   // id finger, f0 midi, f1 pressure, f2 size, f3 x, f4 y, f5 degree
     VoiceOff,    // id finger
-    Freeze,      // every voice under a finger is let go of and keeps sounding
+    Freeze,      // id layer: every voice under a finger keeps sounding, with its own timbre
     Knob,        // i1 role, f0 slide, f1 twist
     LoopBegin,   // id loop, t onset of the handle (one), f0 length s, f1 home x, f2 home y
     LoopHit,     // id loop, f0 offset s, i1 degree, f1 material, f2 velocity, f3 x
@@ -51,6 +51,11 @@ enum class Cmd : uint8_t {
     LoopRelease, // id loop: the finger let go
     LoopPin,     // id loop: toggle whether it erodes
     Overdub,     // id loop, t onset, i1 degree, f0 material, f1 velocity, f2 x
+    Motion,      // id loop, i1 lane, i2 role, t time, f0 midi, f1 pressure, f2 slide, f3 twist, f4 degree, f5 x
+    LayerGrab,   // id layer
+    LayerMod,    // id layer, i1 transpose, f0 brightness, f1 width, f2 swell
+    LayerRelease,// id layer
+    LayerPin,    // id layer: toggle whether it fades
     Dissolve,    // fade the newest layer
     DissolveAll, // fade everything that is left sounding
     Damper,      // f0 0..1, a palm on the pad
@@ -66,7 +71,10 @@ struct Command {
 
 constexpr int kMaxLoops = 16;
 constexpr int kMaxLoopHits = 96;
-constexpr int kMaxVoices = 32;
+constexpr int kMaxVoices = 40;
+constexpr int kLanes = 4;
+constexpr int kLaneBins = 256;
+constexpr int kMaxLayers = 16;
 
 struct LoopView {
     int id = -1;
@@ -77,6 +85,18 @@ struct LoopView {
     float hitPhase[kMaxLoopHits] = {};
     float hitMaterial[kMaxLoopHits] = {};
     float hitDegree[kMaxLoopHits] = {};
+    // Recorded voice lines, 64 steps around the ring: −1 where the finger was
+    // up, else its pitch from 0 (low) to 1 (high).
+    int laneCount = 0;
+    float lane[kLanes][64] = {};
+    int laneRole[kLanes] = {};
+};
+
+struct LayerView {
+    int group = -1;
+    bool active = false, held = false, pinned = false;
+    float x = 0, y = 0, level = 0;
+    int voices = 0, transpose = 0;
 };
 
 struct VoiceView {
@@ -88,6 +108,7 @@ struct VoiceView {
 struct EngineView {
     LoopView loops[kMaxLoops];
     VoiceView voices[kMaxVoices];
+    LayerView layers[kMaxLayers];
     float knobs[RoleCount][2] = {};
     float cpu = 0, cpuPeak = 0;
     float barSec = 0, barPhase = 0;
@@ -103,11 +124,18 @@ struct EngineView {
 struct LoopRegistry {
     std::atomic<int> id[kMaxLoops];
     std::atomic<float> x[kMaxLoops], y[kMaxLoops];
+    std::atomic<int> layer[kMaxLayers];
+    std::atomic<float> layerX[kMaxLayers], layerY[kMaxLayers];
     LoopRegistry() {
         for (int i = 0; i < kMaxLoops; ++i) {
             id[i] = -1;
             x[i] = 0;
             y[i] = 0;
+        }
+        for (int i = 0; i < kMaxLayers; ++i) {
+            layer[i] = -1;
+            layerX[i] = 0;
+            layerY[i] = 0;
         }
     }
 };

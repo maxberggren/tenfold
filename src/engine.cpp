@@ -18,7 +18,7 @@ struct RoleInfo {
 // The order fingers take roles in is the order a player reaches for them:
 // tone first, then width, then voice, then the room.
 const RoleInfo roles[RoleCount] = {
-    {"Tone", "brightness", "hollow ↔ full", 0.45f, 0.5f},
+    {"Tone", "brightness", "hollow ↔ full", 0.55f, 0.5f},
     {"Shadow", "width", "sub & fifth", 0.3f, 0.25f},
     {"Air", "voice", "vowel", 0.0f, 0.5f},
     {"Space", "room", "shimmer", 0.35f, 0.0f},
@@ -65,6 +65,18 @@ struct Loop {
     uint64_t created = 0;
     uint32_t seed = 1;
     bool fired[kMaxLoopHits] = {};
+    // Voice lines recorded while the loop was held: what a held finger did
+    // (pitch, pressure, and the knob its role turns), one bin per 1/256 of
+    // the loop.
+    struct Lane {
+        bool used = false;
+        int role = -1;
+        float midi[kLaneBins], press[kLaneBins], ka[kLaneBins], kb[kLaneBins], x[kLaneBins];
+        int deg[kLaneBins];
+        uint8_t on[kLaneBins];
+        uint64_t recordingUntil = 0;
+        int lastIdx = -1;
+    } lanes[kLanes];
 };
 
 struct Pending {
@@ -97,7 +109,12 @@ struct Engine::Impl {
     TapeEcho echo;
     GrainCloud swarm;
     Limiter limiter;
-    Oversampler2x osL, osR;
+    Saturator gritL, gritR;
+    StrikeVoice ghosts[8];
+    int ghostNext = 0;
+    uint64_t lastKnobCmd[RoleCount] = {};
+    float override_[RoleCount][2] = {};
+    float overrideWeight[RoleCount] = {};
     Svf damperL, damperR;
     DcBlock dcL, dcR;
     Rng rng{0x5EED};
@@ -117,6 +134,8 @@ Engine::Engine(float sampleRate) : m_rate(sampleRate), d(std::make_unique<Impl>(
         d->voices[i].init(sampleRate, 0x1234567u + uint32_t(i) * 7919u);
     for (int i = 0; i < kStrikes; ++i)
         d->strikes[i].rng = Rng(0xBEEF + uint32_t(i) * 104729u);
+    for (int i = 0; i < 8; ++i)
+        d->ghosts[i].rng = Rng(0xFACE + uint32_t(i) * 7907u);
     for (int r = 0; r < RoleCount; ++r)
         for (int a = 0; a < 2; ++a)
             d->knob[r][a] = d->knobTarget[r][a] = roleDefault(r, a);
@@ -156,6 +175,43 @@ static double floorMod(double a, double m) {
     return r < 0 ? r + m : r;
 }
 
+static StrikeVoice &takeStrike(Engine::Impl &s) {
+    StrikeVoice *slot = nullptr;
+    float quietest = 1e9f;
+    for (auto &v : s.strikes) {
+        if (!v.active)
+            return v;
+        if (v.level < quietest) {
+            quietest = v.level;
+            slot = &v;
+        }
+    }
+    StrikeVoice &ghost = s.ghosts[s.ghostNext];
+    s.ghostNext = (s.ghostNext + 1) % 8;
+    ghost = *slot;
+    ghost.fadeStep = 1.0f / (0.008f * s.rate);
+    return *slot;
+}
+
+// The timbre the knobs describe right now, for live voices and for a layer
+// frozen this instant.
+static ToneParams currentTone(const float knob[RoleCount][2]) {
+    ToneParams tp;
+    tp.bright = knob[Tone][0];
+    tp.hollow = knob[Tone][1];
+    tp.width = knob[Shadow][0];
+    tp.shadow = knob[Shadow][1];
+    tp.voice = knob[Air][0];
+    tp.vowel = knob[Air][1];
+    tp.stretch = knob[Drift][0];
+    tp.life = knob[Drift][1];
+    return tp;
+}
+
+// A free strike voice, or the quietest one, faded out over a few
+// milliseconds on the side rather than cut off mid-ring.
+static StrikeVoice &takeStrike(Engine::Impl &s);
+
 void Engine::apply(const Command &c) {
     Impl &s = *d;
     auto findLoop = [&](int id) -> Loop * {
@@ -164,27 +220,16 @@ void Engine::apply(const Command &c) {
                 return &l;
         return nullptr;
     };
-    auto fireStrike = [&](int degree, float mat, float vel, float x, int delay, float gain) {
-        StrikeVoice *slot = nullptr;
-        float quietest = 1e9f;
-        for (auto &v : s.strikes) {
-            if (!v.active) {
-                slot = &v;
-                break;
-            }
-            if (v.level < quietest) {
-                quietest = v.level;
-                slot = &v;
-            }
-        }
+    auto fireStrike = [&](int degree, float mat, float vel, float x, int delay, float gain, float contact) {
+        StrikeVoice &slot = takeStrike(s);
         const double midi = s.tuning.baseMidi() + s.tuning.degreeSemis(degree);
-        slot->start(float(midi), mat, vel, clampf((x - 0.5f) * 1.3f, -0.8f, 0.8f), gain, delay, s.rate);
+        slot.start(float(midi), mat, vel, clampf((x - 0.5f) * 1.3f, -0.8f, 0.8f), gain, delay, s.rate, contact);
         ++s.strikesFired;
     };
 
     switch (c.type) {
     case Cmd::Strike:
-        fireStrike(c.i1, c.f[0], c.f[1], c.f[2], 0, 0.5f);
+        fireStrike(c.i1, c.f[0], c.f[1], c.f[2], 0, 0.5f, c.f[4] > 0 ? c.f[4] : 1.0f);
         break;
     case Cmd::VoiceOn: {
         DroneVoice *slot = nullptr;
@@ -205,6 +250,8 @@ void Engine::apply(const Command &c) {
         if (!slot)
             slot = &s.voices[0];
         slot->start(c.id, c.i1, c.f[0], c.f[1], c.f[2], c.f[3], c.f[4], s.rate, m_sample);
+        slot->degree = int(std::lround(c.f[5]));
+        slot->transpose = 0;
         break;
     }
     case Cmd::VoiceMove:
@@ -215,6 +262,7 @@ void Engine::apply(const Command &c) {
                 v.size = c.f[2];
                 v.x = c.f[3];
                 v.y = c.f[4];
+                v.degree = int(std::lround(c.f[5]));
             }
         break;
     case Cmd::VoiceOff:
@@ -223,21 +271,27 @@ void Engine::apply(const Command &c) {
                 v.releasing = true;
         break;
     case Cmd::Freeze: {
-        ++s.freezeGroup;
+        s.freezeGroup = c.id;
         int frozenCount = 0;
+        const ToneParams now = currentTone(s.knob);
         for (auto &v : s.voices)
             if (v.active && !v.frozen && !v.releasing && v.finger >= 0) {
                 v.frozen = true;
                 v.finger = -1;
-                v.group = s.freezeGroup;
+                v.group = c.id;
                 v.born = m_sample;
+                // The layer keeps the timbre it was made with; turning the
+                // knobs from here on shapes what comes next, not this.
+                v.own = now;
+                v.transpose = 0;
+                v.midiOffset = clampf(float(v.midi.y - (s.tuning.baseMidi() + s.tuning.degreeSemis(v.degree))), -1.5f, 1.5f);
                 ++frozenCount;
             }
         // Too many frozen layers: the oldest give way, slowly.
         int frozen = 0;
         for (auto &v : s.voices)
             frozen += v.active && v.frozen;
-        while (frozen > 22) {
+        while (frozen > 30) {
             DroneVoice *oldest = nullptr;
             for (auto &v : s.voices)
                 if (v.active && v.frozen && v.fadeRate == 0 && (!oldest || v.born < oldest->born))
@@ -254,7 +308,73 @@ void Engine::apply(const Command &c) {
         if (c.i1 >= 0 && c.i1 < RoleCount) {
             s.knobTarget[c.i1][0] = clampf(c.f[0], 0, 1);
             s.knobTarget[c.i1][1] = clampf(c.f[1], 0, 1);
+            s.lastKnobCmd[c.i1] = m_sample + 1;
         }
+        break;
+    case Cmd::Motion:
+        if (Loop *l = findLoop(c.id); l && l->ready && c.i1 >= 0 && c.i1 < kLanes) {
+            auto &lane = l->lanes[c.i1];
+            if (!lane.used) {
+                lane.used = true;
+                std::memset(lane.on, 0, sizeof(lane.on));
+                lane.lastIdx = -1;
+            }
+            lane.role = c.i2;
+            const double at = (c.t - m_time0) * s.rate;
+            const int idx = int(floorMod(at - l->anchor, l->length) / l->length * kLaneBins) % kLaneBins;
+            // Fill the bins since the last sample too, so a moving finger
+            // leaves a line rather than dots.
+            int from = idx;
+            if (lane.lastIdx >= 0) {
+                const int gap = (idx - lane.lastIdx + kLaneBins) % kLaneBins;
+                if (gap > 0 && gap <= 8)
+                    from = (lane.lastIdx + 1) % kLaneBins;
+            }
+            for (int k = from;; k = (k + 1) % kLaneBins) {
+                lane.midi[k] = c.f[0];
+                lane.press[k] = c.f[1];
+                lane.ka[k] = c.f[2];
+                lane.kb[k] = c.f[3];
+                lane.deg[k] = int(std::lround(c.f[4]));
+                lane.x[k] = c.f[5];
+                lane.on[k] = 1;
+                if (k == idx)
+                    break;
+            }
+            lane.lastIdx = idx;
+            // Not replayed while it is being played: the finger is the sound.
+            lane.recordingUntil = m_sample + uint64_t(0.12 * s.rate);
+        }
+        break;
+    case Cmd::LayerGrab:
+        for (auto &v : s.voices)
+            if (v.active && v.frozen && v.group == c.id) {
+                v.held = true;
+                v.fadeRate = 0;
+                v.fade = 1;
+                v.frozenDecay = std::max(v.frozenDecay, 0.6f);
+            }
+        break;
+    case Cmd::LayerMod:
+        for (auto &v : s.voices)
+            if (v.active && v.frozen && v.group == c.id) {
+                v.transpose = c.i1;
+                v.own.bright = clampf(c.f[0], 0, 1);
+                v.own.width = clampf(c.f[1], 0, 1);
+                v.swellTarget = clampf(c.f[2], 0, 2);
+            }
+        break;
+    case Cmd::LayerRelease:
+        for (auto &v : s.voices)
+            if (v.active && v.frozen && v.group == c.id) {
+                v.held = false;
+                v.swellTarget = 1;
+            }
+        break;
+    case Cmd::LayerPin:
+        for (auto &v : s.voices)
+            if (v.active && v.frozen && v.group == c.id)
+                v.pinned = !v.pinned;
         break;
     case Cmd::LoopBegin: {
         Loop *slot = nullptr;
@@ -364,7 +484,7 @@ void Engine::apply(const Command &c) {
             const double off = floorMod(at - l->anchor, l->length);
             // Stored without the loop's current transpose and material, so the
             // new tap moves with the others from here on.
-            l->hits[l->count] = {off, c.i1 - l->transpose, clampf(c.f[0] - l->matShift, 0, 3), c.f[1], c.f[2]};
+            l->hits[l->count] = {off, c.i1 - l->transpose, clampf(c.f[0] - l->matShift, 0, 4), c.f[1], c.f[2]};
             l->fired[l->count] = true;
             ++l->count;
         }
@@ -441,20 +561,19 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
     Impl &s = *d;
     const float dt = float(n) / s.rate;
 
-    for (int r = 0; r < RoleCount; ++r)
-        for (int a = 0; a < 2; ++a)
-            s.knob[r][a] += (s.knobTarget[r][a] - s.knob[r][a]) * s.knobSmooth;
+    // Knobs: where the fingers set them, unless a loop is replaying a
+    // recorded sweep of that knob and no finger has touched it just now.
+    for (int r = 0; r < RoleCount; ++r) {
+        const bool live = s.lastKnobCmd[r] && m_sample < s.lastKnobCmd[r] + uint64_t(0.3 * s.rate);
+        const float w = live ? 0.0f : s.overrideWeight[r];
+        for (int a = 0; a < 2; ++a) {
+            const float target = lerpf(s.knobTarget[r][a], s.override_[r][a], w);
+            s.knob[r][a] += (target - s.knob[r][a]) * s.knobSmooth;
+        }
+        s.overrideWeight[r] = 0;
+    }
     const auto K = [&](int role, int axis) { return s.knob[role][axis]; };
-
-    ToneParams tp;
-    tp.bright = K(Tone, 0);
-    tp.hollow = K(Tone, 1);
-    tp.width = K(Shadow, 0);
-    tp.shadow = K(Shadow, 1);
-    tp.voice = K(Air, 0);
-    tp.vowel = K(Air, 1);
-    tp.stretch = K(Drift, 0);
-    tp.life = K(Drift, 1);
+    const ToneParams tp = currentTone(s.knob);
 
     float *dl = s.bufDroneL, *dr = s.bufDroneR, *hl = s.bufHitL, *hr = s.bufHitR;
     std::memset(dl, 0, sizeof(float) * n);
@@ -462,9 +581,66 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
     std::memset(hl, 0, sizeof(float) * n);
     std::memset(hr, 0, sizeof(float) * n);
 
-    for (auto &v : s.voices)
-        if (v.active)
+    // Loop lanes: replay what held fingers did while the loop was held.
+    {
+        int loopIndex = 0;
+        for (auto &lp : s.loops) {
+            const int li = loopIndex++;
+            if (!lp.active || !lp.ready)
+                continue;
+            const int idx = int(floorMod(double(m_sample) - lp.anchor, lp.length) / lp.length * kLaneBins) % kLaneBins;
+            const float w = lp.level * lp.fade;
+            for (int k = 0; k < kLanes; ++k) {
+                auto &lane = lp.lanes[k];
+                if (!lane.used)
+                    continue;
+                const int finger = -1000 - li * kLanes - k;
+                DroneVoice *voice = nullptr;
+                for (auto &v : s.voices)
+                    if (v.active && !v.frozen && v.finger == finger && !v.releasing)
+                        voice = &v;
+                const bool play = lane.on[idx] && m_sample >= lane.recordingUntil && w > 0.02f;
+                if (!play) {
+                    if (voice)
+                        voice->releasing = true;
+                    continue;
+                }
+                const int deg = lane.deg[idx];
+                const float midi = lane.midi[idx] + float(s.tuning.degreeSemis(deg + lp.transpose) - s.tuning.degreeSemis(deg));
+                if (!voice) {
+                    for (auto &v : s.voices)
+                        if (!v.active) {
+                            voice = &v;
+                            break;
+                        }
+                    if (!voice)
+                        continue;
+                    voice->start(finger, std::max(0, lane.role), midi, 0, 1.0f, lane.x[idx], lp.homeY, s.rate, m_sample);
+                }
+                voice->midiTarget = midi;
+                voice->pressure = lane.press[idx] * w;
+                voice->x = lane.x[idx];
+                if (lane.role >= 0 && lane.role < RoleCount) {
+                    s.override_[lane.role][0] = lane.ka[idx];
+                    s.override_[lane.role][1] = lane.kb[idx];
+                    s.overrideWeight[lane.role] = std::max(s.overrideWeight[lane.role], w);
+                }
+            }
+        }
+    }
+
+    for (auto &v : s.voices) {
+        if (!v.active)
+            continue;
+        if (v.frozen) {
+            // A frozen chord lives in scale degrees: it follows the key and
+            // mode, and its own transpose when it's picked up.
+            v.midiTarget = float(s.tuning.baseMidi() + s.tuning.degreeSemis(v.degree + v.transpose)) + v.midiOffset;
+            v.render(dl, dr, n, v.own, s.rate);
+        } else {
             v.render(dl, dr, n, tp, s.rate);
+        }
+    }
 
     // Loops: find every hit that falls inside this block and start it at its
     // exact sample.
@@ -493,7 +669,7 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
                 return;
             const float erosion = 1.0f - lp.level;
             const float vel = clampf(h.vel * lp.intensity * (0.92f + 0.16f * rng.unit()) * (1.0f - 0.5f * erosion), 0.02f, 1.0f);
-            const float mat = clampf(h.material + lp.matShift, 0.0f, 3.0f);
+            const float mat = clampf(h.material + lp.matShift, 0.0f, 4.0f);
             const int deg = h.degree + lp.transpose;
             // An eroding loop drifts out of time as tape would.
             const double smear = double(erosion * erosion) * 0.012 * s.rate * rng.bipolar();
@@ -551,26 +727,23 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
         }
     }
 
+    // Lane voices of loops that are gone are let go of.
+    for (auto &v : s.voices)
+        if (v.active && !v.frozen && !v.releasing && v.finger <= -1000) {
+            const int li = (-1000 - v.finger) / kLanes;
+            if (li >= kMaxLoops || !s.loops[li].active)
+                v.releasing = true;
+        }
+
     // Due hits, at their exact sample.
     const double blockEnd = blockStart + n;
     for (int i = 0; i < s.pendingCount;) {
         Pending &p = s.pending[i];
         if (p.at < blockEnd) {
-            StrikeVoice *slot = nullptr;
-            float quietest = 1e9f;
-            for (auto &v : s.strikes) {
-                if (!v.active) {
-                    slot = &v;
-                    break;
-                }
-                if (v.level < quietest) {
-                    quietest = v.level;
-                    slot = &v;
-                }
-            }
+            StrikeVoice &slot = takeStrike(s);
             const double midi = s.tuning.baseMidi() + s.tuning.degreeSemis(p.degree);
-            slot->start(float(midi), p.material, p.vel, clampf((p.x - 0.5f) * 1.3f, -0.8f, 0.8f), p.gain,
-                        int(std::max(0.0, p.at - blockStart)), s.rate);
+            slot.start(float(midi), p.material, p.vel, clampf((p.x - 0.5f) * 1.3f, -0.8f, 0.8f), p.gain,
+                       int(std::max(0.0, p.at - blockStart)), s.rate);
             ++s.strikesFired;
             p = s.pending[--s.pendingCount];
         } else {
@@ -579,6 +752,9 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
     }
 
     for (auto &v : s.strikes)
+        if (v.active)
+            v.render(hl, hr, n);
+    for (auto &v : s.ghosts)
         if (v.active)
             v.render(hl, hr, n);
 
@@ -624,12 +800,8 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
         float R = dr[i] * gate + hr[i];
 
         if (gritMix > 0.0f) {
-            auto shape = [&](float x) {
-                const float px = x * pre;
-                return (1.0f - fold) * fastTanh(px) + fold * std::sin(px * 1.7f) * 0.8f;
-            };
-            const float gl = s.osL.process(L, shape) * gritComp;
-            const float gr = s.osR.process(R, shape) * gritComp;
+            const float gl = s.gritL.process(L, pre, fold) * gritComp;
+            const float gr = s.gritR.process(R, pre, fold) * gritComp;
             L = lerpf(L, gl, gritMix);
             R = lerpf(R, gr, gritMix);
         }
@@ -732,9 +904,59 @@ void Engine::publish() {
         o.hitCount = l.count;
         for (int h = 0; h < l.count; ++h) {
             o.hitPhase[h] = float(l.hits[h].offset / l.length);
-            o.hitMaterial[h] = clampf(l.hits[h].material + l.matShift, 0, 3);
+            o.hitMaterial[h] = clampf(l.hits[h].material + l.matShift, 0, 4);
             o.hitDegree[h] = float(l.hits[h].degree + l.transpose);
         }
+        o.laneCount = 0;
+        for (int k = 0; k < kLanes; ++k) {
+            const auto &lane = l.lanes[k];
+            if (!lane.used)
+                continue;
+            float *dst = o.lane[o.laneCount];
+            o.laneRole[o.laneCount] = lane.role;
+            for (int b = 0; b < 64; ++b) {
+                const int src = b * (kLaneBins / 64);
+                dst[b] = lane.on[src] ? clampf((lane.midi[src] - 30.0f) / 60.0f, 0, 1) : -1.0f;
+            }
+            ++o.laneCount;
+        }
+    }
+    // Frozen layers: where each chord's light sits, for the screen and for
+    // the gesture layer to find when a finger reaches for it.
+    for (auto &lv : v.layers)
+        lv = LayerView{};
+    int layerCount = 0;
+    for (const DroneVoice &dv : s.voices) {
+        if (!dv.active || !dv.frozen)
+            continue;
+        LayerView *slot = nullptr;
+        for (int i = 0; i < layerCount; ++i)
+            if (v.layers[i].group == dv.group)
+                slot = &v.layers[i];
+        if (!slot) {
+            if (layerCount >= kMaxLayers)
+                continue;
+            slot = &v.layers[layerCount++];
+            slot->group = dv.group;
+            slot->active = true;
+        }
+        slot->x += dv.x;
+        slot->y += dv.y;
+        slot->level += dv.level;
+        slot->held |= dv.held;
+        slot->pinned |= dv.pinned;
+        slot->transpose = dv.transpose;
+        ++slot->voices;
+    }
+    for (int i = 0; i < kMaxLayers; ++i) {
+        LayerView &lv = v.layers[i];
+        if (i < layerCount && lv.voices > 0) {
+            lv.x /= float(lv.voices);
+            lv.y /= float(lv.voices);
+        }
+        m_registry.layer[i].store(i < layerCount ? lv.group : -1, std::memory_order_relaxed);
+        m_registry.layerX[i].store(lv.x, std::memory_order_relaxed);
+        m_registry.layerY[i].store(lv.y, std::memory_order_relaxed);
     }
     for (int i = 0; i < kMaxVoices; ++i) {
         const DroneVoice &dv = s.voices[i];

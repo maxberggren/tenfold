@@ -48,6 +48,8 @@ ApplicationWindow {
     Shortcut { sequence: "Up"; context: Qt.ApplicationShortcut; onActivated: backend.shiftFamily(1) }
     Shortcut { sequence: "Down"; context: Qt.ApplicationShortcut; onActivated: backend.shiftFamily(-1) }
     Shortcut { sequence: "J"; context: Qt.ApplicationShortcut; onActivated: backend.toggleJust() }
+    Shortcut { sequences: ["PgUp", "]"]; context: Qt.ApplicationShortcut; onActivated: backend.shiftOctave(1) }
+    Shortcut { sequences: ["PgDown", "["]; context: Qt.ApplicationShortcut; onActivated: backend.shiftOctave(-1) }
     Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleRecording() }
     Shortcut { sequence: "Backspace"; context: Qt.ApplicationShortcut; onActivated: backend.dissolve() }
     Shortcut { sequence: "Shift+Backspace"; context: Qt.ApplicationShortcut; onActivated: backend.dissolveAll() }
@@ -83,6 +85,12 @@ ApplicationWindow {
                     text: qsTr("%1 %2").arg(backend.key).arg(backend.mode)
                     font.pixelSize: 15
                     color: "#e6e6e6"
+                }
+                Label {
+                    visible: backend.octave !== 0
+                    text: qsTr("octave %1").arg((backend.octave > 0 ? "+" : "") + backend.octave)
+                    font.pixelSize: 13
+                    color: theme.accent
                 }
                 Label {
                     text: backend.just ? qsTr("just intonation") : qsTr("equal temperament")
@@ -206,6 +214,27 @@ ApplicationWindow {
                     color: "#8a8a92"
                     elide: Text.ElideMiddle
                 }
+            }
+        }
+
+        // What a swipe just changed, big for a moment.
+        Label {
+            id: noticeLabel
+            anchors.centerIn: parent
+            text: backend.notice
+            font.pixelSize: 64
+            font.weight: Font.DemiBold
+            color: theme.accent
+            opacity: 0
+            Connections {
+                target: backend
+                function onNoticeChanged() { noticeFade.restart() }
+            }
+            SequentialAnimation {
+                id: noticeFade
+                NumberAnimation { target: noticeLabel; property: "opacity"; to: 0.95; duration: 80 }
+                PauseAnimation { duration: 700 }
+                NumberAnimation { target: noticeLabel; property: "opacity"; to: 0; duration: 500 }
             }
         }
 

@@ -38,6 +38,8 @@ class Backend : public QObject {
     Q_PROPERTY(double recordSeconds READ recordSeconds NOTIFY changed)
     Q_PROPERTY(QString lastRecording READ lastRecording NOTIFY changed)
     Q_PROPERTY(double level READ level NOTIFY changed)
+    Q_PROPERTY(int octave READ octave NOTIFY changed)
+    Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -66,6 +68,8 @@ public:
     double recordSeconds() const;
     QString lastRecording() const { return m_lastRecording; }
     double level() const { return m_engine->view().rms; }
+    int octave() const { return m_gv.octave; }
+    QString notice() const { return QString::fromUtf8(m_gv.notice); }
 
     tf::Engine *engine() const { return m_engine.get(); }
     const tf::GestureView &gestureView() const { return m_gv; }
@@ -78,6 +82,7 @@ public:
     Q_INVOKABLE void shiftRoot(int fifths);
     Q_INVOKABLE void shiftFamily(int step);
     Q_INVOKABLE void toggleJust();
+    Q_INVOKABLE void shiftOctave(int step);
     Q_INVOKABLE void resetKnobs();
     Q_INVOKABLE void dissolve();
     Q_INVOKABLE void dissolveAll();
@@ -94,6 +99,7 @@ public:
 signals:
     void changed();
     void frame();
+    void noticeChanged();
 
 private:
     void tick();
@@ -111,6 +117,7 @@ private:
     bool m_wantPlay = false;
     bool m_pausedByFocus = false;
     bool m_simulated = false;
+    uint32_t m_noticeSeq = 0;
 
     bool m_recording = false;
     QString m_recordPath, m_lastRecording;

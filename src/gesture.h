@@ -3,21 +3,27 @@
 // Turns raw multitouch frames into music. This is the instrument's grammar:
 //
 //   land      every finger strikes the surface where it lands: X is the note,
-//             Y the material (skin, wood, glass, air), pressure the force.
-//   hold      a finger that stays blooms into a sustained voice, and takes
-//             the next free role (Tone, Shadow, Air, Space, …). Sliding it up
-//             and down turns that role's first knob, twisting it the second.
+//             Y the material (skin, snare, wood, glass, air), force and
+//             contact size the mallet.
+//   hold      a finger that stays blooms into a sustained voice and takes the
+//             next free role (Tone, Shadow, Air, Space, …). Sliding it up and
+//             down turns that role's first knob, twisting it the second.
 //             Knobs stay where you leave them.
 //   tap…hold  tap a rhythm, then land on the next "one" and stay: the taps
-//             become a loop. While you hold, slide to transpose it, move up
-//             or down to change its material, twist to thin it out or roll it
-//             into ratchets, press to accent. Taps with other fingers while
-//             you hold are added to it. Let go and it keeps playing, eroding
-//             slowly like old tape.
-//   tap, hold on a loop   grabs that loop again.
-//   press     (click the pad) holds on to what you are touching: held voices
-//             freeze into the landscape, a held loop is pinned and stops
-//             eroding.
+//             become a loop. While you hold it, slide to transpose, move up or
+//             down to change material, twist to thin out or roll into
+//             ratchets, press to accent. Everything other fingers do while you
+//             hold it goes into it: taps become hits, held fingers become
+//             recorded voice lines and knob sweeps that replay every bar.
+//   tap, hold on a ring    picks a loop up again; on a frozen glow, picks up
+//             that frozen chord to transpose it, brighten it, widen it or
+//             swell it.
+//   press     (click the pad) keeps what you are touching: held voices freeze
+//             into the landscape, a held loop or layer is pinned. Fingers that
+//             froze a chord keep their roles while they stay down, so the
+//             next finger reaches the next knob without another note.
+//   swipe     three fingers together: sideways moves the key by a fifth, up or
+//             down the octave. Four fingers sideways: the scale family.
 //   palm      a resting palm damps everything, like a hand on strings. Palm
 //             and press clears the landscape.
 
@@ -46,12 +52,13 @@ struct Frame {
     std::array<Touch, 16> touches{};
 };
 
-enum class TouchState : uint8_t { Landing, Voice, Handle, Palm, Spent };
+enum class TouchState : uint8_t { Landing, Voice, Handle, Layer, Palm, Spent, Swipe };
 
 struct ContactView {
     int id = -1;
     TouchState state = TouchState::Landing;
     int role = -1, loop = -1;
+    bool recording = false;
     float x = 0, y = 0, size = 0, pressure = 0, angle = 0, twist = 0;
     float age = 0;
 };
@@ -65,7 +72,8 @@ struct GestureView {
     };
     std::array<Tap, 64> phrase{};
     int phraseCount = 0;
-    bool phraseOpen = false; // landing now and holding would make a loop
+    bool phraseOpen = false;     // landing on the beat and holding would make a loop
+    double phraseNext = 0;       // when the next beat of the phrase would land
     float knobs[RoleCount][2] = {};
     float damper = 0;
     uint32_t strikeSeq = 0;
@@ -75,9 +83,11 @@ struct GestureView {
     };
     std::array<Strike, 32> strikes{}; // ring, newest at strikeSeq - 1
     double t = 0;
-    int root = 2, family = 1, brightness = 3;
+    int root = 2, family = 1, brightness = 3, octave = 0;
     bool just = true;
-    int loopsMade = 0, freezes = 0;
+    int loopsMade = 0, freezes = 0, swipes = 0, grabs = 0;
+    uint32_t noticeSeq = 0;
+    char notice[64] = {}; // the last thing a swipe changed, for the screen
 };
 
 // Where commands go: the live engine, or a recorder in tests.
@@ -85,8 +95,9 @@ class CommandSink {
 public:
     virtual ~CommandSink() = default;
     virtual void command(const Command &c) = 0;
-    // Live loops the gesture layer may grab again.
+    // Live loops and frozen layers the gesture layer may grab again.
     virtual int loopNear(float x, float y, float radius) const = 0;
+    virtual int layerNear(float x, float y, float radius) const { (void)x, (void)y, (void)radius; return -1; }
 };
 
 class Gesture {
@@ -97,10 +108,14 @@ public:
     void setAspect(float a) { m_aspect = a; }
 
     void frame(const Frame &f);
+    // Lets lifts that were held back (in case the finger was only lost for a
+    // frame) go through when no frames arrive; the live app calls it on a timer.
+    void idle(double t);
 
     // Keyboard and menu actions.
     void shiftRoot(int fifths);
     void shiftFamily(int step);
+    void shiftOctave(int step);
     void toggleJust();
     void resetKnobs();
     void dissolve();
@@ -115,6 +130,7 @@ public:
     const Tuning &tuning() const { return m_tuning; }
 
     static constexpr double kHoldTime = 0.19;
+    static constexpr double kLiftGrace = 0.035;
     static constexpr int kOctaves = 3;
 
 private:
@@ -122,20 +138,23 @@ private:
         bool live = false;
         int id = -1;
         TouchState state = TouchState::Landing;
-        double t0 = 0, last = 0;
+        double t0 = 0, last = 0, missingSince = -1, swipeStart = 0;
         float x0 = 0, y0 = 0, x = 0, y = 0;
-        float size = 0, pressure = 0, peakPressure = 0;
-        float angle = 0, twist = 0, travel = 0;
-        int frames = 0;
+        float size = 0, pressure = 0, peakPressure = 0, peakSize = 0;
+        float lastAngle = 0, unwrapped = 0, smoothAngle = 0, refAngle = 0;
+        float travel = 0;
+        int frames = 0, bigFrames = 0;
         bool struck = false;
         int degree0 = 0;
         float material0 = 0, vel = 0;
         int role = -1;
-        float refY = 0, refTwist = 0, refKnob[2] = {};
-        int loop = -1;
-        float refX = 0, refDensity = 0;
+        float refY = 0, refKnob[2] = {};
+        int loop = -1, layer = -1;
+        float refX = 0, refDensity = 0, refBright = 0, refWidth = 0;
         float slowDeg = 0, slowSpeed = 0, motion = 0;
         float loopDensity = 0;
+        int lane = -1, laneLoop = -1;
+        float midi = 0;
     };
     struct Tap {
         double t;
@@ -143,32 +162,52 @@ private:
         int degree;
         float material, vel;
     };
+    struct LayerState {
+        int group = -1, transpose = 0;
+        float bright = 0.5f, width = 0.3f;
+    };
 
     Contact *find(int id);
     void land(Contact &c, const Touch &t, double now);
     void move(Contact &c, const Touch &t, double now, double dt);
     void lift(Contact &c, double now);
     void hold(Contact &c, double now);
+    void becomeVoice(Contact &c);
     void strike(Contact &c);
     void click(double now);
+    void finishSwipe(Contact &c, double now);
+    void processLifts(double now);
     void sendTuning();
+    void sendKnob(int role);
+    void doShiftRoot(int fifths);
+    void doShiftFamily(int step);
+    void doShiftOctave(int step);
+    void notice(const char *text);
+    float twistOf(const Contact &c) const;
     float voicePitch(Contact &c, double dt);
+    int voiceDegree(const Contact &c) const;
     void send(const Command &c) { m_sink->command(c); }
     bool isPalm(const Touch &t) const;
+    LayerState *layerState(int group);
 
     CommandSink *m_sink;
     float m_aspect = 1.6f;
     Tuning m_tuning;
+    int m_octave = 0;
     float m_knob[RoleCount][2];
     std::array<Contact, 16> m_contacts{};
     std::vector<Tap> m_phrase;
+    std::vector<LayerState> m_layers;
+    int m_lanesUsed[256] = {};
     bool m_button = false;
-    int m_nextLoop = 1;
+    int m_nextLoop = 1, m_nextGroup = 1;
     float m_damper = 0;
     double m_now = 0, m_lastFrame = 0;
     int m_activeHandle = -1; // the loop overdubs go into
-    int m_loopsMade = 0, m_freezes = 0;
+    int m_loopsMade = 0, m_freezes = 0, m_swipes = 0, m_grabs = 0;
     bool m_palmClicked = false;
+    uint32_t m_noticeSeq = 0;
+    char m_notice[64] = {};
 
     mutable std::mutex m_viewLock;
     GestureView m_view;

@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include <cmath>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -197,7 +198,10 @@ void TouchSource::handle(char *line) {
             }
         }
         ++m_frames;
-        m_gesture->frame(f);
+        // Only a grabbed pad is an instrument. Given back, it's a pointer
+        // again, and pointing must not play.
+        if (m_status == Grabbed)
+            m_gesture->frame(f);
         return;
     }
     if (std::strncmp(line, "info ", 5) == 0) {
@@ -239,6 +243,12 @@ void TouchSource::handle(char *line) {
     }
     if (std::strncmp(line, "ok ungrab", 9) == 0) {
         m_status = Ready;
+        // Lift every finger that was down when the pad was given back.
+        Frame empty;
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        empty.t = double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+        m_gesture->frame(empty);
         return;
     }
     if (std::strncmp(line, "err ", 4) == 0) {

@@ -2,14 +2,20 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 namespace tf {
 
 namespace {
 
+constexpr float kHalfPi = 1.5707963f;
 constexpr float kTwistRange = 3.14159265f / 3.0f; // a 60° twist sweeps a knob end to end
+constexpr float kTwistDeadband = 0.06f;           // ≈3.5°: a still finger's wobble isn't a twist
 constexpr float kSlideGain = 1.6f;                // 60% of the pad's height sweeps a knob
 constexpr float kPalmSize = 2.3f;
+constexpr float kSwipeDistance = 0.12f;
+constexpr int kMaxLanes = 4;
 
 int defaultBrightness(int family) {
     switch (family) {
@@ -19,6 +25,14 @@ int defaultBrightness(int family) {
     case 3: return 3; // In
     default: return 0;
     }
+}
+
+float wrapHalfTurn(float a) {
+    while (a > kHalfPi)
+        a -= 2 * kHalfPi;
+    while (a < -kHalfPi)
+        a += 2 * kHalfPi;
+    return a;
 }
 
 }
@@ -31,14 +45,8 @@ Gesture::Gesture(CommandSink *sink) : m_sink(sink) {
     const int modes = family(m_tuning.familyIndex()).modeCount;
     m_knob[Gravity][1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
     sendTuning();
-    for (int r = 0; r < RoleCount; ++r) {
-        Command c;
-        c.type = Cmd::Knob;
-        c.i1 = r;
-        c.f[0] = m_knob[r][0];
-        c.f[1] = m_knob[r][1];
-        send(c);
-    }
+    for (int r = 0; r < RoleCount; ++r)
+        sendKnob(r);
     publish();
 }
 
@@ -49,7 +57,9 @@ float Gesture::degreeAt(float x) const {
     return std::clamp(x * n - 0.5f, -0.5f, n - 0.5f);
 }
 
-int Gesture::strikeDegree(float x) const { return std::clamp(int(std::floor(x * float(cells()))), 0, cells() - 1); }
+int Gesture::strikeDegree(float x) const {
+    return std::clamp(int(std::floor(x * float(cells()))), 0, cells() - 1) + m_octave * m_tuning.degreesPerOctave();
+}
 
 Gesture::Contact *Gesture::find(int id) {
     for (auto &c : m_contacts)
@@ -60,6 +70,27 @@ Gesture::Contact *Gesture::find(int id) {
 
 bool Gesture::isPalm(const Touch &t) const { return t.size > kPalmSize; }
 
+Gesture::LayerState *Gesture::layerState(int group) {
+    for (auto &l : m_layers)
+        if (l.group == group)
+            return &l;
+    return nullptr;
+}
+
+void Gesture::sendKnob(int role) {
+    Command k;
+    k.type = Cmd::Knob;
+    k.i1 = role;
+    k.f[0] = m_knob[role][0];
+    k.f[1] = m_knob[role][1];
+    send(k);
+}
+
+void Gesture::notice(const char *text) {
+    std::snprintf(m_notice, sizeof(m_notice), "%s", text);
+    ++m_noticeSeq;
+}
+
 void Gesture::frame(const Frame &f) {
     std::lock_guard lock(m_viewLock);
     const double dt = m_lastFrame > 0 ? std::clamp(f.t - m_lastFrame, 0.001, 0.05) : 0.008;
@@ -69,8 +100,27 @@ void Gesture::frame(const Frame &f) {
     bool seen[16] = {};
     for (int i = 0; i < f.count; ++i) {
         const Touch &t = f.touches[i];
-        if (Contact *c = find(t.id)) {
+        Contact *c = find(t.id);
+        if (!c) {
+            // A finger the pad lost for a frame comes back with a new id;
+            // pick up where it was rather than starting over.
+            float best = 0.05f;
+            for (auto &o : m_contacts) {
+                if (!o.live || o.missingSince < 0)
+                    continue;
+                const float dx = (o.x - t.x) * m_aspect, dy = o.y - t.y;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                if (d < best) {
+                    best = d;
+                    c = &o;
+                }
+            }
+            if (c)
+                c->id = t.id;
+        }
+        if (c) {
             seen[c - m_contacts.data()] = true;
+            c->missingSince = -1;
             move(*c, t, f.t, dt);
         } else {
             for (auto &slot : m_contacts)
@@ -81,19 +131,44 @@ void Gesture::frame(const Frame &f) {
                 }
         }
     }
-    for (auto &c : m_contacts)
-        if (c.live && !seen[&c - m_contacts.data()])
+    for (auto &c : m_contacts) {
+        if (!c.live || seen[&c - m_contacts.data()])
+            continue;
+        // A tap's lift is immediate (its timing is the rhythm); anything held
+        // gets a moment's grace, so a dropped frame doesn't cut a voice.
+        if (c.state == TouchState::Landing || c.state == TouchState::Palm || c.state == TouchState::Swipe)
             lift(c, f.t);
+        else if (c.missingSince < 0)
+            c.missingSince = f.t;
+    }
+    processLifts(f.t);
 
     for (auto &c : m_contacts) {
-        if (!c.live || c.state != TouchState::Landing)
+        if (!c.live)
+            continue;
+        if (c.state == TouchState::Swipe) {
+            if (f.t - c.swipeStart > 0.32) {
+                // Not a swipe after all: the fingers were landing a chord.
+                becomeVoice(c);
+            }
+            continue;
+        }
+        if (c.state != TouchState::Landing)
             continue;
         // Strike on the second frame, when the pressure has had a moment to
-        // say how hard the finger came down; a few milliseconds, not a delay
-        // anyone can feel.
-        if (!c.struck && (c.frames >= 2 || f.t - c.t0 >= 0.012))
-            strike(c);
-        if (f.t - c.t0 >= kHoldTime)
+        // say how hard the finger came down. A contact that is still growing
+        // may be a palm arriving: give it a few more milliseconds to decide.
+        const double age = f.t - c.t0;
+        if (!c.struck) {
+            const bool growing = c.size > 1.5f;
+            if ((!growing && (c.frames >= 2 || age >= 0.012)) || age >= 0.036) {
+                if (c.size > kPalmSize)
+                    c.state = TouchState::Palm;
+                else
+                    strike(c);
+            }
+        }
+        if (c.state == TouchState::Landing && age >= kHoldTime)
             hold(c, f.t);
     }
 
@@ -106,7 +181,7 @@ void Gesture::frame(const Frame &f) {
     if (!m_phrase.empty()) {
         float maxGap = 1.3f;
         for (size_t i = 1; i < m_phrase.size(); ++i)
-            maxGap = std::max(maxGap, float(m_phrase[i].t - m_phrase[i - 1].t) * 1.8f);
+            maxGap = std::max(maxGap, float(m_phrase[i].t - m_phrase[i - 1].t) * 2.3f);
         if (f.t - m_phrase.back().t > std::min(maxGap, 2.4f) + kHoldTime)
             m_phrase.clear();
     }
@@ -128,6 +203,25 @@ void Gesture::frame(const Frame &f) {
     publish();
 }
 
+void Gesture::idle(double t) {
+    std::lock_guard lock(m_viewLock);
+    if (t <= m_now)
+        return;
+    bool any = false;
+    for (auto &c : m_contacts)
+        any |= c.live && c.missingSince >= 0;
+    if (!any)
+        return;
+    processLifts(t);
+    publish();
+}
+
+void Gesture::processLifts(double now) {
+    for (auto &c : m_contacts)
+        if (c.live && c.missingSince >= 0 && now - c.missingSince >= kLiftGrace)
+            lift(c, c.missingSince);
+}
+
 void Gesture::land(Contact &c, const Touch &t, double now) {
     c = Contact{};
     c.live = true;
@@ -135,14 +229,20 @@ void Gesture::land(Contact &c, const Touch &t, double now) {
     c.t0 = c.last = now;
     c.x0 = c.x = t.x;
     c.y0 = c.y = t.y;
-    c.size = t.size;
+    c.size = c.peakSize = t.size;
     c.pressure = c.peakPressure = t.pressure;
-    c.angle = t.angle;
+    c.lastAngle = t.angle;
     c.frames = 1;
     c.degree0 = strikeDegree(t.x);
-    c.material0 = std::clamp(t.y * 3.0f, 0.0f, 3.0f);
+    c.material0 = std::clamp(t.y * 4.0f, 0.0f, 4.0f);
     c.slowDeg = degreeAt(t.x);
-    c.state = isPalm(t) ? TouchState::Palm : TouchState::Landing;
+    c.state = TouchState::Landing;
+}
+
+float Gesture::twistOf(const Contact &c) const {
+    const float d = c.smoothAngle - c.refAngle;
+    const float mag = std::max(0.0f, std::fabs(d) - kTwistDeadband);
+    return d < 0 ? -mag : mag;
 }
 
 void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
@@ -151,72 +251,167 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     c.x = t.x;
     c.y = t.y;
     c.size = t.size;
+    c.peakSize = std::max(c.peakSize, t.size);
     c.pressure = t.pressure;
     c.last = now;
     ++c.frames;
     if (!c.struck)
         c.peakPressure = std::max(c.peakPressure, t.pressure);
 
-    // Twist: the contact ellipse's angle, unwrapped, trusted only as far as
-    // the contact is actually elongated (a round contact has no direction).
-    float da = t.angle - c.angle;
-    const float half = 3.14159265f / 2.0f;
-    while (da > half)
-        da -= 2 * half;
-    while (da < -half)
-        da += 2 * half;
-    const float trust = std::clamp((t.eccentricity - 0.08f) / 0.2f, 0.0f, 1.0f);
-    c.twist += da * trust;
-    c.angle = t.angle;
+    // Twist: the contact ellipse's angle. Every change is counted exactly
+    // (so noise cancels instead of adding up), only while the contact is long
+    // enough to have a direction, then smoothed, then measured from where it
+    // was when the knob was picked up, with a small deadband.
+    if (t.eccentricity >= 0.22f)
+        c.unwrapped += wrapHalfTurn(t.angle - c.lastAngle);
+    c.lastAngle = t.angle;
+    c.smoothAngle += (c.unwrapped - c.smoothAngle) * float(1.0 - std::exp(-dt / 0.06));
 
-    if (c.state == TouchState::Landing && isPalm(t) && now - c.t0 < 0.15)
+    // A palm can arrive slowly; catch it whenever it becomes one.
+    c.bigFrames = t.size > kPalmSize ? c.bigFrames + 1 : 0;
+    if (c.bigFrames >= 3 && (c.state == TouchState::Landing || c.state == TouchState::Voice)) {
+        if (c.state == TouchState::Voice) {
+            Command o;
+            o.type = Cmd::VoiceOff;
+            o.id = c.id;
+            send(o);
+            c.role = -1;
+        }
         c.state = TouchState::Palm;
+        c.struck = true;
+    }
 
-    if (c.state == TouchState::Voice) {
-        if (c.role >= 0) {
-            const float a = std::clamp(c.refKnob[0] + (c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
-            const float b = std::clamp(c.refKnob[1] + (c.twist - c.refTwist) / kTwistRange, 0.0f, 1.0f);
-            if (std::fabs(a - m_knob[c.role][0]) > 0.001f || std::fabs(b - m_knob[c.role][1]) > 0.001f) {
-                m_knob[c.role][0] = a;
-                m_knob[c.role][1] = b;
-                Command k;
-                k.type = Cmd::Knob;
-                k.i1 = c.role;
-                k.f[0] = a;
-                k.f[1] = b;
-                send(k);
-                if (c.role == Gravity) {
-                    const int modes = family(m_tuning.familyIndex()).modeCount;
-                    const int bright = std::clamp(int(std::lround(b * float(modes - 1))), 0, modes - 1);
-                    if (bright != m_tuning.brightnessIndex()) {
-                        m_tuning.set(m_tuning.root(), m_tuning.familyIndex(), bright, m_tuning.just());
-                        sendTuning();
-                    }
+    const float twist = twistOf(c);
+    if ((c.state == TouchState::Voice || c.state == TouchState::Spent) && c.role >= 0) {
+        const float a = std::clamp(c.refKnob[0] + (c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
+        const float b = std::clamp(c.refKnob[1] + twist / kTwistRange, 0.0f, 1.0f);
+        if (std::fabs(a - m_knob[c.role][0]) > 0.001f || std::fabs(b - m_knob[c.role][1]) > 0.001f) {
+            m_knob[c.role][0] = a;
+            m_knob[c.role][1] = b;
+            sendKnob(c.role);
+            if (c.role == Gravity) {
+                const int modes = family(m_tuning.familyIndex()).modeCount;
+                const int bright = std::clamp(int(std::lround(b * float(modes - 1))), 0, modes - 1);
+                if (bright != m_tuning.brightnessIndex()) {
+                    m_tuning.set(m_tuning.root(), m_tuning.familyIndex(), bright, m_tuning.just());
+                    sendTuning();
                 }
             }
         }
+    }
+    if (c.state == TouchState::Voice) {
+        c.midi = voicePitch(c, float(dt));
         Command v;
         v.type = Cmd::VoiceMove;
         v.id = c.id;
-        v.f[0] = voicePitch(c, float(dt));
+        v.f[0] = c.midi;
         v.f[1] = c.pressure;
         v.f[2] = c.size;
         v.f[3] = c.x;
         v.f[4] = c.y;
+        v.f[5] = float(voiceDegree(c));
         send(v);
+        // Held while a loop is held: this finger's line goes into the loop.
+        bool handleHeld = false;
+        for (auto &o : m_contacts)
+            if (o.live && o.state == TouchState::Handle && o.loop == m_activeHandle)
+                handleHeld = true;
+        if (handleHeld && m_activeHandle > 0) {
+            if (c.laneLoop != m_activeHandle) {
+                int &used = m_lanesUsed[m_activeHandle & 255];
+                c.lane = used < kMaxLanes ? used++ : -1;
+                c.laneLoop = m_activeHandle;
+            }
+            if (c.lane >= 0) {
+                Command m;
+                m.type = Cmd::Motion;
+                m.id = m_activeHandle;
+                m.i1 = c.lane;
+                m.i2 = c.role;
+                m.t = now;
+                m.f[0] = c.midi;
+                m.f[1] = c.pressure;
+                m.f[2] = c.role >= 0 ? m_knob[c.role][0] : 0;
+                m.f[3] = c.role >= 0 ? m_knob[c.role][1] : 0;
+                m.f[4] = float(voiceDegree(c));
+                m.f[5] = c.x;
+                send(m);
+            }
+        }
     } else if (c.state == TouchState::Handle) {
         Command m;
         m.type = Cmd::LoopMod;
         m.id = c.loop;
         m.i1 = int(std::lround((c.x - c.refX) * float(cells())));
-        m.f[0] = (c.y - c.refY) * 3.0f;
-        c.loopDensity = std::clamp(c.refDensity + (c.twist - c.refTwist) / kTwistRange, -1.0f, 1.0f);
+        m.f[0] = (c.y - c.refY) * 4.0f;
+        c.loopDensity = std::clamp(c.refDensity + twist / kTwistRange, -1.0f, 1.0f);
         m.f[1] = c.loopDensity;
         m.f[2] = 0.55f + 0.95f * c.pressure;
         m.f[3] = c.x;
         m.f[4] = c.y;
         send(m);
+    } else if (c.state == TouchState::Layer) {
+        if (LayerState *l = layerState(c.layer)) {
+            l->transpose = int(std::lround((c.x - c.refX) * float(cells())));
+            l->bright = std::clamp(c.refBright + (c.y - c.refY) * kSlideGain, 0.0f, 1.0f);
+            l->width = std::clamp(c.refWidth + twist / kTwistRange, 0.0f, 1.0f);
+            Command m;
+            m.type = Cmd::LayerMod;
+            m.id = c.layer;
+            m.i1 = l->transpose;
+            m.f[0] = l->bright;
+            m.f[1] = l->width;
+            m.f[2] = 0.35f + 1.3f * c.pressure; // press to swell it
+            m.f[3] = c.x;
+            m.f[4] = c.y;
+            send(m);
+        }
+    } else if (c.state == TouchState::Swipe) {
+        finishSwipe(c, now);
     }
+}
+
+void Gesture::finishSwipe(Contact &c, double now) {
+    // The group is every finger that landed with this one.
+    float sx = 0, sy = 0;
+    int n = 0;
+    for (auto &o : m_contacts)
+        if (o.live && o.state == TouchState::Swipe && std::fabs(o.swipeStart - c.swipeStart) < 1e-9) {
+            sx += (o.x - o.x0) * m_aspect;
+            sy += o.y - o.y0;
+            ++n;
+        }
+    if (n < 3)
+        return;
+    sx /= float(n);
+    sy /= float(n);
+    if (std::sqrt(sx * sx + sy * sy) < kSwipeDistance)
+        return;
+    (void)now;
+    char text[64];
+    if (std::fabs(sx) > std::fabs(sy)) {
+        if (n >= 4) {
+            doShiftFamily(sx > 0 ? 1 : -1);
+            std::snprintf(text, sizeof(text), "%s", m_tuning.familyName());
+        } else {
+            doShiftRoot(sx > 0 ? 1 : -1);
+            std::snprintf(text, sizeof(text), "%s", Tuning::noteName(m_tuning.root()));
+        }
+    } else {
+        doShiftOctave(sy > 0 ? 1 : -1);
+        std::snprintf(text, sizeof(text), "octave %+d", m_octave);
+    }
+    notice(text);
+    ++m_swipes;
+    for (auto &o : m_contacts)
+        if (o.live && o.state == TouchState::Swipe && std::fabs(o.swipeStart - c.swipeStart) < 1e-9) {
+            o.state = TouchState::Spent;
+            o.role = -1;
+        }
+}
+
+int Gesture::voiceDegree(const Contact &c) const {
+    return int(std::lround(c.slowDeg)) + m_octave * m_tuning.degreesPerOctave();
 }
 
 float Gesture::voicePitch(Contact &c, double dt) {
@@ -232,9 +427,10 @@ float Gesture::voicePitch(Contact &c, double dt) {
     c.slowSpeed += (speed - c.slowSpeed) * float(1.0 - std::exp(-dt / 0.08));
     const float target = std::clamp((c.slowSpeed - 0.5f) / 2.5f, 0.0f, 1.0f);
     c.motion += (target - c.motion) * float(1.0 - std::exp(-dt / 0.1));
-    const double snapped =
-        m_tuning.degreeSemis(int(std::lround(c.slowDeg))) + (xd - c.slowDeg) * m_tuning.semisPerDegree(c.slowDeg);
-    const double cont = m_tuning.continuousSemis(xd);
+    const int shift = m_octave * m_tuning.degreesPerOctave();
+    const double snapped = m_tuning.degreeSemis(int(std::lround(c.slowDeg)) + shift) +
+                           (xd - c.slowDeg) * m_tuning.semisPerDegree(c.slowDeg + shift);
+    const double cont = m_tuning.continuousSemis(xd + shift);
     const double w = m_knob[Gravity][0] * (1.0f - c.motion);
     return float(m_tuning.baseMidi() + cont + (snapped - cont) * w);
 }
@@ -251,88 +447,150 @@ void Gesture::strike(Contact &c) {
     s.f[1] = c.vel;
     s.f[2] = c.x0;
     s.f[3] = c.y0;
+    s.f[4] = c.peakSize; // a flat finger is a soft mallet
     send(s);
     m_strikes[m_strikeSeq % m_strikes.size()] = {c.x0, c.y0, c.vel, c.material0, c.t0};
     ++m_strikeSeq;
 }
 
 void Gesture::hold(Contact &c, double now) {
-    (void)now;
+    // Three or more fingers that landed together and are already moving:
+    // perhaps a swipe. Wait a little longer before deciding.
+    if (c.state == TouchState::Landing) {
+        int together = 0;
+        for (auto &o : m_contacts)
+            if (o.live && (o.state == TouchState::Landing || o.state == TouchState::Swipe) &&
+                std::fabs(o.t0 - c.t0) < 0.09)
+                ++together;
+        const float mx = (c.x - c.x0) * m_aspect, my = c.y - c.y0;
+        if (together >= 3 && std::sqrt(mx * mx + my * my) > 0.02f) {
+            for (auto &o : m_contacts)
+                if (o.live && (o.state == TouchState::Landing || o.state == TouchState::Swipe) &&
+                    std::fabs(o.t0 - c.t0) < 0.09) {
+                    o.state = TouchState::Swipe;
+                    o.swipeStart = c.t0;
+                }
+            finishSwipe(c, now);
+            return;
+        }
+    }
+
     if (!m_phrase.empty()) {
         const Tap &last = m_phrase.back();
+        const Tap &first = m_phrase.front();
         const double gap = c.t0 - last.t;
-        double maxGap = 1.3;
-        if (m_phrase.size() > 1) {
-            double maxIoi = 0;
-            for (size_t i = 1; i < m_phrase.size(); ++i)
-                maxIoi = std::max(maxIoi, m_phrase[i].t - m_phrase[i - 1].t);
-            maxGap = std::clamp(1.75 * maxIoi, 0.35, 2.2);
-        }
-        if (gap > 0 && gap <= maxGap) {
-            const float dx = (c.x0 - last.x) * m_aspect, dy = c.y0 - last.y;
-            // A single quick tap and hold on top of a loop picks it up again.
-            if (m_phrase.size() == 1 && gap < 0.45 && std::sqrt(dx * dx + dy * dy) < 0.08f) {
-                const int id = m_sink->loopNear(c.x, c.y, 0.14f);
-                if (id >= 0) {
-                    c.state = TouchState::Handle;
-                    c.loop = id;
-                    c.refX = c.x;
-                    c.refY = c.y;
-                    c.refTwist = c.twist;
-                    c.refDensity = 0;
-                    Command g;
-                    g.type = Cmd::LoopGrab;
-                    g.id = id;
-                    send(g);
-                    m_activeHandle = id;
-                    m_phrase.clear();
-                    return;
-                }
-            }
-            const double length = c.t0 - m_phrase.front().t;
-            if (length >= 0.12) {
-                const int id = m_nextLoop++;
-                Command b;
-                b.type = Cmd::LoopBegin;
-                b.id = id;
-                b.t = c.t0;
-                b.f[0] = float(length);
-                b.f[1] = c.x;
-                b.f[2] = c.y;
-                send(b);
-                for (const Tap &t : m_phrase) {
-                    Command h;
-                    h.type = Cmd::LoopHit;
-                    h.id = id;
-                    h.f[0] = float(t.t - m_phrase.front().t);
-                    h.i1 = t.degree;
-                    h.f[1] = t.material;
-                    h.f[2] = t.vel;
-                    h.f[3] = t.x;
-                    send(h);
-                }
-                Command r;
-                r.type = Cmd::LoopReady;
-                r.id = id;
-                send(r);
+        const float lx = (c.x0 - last.x) * m_aspect, ly = c.y0 - last.y;
+        const float fx = (c.x0 - first.x) * m_aspect, fy = c.y0 - first.y;
+        const float nearLast = std::sqrt(lx * lx + ly * ly), nearFirst = std::sqrt(fx * fx + fy * fy);
+
+        // A single quick tap and hold on top of a loop or a frozen chord
+        // picks it up again.
+        if (m_phrase.size() == 1 && gap > 0 && gap < 0.45 && nearLast < 0.08f) {
+            const int id = m_sink->loopNear(c.x, c.y, 0.14f);
+            if (id >= 0) {
                 c.state = TouchState::Handle;
                 c.loop = id;
                 c.refX = c.x;
                 c.refY = c.y;
-                c.refTwist = c.twist;
+                c.refAngle = c.smoothAngle;
                 c.refDensity = 0;
+                Command g;
+                g.type = Cmd::LoopGrab;
+                g.id = id;
+                send(g);
                 m_activeHandle = id;
                 m_phrase.clear();
-                ++m_loopsMade;
+                ++m_grabs;
+                return;
+            }
+            const int group = m_sink->layerNear(c.x, c.y, 0.14f);
+            if (group >= 0) {
+                LayerState *l = layerState(group);
+                if (!l) {
+                    m_layers.push_back({group, 0, m_knob[Tone][0], m_knob[Shadow][0]});
+                    l = &m_layers.back();
+                }
+                c.state = TouchState::Layer;
+                c.layer = group;
+                c.refX = c.x - float(l->transpose) / float(cells());
+                c.refY = c.y;
+                c.refAngle = c.smoothAngle;
+                c.refBright = l->bright;
+                c.refWidth = l->width;
+                Command g;
+                g.type = Cmd::LayerGrab;
+                g.id = group;
+                send(g);
+                m_phrase.clear();
+                ++m_grabs;
                 return;
             }
         }
-    }
 
-    // A voice. It takes the lowest role no other held finger has.
+        // Does this landing close the phrase? It has to sound like the next
+        // beat: as far after the last tap as some gap inside the phrase (or
+        // twice that), or land back where the phrase began. A single tap
+        // only loops with a hold right on top of it (a steady pulse).
+        bool closes = false;
+        if (gap > 0 && gap <= 2.2) {
+            if (m_phrase.size() == 1) {
+                closes = nearLast < 0.08f && gap >= 0.12;
+            } else {
+                for (size_t i = 1; i < m_phrase.size() && !closes; ++i) {
+                    const double ioi = m_phrase[i].t - m_phrase[i - 1].t;
+                    for (int k = 1; k <= 2 && !closes; ++k)
+                        closes = std::fabs(gap - k * ioi) < 0.28 * k * ioi;
+                }
+                closes = closes || nearFirst < 0.07f;
+            }
+        }
+        const double length = c.t0 - first.t;
+        if (closes && length >= 0.12) {
+            const int id = m_nextLoop++;
+            Command b;
+            b.type = Cmd::LoopBegin;
+            b.id = id;
+            b.t = c.t0;
+            b.f[0] = float(length);
+            b.f[1] = c.x;
+            b.f[2] = c.y;
+            send(b);
+            for (const Tap &t : m_phrase) {
+                Command h;
+                h.type = Cmd::LoopHit;
+                h.id = id;
+                h.f[0] = float(t.t - first.t);
+                h.i1 = t.degree;
+                h.f[1] = t.material;
+                h.f[2] = t.vel;
+                h.f[3] = t.x;
+                send(h);
+            }
+            Command r;
+            r.type = Cmd::LoopReady;
+            r.id = id;
+            send(r);
+            c.state = TouchState::Handle;
+            c.loop = id;
+            c.refX = c.x;
+            c.refY = c.y;
+            c.refAngle = c.smoothAngle;
+            c.refDensity = 0;
+            m_activeHandle = id;
+            m_phrase.clear();
+            ++m_loopsMade;
+            return;
+        }
+    }
+    becomeVoice(c);
+}
+
+void Gesture::becomeVoice(Contact &c) {
+    // A voice takes the lowest role no other finger on the pad holds,
+    // including fingers that froze a chord and stayed down.
     bool taken[RoleCount] = {};
     for (auto &o : m_contacts)
-        if (o.live && o.state == TouchState::Voice && o.role >= 0)
+        if (o.live && (o.state == TouchState::Voice || o.state == TouchState::Spent) && o.role >= 0)
             taken[o.role] = true;
     int role = -1;
     for (int r = 0; r < RoleCount; ++r)
@@ -343,21 +601,23 @@ void Gesture::hold(Contact &c, double now) {
     c.state = TouchState::Voice;
     c.role = role;
     c.refY = c.y;
-    c.refTwist = c.twist;
+    c.refAngle = c.smoothAngle;
     if (role >= 0) {
         c.refKnob[0] = m_knob[role][0];
         c.refKnob[1] = m_knob[role][1];
     }
     c.slowDeg = degreeAt(c.x);
+    c.midi = voicePitch(c, 0.008);
     Command v;
     v.type = Cmd::VoiceOn;
     v.id = c.id;
     v.i1 = std::max(0, role);
-    v.f[0] = voicePitch(c, 0.008);
+    v.f[0] = c.midi;
     v.f[1] = c.pressure;
     v.f[2] = c.size;
     v.f[3] = c.x;
     v.f[4] = c.y;
+    v.f[5] = float(voiceDegree(c));
     send(v);
 }
 
@@ -367,8 +627,6 @@ void Gesture::lift(Contact &c, double now) {
     case TouchState::Landing: {
         if (!c.struck)
             strike(c);
-        if (c.state == TouchState::Palm)
-            break;
         bool handleHeld = false;
         for (auto &o : m_contacts)
             if (o.live && o.state == TouchState::Handle && o.loop == m_activeHandle)
@@ -410,8 +668,16 @@ void Gesture::lift(Contact &c, double now) {
         }
         break;
     }
+    case TouchState::Layer: {
+        Command r;
+        r.type = Cmd::LayerRelease;
+        r.id = c.layer;
+        send(r);
+        break;
+    }
     case TouchState::Palm:
     case TouchState::Spent:
+    case TouchState::Swipe:
         break;
     }
     c.live = false;
@@ -419,12 +685,13 @@ void Gesture::lift(Contact &c, double now) {
 
 void Gesture::click(double now) {
     (void)now;
-    bool palm = false, handle = false, voice = false;
+    bool palm = false, handle = false, voice = false, layer = false;
     for (auto &c : m_contacts) {
         if (!c.live)
             continue;
         palm |= c.state == TouchState::Palm;
         handle |= c.state == TouchState::Handle;
+        layer |= c.state == TouchState::Layer;
         voice |= c.state == TouchState::Voice;
     }
     if (palm) {
@@ -432,29 +699,42 @@ void Gesture::click(double now) {
             Command d;
             d.type = Cmd::DissolveAll;
             send(d);
+            m_layers.clear();
             m_palmClicked = true;
         }
         return;
     }
-    if (handle) {
-        for (auto &c : m_contacts)
-            if (c.live && c.state == TouchState::Handle) {
-                Command p;
+    if (handle || layer) {
+        for (auto &c : m_contacts) {
+            if (!c.live)
+                continue;
+            Command p;
+            if (c.state == TouchState::Handle) {
                 p.type = Cmd::LoopPin;
                 p.id = c.loop;
                 send(p);
+            } else if (c.state == TouchState::Layer) {
+                p.type = Cmd::LayerPin;
+                p.id = c.layer;
+                send(p);
             }
+        }
         return;
     }
     if (voice) {
+        const int group = m_nextGroup++;
         Command f;
         f.type = Cmd::Freeze;
+        f.id = group;
         send(f);
+        m_layers.push_back({group, 0, m_knob[Tone][0], m_knob[Shadow][0]});
+        if (m_layers.size() > 64)
+            m_layers.erase(m_layers.begin());
+        // The fingers go quiet but keep their roles (and keep turning their
+        // knobs) until they lift.
         for (auto &c : m_contacts)
-            if (c.live && c.state == TouchState::Voice) {
+            if (c.live && c.state == TouchState::Voice)
                 c.state = TouchState::Spent;
-                c.role = -1;
-            }
         ++m_freezes;
     }
 }
@@ -469,26 +749,37 @@ void Gesture::sendTuning() {
     send(c);
 }
 
-void Gesture::shiftRoot(int fifths) {
-    std::lock_guard lock(m_viewLock);
+void Gesture::doShiftRoot(int fifths) {
     m_tuning.set(m_tuning.root() + 7 * fifths, m_tuning.familyIndex(), m_tuning.brightnessIndex(), m_tuning.just());
     sendTuning();
+}
+
+void Gesture::doShiftFamily(int step) {
+    const int fam = (m_tuning.familyIndex() + step + familyCount()) % familyCount();
+    m_tuning.set(m_tuning.root(), fam, defaultBrightness(fam), m_tuning.just());
+    const int modes = family(fam).modeCount;
+    m_knob[Gravity][1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
+    sendKnob(Gravity);
+    sendTuning();
+}
+
+void Gesture::doShiftOctave(int step) { m_octave = std::clamp(m_octave + step, -2, 2); }
+
+void Gesture::shiftRoot(int fifths) {
+    std::lock_guard lock(m_viewLock);
+    doShiftRoot(fifths);
     publish();
 }
 
 void Gesture::shiftFamily(int step) {
     std::lock_guard lock(m_viewLock);
-    const int fam = (m_tuning.familyIndex() + step + familyCount()) % familyCount();
-    m_tuning.set(m_tuning.root(), fam, defaultBrightness(fam), m_tuning.just());
-    const int modes = family(fam).modeCount;
-    m_knob[Gravity][1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
-    Command k;
-    k.type = Cmd::Knob;
-    k.i1 = Gravity;
-    k.f[0] = m_knob[Gravity][0];
-    k.f[1] = m_knob[Gravity][1];
-    send(k);
-    sendTuning();
+    doShiftFamily(step);
+    publish();
+}
+
+void Gesture::shiftOctave(int step) {
+    std::lock_guard lock(m_viewLock);
+    doShiftOctave(step);
     publish();
 }
 
@@ -506,18 +797,13 @@ void Gesture::resetKnobs() {
         m_knob[r][1] = r == Gravity ? float(m_tuning.brightnessIndex()) /
                                           float(std::max(1, family(m_tuning.familyIndex()).modeCount - 1))
                                     : roleDefault(r, 1);
-        Command k;
-        k.type = Cmd::Knob;
-        k.i1 = r;
-        k.f[0] = m_knob[r][0];
-        k.f[1] = m_knob[r][1];
-        send(k);
+        sendKnob(r);
     }
     // Fingers still holding a role pick up from the new values.
     for (auto &c : m_contacts)
-        if (c.live && c.state == TouchState::Voice && c.role >= 0) {
+        if (c.live && (c.state == TouchState::Voice || c.state == TouchState::Spent) && c.role >= 0) {
             c.refY = c.y;
-            c.refTwist = c.twist;
+            c.refAngle = c.smoothAngle;
             c.refKnob[0] = m_knob[c.role][0];
             c.refKnob[1] = m_knob[c.role][1];
         }
@@ -536,6 +822,7 @@ void Gesture::dissolveAll() {
     Command c;
     c.type = Cmd::DissolveAll;
     send(c);
+    m_layers.clear();
 }
 
 void Gesture::publish() {
@@ -548,13 +835,14 @@ void Gesture::publish() {
         o.id = c.id;
         o.state = c.state;
         o.role = c.role;
-        o.loop = c.loop;
+        o.loop = c.state == TouchState::Layer ? c.layer : c.loop;
+        o.recording = c.state == TouchState::Voice && c.lane >= 0 && c.laneLoop == m_activeHandle;
         o.x = c.x;
         o.y = c.y;
         o.size = c.size;
         o.pressure = c.pressure;
-        o.angle = c.angle;
-        o.twist = c.state == TouchState::Handle ? c.loopDensity : c.twist - c.refTwist;
+        o.angle = c.smoothAngle;
+        o.twist = c.state == TouchState::Handle ? c.loopDensity : twistOf(c);
         o.age = float(m_now - c.t0);
     }
     v.phraseCount = 0;
@@ -562,6 +850,9 @@ void Gesture::publish() {
         if (v.phraseCount < int(v.phrase.size()))
             v.phrase[v.phraseCount++] = {t.x, t.y, t.t};
     v.phraseOpen = !m_phrase.empty();
+    v.phraseNext = 0;
+    if (m_phrase.size() >= 2)
+        v.phraseNext = m_phrase.back().t + (m_phrase.back().t - m_phrase[m_phrase.size() - 2].t);
     for (int r = 0; r < RoleCount; ++r) {
         v.knobs[r][0] = m_knob[r][0];
         v.knobs[r][1] = m_knob[r][1];
@@ -573,9 +864,14 @@ void Gesture::publish() {
     v.root = m_tuning.root();
     v.family = m_tuning.familyIndex();
     v.brightness = m_tuning.brightnessIndex();
+    v.octave = m_octave;
     v.just = m_tuning.just();
     v.loopsMade = m_loopsMade;
     v.freezes = m_freezes;
+    v.swipes = m_swipes;
+    v.grabs = m_grabs;
+    v.noticeSeq = m_noticeSeq;
+    std::memcpy(v.notice, m_notice, sizeof(v.notice));
 }
 
 GestureView Gesture::view() const {

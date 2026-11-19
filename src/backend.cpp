@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <chrono>
+#include <ctime>
 
 #include "device.h"
 #include "offline.h"
@@ -147,6 +148,7 @@ void Backend::windowActive(bool active) {
 void Backend::shiftRoot(int fifths) { m_gesture->shiftRoot(fifths); }
 void Backend::shiftFamily(int step) { m_gesture->shiftFamily(step); }
 void Backend::toggleJust() { m_gesture->toggleJust(); }
+void Backend::shiftOctave(int step) { m_gesture->shiftOctave(step); }
 void Backend::resetKnobs() { m_gesture->resetKnobs(); }
 void Backend::dissolve() { m_gesture->dissolve(); }
 void Backend::dissolveAll() { m_gesture->dissolveAll(); }
@@ -211,8 +213,18 @@ void Backend::stopRecording() {
 }
 
 void Backend::tick() {
+    if (!m_simulated) {
+        // Let held-back lifts through even when the pad has gone quiet.
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        m_gesture->idle(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
+    }
     m_engine->fetchView();
     m_gv = m_gesture->view();
+    if (m_gv.noticeSeq != m_noticeSeq) {
+        m_noticeSeq = m_gv.noticeSeq;
+        emit noticeChanged();
+    }
     emit frame();
     emit changed();
 }

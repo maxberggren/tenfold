@@ -28,12 +28,15 @@ Rectangle {
                 Label { text: qsTr("The pad"); font.pixelSize: 22; font.weight: Font.DemiBold; color: theme.accent }
                 Repeater {
                     model: [
-                        [qsTr("Land"), qsTr("Every finger strikes where it lands. Left to right is the note, in the current scale. Bottom to top is the material: skin, wood, glass, air. How hard you land is how hard it's hit.")],
+                        [qsTr("Land"), qsTr("Every finger strikes where it lands. Left to right is the note, in the current scale. Bottom to top is the material: skin, snare, wood, glass, air. How hard you land is how hard it's hit; a fingertip is a hard stick, a flat finger a soft mallet.")],
                         [qsTr("Hold"), qsTr("A finger that stays blooms into a voice and takes the next free role, in the order your fingers arrived: 1 Tone, 2 Shadow, 3 Air, 4 Space, 5 Pulse, 6 Echo, 7 Grit, 8 Drift, 9 Swarm, 10 Gravity. Slide it up or down to turn the role's first knob, twist it for the second. Knobs stay where you leave them.")],
                         [qsTr("Glide"), qsTr("Move a held finger slowly and it settles on the nearest note; slide it quickly and it glides. A small rock of the finger is vibrato.")],
                         [qsTr("Loop"), qsTr("Tap a rhythm, then land on the next beat and stay. The taps become a loop, and your first loop sets the tempo. While you hold: slide sideways to transpose it, up or down to change its material, twist right for rolls and ghost notes, left to thin it out, press harder to accent. Taps with other fingers are added to it.")],
+                        [qsTr("Record motion"), qsTr("While you hold a loop, hold other fingers too: their notes, pressure and knob sweeps are recorded into the bar and replay every time round.")],
                         [qsTr("Erode"), qsTr("A loop you let go of keeps playing and slowly wears away like old tape. Tap once and hold on its ring to pick it up again.")],
-                        [qsTr("Press"), qsTr("Click the pad to keep what you're holding: held voices freeze into the landscape and your fingers are free; a held loop is pinned and stops eroding.")],
+                        [qsTr("Press"), qsTr("Click the pad to keep what you're holding: held voices freeze into the landscape with their own timbre, and a held loop is pinned and stops eroding. Fingers that froze a chord keep their roles while they stay down, so the next finger reaches the next knob.")],
+                        [qsTr("Layers"), qsTr("Tap once and hold on a frozen chord's light to pick it up: slide sideways to transpose it, up or down to brighten it, twist to widen it, press to swell it. Press the pad to pin it.")],
+                        [qsTr("Swipe"), qsTr("Three fingers together: sideways moves the key a fifth, up or down the octave. Four fingers sideways change the scale family.")],
                         [qsTr("Palm"), qsTr("Rest a palm on the pad to damp everything, like a hand on strings. Palm and press clears the landscape.")]
                     ]
                     delegate: ColumnLayout {
@@ -57,6 +60,7 @@ Rectangle {
                         ["Esc", qsTr("Give the trackpad back")],
                         ["← →", qsTr("Key down or up a fifth")],
                         ["↑ ↓", qsTr("Scale family")],
+                        ["[ ]", qsTr("Octave down or up")],
                         ["J", qsTr("Just intonation or equal temperament")],
                         ["Backspace", qsTr("Dissolve the newest layer")],
                         ["Shift+Backspace", qsTr("Dissolve everything")],

@@ -7,6 +7,7 @@
 #include "gesture.h"
 #include "offline.h"
 #include "tuning.h"
+#include "tutorial.h"
 
 using namespace tf;
 
@@ -784,6 +785,46 @@ private slots:
         }
         e.render(out.data(), 48000 * 10);
         QVERIFY(rms(out, out.size() - 96000, out.size()) < 0.003);
+    }
+
+    void theTutorialFollowsWhatIsPlayed() {
+        RecordingSink sink;
+        Gesture g(&sink);
+        Pad pad(g);
+        EngineView ev;
+        Tutorial tut;
+        tut.start(g.view());
+        auto update = [&](bool playing) {
+            const GestureView gv = g.view();
+            Tutorial::State st;
+            st.playing = playing;
+            st.gesture = &gv;
+            st.engine = &ev;
+            for (int i = 0; i < 100; ++i)
+                tut.update(st, 0.02);
+        };
+        QCOMPARE(tut.index(), 0);
+        update(true); // taking the pad finishes the welcome
+        QCOMPARE(tut.index(), 1);
+        for (int i = 0; i < 3; ++i)
+            pad.tap(10 + i, 0.05f, kDrums);
+        update(true);
+        QCOMPARE(tut.index(), 1); // three kicks aren't four
+        pad.tap(20, 0.05f, kDrums);
+        update(true);
+        QCOMPARE(tut.index(), 2);
+        QVERIFY(!tut.step().metronome);
+        tut.next(g.view());
+        QVERIFY(tut.step().metronome); // the first-loop step has a click
+        for (int i = 0; i < 4; ++i) {
+            pad.tap(30 + i, 0.05f, kDrums);
+            pad.run(0.5 - 0.058);
+        }
+        pad.land({40, 0.05f, kDrums});
+        pad.run(0.3);
+        pad.release(40);
+        update(true);
+        QCOMPARE(tut.index(), 4); // the loop finished the step
     }
 
     void demoRendersCleanly() {

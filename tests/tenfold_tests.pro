@@ -10,10 +10,11 @@ QMAKE_CXXFLAGS_RELEASE += -O3 -ffast-math -fno-finite-math-only
 
 INCLUDEPATH += ../src
 
-HEADERS += ../src/electro.h ../src/engine.h ../src/gesture.h ../src/tuning.h ../src/offline.h ../src/dsp.h ../src/fx.h ../src/voices.h
+HEADERS += ../src/tutorial.h ../src/electro.h ../src/engine.h ../src/gesture.h ../src/tuning.h ../src/offline.h ../src/dsp.h ../src/fx.h ../src/voices.h
 SOURCES += tenfold_tests.cpp \
     ../src/engine.cpp \
     ../src/gesture.cpp \
     ../src/tuning.cpp \
     ../src/offline.cpp \
-    ../src/demo.cpp
+    ../src/demo.cpp \
+    ../src/tutorial.cpp

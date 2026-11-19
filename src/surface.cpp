@@ -291,42 +291,59 @@ void Surface::paint(QPainter *p) {
     for (const VoiceView &v : ev.voices) {
         if (!v.active || !v.frozen)
             continue;
+        // A crisp diamond for each frozen note, its size its level, over a
+        // faint halo.
         const QPointF c = at(v.x, v.y);
-        const qreal r = unit * (0.5 + 6.0 * std::sqrt(v.level));
-        QRadialGradient g(c, r);
         const QColor col = roleColor(v.role, m_accent);
-        g.setColorAt(0, withAlpha(col, 0.35f));
+        const qreal halo = unit * (0.4 + 2.5 * std::sqrt(v.level));
+        QRadialGradient g(c, halo);
+        g.setColorAt(0, withAlpha(col, 0.12f));
         g.setColorAt(1, withAlpha(col, 0.0f));
         p->setPen(Qt::NoPen);
         p->setBrush(g);
-        p->drawEllipse(c, r, r);
-        p->setBrush(withAlpha(col, 0.8f));
-        p->drawEllipse(c, 2.5, 2.5);
+        p->drawEllipse(c, halo, halo);
+        const qreal d = 4 + unit * 0.6 * std::sqrt(v.level * 6.0f);
+        QPolygonF diamond({c + QPointF(0, -d), c + QPointF(d, 0), c + QPointF(0, d), c + QPointF(-d, 0)});
+        p->setBrush(Qt::NoBrush);
+        p->setPen(QPen(withAlpha(col, 0.9f), 1.6));
+        p->drawPolygon(diamond);
     }
 
     // Frozen chords as layers: a ring around each one's light, solid when
     // pinned, bright while a finger holds it.
-    // Each is a target: a ring of the size a fingertip can find, lettered,
-    // at the chord's centre.
+    // Each is a target: a square console box the size a fingertip can find,
+    // with its letter on a lit tag; solid when pinned, lit while held.
     int layerIndex = 0;
     for (const LayerView &l : ev.layers) {
         if (!l.active)
             continue;
         const QPointF c = at(l.x, l.y);
-        const qreal r = unit * 0.62;
-        const float vis = 0.35f + 0.65f * std::clamp(l.level * 12.0f, 0.0f, 1.0f);
-        p->setBrush(withAlpha(QColor(10, 10, 14), 0.55f));
-        p->setPen(QPen(withAlpha(l.held ? m_accent : QColor(255, 255, 255), (l.held ? 0.95f : 0.55f) * vis),
-                       l.pinned ? 2.4 : 1.2, l.pinned ? Qt::SolidLine : Qt::DashLine));
-        p->drawEllipse(c, r, r);
-        QFont f = small;
-        f.setBold(true);
-        p->setFont(f);
-        p->setPen(withAlpha(l.held ? m_accent : QColor(255, 255, 255), 0.85f * vis));
+        const qreal half = unit * 0.55;
+        const QRectF box(c.x() - half, c.y() - half, 2 * half, 2 * half);
+        const QColor col = l.held ? m_accent : QColor("#39FF88");
+        const float vis = 0.45f + 0.55f * std::clamp(l.level * 12.0f, 0.0f, 1.0f);
+        p->setBrush(QColor(0, 0, 0, 200));
+        p->setPen(QPen(withAlpha(col, vis), l.pinned ? 3.0 : 1.6));
+        p->drawRect(box);
+        // Corner ticks, like a target reticle.
+        p->setPen(QPen(withAlpha(col, vis), 2));
+        const qreal t = half * 0.45;
+        for (int sx : {-1, 1})
+            for (int sy : {-1, 1}) {
+                const QPointF corner(c.x() + sx * (half + 4), c.y() + sy * (half + 4));
+                p->drawLine(corner, corner - QPointF(sx * t, 0));
+                p->drawLine(corner, corner - QPointF(0, sy * t));
+            }
         QString text = QString(QChar('A' + layerIndex % 26));
         if (l.transpose != 0)
             text += QString(" %1%2").arg(l.transpose > 0 ? "+" : "").arg(l.transpose);
-        p->drawText(QRectF(c.x() - 2 * r, c.y() - r, 4 * r, 2 * r), Qt::AlignCenter, text);
+        const QFont tagFont = consoleFont(int(unit * 0.26), true);
+        p->setFont(tagFont);
+        const qreal tw = QFontMetricsF(tagFont).horizontalAdvance(text) + 10;
+        const QRectF tag(c.x() - tw / 2, c.y() - unit * 0.2, tw, unit * 0.4);
+        p->fillRect(tag, withAlpha(col, vis));
+        p->setPen(QColor::fromRgb(kInk));
+        p->drawText(tag, Qt::AlignCenter, text);
         p->setFont(small);
         ++layerIndex;
     }
@@ -379,18 +396,23 @@ void Surface::paint(QPainter *p) {
             p->setBrush(haze);
             p->drawEllipse(c, hr, hr);
         }
-        QColor ring = l.held ? m_accent : QColor(255, 255, 255);
-        p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(withAlpha(ring, alpha * (l.held ? 0.9f : 0.45f)), l.pinned ? 3.0 : 1.2,
-                       l.pinned ? Qt::SolidLine : Qt::DashLine));
+        // A dial: a solid ring with twelve ticks, magenta like every loop;
+        // amber while a finger holds it, heavier when pinned.
+        const QColor ring = l.held ? m_accent : QColor("#FF4FD8");
+        p->setBrush(QColor(0, 0, 0, 170));
+        p->setPen(QPen(withAlpha(ring, alpha), l.pinned ? 3.0 : 1.6));
         p->drawEllipse(c, r, r);
+        for (int tick = 0; tick < 12; ++tick) {
+            const float ta = float(tick) / 12.0f * 2 * kPiF;
+            const qreal len = tick % 3 == 0 ? 7 : 4;
+            p->drawLine(QPointF(c.x() + std::cos(ta) * r, c.y() + std::sin(ta) * r),
+                        QPointF(c.x() + std::cos(ta) * (r + len), c.y() + std::sin(ta) * (r + len)));
+        }
         if (l.flash > 0.02f) {
-            QRadialGradient g(c, r * 1.4);
-            g.setColorAt(0, withAlpha(m_accent, 0.25f * l.flash * alpha));
-            g.setColorAt(1, withAlpha(m_accent, 0));
+            // A hit lights the inside of the dial for a moment.
             p->setPen(Qt::NoPen);
-            p->setBrush(g);
-            p->drawEllipse(c, r * 1.4, r * 1.4);
+            p->setBrush(withAlpha(ring, 0.22f * l.flash * alpha));
+            p->drawEllipse(c, r * 0.92, r * 0.92);
         }
         for (int h = 0; h < l.hitCount; ++h) {
             const float a = l.hitPhase[h] * 2 * kPiF - kPiF / 2;
@@ -429,7 +451,7 @@ void Surface::paint(QPainter *p) {
             p->drawPath(line);
         }
         const float a = l.phase * 2 * kPiF - kPiF / 2;
-        p->setPen(QPen(withAlpha(m_accent, alpha * 0.8f), 1.4));
+        p->setPen(QPen(withAlpha(ring, alpha), 2.0));
         p->drawLine(c, QPointF(c.x() + std::cos(a) * r * 0.85, c.y() + std::sin(a) * r * 0.85));
         if (l.transpose != 0 || std::fabs(l.density) > 0.05f) {
             p->setPen(withAlpha(QColor(255, 255, 255), alpha * 0.7f));

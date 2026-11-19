@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
-import QtQuick.Effects
 import QtQuick.Layouts
 import Tenfold
 
@@ -83,22 +82,9 @@ ApplicationWindow {
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
     }
 
-    // Phosphor bloom: a blurred copy of the whole screen glows behind it.
-    MultiEffect {
-        source: screen
-        anchors.fill: screen
-        blurEnabled: true
-        blur: 0.5
-        blurMax: 24
-        brightness: 0.1
-        saturation: 0.2
-        opacity: 0.6
-    }
-
     Item {
         id: screen
         anchors.fill: parent
-        layer.enabled: true
         LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
         LayoutMirroring.childrenInherit: true
 

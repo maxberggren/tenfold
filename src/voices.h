@@ -65,6 +65,9 @@ struct DroneVoice {
     // Sympathetic ring: how much each partial has been set ringing by a
     // strike whose modes sit on it, decaying on its own.
     float freq[K], sym[K];
+    // Faster shimmer per partial, opened up by leaning into the pad.
+    float flick[K];
+    float age = 0, breathPhase = 0;
     float driftPitch = 0;
 
     Delay comb;
@@ -128,7 +131,10 @@ struct DroneVoice {
             driftA[i] = rng.bipolar();
             freq[i] = 0;
             sym[i] = 0;
+            flick[i] = 0;
         }
+        age = 0;
+        breathPhase = rng.unit();
         comb.clear();
         f1.reset();
         f2.reset();
@@ -159,23 +165,39 @@ struct DroneVoice {
             return;
         }
 
-        // Slow life: every partial wanders in pitch and level on its own.
+        // Slow life: every partial wanders in pitch and level on its own,
+        // and a quicker flicker rides on the upper ones as you lean in.
         const float life = tp.life;
         const float walk = std::sqrt(dt) * 0.9f;
+        const float quick = std::sqrt(dt) * 3.5f;
         for (int i = 0; i < K; ++i) {
             driftF[i] = clampf(driftF[i] * (1.0f - dt * 0.3f) + rng.bipolar() * walk, -1.0f, 1.0f);
             driftA[i] = clampf(driftA[i] * (1.0f - dt * 0.5f) + rng.bipolar() * walk, -1.0f, 1.0f);
+            flick[i] = clampf(flick[i] * (1.0f - dt * 6.0f) + rng.bipolar() * quick, -1.0f, 1.0f);
         }
+        age += dt;
+        // A slow breath of the whole spectrum, a few seconds long.
+        breathPhase += dt * (0.09f + 0.05f * life);
+        if (breathPhase > 1.0f)
+            breathPhase -= 1.0f;
         driftPitch = clampf(driftPitch * (1.0f - dt * 0.2f) + rng.bipolar() * walk * 0.15f, -1.0f, 1.0f);
 
         const float f0 = midiToHz(m + driftPitch * life * 0.12f);
-        const float alpha = lerpf(2.3f, 0.35f, clampf(tp.bright + 0.25f * p - 0.2f * sz, 0.0f, 1.0f));
+        // The bloom: a new voice starts dark and opens over its first few
+        // seconds, its partials arriving one after another from the bottom
+        // up. Leaning in opens it further; the breath keeps it moving.
+        const float bloom = 0.45f * std::exp(-age / 0.9f) - 0.12f * (1.0f - std::exp(-age / 2.5f));
+        const float breath = 0.06f * (0.4f + life) * std::sin(kTwoPi * breathPhase);
+        const float lean = 0.3f * p * p;
+        // A flat finger (bigger than a fingertip) is warmer and rounder.
+        const float flat = clampf(sz - 1.0f, 0.0f, 1.5f);
+        const float alpha = lerpf(2.3f, 0.35f, clampf(tp.bright + lean - 0.2f * flat + breath, 0.0f, 1.0f)) + bloom;
         const float evenGain = clampf(2.0f * tp.hollow, 0.0f, 1.0f);
         const float oddGain = clampf(2.0f * (1.0f - tp.hollow), 0.0f, 1.0f);
         const float B = tp.stretch * tp.stretch * 0.004f;
         const float widthRatio = tp.width * 0.0105f;
         float form[3];
-        vowelFormants(tp.vowel, form);
+        vowelFormants(clampf(tp.vowel + 0.12f * life * std::sin(kTwoPi * breathPhase * 0.7f + 1.3f), 0.0f, 1.0f), form);
         const float formantAmt = clampf(tp.voice * 1.3f, 0.0f, 1.0f);
         const float voicePan = clampf((x - 0.5f) * 0.9f, -0.6f, 0.6f);
 
@@ -185,7 +207,7 @@ struct DroneVoice {
             const float h = harm[i];
             float a;
             if (h == 0.5f)
-                a = 0.55f * tp.shadow + 0.35f * sz;
+                a = 0.55f * tp.shadow + 0.3f * clampf(sz - 1.0f, 0.0f, 1.5f);
             else if (h == 1.5f)
                 a = 0.3f * tp.shadow;
             else {
@@ -209,6 +231,13 @@ struct DroneVoice {
                 a *= lerpf(1.0f, env3 * 1.6f, formantAmt);
             }
             a *= 1.0f + life * 0.45f * driftA[i];
+            if (h > 4.0f)
+                a *= 1.0f + (0.15f + 0.6f * p) * life * flick[i];
+            if (!frozen) {
+                const float arrive = 0.035f * std::pow(h, 0.9f);
+                const float u = clampf((age - arrive) / 0.45f, 0.0f, 1.0f);
+                a *= u * u * (3.0f - 2.0f * u);
+            }
             amps[i] = a;
             energy += a * a;
             // Each ear gets a slightly different frequency, so partials beat
@@ -283,12 +312,20 @@ struct DroneVoice {
             return;
         // Only the few partials that can sit near each mode are checked: the
         // nearest harmonics, plus the sub and the fifth.
+        // Nothing rings below about 120 Hz: a kick that set the drone's
+        // fundamental booming would only pile up sub. Each partial has a cap
+        // and fills towards it more slowly the fuller it is, so a run of
+        // kicks can't stack.
+        constexpr float cap = 1.2f;
         auto ring = [&](int i, float hz, float amp) {
             if (i < 0 || i >= K || freq[i] <= 0)
                 return;
             const float off = std::fabs(freq[i] / hz - 1.0f);
-            if (off < 0.02f)
-                sym[i] = std::min(2.5f, sym[i] + amp * (1.0f - off / 0.02f) * vel * 1.4f);
+            if (off >= 0.02f)
+                return;
+            const float lowCut = clampf((freq[i] - 90.0f) / 130.0f, 0.0f, 1.0f);
+            const float add = amp * (1.0f - off / 0.02f) * vel * 1.4f * lowCut * lowCut;
+            sym[i] = std::min(cap, sym[i] + add * (1.0f - sym[i] / cap));
         };
         for (int m = 0; m < modes; ++m) {
             if (modeAmp[m] <= 0)
@@ -359,8 +396,8 @@ inline const Material &material(int i) {
          0.28f, 1.1f, 0.35f, 0.02f, 1.1f, 0, 0.7f, 0.11f, 4200.0f, 1.0f, 0},
         // Wood: a tuned bar, upper modes dying much faster than the note.
         {{1, 3.98f, 9.38f, 15.6f, 2.76f, 5.40f, 8.93f, 13.3f, 18.6f, 1.0f, 2.0f, 4.0f, 23.1f, 27.9f, 6.3f, 11.7f},
-         {1, .42f, .2f, .09f, .1f, .06f, .04f, .03f, .02f, .0f, .08f, .05f, .015f, .01f, .03f, .02f},
-         1.3f, 2.2f, 0.015f, 0.01f, 0.18f, 6.0f, 1.2f, 0.005f, 0, 1.6f, 0},
+         {1, .7f, .42f, .22f, .14f, .1f, .08f, .06f, .04f, .0f, .08f, .07f, .03f, .02f, .05f, .04f},
+         1.3f, 1.6f, 0.015f, 0.01f, 0.18f, 6.0f, 1.2f, 0.005f, 0, 1.6f, 0},
         // Glass: church-bell partials, the hum below the note, a long ring.
         {{0.5f, 1, 1.183f, 1.506f, 2.0f, 2.514f, 2.662f, 3.011f, 4.166f, 5.433f, 6.796f, 8.215f, 9.67f, 11.2f, 12.8f, 14.4f},
          {.55f, 1, .7f, .5f, .6f, .35f, .3f, .25f, .2f, .15f, .1f, .08f, .06f, .05f, .04f, .03f},
@@ -393,6 +430,7 @@ struct StrikeVoice {
     int pulseLen = 1, pulsePos = 0;
     float pulseNorm = 1;
     float fade = 1, fadeStep = 0; // a stolen voice fades instead of cutting
+    float wet = 1;                // how much goes to the echo and the room
     Svf noiseF, clickF;
     Rng rng;
 
@@ -419,14 +457,14 @@ struct StrikeVoice {
             // Higher modes and higher notes ring shorter, as in any real body;
             // a hard hit drives the upper modes harder, so they also last
             // longer above the noise.
-            float t60 = t60base / (1.0f + slope * float(i) * ratio * 0.25f / (1.0f + 1.2f * vel * vel));
+            float t60 = t60base / (1.0f + slope * float(i) * ratio * 0.25f / (1.0f + 3.0f * vel * vel));
             t60 *= clampf(std::pow(220.0f / std::max(f, 20.0f), 0.3f), 0.25f, 2.5f);
             w0[i] = kTwoPi * f / rate;
             hz[i] = f;
             rad[i] = (f > rate * 0.45f || f < 18.0f) ? 0.0f : std::exp(-6.9078f / (t60 * rate));
             // Soft hits lose their upper modes; hard ones with a small contact
             // lift them, for the whole ring, not just the click.
-            const float lift = 1.0f + 3.0f * vel * vel * clampf((ratio - 1.0f) / 3.0f, 0.0f, 1.0f) / clampf(contact, 0.8f, 2.0f);
+            const float lift = 1.0f + 4.0f * vel * vel * clampf((ratio - 1.0f) / 3.0f, 0.0f, 1.0f) / clampf(contact, 0.8f, 2.0f);
             float a = amp * lift * std::pow(std::max(ratio, 0.5f), -soft * hard);
             if (rad[i] == 0.0f)
                 a = 0;
@@ -463,7 +501,7 @@ struct StrikeVoice {
         clickAmp = g * vel * vel * 0.9f / clampf(contact, 0.7f, 2.0f);
         clickDecay = std::exp(-1.0f / (0.0012f * rate));
         clickF.reset();
-        clickF.set(std::min(2500.0f + 9000.0f * vel, rate * 0.42f), 0.7f, rate);
+        clickF.set(std::min(2200.0f + 3500.0f * vel, rate * 0.42f), 1.2f, rate);
         noisePanL = std::sqrt(0.5f * (1.0f - pan));
         noisePanR = std::sqrt(0.5f * (1.0f + pan));
         delay = startDelay;
@@ -472,6 +510,7 @@ struct StrikeVoice {
         level = g;
         fade = 1;
         fadeStep = 0;
+        wet = 1;
         active = true;
     }
 
@@ -487,7 +526,7 @@ struct StrikeVoice {
         return M;
     }
 
-    void render(float *l, float *r, int n) {
+    void render(float *l, float *r, int n, float *sendL = nullptr, float *sendR = nullptr) {
         int from = 0;
         if (delay > 0) {
             if (delay >= n) {
@@ -528,7 +567,7 @@ struct StrikeVoice {
                 sr += nz * noisePanR;
             }
             if (clickAmp > 1e-6f) {
-                const float c = clickF.step(rng.bipolar()).high * clickAmp;
+                const float c = clickF.step(rng.bipolar()).band * clickAmp * 1.6f;
                 clickAmp *= clickDecay;
                 sl += c * noisePanL;
                 sr += c * noisePanR;
@@ -544,6 +583,10 @@ struct StrikeVoice {
             }
             l[t] += sl;
             r[t] += sr;
+            if (sendL) {
+                sendL[t] += sl * wet;
+                sendR[t] += sr * wet;
+            }
         }
         for (int i = 0; i < M; ++i)
             energy += re[i] * re[i] + im[i] * im[i];

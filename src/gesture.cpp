@@ -113,6 +113,10 @@ void Gesture::frame(const Frame &f) {
                 // merely lost comes back as it was.
                 if (std::fabs(t.pressure - o.pressure) > 0.3f || std::fabs(t.size - o.size) > 0.4f * std::max(o.size, 0.3f))
                     continue;
+                // And only straight away: a frame lost is one frame (8 ms);
+                // anything longer is a finger that left and came back.
+                if (f.t - o.missingSince > 0.012)
+                    continue;
                 const float dx = (o.x - t.x) * m_aspect, dy = o.y - t.y;
                 const float d = std::sqrt(dx * dx + dy * dy);
                 if (d < best) {
@@ -421,6 +425,11 @@ void Gesture::finishSwipe(Contact &c, double now) {
     }
     notice(text);
     ++m_swipes;
+    // The fingers struck as they landed; a gesture shouldn't leave notes.
+    Command h;
+    h.type = Cmd::Hush;
+    h.f[0] = 0.7f;
+    send(h);
 }
 
 int Gesture::voiceDegree(const Contact &c) const {

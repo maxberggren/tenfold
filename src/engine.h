@@ -60,6 +60,7 @@ enum class Cmd : uint8_t {
     DissolveAll, // fade everything that is left sounding
     Damper,      // f0 0..1, a palm on the pad
     SetTuning,   // i1 root, i2 family, i3 brightness, f0 just
+    Hush,        // f0 seconds: fade out strikes younger than that (a swipe's own notes)
 };
 
 struct Command {

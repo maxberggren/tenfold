@@ -82,7 +82,7 @@ struct Loop {
 struct Pending {
     double at; // absolute sample
     int degree;
-    float material, vel, x, gain;
+    float material, vel, x, gain, wet;
 };
 
 struct Engine::Impl {
@@ -121,7 +121,11 @@ struct Engine::Impl {
     Rng rng{0x5EED};
     int strikesFired = 0;
 
-    float bufDroneL[64], bufDroneR[64], bufHitL[64], bufHitR[64];
+    float bufDroneL[64], bufDroneR[64], bufHitL[64], bufHitR[64], bufSendL[64], bufSendR[64];
+    // Low end: summed to mono under 120 Hz and held in check by a
+    // compressor on the band below 150 Hz.
+    Svf sideLp, lowBand;
+    float lowEnv = 0;
 
 
     float cpu = 0, cpuPeak = 0;
@@ -153,6 +157,8 @@ Engine::Engine(float sampleRate) : m_rate(sampleRate), d(std::make_unique<Impl>(
     d->echo.init(sampleRate);
     d->swarm.init(sampleRate);
     d->limiter.init(sampleRate);
+    d->sideLp.set(120.0f, 0.7f, sampleRate);
+    d->lowBand.set(150.0f, 0.7f, sampleRate);
     d->mudL.set(300.0f, 0.8f, sampleRate);
     d->mudR.set(300.0f, 0.8f, sampleRate);
     d->airL.set(6500.0f, 0.7f, sampleRate);
@@ -541,6 +547,11 @@ void Engine::apply(const Command &c) {
     case Cmd::Damper:
         s.damperTarget = clampf(c.f[0], 0, 1);
         break;
+    case Cmd::Hush:
+        for (auto &v : s.strikes)
+            if (v.active && float(v.age) < c.f[0] * s.rate)
+                v.fadeStep = 1.0f / (0.03f * s.rate);
+        break;
     case Cmd::SetTuning:
         s.tuning.set(c.i1, c.i2, c.i3, c.f[0] > 0.5f);
         break;
@@ -599,6 +610,9 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
     std::memset(dr, 0, sizeof(float) * n);
     std::memset(hl, 0, sizeof(float) * n);
     std::memset(hr, 0, sizeof(float) * n);
+    float *sl = s.bufSendL, *sr = s.bufSendR;
+    std::memset(sl, 0, sizeof(float) * n);
+    std::memset(sr, 0, sizeof(float) * n);
 
     // Loop lanes: replay what held fingers did while the loop was held.
     {
@@ -702,8 +716,11 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
             const double smear = double(erosion * erosion) * 0.012 * s.rate * rng.bipolar();
             const double when = std::max(blockStart, at + smear);
             const float gain = 0.5f * lp.level * lp.fade;
+            // A loop's height is how wet it is: a kick left low stays dry, a
+            // bell pattern left high drowns in the room.
+            const float wet = 0.15f + 1.7f * std::pow(clampf(lp.homeY, 0, 1), 1.3f);
             if (s.pendingCount < kPending)
-                s.pending[s.pendingCount++] = {when, deg, mat, vel, h.x, gain};
+                s.pending[s.pendingCount++] = {when, deg, mat, vel, h.x, gain, wet};
             // Twisting right rolls each hit into ratchets and, further, adds
             // ghost notes between them; pressing hard doubles the rolls.
             int rolls = 0;
@@ -713,10 +730,10 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
                 rolls = rolls * 2 + 1;
             const double step = s.bar / (lp.intensity > 1.3f ? 32.0 : 16.0);
             for (int k = 1; k <= rolls && s.pendingCount < kPending; ++k)
-                s.pending[s.pendingCount++] = {when + step * k, deg, mat, vel * std::pow(0.72f, float(k)), h.x, gain};
+                s.pending[s.pendingCount++] = {when + step * k, deg, mat, vel * std::pow(0.72f, float(k)), h.x, gain, wet};
             if (lp.density > 0.5f && rng.unit() < (lp.density - 0.5f) * 1.2f && s.pendingCount < kPending) {
                 const int hop = int(rng.next() % 3u) - 1;
-                s.pending[s.pendingCount++] = {when + step * (1 + int(rng.next() % 3u)), deg + hop, mat, vel * 0.35f, h.x, gain};
+                s.pending[s.pendingCount++] = {when + step * (1 + int(rng.next() % 3u)), deg + hop, mat, vel * 0.35f, h.x, gain, wet};
             }
             lp.flash = 1.0f;
         };
@@ -771,6 +788,7 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
             const double midi = s.tuning.baseMidi() + s.tuning.degreeSemis(p.degree);
             slot.start(float(midi), p.material, p.vel, clampf((p.x - 0.5f) * 1.3f, -0.8f, 0.8f), p.gain,
                        int(std::max(0.0, p.at - blockStart)), s.rate);
+            slot.wet = p.wet;
             sympathetic(s, slot, p.vel * p.gain * 2.0f);
             ++s.strikesFired;
             p = s.pending[--s.pendingCount];
@@ -781,10 +799,10 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
 
     for (auto &v : s.strikes)
         if (v.active)
-            v.render(hl, hr, n);
+            v.render(hl, hr, n, sl, sr);
     for (auto &v : s.ghosts)
         if (v.active)
-            v.render(hl, hr, n);
+            v.render(hl, hr, n, sl, sr);
 
     // Pulse: a tempo-locked swell and duck on the drones only, so taps and
     // loops cut through it.
@@ -834,8 +852,12 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
             R = lerpf(R, gr, gritMix);
         }
 
+        // What goes to the echo and the room: everything as it is, except
+        // that loop hits go at their own loop's wetness.
+        const float sendL = L + (sl[i] - hl[i]), sendR = R + (sr[i] - hr[i]);
+
         float eL, eR;
-        s.echo.process(L, R, eL, eR);
+        s.echo.process(sendL, sendR, eL, eR);
         L += eL;
         R += eR;
 
@@ -846,9 +868,26 @@ void Engine::renderBlock(float *outL, float *outR, int n) {
         R += gR * swarmLevel;
 
         float rL, rR;
-        s.reverb.process(L * send + gL * 0.6f, R * send + gR * 0.6f, rL, rR);
+        s.reverb.process((sendL + eL) * send + gL * 0.6f, (sendR + eR) * send + gR * 0.6f, rL, rR);
         L += rL * wet;
         R += rR * wet;
+
+        // Low end: one bass in the middle, not two drifting apart, and a
+        // compressor on everything under 150 Hz so a dense landscape stays
+        // clear instead of filling up from the floor.
+        {
+            const float mid = 0.5f * (L + R);
+            float side = 0.5f * (L - R);
+            side -= s.sideLp.step(side).low;
+            const float low = s.lowBand.step(mid).low;
+            const float a = std::fabs(low);
+            s.lowEnv += (a - s.lowEnv) * (a > s.lowEnv ? 0.004f : 0.0001f);
+            constexpr float threshold = 0.1f; // about −20 dBFS
+            const float g = s.lowEnv > threshold ? std::pow(threshold / s.lowEnv, 0.66f) : 1.0f;
+            const float m2 = mid - (1.0f - g) * low;
+            L = m2 + side;
+            R = m2 - side;
+        }
 
         if (s.damper > 0.002f) {
             L = s.damperL.step(L).low * damperGain;

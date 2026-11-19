@@ -31,7 +31,7 @@ static void usage(FILE *out) {
                "  tenfold demo <out.wav> [--json]         render the built-in demo\n"
                "  tenfold demo-script                     print the demo's script\n"
                "  tenfold bench [--json]                  time the worst case\n"
-               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH]\n"
+               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--help-page]\n"
                "                                          draw the window mid-performance\n",
                out);
 }
@@ -102,6 +102,8 @@ static int screenshot(int argc, char **argv) {
     if (const char *size = option(argc, argv, "--size"))
         std::sscanf(size, "%dx%d", &w, &h);
     window->resize(w, h);
+    if (hasFlag(argc, argv, "--help-page"))
+        window->setProperty("helpVisible", true);
     for (int i = 0; i < 20; ++i) {
         QCoreApplication::processEvents();
         QThread::msleep(10);

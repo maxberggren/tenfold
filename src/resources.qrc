@@ -2,6 +2,9 @@
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
         <file alias="GestureGuide.qml">GestureGuide.qml</file>
+        <file alias="PanelBox.qml">PanelBox.qml</file>
+        <file alias="PanelButton.qml">PanelButton.qml</file>
+        <file alias="StatusLamp.qml">StatusLamp.qml</file>
         <file alias="i18n/en.json">i18n/en.json</file>
     </qresource>
 </RCC>

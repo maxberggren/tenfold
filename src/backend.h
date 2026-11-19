@@ -39,6 +39,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString lastRecording READ lastRecording NOTIFY changed)
     Q_PROPERTY(double level READ level NOTIFY changed)
     Q_PROPERTY(int octave READ octave NOTIFY changed)
+    Q_PROPERTY(double damper READ damper NOTIFY changed)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
 
 public:
@@ -69,6 +70,7 @@ public:
     QString lastRecording() const { return m_lastRecording; }
     double level() const { return m_engine->view().rms; }
     int octave() const { return m_gv.octave; }
+    double damper() const { return m_gv.damper; }
     QString notice() const { return QString::fromUtf8(m_gv.notice); }
 
     tf::Engine *engine() const { return m_engine.get(); }

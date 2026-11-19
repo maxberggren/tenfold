@@ -37,6 +37,19 @@ void fft(std::vector<std::complex<float>> &a, const std::vector<std::complex<flo
     }
 }
 
+// The console's lettering: a condensed monospace in capitals.
+QFont consoleFont(int px, bool bold = false) {
+    QFont f("Noto Sans Mono");
+    f.setPixelSize(std::max(9, px));
+    f.setStretch(QFont::SemiCondensed);
+    f.setCapitalization(QFont::AllUppercase);
+    f.setLetterSpacing(QFont::AbsoluteSpacing, 0.6);
+    f.setWeight(bold ? QFont::Bold : QFont::DemiBold);
+    return f;
+}
+
+constexpr QRgb kInk = 0xff0a0806; // text on a lit (inverse) field
+
 QColor withAlpha(QColor c, float a) {
     c.setAlphaF(std::clamp(a, 0.0f, 1.0f));
     return c;
@@ -77,16 +90,18 @@ void Surface::setAccent(const QColor &c) {
 }
 
 QColor Surface::roleColor(int role, const QColor &accent) {
-    static const char *colors[RoleCount] = {nullptr,   "#9D7CFF", "#6EE7F9", "#60A5FA", "#F472B6",
-                                            "#34D399", "#FB923C", "#E879F9", "#A3E635", "#F87171"};
+    // A phosphor each: amber, violet, cyan, blue, pink, green, orange,
+    // magenta, lime, red.
+    static const char *colors[RoleCount] = {nullptr,   "#A98BFF", "#2EE6FF", "#4DA3FF", "#FF6FA8",
+                                            "#39FF88", "#FF8A1F", "#FF4FD8", "#B6FF3B", "#FF4136"};
     if (role <= 0 || role >= RoleCount)
         return accent;
     return QColor(colors[role]);
 }
 
 QColor Surface::materialColor(float m) {
-    static const QColor c[5] = {QColor("#F59E0B"), QColor("#FB7185"), QColor("#C08457"), QColor("#7DD3FC"),
-                                QColor("#E5E7EB")};
+    static const QColor c[5] = {QColor("#FF8A1F"), QColor("#FF6FA8"), QColor("#E0A060"), QColor("#2EE6FF"),
+                                QColor("#E8F0FF")};
     const float mc = std::clamp(m, 0.0f, 4.0f);
     const int i = std::min(3, int(mc));
     const float t = mc - float(i);
@@ -164,7 +179,7 @@ void Surface::updateSpectrum() {
 
 QRectF Surface::padRect() const {
     const float aspect = m_backend ? std::clamp(m_backend->padAspect(), 1.0f, 2.4f) : 1.6f;
-    const qreal margin = 18, side = 40, bottom = 92;
+    const qreal margin = 14, side = 30, bottom = 98;
     const qreal availW = width() - 2 * side, availH = height() - margin - bottom;
     qreal w = availW, h = w / aspect;
     if (h > availH) {
@@ -190,10 +205,10 @@ void Surface::paint(QPainter *p) {
     const int cells = 3 * tuning.degreesPerOctave() + 1;
 
     // The pad itself.
-    const qreal radius = std::min<qreal>(18, pad.height() * 0.04);
+    const qreal radius = 0;
     QPainterPath padPath;
-    padPath.addRoundedRect(pad, radius, radius);
-    p->fillPath(padPath, QColor(255, 255, 255, 8));
+    padPath.addRect(pad);
+    p->fillPath(padPath, QColor(0, 0, 0));
     p->save();
     p->setClipPath(padPath);
 
@@ -202,7 +217,7 @@ void Surface::paint(QPainter *p) {
         if (c % tuning.degreesPerOctave() != 0)
             continue;
         const QRectF col(pad.left() + c * pad.width() / cells, pad.top(), pad.width() / cells, pad.height());
-        p->fillRect(col, withAlpha(m_accent, 0.05f));
+        p->fillRect(col, withAlpha(m_accent, 0.07f));
     }
 
     // The landscape: past spectra rising from the bottom, newest in front.
@@ -224,24 +239,22 @@ void Surface::paint(QPainter *p) {
         path.lineTo(pad.right(), base);
         path.closeSubpath();
         const float age = float(k) / kHistory;
-        QLinearGradient fill(0, base - amp, 0, base);
-        fill.setColorAt(0, withAlpha(m_accent, 0.10f * (1 - age)));
-        fill.setColorAt(1, QColor(11, 11, 14, int(235 * (1 - age * 0.7f))));
-        p->fillPath(path, fill);
+        // Green phosphor ridges, each hiding the ones behind it.
+        const QColor phosphor("#39FF88");
+        p->fillPath(path, QColor(0, 0, 0, int(235 * (1 - age * 0.6f))));
         const float fade = (1.0f - age) * (1.0f - age) * (1.0f - age);
         if (fade > 0.03f) {
-            p->setPen(QPen(withAlpha(m_accent, 0.65f * fade), k == 0 ? 1.8 : 1.0));
+            p->setPen(QPen(withAlpha(phosphor, 0.85f * fade), k == 0 ? 2.0 : 1.1));
             p->drawPath(path);
         }
     }
 
     // Note grid and names.
-    QFont small = p->font();
-    small.setPixelSize(std::max(9, int(unit * 0.22)));
+    QFont small = consoleFont(int(unit * 0.22));
     p->setFont(small);
     for (int c = 0; c <= cells; ++c) {
         const qreal x = pad.left() + c * pad.width() / cells;
-        p->setPen(QPen(QColor(255, 255, 255, 18), 1));
+        p->setPen(QPen(withAlpha(m_accent, 0.16f), 1, Qt::DotLine));
         p->drawLine(QPointF(x, pad.top()), QPointF(x, pad.bottom()));
     }
     for (int c = 0; c < cells; ++c) {
@@ -260,7 +273,7 @@ void Surface::paint(QPainter *p) {
     for (int m = 0; m < 5; ++m) {
         const qreal y = pad.bottom() - (m + 0.5) * pad.height() / 5;
         if (m > 0) {
-            p->setPen(QPen(QColor(255, 255, 255, 12), 1, Qt::DashLine));
+            p->setPen(QPen(withAlpha(m_accent, 0.12f), 1, Qt::DashLine));
             const qreal ly = pad.bottom() - m * pad.height() / 5;
             p->drawLine(QPointF(pad.left(), ly), QPointF(pad.right(), ly));
         }
@@ -268,7 +281,7 @@ void Surface::paint(QPainter *p) {
         p->setClipping(false);
         p->translate(pad.left() - 16, y);
         p->rotate(-90);
-        p->setPen(withAlpha(materialColor(m + 0.15f), 0.55f));
+        p->setPen(withAlpha(materialColor(float(m)), 0.9f));
         p->drawText(QRectF(-unit, -unit * 0.2, 2 * unit, unit * 0.4), Qt::AlignCenter,
                     QCoreApplication::translate("Surface", materials[m]));
         p->restore();
@@ -468,9 +481,7 @@ void Surface::paint(QPainter *p) {
 
     // Fingers.
     std::vector<QRectF> placedLabels;
-    QFont label = p->font();
-    label.setPixelSize(std::max(10, int(unit * 0.26)));
-    label.setBold(true);
+    QFont label = consoleFont(int(unit * 0.26), true);
     for (int i = 0; i < gv.count; ++i) {
         const ContactView &c = gv.contacts[i];
         const QPointF pos = at(c.x, c.y);
@@ -568,7 +579,7 @@ void Surface::paint(QPainter *p) {
             // Above the finger, unless another finger's label is already
             // there; then below it.
             const QString text = QString("%1  %2").arg(c.role + 1).arg(m_backend->roleName(c.role));
-            const qreal tw = QFontMetricsF(label).horizontalAdvance(text) + 8;
+            const qreal tw = QFontMetricsF(label).horizontalAdvance(text) + 10;
             QRectF box(lx - tw / 2, pos.y() - kr - unit * 0.55, tw, unit * 0.4);
             for (const QRectF &o : placedLabels)
                 if (o.intersects(box)) {
@@ -576,6 +587,11 @@ void Surface::paint(QPainter *p) {
                     break;
                 }
             placedLabels.push_back(box);
+            // An inverse-video tag, like a lit console legend.
+            p->setPen(Qt::NoPen);
+            p->setBrush(col);
+            p->drawRect(box.adjusted(-3, -1, 3, 1));
+            p->setPen(QColor::fromRgb(kInk));
             p->drawText(box, Qt::AlignCenter, text);
             int voicesHeld = 0;
             for (int j = 0; j < gv.count; ++j)
@@ -611,45 +627,67 @@ void Surface::paint(QPainter *p) {
     }
     p->restore();
 
-    // Pad edge, lit by the damper's opposite: the more open, the brighter.
+    // The pad's frame, dimmed by the damper, with its legend cut into the
+    // top edge.
     p->setBrush(Qt::NoBrush);
-    p->setPen(QPen(withAlpha(m_accent, 0.25f + 0.35f * (1.0f - ev.damper)), 1.2));
+    p->setPen(QPen(withAlpha(m_accent, 0.55f + 0.45f * (1.0f - ev.damper)), 2.0));
     p->drawPath(padPath);
+    {
+        const QFont legendFont = consoleFont(13, true);
+        p->setFont(legendFont);
+        const QString legend = tr("Trackpad · %1 notes · 5 materials").arg(cells);
+        const qreal lw = QFontMetricsF(legendFont).horizontalAdvance(legend) + 16;
+        const QRectF lr(pad.left() + 16, pad.top() - 9, lw, 18);
+        p->fillRect(lr, QColor(0, 0, 0));
+        p->setPen(m_accent);
+        p->drawText(lr, Qt::AlignCenter, legend);
+    }
 
-    // The ten knobs, always in view, so a player learns them by looking down.
-    const qreal stripTop = pad.bottom() + 16;
-    const qreal cellW = std::min<qreal>(pad.width() / int(RoleCount), 150);
-    const qreal stripLeft = width() / 2 - cellW * int(RoleCount) / 2;
+    // The ten knobs, always in view, so a player learns them by looking down:
+    // a console button each, lit while a finger holds it, with a segmented
+    // gauge for the slide and one for the twist.
+    const qreal stripTop = pad.bottom() + 14;
+    const qreal cellW = pad.width() / int(RoleCount);
+    const qreal stripLeft = pad.left();
     bool held[RoleCount] = {};
     for (int i = 0; i < gv.count; ++i)
-        if (gv.contacts[i].state == TouchState::Voice && gv.contacts[i].role >= 0)
+        if ((gv.contacts[i].state == TouchState::Voice || gv.contacts[i].state == TouchState::Spent) &&
+            gv.contacts[i].role >= 0)
             held[gv.contacts[i].role] = true;
-    QFont knobFont = p->font();
-    knobFont.setPixelSize(11);
+    const QFont head = consoleFont(int(std::clamp(cellW / 9.5, 9.0, 13.0)), true),
+                body = consoleFont(int(std::clamp(cellW / 12.0, 8.0, 10.0)));
+    constexpr int kSegments = 10;
     for (int r = 0; r < RoleCount; ++r) {
-        const QRectF cell(stripLeft + r * cellW + 4, stripTop, cellW - 8, 64);
+        const QRectF cell(stripLeft + r * cellW + 3, stripTop, cellW - 6, 78);
         const QColor col = roleColor(r, m_accent);
-        p->setPen(Qt::NoPen);
-        p->setBrush(held[r] ? withAlpha(col, 0.16f) : QColor(255, 255, 255, 6));
-        p->drawRoundedRect(cell, std::min<qreal>(6, radius), std::min<qreal>(6, radius));
-        knobFont.setBold(true);
-        p->setFont(knobFont);
-        p->setPen(held[r] ? col : withAlpha(col, 0.7f));
-        p->drawText(cell.adjusted(8, 6, -8, 0), Qt::AlignLeft | Qt::AlignTop,
-                    QString("%1 %2").arg(r + 1).arg(m_backend->roleName(r)));
-        knobFont.setBold(false);
-        p->setFont(knobFont);
+        const QRectF header(cell.left(), cell.top(), cell.width(), 22);
+        p->setPen(QPen(col, 2));
+        p->setBrush(Qt::NoBrush);
+        p->drawRect(cell);
+        if (held[r])
+            p->fillRect(header, col);
+        p->setFont(head);
+        p->setPen(held[r] ? QColor::fromRgb(kInk) : col);
+        const QRectF headerText = header.adjusted(6, 0, -4, 0);
+        p->drawText(headerText, Qt::AlignLeft | Qt::AlignVCenter,
+                    QFontMetricsF(head).elidedText(QString("%1 %2").arg(r + 1).arg(m_backend->roleName(r)),
+                                                   Qt::ElideRight, headerText.width()));
+        p->setFont(body);
         for (int axis = 0; axis < 2; ++axis) {
-            const qreal y = cell.top() + 28 + axis * 17;
-            const QRectF track(cell.left() + 8, y + 10, cell.width() - 16, 3);
-            p->setPen(QColor(255, 255, 255, 110));
-            p->drawText(QRectF(cell.left() + 8, y - 4, cell.width() - 16, 14), Qt::AlignLeft | Qt::AlignVCenter,
-                        axis == 0 ? m_backend->roleSlide(r) : m_backend->roleTwist(r));
-            p->setPen(Qt::NoPen);
-            p->setBrush(QColor(255, 255, 255, 22));
-            p->drawRoundedRect(track, 1.5, 1.5);
-            p->setBrush(withAlpha(col, axis == 0 ? 0.95f : 0.6f));
-            p->drawRoundedRect(QRectF(track.left(), track.top(), track.width() * gv.knobs[r][axis], 3), 1.5, 1.5);
+            const qreal y = header.bottom() + 6 + axis * 25;
+            p->setPen(withAlpha(col, 0.85f));
+            p->drawText(QRectF(cell.left() + 7, y, cell.width() - 14, 11), Qt::AlignLeft | Qt::AlignVCenter,
+                        QFontMetricsF(body).elidedText(axis == 0 ? m_backend->roleSlide(r) : m_backend->roleTwist(r),
+                                                       Qt::ElideRight, cell.width() - 14));
+            const qreal segW = (cell.width() - 14) / kSegments;
+            const int lit = int(std::lround(gv.knobs[r][axis] * kSegments));
+            for (int k = 0; k < kSegments; ++k) {
+                const QRectF seg(cell.left() + 7 + k * segW, y + 13, segW - 2, 7);
+                if (k < lit)
+                    p->fillRect(seg, axis == 0 ? col : withAlpha(col, 0.65f));
+                else
+                    p->fillRect(seg, withAlpha(col, 0.13f));
+            }
         }
     }
 }

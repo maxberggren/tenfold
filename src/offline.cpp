@@ -33,7 +33,7 @@ struct Event {
     std::string key;
 };
 
-struct Glide {
+struct GlideMove {
     double t1, t2;
     int id;
     Finger from, to;
@@ -148,7 +148,7 @@ struct ScriptPlayer::Impl {
     std::vector<Event> events;
     double end = 0;
     std::map<int, Finger> fingers;
-    std::vector<Glide> glides;
+    std::vector<GlideMove> glides;
     size_t next = 0;
     int clickFrames = 0;
 };

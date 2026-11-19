@@ -19,6 +19,7 @@ HEADERS += \
     src/device.h \
     src/dsp.h \
     src/engine.h \
+    src/electro.h \
     src/enginesink.h \
     src/fx.h \
     src/gesture.h \

@@ -1,106 +1,97 @@
 #!/usr/bin/env python3
-"""Writes docs/demo.tf and src/demo.cpp: the built-in demo performance.
+"""Writes docs/demo.tf and src/demo.cpp: the built-in demo, an electronic
+track built live on the pad in A minor at 124 BPM.
 
-Positions are given in scale degrees of the default layout (D minor
-pentatonic, three octaves, sixteen cells across the pad) and material rows.
+Rows bottom to top: drums, bass, chords, lead, arp. Above the drum row each
+column is a degree of A natural minor (22 columns, three octaves); the drum
+row is six pieces: kick, snare, clap, hat, open hat, perc.
 """
 import pathlib
 
-CELLS = 16
-def X(deg):
-    return round((deg + 0.5) / CELLS, 4)
+CELLS = 22
+B = 60 / 124            # a beat
+S = B / 4               # a sixteenth
+def X(deg): return round((deg + 0.5) / CELLS, 4)
+def ROW(r): return round((r + 0.5) / 5, 3)
+KICK, SNARE, CLAP, HAT, OPEN, PERC = [round((k + 0.5) / 6, 4) for k in range(6)]
+DR, BASS, CHORD, LEAD, ARP = [ROW(r) for r in range(5)]
 
-SKIN, SNARE, WOOD, GLASS, AIR = 0.05, 0.25, 0.5, 0.74, 0.95
 out = []
 def say(s): out.append(s)
+fid = [100]
+def hold(t0, t1, x, y, p=0.7, extra=""):
+    fid[0] += 1
+    say(f"down {t0:.3f} {fid[0]} {x} {y} p={p} {extra}".rstrip())
+    say(f"up {t1:.3f} {fid[0]}")
+    return fid[0]
+def tap(t, x, y, p=0.8, length=0.06):
+    say(f"tap {t:.3f} {x} {y} p={p} len={length:.3f}")
 
-say("# tenfold demo: a landscape built from nothing, then cleared with a palm.")
-say("# 1. One finger blooms into a low drone; sliding it up brightens the tone.")
-say(f"down 0.5 1 {X(0)} 0.25 p=0.45")
-say(f"glide 1.0 6.0 1 {X(0)} 0.6 p=0.7")
-say("# 2. A second finger takes Shadow: width and a sub-octave.")
-say(f"down 3.0 2 {X(3)} 0.3 p=0.5")
-say(f"glide 3.5 7.0 2 {X(3)} 0.55 p=0.6 twist=30")
-say("# 3. A third takes Air: slide up and it sings, twist and the vowel turns.")
-say(f"down 5.5 3 {X(9)} 0.3 p=0.5")
-say(f"glide 6.0 9.0 3 {X(9)} 0.6 p=0.6 twist=-40")
-say(f"glide 9.0 12.0 3 {X(9)} 0.6 twist=40")
-say("# 4. A fourth opens the Space: a bigger room with an octave shimmer.")
-say(f"down 7.0 4 {X(7)} 0.2 p=0.4")
-say(f"glide 7.5 10.5 4 {X(7)} 0.52 twist=35")
-say("# Press the pad: the chord freezes into the landscape, the fingers are free.")
-say("click 12.5")
-for i in (1, 2, 3, 4):
-    say(f"up 13.0 {i}")
+say("# tenfold demo: a track built live, A minor, 124 BPM.")
+t = 1.0
+say("# 1. Four on the floor with offbeat hats and a clap on two and four;")
+say("#    land on the next one and hold: the loop forms and sets the tempo.")
+for beat in range(4):
+    tap(t + beat * B, KICK, DR, 0.95)
+    tap(t + beat * B + 2 * S, HAT, DR, 0.6)
+    if beat in (1, 3):
+        tap(t + beat * B, CLAP, DR, 0.8)
+loop_one = t + 4 * B
+say(f"down {loop_one:.3f} 10 {KICK} {DR} p=0.8")
+say(f"up {loop_one + 0.4:.3f} 10")
 
-say("# 5. Kick and snare, then land on the next one and stay: a loop (and the tempo).")
-for t, d, y, p in [(14.0, 0, SKIN, 0.95), (14.6, 5, SNARE, 0.8), (15.05, 0, SKIN, 0.7), (15.2, 0, SKIN, 0.9), (15.8, 5, SNARE, 0.85), (16.1, 5, SNARE, 0.35)]:
-    say(f"tap {t} {X(d)} {y} p={p}")
-say(f"down 16.4 10 {X(0)} {SKIN} p=0.8")
-say("up 17.4 10")
+t = loop_one + 4 * B
+say("# 2. A bass line, eighths and a pickup, looped the same way.")
+line = [(0, 0, 0.8), (2, 0, 0.6), (3, 7, 0.7), (4, 0, 0.8), (6, 2, 0.7), (7, 4, 0.6),
+        (8, 0, 0.8), (10, 0, 0.6), (11, 7, 0.7), (12, 5, 0.8), (14, 4, 0.7), (15, 2, 0.6)]
+for step, deg, p in line:
+    tap(t + step * S * 2 / 2 * 2 / 2, X(deg), BASS, p, 0.18) if False else tap(t + step * S, X(deg), BASS, p, S * 1.6)
+close = t + 16 * S
+say(f"down {close:.3f} 11 {X(0)} {BASS} p=0.8")
+say(f"up {close + 0.4:.3f} 11")
 
-say("# 6. A wooden melody, then hold on the one: the loop forms under the finger.")
-mel = [5, 7, 8, 10, 8, 7, 5, 3]
-for k, d in enumerate(mel):
-    say(f"tap {19.6 + 0.3 * k:.2f} {X(d)} {WOOD} p={0.55 + 0.1 * (k % 2)}")
-say(f"down 22.0 11 {X(5)} {WOOD} p=0.7")
-say("# Still holding: twist to roll it into ratchets, slide right two notes and up towards glass.")
-say(f"glide 22.4 24.5 11 {X(7)} 0.62 twist=35 p=0.8")
-say("# And a second finger, held while the loop is held, sings a line into it.")
-say(f"down 23.0 13 {X(8)} 0.45 p=0.5")
-say(f"glide 23.4 24.4 13 {X(10)} 0.5 p=0.8")
-say(f"glide 24.4 25.3 13 {X(7)} 0.42 p=0.4")
-say("up 25.4 13")
-say("up 26.0 11")
+t = close + 4 * B
+say("# 3. A pad: one finger on the chord row plays a voiced seventh; sliding it")
+say("#    walks the progression Am7 → Fmaj7 → Cmaj7 → G7, two bars each.")
+pad = 20
+say(f"down {t:.3f} {pad} {X(7)} {CHORD} p=0.55")
+for i, deg in enumerate([5, 9, 6]):
+    say(f"move {t + (i + 1) * 8 * B:.3f} {pad} {X(deg)} {CHORD} p=0.55")
+pad_end = t + 32 * B
 
-say("# 7. Sparse glass bells, a third loop.")
-for t, d in [(28.4, 10), (29.0, 12), (29.9, 11), (30.35, 13)]:
-    say(f"tap {t} {X(d)} {GLASS} p=0.6")
-say(f"down 30.8 12 {X(10)} {GLASS} p=0.5")
-say("up 31.6 12")
+say("# 4. Over it, a lead melody tapped on the lead row.")
+mel = [(0, 7, 2), (2, 9, 2), (4, 10, 4), (8, 9, 2), (10, 7, 2), (12, 11, 4),
+       (16, 12, 2), (18, 11, 2), (20, 9, 4), (24, 7, 2), (26, 9, 2), (28, 7, 4)]
+m0 = t + 8 * B
+for rep in range(2):
+    for step, deg, length in mel:
+        tap(m0 + rep * 16 * B + step * B / 2, X(deg), LEAD, 0.75, length * B / 2 * 0.9)
 
-say("# 8. A new chord of six: the fifth finger is Pulse, the sixth Echo.")
-for k, (d, y) in enumerate([(2, 0.4), (5, 0.4), (8, 0.4), (10, 0.4), (13, 0.3), (14, 0.3)]):
-    say(f"down {33.0 + 0.25 * k:.2f} {20 + k} {X(d)} {y} p=0.45")
-say(f"glide 34.5 37.0 24 {X(13)} 0.7 twist=12")
-say(f"glide 35.5 38.5 25 {X(14)} 0.62 twist=-8")
-say("# Slide the Tone finger slowly between notes: gravity pulls it into tune.")
-say(f"glide 37.0 40.0 20 {X(4)} 0.4")
-for k in range(6):
-    say(f"up {41.0 + 0.2 * k:.1f} {20 + k}")
+say("# 5. An arpeggio: hold the arp row and it runs the chord in sixteenths.")
+arp_t = t + 16 * B
+say(f"down {arp_t:.3f} 30 {X(7)} {ARP} p=0.6")
+for i, deg in enumerate([9, 6]):
+    say(f"move {arp_t + (i + 1) * 8 * B:.3f} 30 {X(deg)} {ARP} p=0.6")
+say(f"up {pad_end:.3f} 30")
+say(f"up {pad_end:.3f} {pad}")
 
-say("# 9. Tap once and hold on the first frozen chord: slide it up two notes and press to swell it.")
-say(f"tap 41.8 0.33 0.57 p=0.3")
-say(f"down 42.0 40 0.33 0.57 p=0.3")
-say(f"glide 42.3 43.3 40 {0.33 + 2/16:.3f} 0.62 p=0.9")
-say("up 44.0 40")
-say("# 10. Three fingers swipe right: the key moves a fifth. Every loop and frozen chord follows.")
-for k, x in enumerate((0.3, 0.4, 0.5)):
-    say(f"down 44.3 {50 + k} {x} 0.45 p=0.4")
-    say(f"glide 44.36 44.56 {50 + k} {x + 0.2} 0.45")
-    say(f"up 44.6 {50 + k}")
-
-say("# 11. All ten fingers. 7 Grit, 8 Drift stretches the partials into bells,")
-say("#     9 sprays a grain cloud, 10 twists the mode from dark to bright.")
-degs = [0, 3, 5, 7, 8, 10, 11, 12, 14, 15]
-for k, d in enumerate(degs):
-    say(f"down {45.5 + 0.18 * k:.2f} {30 + k} {X(d)} 0.32 p=0.5")
-say(f"glide 47.5 50.5 36 {X(11)} 0.42 twist=20")
-say(f"glide 47.5 51.0 37 {X(12)} 0.68 twist=30")
-say(f"glide 48.0 52.0 38 {X(14)} 0.72 twist=45")
-say(f"glide 49.0 53.0 39 {X(15)} 0.32 twist=-35")
-say("click 54.0")
-for k in range(10):
-    say(f"up 54.4 {30 + k}")
-
-say("# 12. A palm resting on the pad damps everything like a hand on strings.")
-say("down 56.5 90 0.5 0.15 p=0.6 size=3.0")
-say("up 59.0 90")
-say("# 13. Palm and press: the landscape dissolves into its own reverb.")
-say("down 60.0 91 0.5 0.15 p=0.6 size=3.2")
-say("click 60.4")
-say("up 61.0 91")
-say("end 68.0")
+t = pad_end
+say("# 6. The build: hold the snare and press harder, the roll doubles;")
+say("#    the pad's filter finger (the first held finger is Filter) closes then opens.")
+say(f"down {t:.3f} 40 {SNARE} {DR} p=0.35")
+say(f"glide {t + 0.1:.3f} {t + 4 * B:.3f} 40 {SNARE} {DR} p=0.95")
+say(f"up {t + 4 * B:.3f} 40")
+drop = t + 4 * B
+say("# 7. The drop: a big chord latched with a press, the loops carry on.")
+say(f"down {drop:.3f} 50 {X(7)} {CHORD} p=0.8")
+say(f"click {drop + 0.3:.3f}")
+say(f"up {drop + 0.5:.3f} 50")
+say(f"down {drop + 8 * B:.3f} 51 {X(5)} {LEAD} p=0.85")
+say(f"glide {drop + 8 * B + 0.1:.3f} {drop + 12 * B:.3f} 51 {X(7)} {LEAD} p=0.9")
+say(f"up {drop + 14 * B:.3f} 51")
+end = drop + 20 * B
+say(f"key {end:.3f} dissolve-all")
+say(f"end {end + 4:.3f}")
 
 root = pathlib.Path(__file__).resolve().parent.parent
 text = "\n".join(out) + "\n"
@@ -108,4 +99,4 @@ text = "\n".join(out) + "\n"
 (root / "src" / "demo.cpp").write_text(
     "// Generated by tools/make_demo.py from the same text as docs/demo.tf.\n"
     '#include "offline.h"\n\nnamespace tf {\n\nconst char *demoScript() {\n    return R"TF(' + text + ')TF";\n}\n\n}\n')
-print("wrote", len(out), "lines")
+print("wrote", len(out), "lines, ends at", round(end + 4, 1), "s")

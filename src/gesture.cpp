@@ -19,7 +19,7 @@ constexpr int kMaxLanes = 4;
 
 int defaultBrightness(int family) {
     switch (family) {
-    case 0: return 3; // Dorian
+    case 0: return 4; // Aeolian: natural minor
     case 1: return 3; // minor pentatonic
     case 2: return 2; // harmonic minor
     case 3: return 3; // In
@@ -41,7 +41,8 @@ Gesture::Gesture(CommandSink *sink) : m_sink(sink) {
     for (int r = 0; r < RoleCount; ++r)
         for (int a = 0; a < 2; ++a)
             m_knob[r][a] = roleDefault(r, a);
-    m_tuning.set(2, 1, defaultBrightness(1), true);
+    // A minor, equal temperament: the key most electronic music lives in.
+    m_tuning.set(9, 0, defaultBrightness(0), false);
     const int modes = family(m_tuning.familyIndex()).modeCount;
     m_knob[Gravity][1] = float(m_tuning.brightnessIndex()) / float(std::max(1, modes - 1));
     sendTuning();
@@ -247,8 +248,8 @@ void Gesture::land(Contact &c, const Touch &t, double now) {
     c.vy = std::sin(2 * t.angle);
     c.smoothAngle = c.refAngle = t.angle;
     c.frames = 1;
-    c.degree0 = strikeDegree(t.x);
-    c.material0 = std::clamp(t.y * 4.0f, 0.0f, 4.0f);
+    c.row = std::clamp(int(t.y * float(RowCount)), 0, RowCount - 1);
+    c.value = c.row == DrumRow ? drumPieceAt(t.x) : strikeDegree(t.x);
     c.slowDeg = degreeAt(t.x);
     c.state = TouchState::Landing;
 }
@@ -289,13 +290,8 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     // A palm can arrive slowly; catch it whenever it becomes one.
     c.bigFrames = t.size > kPalmSize ? c.bigFrames + 1 : 0;
     if (c.bigFrames >= 3 && (c.state == TouchState::Landing || c.state == TouchState::Voice)) {
-        if (c.state == TouchState::Voice) {
-            Command o;
-            o.type = Cmd::VoiceOff;
-            o.id = c.id;
-            send(o);
-            c.role = -1;
-        }
+        stopSound(c);
+        c.role = -1;
         c.state = TouchState::Palm;
         c.struck = true;
     }
@@ -320,19 +316,29 @@ void Gesture::move(Contact &c, const Touch &t, double now, double dt) {
     }
     if (c.state == TouchState::Spent && c.role >= 0)
         recordMotion(c, now, false);
-    if (c.state == TouchState::Voice) {
-        c.midi = voicePitch(c, float(dt));
-        Command v;
-        v.type = Cmd::VoiceMove;
-        v.id = c.id;
-        v.f[0] = c.midi;
-        v.f[1] = c.pressure;
-        v.f[2] = c.size;
-        v.f[3] = c.x;
-        v.f[4] = c.y;
-        v.f[5] = float(voiceDegree(c));
-        send(v);
-        recordMotion(c, now, true);
+    if (c.state == TouchState::Voice || (c.state == TouchState::Landing && c.sounding)) {
+        if (c.row == DrumRow) {
+            if (c.rolling) {
+                Command v;
+                v.type = Cmd::RollMove;
+                v.id = c.id;
+                v.f[0] = c.pressure;
+                send(v);
+            }
+        } else {
+            c.midi = voicePitch(c, float(dt));
+            Command v;
+            v.type = Cmd::NoteMove;
+            v.id = c.id;
+            v.i2 = voiceDegree(c);
+            v.f[0] = c.midi;
+            v.f[1] = c.pressure;
+            v.f[2] = c.x;
+            v.f[3] = c.y;
+            send(v);
+            if (c.state == TouchState::Voice)
+                recordMotion(c, now, true);
+        }
     } else if (c.state == TouchState::Handle) {
         Command m;
         m.type = Cmd::LoopMod;
@@ -385,7 +391,7 @@ void Gesture::recordMotion(Contact &c, double now, bool voice) {
     m.id = m_activeHandle;
     m.i1 = c.lane;
     m.i2 = c.role;
-    m.i3 = voice ? 1 : 0;
+    m.i3 = voice ? c.row : -1;
     m.t = now;
     m.f[0] = c.midi;
     m.f[1] = c.pressure;
@@ -455,25 +461,55 @@ float Gesture::voicePitch(Contact &c, double dt) {
                            (xd - c.slowDeg) * m_tuning.semisPerDegree(c.slowDeg + shift);
     const double cont = m_tuning.continuousSemis(xd + shift);
     const double w = m_knob[Gravity][0] * (1.0f - c.motion);
-    return float(m_tuning.baseMidi() + cont + (snapped - cont) * w);
+    return float(m_tuning.baseMidi() + rowOffset(c.row) + cont + (snapped - cont) * w);
 }
 
 void Gesture::strike(Contact &c) {
+    // The finger's sound starts the moment it lands: a drum hit on the drum
+    // row, a note on the others (a tap is just a short note).
     c.struck = true;
     if (c.state == TouchState::Palm)
         return;
-    c.vel = std::clamp(0.12f + 0.95f * c.peakPressure, 0.08f, 1.0f);
-    Command s;
-    s.type = Cmd::Strike;
-    s.i1 = c.degree0;
-    s.f[0] = c.material0;
-    s.f[1] = c.vel;
-    s.f[2] = c.x0;
-    s.f[3] = c.y0;
-    s.f[4] = c.peakSize; // a flat finger is a soft mallet
-    send(s);
-    m_strikes[m_strikeSeq % m_strikes.size()] = {c.x0, c.y0, c.vel, c.material0, c.t0};
+    c.vel = std::clamp(0.25f + 0.85f * c.peakPressure, 0.15f, 1.0f);
+    if (c.row == DrumRow) {
+        Command h;
+        h.type = Cmd::Hit;
+        h.i1 = c.value;
+        h.f[0] = c.vel;
+        h.f[1] = c.x0;
+        send(h);
+    } else {
+        Command n;
+        n.type = Cmd::NoteOn;
+        n.id = c.id;
+        n.i1 = c.row;
+        n.i2 = c.value;
+        n.f[0] = float(m_tuning.baseMidi() + rowOffset(c.row) + m_tuning.degreeSemis(c.value));
+        n.f[1] = c.vel;
+        n.f[2] = c.x0;
+        n.f[3] = c.y0;
+        send(n);
+        c.sounding = true;
+    }
+    m_strikes[m_strikeSeq % m_strikes.size()] = {c.x0, c.y0, c.vel, float(c.row), c.t0};
     ++m_strikeSeq;
+}
+
+void Gesture::stopSound(Contact &c) {
+    if (c.rolling) {
+        Command o;
+        o.type = Cmd::RollOff;
+        o.id = c.id;
+        send(o);
+        c.rolling = false;
+    }
+    if (c.sounding) {
+        Command o;
+        o.type = Cmd::NoteOff;
+        o.id = c.id;
+        send(o);
+        c.sounding = false;
+    }
 }
 
 void Gesture::hold(Contact &c, double now) {
@@ -512,6 +548,7 @@ void Gesture::hold(Contact &c, double now) {
         if (m_phrase.size() == 1 && gap > 0 && gap < 0.45 && nearLast < 0.08f) {
             const int id = m_sink->loopNear(c.x, c.y, 0.14f);
             if (id >= 0) {
+                stopSound(c);
                 c.state = TouchState::Handle;
                 c.loop = id;
                 c.refX = c.x;
@@ -529,9 +566,10 @@ void Gesture::hold(Contact &c, double now) {
             }
             const int group = m_sink->layerNear(c.x, c.y, 0.14f);
             if (group >= 0) {
+                stopSound(c);
                 LayerState *l = layerState(group);
                 if (!l) {
-                    m_layers.push_back({group, 0, m_knob[Tone][0], m_knob[Shadow][0]});
+                    m_layers.push_back({group, 0, m_knob[Filter][0], m_knob[Width][0]});
                     l = &m_layers.back();
                 }
                 c.state = TouchState::Layer;
@@ -595,16 +633,20 @@ void Gesture::hold(Contact &c, double now) {
                 h.type = Cmd::LoopHit;
                 h.id = id;
                 h.f[0] = float(t.t - first.t);
-                h.i1 = t.degree;
-                h.f[1] = t.material;
-                h.f[2] = t.vel;
-                h.f[3] = t.x;
+                h.i1 = t.row;
+                h.i2 = t.value;
+                h.f[1] = t.vel;
+                h.f[2] = t.x;
+                h.f[3] = t.length;
                 send(h);
             }
             Command r;
             r.type = Cmd::LoopReady;
             r.id = id;
             send(r);
+            // The finger that closed the phrase is the loop's handle now, not
+            // a note.
+            stopSound(c);
             c.state = TouchState::Handle;
             c.loop = id;
             c.refX = c.x;
@@ -621,8 +663,9 @@ void Gesture::hold(Contact &c, double now) {
 }
 
 void Gesture::becomeVoice(Contact &c) {
-    // A voice takes the lowest role no other finger on the pad holds,
-    // including fingers that froze a chord and stayed down.
+    // A held finger keeps its note sounding (or, on the drum row, rolls) and
+    // takes the lowest role no other finger on the pad holds, including
+    // fingers that latched a chord and stayed down.
     bool taken[RoleCount] = {};
     for (auto &o : m_contacts)
         if (o.live && (o.state == TouchState::Voice || o.state == TouchState::Spent) && o.role >= 0)
@@ -641,27 +684,27 @@ void Gesture::becomeVoice(Contact &c) {
         c.refKnob[0] = m_knob[role][0];
         c.refKnob[1] = m_knob[role][1];
     }
-    c.slowDeg = degreeAt(c.x);
-    c.midi = voicePitch(c, 0.008);
-    Command v;
-    v.type = Cmd::VoiceOn;
-    v.id = c.id;
-    v.i1 = std::max(0, role);
-    v.f[0] = c.midi;
-    v.f[1] = c.pressure;
-    v.f[2] = c.size;
-    v.f[3] = c.x;
-    v.f[4] = c.y;
-    v.f[5] = float(voiceDegree(c));
-    send(v);
+    if (!c.struck)
+        strike(c);
+    if (c.row == DrumRow) {
+        Command r;
+        r.type = Cmd::RollOn;
+        r.id = c.id;
+        r.i1 = c.value;
+        r.f[0] = c.pressure;
+        r.f[1] = c.x;
+        send(r);
+        c.rolling = true;
+    }
 }
 
 void Gesture::lift(Contact &c, double now) {
-    (void)now;
     switch (c.state) {
     case TouchState::Landing: {
         if (!c.struck)
             strike(c);
+        stopSound(c);
+        const float length = float(std::max(0.03, now - c.t0));
         bool handleHeld = false;
         for (auto &o : m_contacts)
             if (o.live && o.state == TouchState::Handle && o.loop == m_activeHandle)
@@ -671,25 +714,22 @@ void Gesture::lift(Contact &c, double now) {
             o.type = Cmd::Overdub;
             o.id = m_activeHandle;
             o.t = c.t0;
-            o.i1 = c.degree0;
-            o.f[0] = c.material0;
-            o.f[1] = c.vel;
-            o.f[2] = c.x0;
+            o.i1 = c.row;
+            o.i2 = c.value;
+            o.f[0] = c.vel;
+            o.f[1] = c.x0;
+            o.f[2] = length;
             send(o);
         } else {
-            m_phrase.push_back({c.t0, c.x0, c.y0, c.degree0, c.material0, c.vel});
+            m_phrase.push_back({c.t0, c.x0, c.y0, c.row, c.value, c.vel, length});
             while (m_phrase.size() > 64 || (m_phrase.size() > 1 && c.t0 - m_phrase.front().t > 8.0))
                 m_phrase.erase(m_phrase.begin());
         }
         break;
     }
-    case TouchState::Voice: {
-        Command o;
-        o.type = Cmd::VoiceOff;
-        o.id = c.id;
-        send(o);
+    case TouchState::Voice:
+        stopSound(c);
         break;
-    }
     case TouchState::Handle: {
         Command r;
         r.type = Cmd::LoopRelease;
@@ -764,14 +804,19 @@ void Gesture::click(double now) {
         f.type = Cmd::Freeze;
         f.id = group;
         send(f);
-        m_layers.push_back({group, 0, m_knob[Tone][0], m_knob[Shadow][0]});
+        m_layers.push_back({group, 0, m_knob[Filter][0], m_knob[Width][0]});
         if (m_layers.size() > 64)
             m_layers.erase(m_layers.begin());
         // The fingers go quiet but keep their roles (and keep turning their
         // knobs) until they lift.
         for (auto &c : m_contacts)
-            if (c.live && c.state == TouchState::Voice)
+            if (c.live && c.state == TouchState::Voice) {
+                // Latched notes ring on in the engine; a drum roll stops.
+                if (c.rolling)
+                    stopSound(c);
+                c.sounding = false;
                 c.state = TouchState::Spent;
+            }
         ++m_freezes;
     }
 }

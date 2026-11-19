@@ -389,7 +389,7 @@ ApplicationWindow {
                         width: parent.width - 32
                         elide: Text.ElideMiddle
                         text: {
-                            const s = Math.floor((win.now.getTime() - win.started) / 1000)
+                            const s = Math.max(0, Math.floor((win.now.getTime() - win.started) / 1000))
                             return qsTr("Show time %1:%2 (MM:SS)").arg(win.pad4(Math.floor(s / 60))).arg(win.pad2(s % 60))
                                    + "     " + qsTr("Date %1").arg(Qt.formatDate(win.now, "MM/dd/yy"))
                                    + "     " + qsTr("Time %1").arg(Qt.formatTime(win.now, "HH:mm:ss"))

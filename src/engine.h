@@ -4,6 +4,7 @@
 // audio thread, and hears only commands from a lock-free queue, so the touch
 // thread can never stall it and it can never stall the screen.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -14,18 +15,19 @@
 
 namespace tf {
 
-// What each finger becomes, by the order it landed in.
+// What each held finger turns, by the order it landed in: the knobs a
+// producer reaches for, in the order they reach for them.
 enum Role : int {
-    Tone = 0, // brightness / hollow ↔ full
-    Shadow,   // width / sub and fifth
-    Air,      // voice (breath + formants) / vowel
-    Space,    // reverb size / shimmer
-    Pulse,    // tempo-locked gating / rate
-    Echo,     // tape echo amount / time
-    Grit,     // drive / fold
-    Drift,    // inharmonic stretch / life
-    Swarm,    // grain cloud density / grain pitch spread
-    Gravity,  // pull to the scale / mode, bright to dark
+    Filter = 0, // cutoff / resonance
+    Env,        // filter envelope amount / decay: pluck ↔ pad
+    Width,      // unison detune and spread / sub oscillator
+    Drive,      // drive / fold
+    Pump,       // sidechain depth / arpeggio rate
+    Echo,       // tape echo amount / time
+    Space,      // reverb size / shimmer
+    Glide,      // portamento / swing
+    Wobble,     // tempo-synced filter wobble depth / rate
+    Gravity,    // pull to the scale / mode, bright to dark
     RoleCount
 };
 
@@ -36,22 +38,40 @@ const char *roleTwist(int role);
 // Where the knobs start, and where they go back to on a reset.
 float roleDefault(int role, int axis);
 
+// The pad's rows, bottom to top, each one instrument: the kit, then bass,
+// chords, lead and arpeggio. On the drum row the columns choose the piece;
+// on the others they are the notes of the scale. A tap is a short note, a
+// hold sustains it (or, on the drums, rolls).
+enum Row : int { DrumRow = 0, BassRow, ChordRow, LeadRow, ArpRow, RowCount };
+const char *rowName(int row);
+// Semitones each row sits above the tuning's base (the root in octave 2).
+inline int rowOffset(int row) {
+    static const int o[RowCount] = {0, 0, 12, 12, 12};
+    return o[std::clamp(row, 0, RowCount - 1)];
+}
+// The drum row's columns, left to right.
+constexpr int kDrumPieces = 6;
+inline int drumPieceAt(float x) { return std::clamp(int(x * kDrumPieces), 0, kDrumPieces - 1); }
+
 enum class Cmd : uint8_t {
-    Strike,      // i1 degree, f0 material, f1 velocity, f2 x, f3 y, f4 contact size
-    VoiceOn,     // id finger, i1 role, f0 midi, f1 pressure, f2 size, f3 x, f4 y, f5 degree
-    VoiceMove,   // id finger, f0 midi, f1 pressure, f2 size, f3 x, f4 y, f5 degree
-    VoiceOff,    // id finger
-    Freeze,      // id layer: every voice under a finger keeps sounding, with its own timbre
+    NoteOn,      // id finger, i1 row, i2 degree, f0 midi, f1 velocity, f2 x, f3 y
+    NoteMove,    // id finger, i2 degree, f0 midi, f1 pressure, f2 x, f3 y
+    NoteOff,     // id finger
+    Hit,         // i1 drum piece, f0 velocity, f1 x
+    RollOn,      // id finger, i1 drum piece, f0 pressure, f1 x
+    RollMove,    // id finger, f0 pressure
+    RollOff,     // id finger
+    Freeze,      // id layer: every note under a finger latches, with its own sound
     Knob,        // i1 role, f0 slide, f1 twist
     LoopBegin,   // id loop, t onset of the handle (one), f0 length s, f1 home x, f2 home y
-    LoopHit,     // id loop, f0 offset s, i1 degree, f1 material, f2 velocity, f3 x
+    LoopHit,     // id loop, f0 offset s, i1 row, i2 degree or piece, f1 velocity, f2 x, f3 length s
     LoopReady,   // id loop: quantise to the tempo and start
-    LoopMod,     // id loop, i1 transpose, f0 material shift, f1 density, f2 intensity, f3 x, f4 y
+    LoopMod,     // id loop, i1 transpose, f0 brightness/wetness shift, f1 density, f2 intensity, f3 x, f4 y
     LoopGrab,    // id loop: a finger holds it again
     LoopRelease, // id loop: the finger let go
     LoopPin,     // id loop: toggle whether it erodes
-    Overdub,     // id loop, t onset, i1 degree, f0 material, f1 velocity, f2 x
-    Motion,      // id loop, i1 lane, i2 role, t time, f0 midi, f1 pressure, f2 slide, f3 twist, f4 degree, f5 x
+    Overdub,     // id loop, t onset, i1 row, i2 degree or piece, f0 velocity, f1 x, f2 length s
+    Motion,      // id loop, i1 lane, i2 role, i3 row, t time, f0 midi, f1 pressure, f2 slide, f3 twist, f4 degree, f5 x
     LayerGrab,   // id layer
     LayerMod,    // id layer, i1 transpose, f0 brightness, f1 width, f2 swell
     LayerRelease,// id layer
@@ -60,11 +80,11 @@ enum class Cmd : uint8_t {
     DissolveAll, // fade everything that is left sounding
     Damper,      // f0 0..1, a palm on the pad
     SetTuning,   // i1 root, i2 family, i3 brightness, f0 just
-    Hush,        // f0 seconds: fade out strikes younger than that (a swipe's own notes)
+    Hush,        // f0 seconds: fade out hits and notes younger than that (a swipe's own notes)
 };
 
 struct Command {
-    Cmd type = Cmd::Strike;
+    Cmd type = Cmd::NoteOn;
     int32_t id = 0, i1 = 0, i2 = 0, i3 = 0;
     double t = 0;
     float f[6] = {};
@@ -177,7 +197,7 @@ public:
 
     // For tests and the offline renderer.
     int activeVoices() const;
-    int activeStrikes() const;
+    int activeHits() const;
     int activeLoops() const;
     float barSeconds() const;
     double lastBlockLoad() const { return m_lastLoad; }

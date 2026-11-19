@@ -149,8 +149,9 @@ private:
         float travel = 0;
         int frames = 0, bigFrames = 0;
         bool struck = false;
-        int degree0 = 0;
-        float material0 = 0, vel = 0;
+        int row = 0, value = 0; // value: the scale degree, or the drum piece
+        float vel = 0;
+        bool sounding = false, rolling = false;
         int role = -1;
         float refY = 0, refKnob[2] = {};
         int loop = -1, layer = -1;
@@ -163,8 +164,8 @@ private:
     struct Tap {
         double t;
         float x, y;
-        int degree;
-        float material, vel;
+        int row, value;
+        float vel, length;
     };
     struct SwipeGroup {
         bool active = false;
@@ -184,6 +185,7 @@ private:
     void hold(Contact &c, double now);
     void becomeVoice(Contact &c);
     void strike(Contact &c);
+    void stopSound(Contact &c);
     void click(double now);
     void finishSwipe(Contact &c, double now);
     void recordMotion(Contact &c, double now, bool voice);

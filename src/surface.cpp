@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "backend.h"
+#include "electro.h"
 #include "tuning.h"
 
 using namespace tf;
@@ -99,15 +100,12 @@ QColor Surface::roleColor(int role, const QColor &accent) {
     return QColor(colors[role]);
 }
 
-QColor Surface::materialColor(float m) {
-    static const QColor c[5] = {QColor("#FF8A1F"), QColor("#FF6FA8"), QColor("#E0A060"), QColor("#2EE6FF"),
-                                QColor("#E8F0FF")};
-    const float mc = std::clamp(m, 0.0f, 4.0f);
-    const int i = std::min(3, int(mc));
-    const float t = mc - float(i);
-    return QColor::fromRgbF(c[i].redF() + (c[i + 1].redF() - c[i].redF()) * t,
-                            c[i].greenF() + (c[i + 1].greenF() - c[i].greenF()) * t,
-                            c[i].blueF() + (c[i + 1].blueF() - c[i].blueF()) * t);
+// One phosphor per instrument row: drums orange, bass magenta, chords cyan,
+// lead amber, arp green.
+QColor Surface::materialColor(float row) {
+    static const QColor c[RowCount] = {QColor("#FF8A1F"), QColor("#FF4FD8"), QColor("#2EE6FF"), QColor("#FFB000"),
+                                       QColor("#39FF88")};
+    return c[std::clamp(int(std::lround(row)), 0, RowCount - 1)];
 }
 
 void Surface::onFrame() {
@@ -212,11 +210,13 @@ void Surface::paint(QPainter *p) {
     p->save();
     p->setClipPath(padPath);
 
+    const qreal rowH = pad.height() / RowCount;
+    const qreal notesBottom = pad.bottom() - rowH; // above the drum row
     // Root columns: one note per octave a little lighter, so the hand finds home.
     for (int c = 0; c < cells; ++c) {
         if (c % tuning.degreesPerOctave() != 0)
             continue;
-        const QRectF col(pad.left() + c * pad.width() / cells, pad.top(), pad.width() / cells, pad.height());
+        const QRectF col(pad.left() + c * pad.width() / cells, pad.top(), pad.width() / cells, notesBottom - pad.top());
         p->fillRect(col, withAlpha(m_accent, 0.07f));
     }
 
@@ -252,38 +252,48 @@ void Surface::paint(QPainter *p) {
     // Note grid and names.
     QFont small = consoleFont(int(unit * 0.22));
     p->setFont(small);
+    // Note columns above the drum row, the kit's pieces in it.
     for (int c = 0; c <= cells; ++c) {
         const qreal x = pad.left() + c * pad.width() / cells;
         p->setPen(QPen(withAlpha(m_accent, 0.16f), 1, Qt::DotLine));
-        p->drawLine(QPointF(x, pad.top()), QPointF(x, pad.bottom()));
+        p->drawLine(QPointF(x, pad.top()), QPointF(x, notesBottom));
     }
     for (int c = 0; c < cells; ++c) {
         const double midi = tuning.baseMidi() + tuning.degreeSemis(c);
         const int pc = int(std::lround(midi)) % 12;
         const bool root = c % tuning.degreesPerOctave() == 0;
         p->setPen(root ? withAlpha(m_accent, 0.85f) : QColor(255, 255, 255, 90));
-        const QRectF cell(pad.left() + c * pad.width() / cells, pad.bottom() - unit * 0.5, pad.width() / cells,
-                          unit * 0.45);
+        const QRectF cell(pad.left() + c * pad.width() / cells, notesBottom - unit * 0.42, pad.width() / cells,
+                          unit * 0.38);
         p->drawText(cell, Qt::AlignCenter, QString::fromUtf8(Tuning::noteName(pc)));
     }
-    // Material rows.
-    static const char *materials[5] = {QT_TRANSLATE_NOOP("Surface", "skin"), QT_TRANSLATE_NOOP("Surface", "snare"),
-                                       QT_TRANSLATE_NOOP("Surface", "wood"), QT_TRANSLATE_NOOP("Surface", "glass"),
-                                       QT_TRANSLATE_NOOP("Surface", "air")};
-    for (int m = 0; m < 5; ++m) {
-        const qreal y = pad.bottom() - (m + 0.5) * pad.height() / 5;
+    const QColor drumCol = materialColor(float(DrumRow));
+    for (int k = 0; k < kDrumPieces; ++k) {
+        const QRectF zone(pad.left() + k * pad.width() / kDrumPieces, notesBottom, pad.width() / kDrumPieces, rowH);
+        if (k > 0) {
+            p->setPen(QPen(withAlpha(drumCol, 0.35f), 1));
+            p->drawLine(zone.topLeft(), zone.bottomLeft());
+        }
+        p->setFont(consoleFont(int(unit * 0.26), true));
+        p->setPen(withAlpha(drumCol, 0.75f));
+        p->drawText(zone, Qt::AlignCenter, QCoreApplication::translate("Surface", drumName(Drum(k))));
+    }
+    p->setFont(small);
+    // Instrument rows.
+    for (int m = 0; m < RowCount; ++m) {
+        const qreal y = pad.bottom() - (m + 0.5) * rowH;
         if (m > 0) {
-            p->setPen(QPen(withAlpha(m_accent, 0.12f), 1, Qt::DashLine));
-            const qreal ly = pad.bottom() - m * pad.height() / 5;
+            p->setPen(QPen(withAlpha(materialColor(float(m)), 0.3f), 1, m == 1 ? Qt::SolidLine : Qt::DashLine));
+            const qreal ly = pad.bottom() - m * rowH;
             p->drawLine(QPointF(pad.left(), ly), QPointF(pad.right(), ly));
         }
         p->save();
         p->setClipping(false);
         p->translate(pad.left() - 16, y);
         p->rotate(-90);
-        p->setPen(withAlpha(materialColor(float(m)), 0.9f));
-        p->drawText(QRectF(-unit, -unit * 0.2, 2 * unit, unit * 0.4), Qt::AlignCenter,
-                    QCoreApplication::translate("Surface", materials[m]));
+        p->setPen(withAlpha(materialColor(float(m)), 0.95f));
+        p->drawText(QRectF(-1.2 * unit, -unit * 0.2, 2.4 * unit, unit * 0.4), Qt::AlignCenter,
+                    QCoreApplication::translate("Surface", rowName(m)));
         p->restore();
     }
 
@@ -657,7 +667,7 @@ void Surface::paint(QPainter *p) {
     {
         const QFont legendFont = consoleFont(13, true);
         p->setFont(legendFont);
-        const QString legend = tr("Trackpad · %1 notes · 5 materials").arg(cells);
+        const QString legend = tr("Trackpad · %1 notes · 5 instruments").arg(cells);
         const qreal lw = QFontMetricsF(legendFont).horizontalAdvance(legend) + 16;
         const QRectF lr(pad.left() + 16, pad.top() - 9, lw, 18);
         p->fillRect(lr, QColor(0, 0, 0));

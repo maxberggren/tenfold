@@ -4,127 +4,87 @@
 namespace tf {
 
 const char *demoScript() {
-    return R"TF(# tenfold demo: a landscape built from nothing, then cleared with a palm.
-# 1. One finger blooms into a low drone; sliding it up brightens the tone.
-down 0.5 1 0.0312 0.25 p=0.45
-glide 1.0 6.0 1 0.0312 0.6 p=0.7
-# 2. A second finger takes Shadow: width and a sub-octave.
-down 3.0 2 0.2188 0.3 p=0.5
-glide 3.5 7.0 2 0.2188 0.55 p=0.6 twist=30
-# 3. A third takes Air: slide up and it sings, twist and the vowel turns.
-down 5.5 3 0.5938 0.3 p=0.5
-glide 6.0 9.0 3 0.5938 0.6 p=0.6 twist=-40
-glide 9.0 12.0 3 0.5938 0.6 twist=40
-# 4. A fourth opens the Space: a bigger room with an octave shimmer.
-down 7.0 4 0.4688 0.2 p=0.4
-glide 7.5 10.5 4 0.4688 0.52 twist=35
-# Press the pad: the chord freezes into the landscape, the fingers are free.
-click 12.5
-up 13.0 1
-up 13.0 2
-up 13.0 3
-up 13.0 4
-# 5. Kick and snare, then land on the next one and stay: a loop (and the tempo).
-tap 14.0 0.0312 0.05 p=0.95
-tap 14.6 0.3438 0.25 p=0.8
-tap 15.05 0.0312 0.05 p=0.7
-tap 15.2 0.0312 0.05 p=0.9
-tap 15.8 0.3438 0.25 p=0.85
-tap 16.1 0.3438 0.25 p=0.35
-down 16.4 10 0.0312 0.05 p=0.8
-up 17.4 10
-# 6. A wooden melody, then hold on the one: the loop forms under the finger.
-tap 19.60 0.3438 0.5 p=0.55
-tap 19.90 0.4688 0.5 p=0.65
-tap 20.20 0.5312 0.5 p=0.55
-tap 20.50 0.6562 0.5 p=0.65
-tap 20.80 0.5312 0.5 p=0.55
-tap 21.10 0.4688 0.5 p=0.65
-tap 21.40 0.3438 0.5 p=0.55
-tap 21.70 0.2188 0.5 p=0.65
-down 22.0 11 0.3438 0.5 p=0.7
-# Still holding: twist to roll it into ratchets, slide right two notes and up towards glass.
-glide 22.4 24.5 11 0.4688 0.62 twist=35 p=0.8
-# And a second finger, held while the loop is held, sings a line into it.
-down 23.0 13 0.5312 0.45 p=0.5
-glide 23.4 24.4 13 0.6562 0.5 p=0.8
-glide 24.4 25.3 13 0.4688 0.42 p=0.4
-up 25.4 13
-up 26.0 11
-# 7. Sparse glass bells, a third loop.
-tap 28.4 0.6562 0.74 p=0.6
-tap 29.0 0.7812 0.74 p=0.6
-tap 29.9 0.7188 0.74 p=0.6
-tap 30.35 0.8438 0.74 p=0.6
-down 30.8 12 0.6562 0.74 p=0.5
-up 31.6 12
-# 8. A new chord of six: the fifth finger is Pulse, the sixth Echo.
-down 33.00 20 0.1562 0.4 p=0.45
-down 33.25 21 0.3438 0.4 p=0.45
-down 33.50 22 0.5312 0.4 p=0.45
-down 33.75 23 0.6562 0.4 p=0.45
-down 34.00 24 0.8438 0.3 p=0.45
-down 34.25 25 0.9062 0.3 p=0.45
-glide 34.5 37.0 24 0.8438 0.7 twist=12
-glide 35.5 38.5 25 0.9062 0.62 twist=-8
-# Slide the Tone finger slowly between notes: gravity pulls it into tune.
-glide 37.0 40.0 20 0.2812 0.4
-up 41.0 20
-up 41.2 21
-up 41.4 22
-up 41.6 23
-up 41.8 24
-up 42.0 25
-# 9. Tap once and hold on the first frozen chord: slide it up two notes and press to swell it.
-tap 41.8 0.33 0.57 p=0.3
-down 42.0 40 0.33 0.57 p=0.3
-glide 42.3 43.3 40 0.455 0.62 p=0.9
-up 44.0 40
-# 10. Three fingers swipe right: the key moves a fifth. Every loop and frozen chord follows.
-down 44.3 50 0.3 0.45 p=0.4
-glide 44.36 44.56 50 0.5 0.45
-up 44.6 50
-down 44.3 51 0.4 0.45 p=0.4
-glide 44.36 44.56 51 0.6000000000000001 0.45
-up 44.6 51
-down 44.3 52 0.5 0.45 p=0.4
-glide 44.36 44.56 52 0.7 0.45
-up 44.6 52
-# 11. All ten fingers. 7 Grit, 8 Drift stretches the partials into bells,
-#     9 sprays a grain cloud, 10 twists the mode from dark to bright.
-down 45.50 30 0.0312 0.32 p=0.5
-down 45.68 31 0.2188 0.32 p=0.5
-down 45.86 32 0.3438 0.32 p=0.5
-down 46.04 33 0.4688 0.32 p=0.5
-down 46.22 34 0.5312 0.32 p=0.5
-down 46.40 35 0.6562 0.32 p=0.5
-down 46.58 36 0.7188 0.32 p=0.5
-down 46.76 37 0.7812 0.32 p=0.5
-down 46.94 38 0.9062 0.32 p=0.5
-down 47.12 39 0.9688 0.32 p=0.5
-glide 47.5 50.5 36 0.7188 0.42 twist=20
-glide 47.5 51.0 37 0.7812 0.68 twist=30
-glide 48.0 52.0 38 0.9062 0.72 twist=45
-glide 49.0 53.0 39 0.9688 0.32 twist=-35
-click 54.0
-up 54.4 30
-up 54.4 31
-up 54.4 32
-up 54.4 33
-up 54.4 34
-up 54.4 35
-up 54.4 36
-up 54.4 37
-up 54.4 38
-up 54.4 39
-# 12. A palm resting on the pad damps everything like a hand on strings.
-down 56.5 90 0.5 0.15 p=0.6 size=3.0
-up 59.0 90
-# 13. Palm and press: the landscape dissolves into its own reverb.
-down 60.0 91 0.5 0.15 p=0.6 size=3.2
-click 60.4
-up 61.0 91
-end 68.0
+    return R"TF(# tenfold demo: a track built live, A minor, 124 BPM.
+# 1. Four on the floor with offbeat hats and a clap on two and four;
+#    land on the next one and hold: the loop forms and sets the tempo.
+tap 1.000 0.0833 0.1 p=0.95 len=0.060
+tap 1.242 0.5833 0.1 p=0.6 len=0.060
+tap 1.484 0.0833 0.1 p=0.95 len=0.060
+tap 1.726 0.5833 0.1 p=0.6 len=0.060
+tap 1.484 0.4167 0.1 p=0.8 len=0.060
+tap 1.968 0.0833 0.1 p=0.95 len=0.060
+tap 2.210 0.5833 0.1 p=0.6 len=0.060
+tap 2.452 0.0833 0.1 p=0.95 len=0.060
+tap 2.694 0.5833 0.1 p=0.6 len=0.060
+tap 2.452 0.4167 0.1 p=0.8 len=0.060
+down 2.935 10 0.0833 0.1 p=0.8
+up 3.335 10
+# 2. A bass line, eighths and a pickup, looped the same way.
+tap 4.871 0.0227 0.3 p=0.8 len=0.194
+tap 5.113 0.0227 0.3 p=0.6 len=0.194
+tap 5.234 0.3409 0.3 p=0.7 len=0.194
+tap 5.355 0.0227 0.3 p=0.8 len=0.194
+tap 5.597 0.1136 0.3 p=0.7 len=0.194
+tap 5.718 0.2045 0.3 p=0.6 len=0.194
+tap 5.839 0.0227 0.3 p=0.8 len=0.194
+tap 6.081 0.0227 0.3 p=0.6 len=0.194
+tap 6.202 0.3409 0.3 p=0.7 len=0.194
+tap 6.323 0.25 0.3 p=0.8 len=0.194
+tap 6.565 0.2045 0.3 p=0.7 len=0.194
+tap 6.685 0.1136 0.3 p=0.6 len=0.194
+down 6.806 11 0.0227 0.3 p=0.8
+up 7.206 11
+# 3. A pad: one finger on the chord row plays a voiced seventh; sliding it
+#    walks the progression Am7 → Fmaj7 → Cmaj7 → G7, two bars each.
+down 8.742 20 0.3409 0.5 p=0.55
+move 12.613 20 0.25 0.5 p=0.55
+move 16.484 20 0.4318 0.5 p=0.55
+move 20.355 20 0.2955 0.5 p=0.55
+# 4. Over it, a lead melody tapped on the lead row.
+tap 12.613 0.3409 0.7 p=0.75 len=0.435
+tap 13.097 0.4318 0.7 p=0.75 len=0.435
+tap 13.581 0.4773 0.7 p=0.75 len=0.871
+tap 14.548 0.4318 0.7 p=0.75 len=0.435
+tap 15.032 0.3409 0.7 p=0.75 len=0.435
+tap 15.516 0.5227 0.7 p=0.75 len=0.871
+tap 16.484 0.5682 0.7 p=0.75 len=0.435
+tap 16.968 0.5227 0.7 p=0.75 len=0.435
+tap 17.452 0.4318 0.7 p=0.75 len=0.871
+tap 18.419 0.3409 0.7 p=0.75 len=0.435
+tap 18.903 0.4318 0.7 p=0.75 len=0.435
+tap 19.387 0.3409 0.7 p=0.75 len=0.871
+tap 20.355 0.3409 0.7 p=0.75 len=0.435
+tap 20.839 0.4318 0.7 p=0.75 len=0.435
+tap 21.323 0.4773 0.7 p=0.75 len=0.871
+tap 22.290 0.4318 0.7 p=0.75 len=0.435
+tap 22.774 0.3409 0.7 p=0.75 len=0.435
+tap 23.258 0.5227 0.7 p=0.75 len=0.871
+tap 24.226 0.5682 0.7 p=0.75 len=0.435
+tap 24.710 0.5227 0.7 p=0.75 len=0.435
+tap 25.194 0.4318 0.7 p=0.75 len=0.871
+tap 26.161 0.3409 0.7 p=0.75 len=0.435
+tap 26.645 0.4318 0.7 p=0.75 len=0.435
+tap 27.129 0.3409 0.7 p=0.75 len=0.871
+# 5. An arpeggio: hold the arp row and it runs the chord in sixteenths.
+down 16.484 30 0.3409 0.9 p=0.6
+move 20.355 30 0.4318 0.9 p=0.6
+move 24.226 30 0.2955 0.9 p=0.6
+up 24.226 30
+up 24.226 20
+# 6. The build: hold the snare and press harder, the roll doubles;
+#    the pad's filter finger (the first held finger is Filter) closes then opens.
+down 24.226 40 0.25 0.1 p=0.35
+glide 24.326 26.161 40 0.25 0.1 p=0.95
+up 26.161 40
+# 7. The drop: a big chord latched with a press, the loops carry on.
+down 26.161 50 0.3409 0.5 p=0.8
+click 26.461
+up 26.661 50
+down 30.032 51 0.25 0.7 p=0.85
+glide 30.132 31.968 51 0.3409 0.7 p=0.9
+up 32.935 51
+key 35.839 dissolve-all
+end 39.839
 )TF";
 }
 

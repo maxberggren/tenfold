@@ -51,11 +51,12 @@ public:
 private:
     void rebuild();
 
-    int m_root = 2;
-    int m_family = 1;
-    int m_bright = 3;
-    bool m_just = true;
-    int m_count = 5;
+    // A natural minor, equal temperament.
+    int m_root = 9;
+    int m_family = 0;
+    int m_bright = 4;
+    bool m_just = false;
+    int m_count = 7;
     std::array<double, 12> m_semis{}; // one octave of degrees, from 0
 };
 

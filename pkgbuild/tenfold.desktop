@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=tenfold
+Comment=An instrument played with all ten fingers on the trackpad
+Exec=tenfold
+Icon=tenfold
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=synth;instrument;trackpad;touchpad;music;loop;drone;
+StartupWMClass=tenfold

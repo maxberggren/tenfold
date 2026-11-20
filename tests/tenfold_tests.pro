@@ -7,6 +7,7 @@ QMAKE_CXXFLAGS_RELEASE -= -O2
 QMAKE_CXXFLAGS_RELEASE += -O3 -ffast-math -fno-finite-math-only
 
 INCLUDEPATH += ../src
+DEPENDPATH += ../src
 
 # Everything but the window: the studio, the session, every part, the
 # offline player.

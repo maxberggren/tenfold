@@ -142,7 +142,7 @@ int Backend::voices() const {
     return n;
 }
 
-bool Backend::key(int key, int modifiers, bool down, bool repeat, const QString &text) {
+bool Backend::sendKey(int key, int modifiers, bool down, bool repeat, const QString &text) {
     KeyEvent k;
     k.key = key;
     k.modifiers = modifiers;

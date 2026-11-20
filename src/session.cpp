@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <Qt>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 
@@ -24,6 +25,11 @@ public:
     void send(const Command &c) override {
         if (m_part < 0)
             return;
+        // Onsets, for Space to know what was just played.
+        if (!(c.flags & Command::NoRecord) && (c.type == Command::On || (c.flags & Command::Quantize))) {
+            onsets[onsetHead % onsets.size()] = c.t > 0 ? c.t : now();
+            ++onsetHead;
+        }
         StudioMsg m;
         m.kind = StudioMsg::ToPart;
         m.part = int8_t(m_part);
@@ -61,22 +67,24 @@ public:
     void launchPart(int part, int slot, bool now) override { simple(StudioMsg::Launch, part, slot, now); }
     void stopPart(int part, bool now) override { simple(StudioMsg::Stop, part, 0, now); }
     void clearPart(int part, int slot) override { simple(StudioMsg::Clear, part, slot, 0); }
-    void setChannel(int part, int channel, float value) override {
+    void setChannel(int part, int channel, float value, double t) override {
         StudioMsg m;
         m.kind = StudioMsg::SetChannel;
         m.part = int8_t(part);
         m.slot = int8_t(channel);
         m.f = value;
+        m.d0 = t;
         post(m);
         // Shown at once, before the studio's next view says so.
         if (part >= 0 && part < kMaxParts && channel >= 0 && channel < ChannelCount)
             m_s->m_view.parts[part].channel.value[channel] = value;
     }
-    void setMaster(int master, float value) override {
+    void setMaster(int master, float value, double t) override {
         StudioMsg m;
         m.kind = StudioMsg::SetMaster;
         m.slot = int8_t(master);
         m.f = value;
+        m.d0 = t;
         post(m);
         if (master >= 0 && master < MasterCount)
             m_s->m_view.master[master] = value;
@@ -105,8 +113,11 @@ public:
         ++m_s->m_noticeSeq;
     }
 
-private:
+    std::array<double, 128> onsets{};
+    size_t onsetHead = 0;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
+
+private:
     void simple(StudioMsg::Kind k, int part, int slot, int value) {
         StudioMsg m;
         m.kind = k;
@@ -263,10 +274,20 @@ bool Session::key(const KeyEvent &k) {
         default: return false;
         }
     }
-    if (k.key == Qt::Key_Space || k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
+    if (k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
         return false;
     Page &p = *m_pages[size_t(m_page)];
-    return p.spec.control->key(k, *p.ctx);
+    if (p.spec.control->key(k, *p.ctx))
+        return true;
+    // Space records a loop on any part's page that doesn't record its own
+    // way: from the next bar into the next free slot, and Space again closes
+    // it at the bar after.
+    if (k.key == Qt::Key_Space) {
+        if (k.down && !k.repeat && p.part >= 0)
+            toggleRecording(*p.ctx);
+        return true;
+    }
+    return false;
 }
 
 void Session::refresh() {
@@ -296,6 +317,89 @@ QString Session::notice(uint32_t *seq) const {
     if (seq)
         *seq = m_noticeSeq;
     return m_notice;
+}
+
+void Session::toggleRecording(ControlContext &base) {
+    // Space loops what was just played. Play first, then press Space:
+    //   * nothing else playing: press it where the phrase would start again
+    //     (the next ONE). The phrase becomes the loop and sets the tempo.
+    //   * something playing: the bars that hold the phrase become the loop,
+    //     ending at the bar line just passed (pressed within a beat of it) or
+    //     the next one. It carries on from there without a seam.
+    // Space again while a take waits calls it off.
+    Context &ctx = static_cast<Context &>(base);
+    const int part = ctx.part();
+    const PartView &v = m_view.parts[part];
+    if (v.recording >= 0) {
+        StudioMsg m;
+        m.kind = StudioMsg::CancelRecord;
+        m.part = int8_t(part);
+        ctx.post(m);
+        m_view.parts[part].recording = -1;
+        ctx.notice(QStringLiteral("Loop called off"));
+        return;
+    }
+    const int slot = ctx.freeSlot();
+    if (slot < 0) {
+        ctx.notice(QStringLiteral("Every slot is full: clear one first"));
+        return;
+    }
+    const double nowT = now();
+    const double spb = 60.0 / std::max(1.0, m_view.bpm);
+    // The phrase: onsets back from the latest, until a pause of two bars.
+    std::vector<double> times;
+    const size_t n = std::min(ctx.onsetHead, ctx.onsets.size());
+    for (size_t i = 0; i < n; ++i)
+        times.push_back(ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()]);
+    std::sort(times.begin(), times.end());
+    double first = -1;
+    for (size_t i = times.size(); i-- > 0;) {
+        if (times[i] > nowT + 0.05)
+            continue;
+        if (first >= 0 && first - times[i] > 8 * spb)
+            break;
+        if (first < 0 && nowT - times[i] > 8 * spb)
+            break;
+        first = times[i];
+    }
+    if (first < 0) {
+        ctx.notice(QStringLiteral("Play something, then Space loops it"));
+        return;
+    }
+    bool anyPlaying = false;
+    for (int p = 0; p < m_view.partCount; ++p)
+        anyPlaying |= m_view.parts[p].playing >= 0 || m_view.parts[p].queued >= 0;
+    if (!anyPlaying && !m_view.metronome) {
+        if (nowT - first < 0.3) {
+            ctx.notice(QStringLiteral("Press Space where the phrase starts again"));
+            return;
+        }
+        ctx.capture(slot, first, nowT, 0.85f);
+        m_view.parts[part].recording = slot;
+        ctx.notice(QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
+        return;
+    }
+    const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first);
+    const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
+    const double end = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
+    // A first note a little early for its bar belongs to that bar.
+    const double startBar = std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+    int bars = 1;
+    while (bars < 8 && end - bars * kBeatsPerBar > startBar + 1e-6)
+        bars *= 2;
+    StudioMsg m;
+    m.kind = StudioMsg::TakeBars;
+    m.part = int8_t(part);
+    m.slot = int8_t(slot);
+    m.d0 = end - bars * kBeatsPerBar;
+    m.d1 = end;
+    ctx.post(m);
+    m_view.parts[part].recording = slot;
+    const QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
+    if (end <= beatNow)
+        ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
+    else
+        ctx.notice(QStringLiteral("Looping %1 in slot %2 at the bar").arg(what).arg(slot + 1));
 }
 
 void Session::shiftTempo(double delta) {

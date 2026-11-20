@@ -22,12 +22,15 @@ struct StudioMsg {
         Capture,     // part, slot, d0 = t0, d1 = t1, f = quantize
         Record,      // part, slot, value = max bars
         StopRecord,  // part
+        TakeBars,    // part, slot, d0 = first beat, d1 = last beat (a bar line, now or soon):
+                     // what the part played between them becomes a loop at d1
+        CancelRecord,// part: a recording or a waiting take is called off
         Overdub,     // part, value = on
         Launch,      // part, slot, value = now
         Stop,        // part, value = now
         Clear,       // part, slot
-        SetChannel,  // part, slot = channel, f = value
-        SetMaster,   // slot = master param, f = value
+        SetChannel,  // part, slot = channel, f = value, d0 = when (touch clock; 0 = now)
+        SetMaster,   // slot = master param, f = value, d0 = when
         Tempo,       // d0 = bpm
         Key,         // part = root, slot = family, value = brightness
         Metronome,   // value = on

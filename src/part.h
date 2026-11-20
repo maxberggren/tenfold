@@ -64,7 +64,8 @@ struct Command {
     uint16_t flags = 0;
     int32_t id = 0;
     int32_t i[4] = {};
-    double t = 0; // seconds on the touch clock when it happened; 0 = now
+    double t = 0; // seconds on the touch clock when it happens; 0 = now. A time in
+                  // the future is held by the studio and delivered in its block.
     float f[8] = {};
 };
 
@@ -273,8 +274,10 @@ public:
     virtual void launchPart(int part, int slot, bool now = false) = 0;
     virtual void stopPart(int part, bool now = false) = 0;
     virtual void clearPart(int part, int slot) = 0;
-    virtual void setChannel(int part, int channel, float value) = 0;
-    virtual void setMaster(int master, float value) = 0;
+    // A time t (the touch clock, as ctx.timeAt(beat) gives it) schedules the
+    // change for that moment, to the sample block; 0 is now.
+    virtual void setChannel(int part, int channel, float value, double t = 0) = 0;
+    virtual void setMaster(int master, float value, double t = 0) = 0;
     virtual void setTempo(double bpm) = 0;
     virtual void setKey(int root, int family, int brightness) = 0;
 

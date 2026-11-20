@@ -47,8 +47,7 @@ constexpr float kField = 0.76f; // the note field below this height, the rail ab
 constexpr int kLowDegree = -2;  // the leftmost column: two degrees under the root
 constexpr int kColumns = 12;
 constexpr int kKeyIdBase = 0x200000; // ids for notes played on the keyboard
-constexpr float kLoopW = 0.12f; // the rail's LOOP button, at its left end
-constexpr float kZoneW = (1.0f - kLoopW) / 4.0f; // and its four shapers
+constexpr float kLoopW = 0.08f; // the rail's LOOP button, at its left end
 constexpr float kRailMid = 0.5f * (kField + 1.0f);  // a zone's two rows of stops meet here
 
 // The stops marked in the ROLL and WOB zones, four across and two rows
@@ -58,11 +57,22 @@ constexpr float kRailMid = 0.5f * (kField + 1.0f);  // a zone's two rows of stop
 constexpr int kWobStops[2][4] = {{0, 1, 3, 5}, {2, 4, 6, 7}};
 constexpr int kRollStops[2][4] = {{0, 1, 2, 3}, {7, 4, 5, 6}};
 
+enum Role { NoRole, NoteRole, OctRole, RollRole, WobRole, GritRole, FiltRole, LoopRole };
 
-enum Role { NoRole, NoteRole, OctRole, RollRole, WobRole, GritRole, LoopRole };
+// The rail after LOOP, left to right: five zones, ROLL and WOB widest for
+// their four stops across.
+constexpr int kZones = 5;
+constexpr Role kZoneRole[kZones] = {OctRole, RollRole, WobRole, FiltRole, GritRole};
+constexpr float kZoneEdge[kZones + 1] = {kLoopW, 0.24f, 0.45f, 0.66f, 0.83f, 1.0f};
 
-// A shaper zone's left edge on the pad.
-float zoneLeft(Role r) { return kLoopW + kZoneW * float(int(r) - int(OctRole)); }
+int zoneOf(Role r) {
+    for (int z = 0; z < kZones; ++z)
+        if (kZoneRole[z] == r)
+            return z;
+    return 0;
+}
+float zoneLeft(Role r) { return kZoneEdge[zoneOf(r)]; }
+float zoneWidth(Role r) { return kZoneEdge[zoneOf(r) + 1] - kZoneEdge[zoneOf(r)]; }
 
 const char *roleName(Role r) {
     switch (r) {
@@ -70,12 +80,20 @@ const char *roleName(Role r) {
     case RollRole: return "ROLL";
     case WobRole: return "WOB";
     case GritRole: return "GRIT";
+    case FiltRole: return "FILTER";
     default: return "";
     }
 }
 
 Shaper shaperOf(Role r) {
-    return r == OctRole ? ShapeOct : r == RollRole ? ShapeRoll : r == WobRole ? ShapeWob : ShapeGrit;
+    return r == OctRole    ? ShapeOct
+           : r == RollRole ? ShapeRoll
+           : r == WobRole  ? ShapeWob
+           : r == FiltRole ? ShapeFilter
+                           : ShapeGrit;
+}
+Role roleOf(Shaper s) {
+    return s == ShapeRoll ? RollRole : s == ShapeWob ? WobRole : s == ShapeGrit ? GritRole : s == ShapeFilter ? FiltRole : OctRole;
 }
 
 // Twist from where the finger landed, folded to ±90° (a contact ellipse
@@ -125,6 +143,20 @@ public:
         }
         if (click)
             this->click(f.t, ctx);
+        settle(f.t, ctx);
+    }
+
+    void idle(double t, ControlContext &ctx) override { settle(t, ctx); }
+
+    // A bend held still for a moment settles: the engine lands it on the
+    // nearest note of the key.
+    void settle(double t, ControlContext &ctx) {
+        for (auto &h : m_fingers)
+            if (h.id >= 0 && h.role == OctRole && h.row == 1 && !h.settled && t - h.lastMove > 0.15 &&
+                newestIn(OctRole, h)) {
+                h.settled = true;
+                sendShaper(ShapeBend, h.amount, 1, t, ctx, true);
+            }
     }
 
     // Recording goes on whichever page shows: keep its state, close an
@@ -187,7 +219,7 @@ public:
         // stay with the loop that plays on.
         for (int s = 0; s < ShaperCount; ++s)
             if (!m_latched[s])
-                sendShaper(Shaper(s), 0, m_sent[s][1], ctx.now(), ctx, true);
+                sendShaper(Shaper(s), 0, restB(Shaper(s)), ctx.now(), ctx, true);
         m_frame = Frame{};
         m_button = false;
     }
@@ -254,7 +286,7 @@ public:
             for (int s = 0; s < ShaperCount; ++s)
                 if (m_latched[s]) {
                     m_latched[s] = false;
-                    sendShaper(Shaper(s), 0, m_sent[s][1], ctx.now(), ctx, true);
+                    sendShaper(Shaper(s), 0, restB(Shaper(s)), ctx.now(), ctx, true);
                 }
             ctx.notice(QStringLiteral("Shapers released"));
             return true;
@@ -309,6 +341,7 @@ public:
             "ROLL\tland on a pattern: the held note strikes it on the bar; slide along the row, up/down the gate\n"
             "WOB\tland on a rate (straight on top, triplets below): a wobble on the tempo; up/down the depth\n"
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
+            "FILTER\ta fader for whatever sounds, the loop too: middle leaves it, up opens, down darkens; sideways morph (ACID: squelch)\n"
             "click\twith a note down, strike it again accented; with only shapers down, latch them (P frees)\n"
             "LOOP (rail, far left) or Enter\talso: record the coming bars from the next bar line; tap again to close\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
@@ -344,13 +377,16 @@ public:
             case GritRole:
                 parts << QStringLiteral("grit %1%").arg(int(std::lround(h.amount * 100)));
                 break;
+            case FiltRole:
+                parts << QStringLiteral("filter %1%2").arg(h.amount >= 0 ? "+" : "").arg(int(std::lround(h.amount * 100)));
+                break;
             default:
                 break;
             }
         }
         for (int s = 0; s < ShaperCount; ++s)
             if (m_latched[s])
-                parts << QStringLiteral("%1 latched").arg(QString::fromUtf8(roleName(Role(s + OctRole))).toLower());
+                parts << QStringLiteral("%1 latched").arg(QString::fromUtf8(roleName(roleOf(Shaper(s)))).toLower());
         if (m_follow)
             parts << QStringLiteral("follows the chords");
         return parts.join(QStringLiteral(" · "));
@@ -368,6 +404,8 @@ private:
         int index = 0;                                    // a shaper's pattern or rate
         int row = 0;                                      // the row of stops it landed on (col: the stop)
         float sentA = 0, sentB = 0;                       // what this shaper last asked for
+        double lastMove = 0;                              // a bend's last real movement
+        bool settled = false;                             // a bend at rest, landed in the key
     };
     struct KeyNote {
         int key = 0, id = 0;
@@ -409,13 +447,16 @@ private:
             return;
         }
         if (t.y >= kField) {
-            h.role = Role(OctRole + std::clamp(int((t.x - kLoopW) / kZoneW), 0, 3));
+            int z = 0;
+            while (z < kZones - 1 && t.x >= kZoneEdge[z + 1])
+                ++z;
+            h.role = kZoneRole[z];
             const Shaper s = shaperOf(h.role);
             // A finger on a latched zone takes it over, and lets it go on lift.
             m_latched[s] = false;
             // Which stop it landed on: the cell under it, four across, two rows.
             h.row = t.y >= kRailMid ? 0 : 1;
-            h.col = std::clamp(int((t.x - zoneLeft(h.role)) / (kZoneW / 4.0f)), 0, 3);
+            h.col = std::clamp(int((t.x - zoneLeft(h.role)) / (zoneWidth(h.role) / 4.0f)), 0, 3);
             switch (h.role) {
             case RollRole:
                 h.amount = m_gate;
@@ -517,11 +558,12 @@ private:
                     other = &f;
             if (s == ShapeOct) {
                 sendShaper(s, float(octFingers()), 0, time, ctx, true);
-                sendShaper(ShapeBend, other ? other->amount : 0.0f, 0, time, ctx, true);
+                sendShaper(ShapeBend, other && other->row == 1 ? other->amount : 0.0f,
+                           other && other->settled ? 1.0f : 0.0f, time, ctx, true);
             } else if (other)
                 sendShaper(s, other->sentA, other->sentB, time, ctx, true);
             else if (!m_latched[s])
-                sendShaper(s, 0, m_sent[s][1], time, ctx, true);
+                sendShaper(s, 0, restB(s), time, ctx, true);
         }
     }
 
@@ -532,14 +574,25 @@ private:
         float a = 0, b = 0;
         switch (h.role) {
         case OctRole: {
-            // The top row lifts an octave; any finger here bends with its
-            // height, down to two octaves under (a dive) or one over.
+            // The top row lifts an octave and nothing else, so octave pumps
+            // stay in tune however the finger drifts.
             a = float(octFingers());
-            h.amount = clampf(dy * 40.0f, -24.0f, 12.0f);
             sendShaper(ShapeOct, a, 0, time, ctx, first);
+            if (h.row == 0)
+                return;
+            // The BEND row bends with height, down two octaves (a dive) or
+            // up one, past a small dead zone so a resting finger is in tune.
+            constexpr float dead = 0.02f;
+            const float travel = std::fabs(dy) <= dead ? 0.0f : dy - std::copysign(dead, dy);
+            const float bend = clampf(travel * 40.0f, -24.0f, 12.0f);
+            if (first || std::fabs(bend - h.amount) > 0.05f) {
+                h.amount = bend;
+                h.lastMove = time;
+                h.settled = false;
+            }
             // With several fingers here, the newest bends.
             if (newestIn(OctRole, h))
-                sendShaper(ShapeBend, h.amount, 0, time, ctx, first);
+                sendShaper(ShapeBend, h.amount, h.settled ? 1.0f : 0.0f, time, ctx, first);
             return;
         }
         case RollRole:
@@ -554,6 +607,19 @@ private:
             a = clampf(h.amount + 0.4f * press, 0.05f, 1.0f);
             b = float(h.index);
             break;
+        case FiltRole: {
+            // A fader, like a DJ filter: the zone's middle leaves the sound
+            // alone, lower darkens it, higher opens it, on whatever sounds,
+            // the loop included. Sideways from the middle is morph (on ACID,
+            // the squelch).
+            const float half = 0.5f * (1.0f - kField);
+            const float mid = zoneLeft(FiltRole) + 0.5f * zoneWidth(FiltRole);
+            h.amount = clampf((t.y - kRailMid) / half * 0.7f, -0.7f, 0.7f);
+            h.second = clampf((t.x - mid) / (0.5f * zoneWidth(FiltRole)), -1.0f, 1.0f);
+            a = h.amount;
+            b = h.second;
+            break;
+        }
         case GritRole:
             h.amount = clampf(m_grit + dy * 2.5f, 0.02f, 1.0f);
             h.second = clampf(m_gritChar + dx * 2.5f, 0, 1);
@@ -568,9 +634,13 @@ private:
         sendShaper(shaperOf(h.role), a, b, time, ctx, first);
     }
 
+    // A shaper at rest: off, its second axis left where it was (a rate, a
+    // pattern), except the filter's morph, which rests at zero too.
+    float restB(Shaper s) const { return s == ShapeFilter ? 0.0f : m_sent[s][1]; }
+
     // Sliding along a row of stops: one cell per cell's width.
     static int stopAlong(const Finger &h, float dx) {
-        return std::clamp(h.col + int(std::lround(dx / (kZoneW / 4.0f))), 0, 3);
+        return std::clamp(h.col + int(std::lround(dx / (zoneWidth(h.role) / 4.0f))), 0, 3);
     }
     bool newestIn(Role r, const Finger &h) const {
         for (const auto &f : m_fingers)
@@ -1047,7 +1117,7 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
     {
         const QRectF r = pc.rect(0, kField, kLoopW, 1.0f).adjusted(6, 14, -6, -6);
         const int taking = pc.view->recording;
-        QString title = QStringLiteral("LOOP"), body = QStringLiteral("SPACE · TAP");
+        QString title = QStringLiteral("LOOP"), body = QStringLiteral("SPACE");
         QColor col = pc.color;
         bool lit = false;
         if (taking >= 0) {
@@ -1073,29 +1143,29 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
 
     bool held[ShaperCount] = {};
     for (const auto &h : m_fingers)
-        if (h.id >= 0 && h.role >= OctRole && h.role <= GritRole)
+        if (h.id >= 0 && h.role >= OctRole && h.role <= FiltRole)
             held[shaperOf(h.role)] = true;
-    for (int z = 0; z < 4; ++z) {
-        const Shaper s = Shaper(z);
-        const Role role = Role(OctRole + z);
-        const float x0 = zoneLeft(role);
-        const QRectF frame = pc.rect(x0, kField, x0 + kZoneW, 1.0f).adjusted(4, 4, -4, -4);
-        const bool on = s == ShapeOct    ? d[PubOct] > 0 || held[s]
-                        : s == ShapeRoll ? d[PubRoll] > 0
-                        : s == ShapeWob  ? held[s] || m_latched[s]
-                                         : d[PubGrit] > 0;
+    for (int z = 0; z < kZones; ++z) {
+        const Role role = kZoneRole[z];
+        const Shaper s = shaperOf(role);
+        const float x0 = zoneLeft(role), zw = zoneWidth(role);
+        const QRectF frame = pc.rect(x0, kField, x0 + zw, 1.0f).adjusted(4, 4, -4, -4);
+        const bool on = s == ShapeOct      ? d[PubOct] > 0 || held[s]
+                        : s == ShapeRoll   ? d[PubRoll] > 0
+                        : s == ShapeWob    ? held[s] || m_latched[s]
+                        : s == ShapeFilter ? held[s] || m_latched[s] || std::fabs(d[PubFilter]) > 0.005f
+                                           : d[PubGrit] > 0;
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(c::alpha(amber, on ? 1.0f : 0.55f), on ? 2.0 : 1.2));
         p.drawRect(frame);
-        static const char *names[] = {"OCT", "ROLL", "WOB", "GRIT"};
-        c::text(p, QRectF(frame.left() + 6, frame.top() + 1, frame.width() - 12, 14), QString::fromUtf8(names[z]),
+        c::text(p, QRectF(frame.left() + 6, frame.top() + 1, frame.width() - 12, 14), QString::fromUtf8(roleName(role)),
                 c::alpha(amber, on ? 1.0f : 0.6f), 10, true);
         if (m_latched[s])
             c::tag(p, QPointF(frame.right() - 50, frame.top() + 9), QStringLiteral("LATCH"), c::red(), 9);
 
         // A cell of the zone's stop grid, in pad units, as touched.
         auto cell = [&](int row, int col) {
-            const float cw = kZoneW / 4.0f;
+            const float cw = zw / 4.0f;
             const float ya = row == 0 ? kRailMid : kField, yb = row == 0 ? 1.0f : kRailMid;
             return pc.rect(x0 + cw * float(col), ya, x0 + cw * float(col + 1), yb).adjusted(3, row == 0 ? 15 : 2, -3, -3);
         };
@@ -1122,7 +1192,7 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
                                 p.fillRect(st.adjusted(0, -3, 0, 0), QColor::fromRgb(c::kInk));
                         }
                         c::text(p, b.adjusted(0, 0, 0, -10), QString::fromUtf8(kPatterns[stop].name),
-                                lit ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 8, true, Qt::AlignCenter);
+                                lit ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.75f), 9, true, Qt::AlignCenter);
                     } else {
                         c::text(p, b, QString::fromUtf8(kRateNames[stop]),
                                 lit ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 11, true, Qt::AlignCenter);
@@ -1130,14 +1200,14 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
                 }
             if (s == ShapeWob && d[PubLfo] >= 0 && d[PubWobDepth] > 0) {
                 // The LFO, a dot riding the zone's floor.
-                const QPointF a = pc.at(x0, kField), b = pc.at(x0 + kZoneW, kField);
+                const QPointF a = pc.at(x0, kField), b = pc.at(x0 + zw, kField);
                 const float v = d[PubLfo];
                 p.fillRect(QRectF(a.x() + 4, a.y() - 4 - 3, (b.x() - a.x() - 8) * v * d[PubWobDepth], 3), amber);
             }
         } else if (s == ShapeOct) {
             const int lit = int(std::lround(d[PubOct]));
-            const QRectF up = pc.rect(x0, kRailMid, x0 + kZoneW, 1.0f).adjusted(6, 15, -6, -3);
-            const QRectF bend = pc.rect(x0, kField, x0 + kZoneW, kRailMid).adjusted(6, 2, -6, -3);
+            const QRectF up = pc.rect(x0, kRailMid, x0 + zw, 1.0f).adjusted(6, 15, -6, -3);
+            const QRectF bend = pc.rect(x0, kField, x0 + zw, kRailMid).adjusted(6, 2, -6, -3);
             p.fillRect(up, c::alpha(amber, lit > 0 ? 0.9f : 0.08f));
             c::text(p, up, lit > 1 ? QStringLiteral("+24") : QStringLiteral("+12"),
                     lit > 0 ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 11, true, Qt::AlignCenter);
@@ -1147,8 +1217,24 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
                     bending ? QStringLiteral("BEND %1").arg(double(m_sent[ShapeBend][0]), 0, 'f', 1)
                             : QStringLiteral("BEND ↕"),
                     bending ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 10, true, Qt::AlignCenter);
+        } else if (s == ShapeFilter) {
+            // Two bipolar meters: the cutoff it lifts or sinks (height), and
+            // the morph it adds (sideways; the squelch on ACID).
+            const QRectF body = pc.rect(x0, kField, x0 + zw, 1.0f).adjusted(10, 20, -10, -8);
+            const float cut = d[PubFilter], mo = d[PubFilterMorph];
+            // The fader's rest: the line across the zone's middle.
+            p.setPen(QPen(c::alpha(amber, 0.35f), 1, Qt::DashLine));
+            p.drawLine(pc.at(x0, kRailMid), pc.at(x0 + zw, kRailMid));
+            c::text(p, QRectF(body.left(), body.top(), body.width(), 12), QStringLiteral("↕ TONE"),
+                    c::alpha(amber, 0.7f), 9, true);
+            c::gauge(p, QRectF(body.left(), body.top() + 13, body.width(), body.height() * 0.28),
+                     clampf(0.5f + 0.5f * cut / 0.7f, 0, 1), amber, 10, true);
+            c::text(p, QRectF(body.left(), body.top() + body.height() * 0.5, body.width(), 12),
+                    m_sound == Acid ? QStringLiteral("↔ SQUELCH") : QStringLiteral("↔ MORPH"), c::alpha(amber, 0.7f), 9, true);
+            c::gauge(p, QRectF(body.left(), body.top() + body.height() * 0.5 + 13, body.width(), body.height() * 0.28),
+                     clampf(0.5f + 0.5f * mo, 0, 1), amber, 10, true);
         } else {
-            const QRectF body = pc.rect(x0, kField, x0 + kZoneW, 1.0f).adjusted(10, 20, -10, -10);
+            const QRectF body = pc.rect(x0, kField, x0 + zw, 1.0f).adjusted(10, 20, -10, -10);
             c::gauge(p, QRectF(body.left(), body.top(), body.width(), body.height() * 0.55), on ? d[PubGrit] : 0,
                      amber, 12);
             // Sideways goes warm, tube, fold: the one it is on is lit.

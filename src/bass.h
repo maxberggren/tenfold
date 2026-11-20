@@ -36,12 +36,13 @@ enum Sound : int { Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, SoundCo
 //   Move   id; i[0] degree, i[1] octave; f[0] pressure, f[1] tone, f[2] morph, f[3] fat
 //   Off    id
 //   Param  i[0] Shaper; f[0] amount (0 = off), f[1] its second axis (ShapeBend: f[0]
-//          semitones, −24..12);
+//          semitones, −24..12, f[1] 1 once it has settled; ShapeFilter: f[0] cutoff
+//          offset −0.7..0.7, f[1] morph offset −1..1);
 //          or i[0] ResetSlot, f[0] the slot (never recorded)
 //   Strike id: the note this id plays is struck again with an accent (the click)
 constexpr uint16_t kStrike = Command::User;
 enum NoteFlag : int { Follow = 1, Accent = 2, Square = 4 }; // Square: the saw becomes a square
-enum Shaper : int { ShapeOct, ShapeRoll, ShapeWob, ShapeGrit, ShapeBend, ShaperCount, ResetSlot = 15 };
+enum Shaper : int { ShapeOct, ShapeRoll, ShapeWob, ShapeGrit, ShapeBend, ShapeFilter, ShaperCount, ResetSlot = 15 };
 
 // The roll's rhythms, one beat each: a held note is struck on the lit steps.
 // The kick owns the downbeat, so most of them leave it free.
@@ -92,6 +93,8 @@ enum Pub : int {
     PubChordShift = 24, // degrees the chord moves a following line
     PubClipMute = 25,   // how far the loop has stepped aside
     PubScopeCycles = 26,
+    PubFilter = 27,      // the FILTER finger's cutoff offset, and its morph offset
+    PubFilterMorph = 28,
     PubScope = 128,     // 128 points: two cycles of the waveform, phase-locked
     PubScopeSize = 128,
 };
@@ -209,7 +212,7 @@ inline const Recipe &recipe(int sound) {
             s.sub = 0.75f;
             s.cutLo = 0.14f, s.cutHi = 0.6f, s.res = 0.6f;
             s.envAmt = 0.45f, s.envDecay = 0.11f;
-            s.mRes = 0.36f, s.mEnv = 0.5f, s.mDecay = 2.6f;
+            s.mRes = 0.36f, s.mEnv = 0.25f, s.mDecay = 1.6f;
             s.attack = 0.001f, s.decay = 0.35f, s.sustain = 0.7f, s.release = 0.03f;
             s.drive = 0.42f, s.character = 0.1f;
             s.glide = 0.065f;
@@ -315,6 +318,23 @@ inline const Recipe &recipe(int sound) {
 // (41–78 Hz), the octave every producer puts a sub in.
 inline double rootShift(const Tuning &t) { return t.root() >= 4 ? -12.0 : 0.0; }
 
+// The nearest note of the key to a pitch: where a bend that has settled
+// lands, so it ends in tune.
+inline double nearestInKey(const Harmony &h, double midi) {
+    const double base = h.tuning.baseMidi() + rootShift(h.tuning);
+    const int n = h.tuning.degreesPerOctave();
+    const int oct = int(std::floor((midi - base) / 12.0));
+    double best = midi, bestDistance = 1e9;
+    for (int d = (oct - 1) * n; d <= (oct + 2) * n; ++d) {
+        const double m = base + h.tuning.degreeSemis(d);
+        if (std::fabs(m - midi) < bestDistance) {
+            bestDistance = std::fabs(m - midi);
+            best = m;
+        }
+    }
+    return best;
+}
+
 // How far a chord moves a line that follows it, in degrees: its root, folded
 // to the nearer octave so the bass walks to the closest root and stays low.
 inline int chordShift(const Harmony &h) {
@@ -386,11 +406,16 @@ struct Shape {
     int rate = 3;
     float grit = 0, gritChar = 0.3f;
     float bend = 0;  // semitones
+    bool bendSettled = false; // a bend at rest lands on a note of the key
+    float cut = 0, morph = 0; // the FILTER finger: cutoff and morph offsets
 
     // The live shapers over a loop's own: the player's hand wins.
     static Shape over(const Shape &own, const Shape &live) {
         Shape s = own;
         s.bend = own.bend + live.bend;
+        s.bendSettled = live.bend != 0 ? live.bendSettled : own.bendSettled;
+        s.cut = clampf(own.cut + live.cut, -0.9f, 0.9f);
+        s.morph = clampf(own.morph + live.morph, -1.0f, 1.0f);
         s.oct = std::clamp(own.oct + live.oct, 0.0f, 2.0f);
         if (live.roll > 0) {
             s.roll = live.roll;
@@ -428,6 +453,8 @@ public:
         m_chorus.init(size_t(0.03f * rate));
         m_post.reset();
         m_sideHp.set(300.0f, 0.7f, rate);
+        m_preLp.set(4500.0f, rate);
+        m_preLp2.set(4500.0f, rate);
         m_tone.reset(0.5f);
         m_morph.reset(0.3f);
         m_fat.reset(0);
@@ -450,6 +477,7 @@ public:
             remove(m_notes[0].id);
         m_notes[m_count++] = n;
         m_cur = n;
+        m_sinceOn = 0;
         m_target = pitchOf(n, h) + 12.0 * double(sh.oct);
         m_chordSeq = h.chordSeq;
         if (legato) {
@@ -493,8 +521,11 @@ public:
             n.fat = c.f[3];
             if (k == m_count - 1) {
                 m_cur = n;
+                // A move that comes with its note (a loop carrying in a note
+                // held across its start, where it had slid to) is where the
+                // note begins, not a slide.
                 if (slide)
-                    m_glideTau = glideTime(n) / 3.0f;
+                    m_glideTau = m_sinceOn < int(0.005f * m_rate) ? 0.0f : glideTime(n) / 3.0f;
             }
         }
     }
@@ -513,6 +544,7 @@ public:
             m_stage = Idle;
             m_ladder.reset();
             m_os.reset();
+            m_os4.reset();
         } else {
             release();
         }
@@ -551,6 +583,7 @@ public:
             m_glideTau = 0.0015f;
         }
         m_target = pitchOf(m_cur, h) + 12.0 * double(m_oct);
+        m_sinceOn = std::min(m_sinceOn + n, 1 << 30);
 
         // The roll starting or stopping under a held note.
         const bool rolling = sh.roll > 0 && m_count > 0;
@@ -562,7 +595,11 @@ public:
 
         const float blockSmooth = 1.0f - std::exp(-float(n) / (0.006f * rate));
         const float tone = m_tone.y += (m_cur.tone - m_tone.y) * blockSmooth;
-        const float morph = m_morph.y += (m_cur.morph - m_morph.y) * blockSmooth;
+        // The FILTER finger's offsets, smoothed: it arrives sixty times a second.
+        const float cutOff = m_cutOff += (sh.cut - m_cutOff) * blockSmooth;
+        m_morphOff += (sh.morph - m_morphOff) * blockSmooth;
+        m_morph.y += (m_cur.morph - m_morph.y) * blockSmooth;
+        const float morph = clampf(m_morph.y + m_morphOff, 0.0f, 1.0f);
         const float fat = m_fat.y += (m_cur.fat - m_fat.y) * blockSmooth;
         const float press = m_press.y += (m_cur.pressure - m_press.y) * blockSmooth;
 
@@ -570,11 +607,15 @@ public:
         // A bend arrives sixty times a second; smoothed over 15 ms it is a
         // continuous dive, not steps.
         const float bendCoef = 1.0f - std::exp(-1.0f / (0.015f * rate));
-        const float bendTarget = sh.bend;
+        // Moving, a bend goes where the finger is; settled, it lands on the
+        // nearest note of the key.
+        float bendTarget = sh.bend;
+        if (sh.bendSettled && sh.bend != 0)
+            bendTarget = float(nearestInKey(h, m_target + double(sh.bend)) - m_target);
         const float decayCoef = std::exp(-1.0f / (std::max(0.01f, R.decay) * rate));
         const float releaseCoef = std::exp(-1.0f / (std::max(0.004f, R.release) * rate));
         const float attackInc = 1.0f / (std::max(0.0005f, R.attack) * rate);
-        const float envDecay = R.envDecay * (1.0f + m_morph.y * R.mDecay) * (1.0f - 0.35f * m_accent);
+        const float envDecay = R.envDecay * (1.0f + morph * R.mDecay) * (1.0f - 0.35f * m_accent);
         const float fenvCoef = std::exp(-1.0f / (std::max(0.01f, envDecay) * rate));
         const float dropCoef = std::exp(-1.0f / (std::max(0.005f, R.dropTime) * rate));
         const float sustain = R.sustain;
@@ -605,14 +646,18 @@ public:
         float lfo = m_lfo;
         float g = 1, comp = 1, fmIndex = 0, d2 = 1, d3 = 1, envAmt = 0, hiScale = 1;
         float peak = 0;
-        auto shapeFn = [&character](float v) {
+        float foldMax = 4.0f; // radians the fold may turn through, fewer up high
+        auto shapeFn = [&character, &foldMax](float v) {
             // Warm (tanh), tube (lopsided: even harmonics), fold (sine
             // folding: the growl), blended continuously.
             const float t = fastTanh(v);
             const float a = fastTanh(v + 0.35f) - 0.33638f;
             if (character < 0.5f)
                 return lerpf(t, a, character * 2.0f);
-            const float f = std::sin(v);
+            // The fold turns at most about one and a half times: pushed
+            // harder it only saturates, so its harmonics stay inside what
+            // twice the rate can hold.
+            const float f = std::sin(foldMax * fastTanh(v / foldMax));
             return lerpf(a, f, (character - 0.5f) * 2.0f);
         };
 
@@ -648,10 +693,16 @@ public:
                     lfo = 0;
                 }
                 const float keytrack = 0.4f * std::log2(std::max(hz0, 20.0f) / 55.0f) / 8.3f;
-                float cut = lerpf(R.cutLo, R.cutHi, tone) + keytrack + 0.1f * (press - 0.5f);
+                // The FILTER finger: above its middle it opens the synth's own
+                // filter; below, a DJ low-pass closes over the whole top, the
+                // envelope and accents included, from 16 kHz down to 150 Hz.
+                float cut = lerpf(R.cutLo, R.cutHi, tone) + keytrack + 0.1f * (press - 0.5f) + std::max(0.0f, cutOff);
+                m_djOn = cutOff < -0.005f;
+                if (m_djOn)
+                    m_dj.set(16000.0f * std::exp2(cutOff / 0.7f * 6.7f), 0.7f, rate);
                 if (wobDepth > 0.001f)
                     cut = lerpf(cut, lerpf(R.cutLo * 0.6f, cut + 0.22f, lfo), wobDepth * R.wobCut);
-                envAmt = (R.envAmt + morph * R.mEnv) * (1.0f + 0.8f * m_accent * R.accent);
+                envAmt = (R.envAmt + morph * R.mEnv) * (1.0f + 1.4f * m_accent * R.accent);
                 cut += envAmt * m_fenv * 0.6f;
                 cutNow = clampf(cut, 0.0f, 1.0f);
                 const float fc = std::min(50.0f * std::exp2(cutNow * 8.3f), rate * (0.42f - 0.1f * R.res));
@@ -665,6 +716,7 @@ public:
                 // FM and folding run at the base rate, so they too thin out
                 // as the note climbs.
                 hiScale = clampf(320.0f / hz0, 0.2f, 1.0f);
+                foldMax = 1.6f + 2.4f * hiScale * hiScale;
                 fmIndex = (R.fmIndex + tone * R.fmTone + morph * R.mFm + wobDepth * lfo * R.wobFm + grit * sh.gritChar * 3.0f) * hiScale;
                 const float drv = R.drive + tone * R.toneDrive + morph * R.mDrive + grit * 1.1f +
                                   m_accent * 0.15f * R.accent + std::max(0.0f, press - 0.55f) * 0.5f;
@@ -788,11 +840,22 @@ public:
                 // the raw tone through an open filter.
                 x = lerpf(x, 1.8f * v, R.formant * (1.0f - 0.45f * tone * tone));
             }
-            if (R.driveFirst)
-                y = m_ladder.step(m_os.process(x * g, shapeFn) * comp);
+            if (R.driveFirst) {
+                // Nothing high goes into a drive with no filter before it:
+                // what it would fold back is gone first.
+                x = m_preLp2.step(m_preLp.step(x));
+                // Four times the rate: a drive this hard folds and clips into
+                // corners whose harmonics would pass twice the rate.
+                auto inner = [&](float v) { return m_os4.process(v, shapeFn); };
+                y = ladder(m_os.process(x * g, inner) * comp);
+            }
+            else if (character > 0.5f) // folding: four times the rate here too
+                y = m_os.process(ladder(x) * g, [&](float v) { return m_os4.process(v, shapeFn); }) * comp;
             else
-                y = m_os.process(m_ladder.step(x) * g, shapeFn) * comp;
+                y = m_os.process(ladder(x) * g, shapeFn) * comp;
             y = m_post.step(y).low;
+            if (m_djOn)
+                y = m_dj.step(y).low;
             // The crossover: two 2-pole high-passes, a 24 dB slope.
             y = m_hp2.step(m_hp1.step(y).high).high;
 
@@ -800,7 +863,7 @@ public:
             const float mute = m_mute.step(muteTarget);
             const float dk = duck[std::min(off0 + i, kBlock - 1)];
             const float pumped = 1.0f - R.pump * dk;
-            const float top = y * amp * topGain * (1.0f + 0.5f * m_accent * R.accent) * pumped;
+            const float top = y * amp * topGain * (1.0f + 0.8f * m_accent * R.accent) * pumped;
             // The sub ducks under the kick harder than the top does.
             const float sub = s1 * amp * subGain * pumped * (1.0f - R.subPump * dk);
             float mono = (top + sub) * mute;
@@ -819,8 +882,8 @@ public:
             // accented, fat, resonant attack rounds off instead of hitting
             // the bus limiter, and the low end stays one signal.
             const float mag = std::fabs(mono) + std::fabs(side);
-            if (mag > 0.45f) {
-                const float k = (0.45f + 0.25f * fastTanh((mag - 0.45f) / 0.25f)) / mag;
+            if (mag > 0.55f) {
+                const float k = (0.55f + 0.25f * fastTanh((mag - 0.55f) / 0.25f)) / mag;
                 mono *= k;
                 side *= k;
             }
@@ -913,6 +976,14 @@ private:
             closeGate();
         }
     }
+    // The ladder fed gently: its input clips ahead of the resonance, so a
+    // hot signal flattens the very peak a squelch is made of. In at a level
+    // that falls as the resonance rises, out at the level it came in.
+    float ladder(float x) {
+        const float trim = 0.45f / (1.0f + 0.5f * m_ladder.k);
+        return m_ladder.step(x * trim) / trim;
+    }
+
     // Steps from a lit step to the next: the gate is a share of that, so an
     // offbeat note can last an eighth and a sixteenth roll stays tight.
     static int untilNext(int pattern, int within) {
@@ -946,7 +1017,8 @@ private:
     float m_amp = 0, m_fenv = 0, m_drop = 0, m_vel = 0.8f, m_accent = 0;
     double m_midi = 33, m_target = 33;
     float m_glideTau = 0;
-    float m_oct = 0, m_bend = 0;
+    float m_oct = 0, m_bend = 0, m_cutOff = 0, m_morphOff = 0;
+    int m_sinceOn = 0; // samples since the sounding note began
     uint32_t m_chordSeq = 0;
     long m_step = 0;
     double m_gateEnd = 0;
@@ -955,8 +1027,11 @@ private:
     Ladder m_ladder;
     Svf m_vf[3];
     float m_vk[3] = {1, 1, 1};
-    Halfband2x m_os;
+    Halfband2x m_os, m_os4;
     Svf m_post, m_hp1, m_hp2, m_sideHp;
+    OnePoleLp m_preLp, m_preLp2;
+    Svf m_dj;            // the FILTER finger's low-pass, below its middle
+    bool m_djOn = false;
     Delay m_chorus;
     float m_cutNow = 0, m_lfo = -1, m_lfoDepth = 0, m_level = 0;
 };
@@ -1038,6 +1113,8 @@ public:
         data[PubGrit] = sh.grit;
         data[PubGritChar] = sh.gritChar;
         data[PubOct] = sh.oct;
+        data[PubFilter] = sh.cut;
+        data[PubFilterMorph] = sh.morph;
         data[PubChordShift] = float(chordShift(m_harmony));
         data[PubClipMute] = 1.0f - m_clip.mute();
         scope(data + PubScope, data[PubScopeCycles]);
@@ -1102,6 +1179,11 @@ private:
                 break;
             case ShapeBend:
                 own.bend = clampf(c.f[0], -24, 12);
+                own.bendSettled = c.f[1] > 0.5f;
+                break;
+            case ShapeFilter:
+                own.cut = clampf(c.f[0], -0.7f, 0.7f);
+                own.morph = clampf(c.f[1], -1.0f, 1.0f);
                 break;
             case ResetSlot:
                 // The page is about to fill a slot: what an old loop there

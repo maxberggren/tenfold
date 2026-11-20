@@ -170,6 +170,31 @@ struct Rig {
     }
 };
 
+// A stretch of a take (the whole mix) as a Rig, to measure it the same way.
+Rig stretch(const testkit::Take &take, double t0, double t1) {
+    Rig r;
+    r.left.assign(take.left.begin() + long(t0 * 48000), take.left.begin() + long(t1 * 48000));
+    r.right.assign(take.right.begin() + long(t0 * 48000), take.right.begin() + long(t1 * 48000));
+    return r;
+}
+
+// Power in dB between lo and hi Hz over a whole stretch (a DFT every 10 Hz).
+double bandPower(const Rig &r, double lo, double hi) {
+    const size_t n = r.left.size();
+    double sum = 0;
+    for (double f = lo; f < hi; f += 10) {
+        double re = 0, im = 0;
+        const double w = 2 * M_PI * f / 48000.0;
+        for (size_t i = 0; i < n; i += 2) {
+            const double v = 0.5 * (r.left[i] + r.right[i]) * (0.5 - 0.5 * std::cos(2 * M_PI * double(i) / double(n)));
+            re += v * std::cos(w * double(i));
+            im += v * std::sin(w * double(i));
+        }
+        sum += re * re + im * im;
+    }
+    return 10 * std::log10(sum / double(n) / double(n) + 1e-20);
+}
+
 Command noteOn(int id, int degree, int sound, int flags = 0, float vel = 0.8f, float tone = 0.5f) {
     Command c;
     c.type = Command::On;
@@ -482,7 +507,9 @@ private slots:
         a.send(strike);
         a.run(0.2);
         b.run(0.2);
-        QVERIFY(a.topRms(0.6, 0.66) > b.topRms(0.6, 0.66) + 5);
+        // Louder above the sub, and brighter: more of it between 1 and 4 kHz.
+        QVERIFY(a.topRms(0.6, 0.66) > b.topRms(0.6, 0.66) + 3);
+        QVERIFY(a.band(0.6, 0.66, 1000, 4000) > b.band(0.6, 0.66, 1000, 4000) + 3);
         QVERIFY(a.topRms(0.6, 0.66) > a.topRms(0.0, 0.06)); // harder than the note's own attack
     }
 
@@ -625,16 +652,16 @@ private slots:
     // A finger lands on the stop it aims at: 1/16 is 1/16 and GALLOP is
     // GALLOP, whatever the last finger left.
     void shaperStopsAreWhereTheyLand() {
-        // WOB is 0.56..0.78 wide, four stops across; 1/16 is the top row's last.
+        // WOB is 0.45..0.66 wide, four stops across; 1/16 is the top row's last.
         auto wobRate = [](const std::string &land) {
             const auto take = testkit::play("page 0 2\ndown 0.1 1 0.3 0.3\n" + land + "end 0.6\n");
             return int(take.view.parts[1].data[bass::PubWobRate]);
         };
-        QCOMPARE(wobRate("down 0.2 2 0.7525 0.95\n"), 5);                          // 1/16
-        QCOMPARE(wobRate("down 0.2 2 0.5875 0.80\n"), 2);                          // 1/4T
-        QCOMPARE(wobRate("down 0.2 2 0.7525 0.95\nup 0.3 2\ndown 0.4 3 0.6975 0.95\n"), 3); // then 1/8
-        QCOMPARE(wobRate("down 0.2 2 0.5875 0.95\nglide 0.3 0.4 2 0.6975 0.95\n"), 3); // slid two stops
-        const auto roll = testkit::play("page 0 2\ndown 0.1 1 0.3 0.3\ndown 0.2 2 0.4775 0.95\nend 0.6\n");
+        QCOMPARE(wobRate("down 0.2 2 0.6338 0.95\n"), 5);                          // 1/16
+        QCOMPARE(wobRate("down 0.2 2 0.4763 0.80\n"), 2);                          // 1/4T
+        QCOMPARE(wobRate("down 0.2 2 0.6338 0.95\nup 0.3 2\ndown 0.4 3 0.5813 0.95\n"), 3); // then 1/8
+        QCOMPARE(wobRate("down 0.2 2 0.4763 0.95\nglide 0.3 0.4 2 0.5813 0.95\n"), 3); // slid two stops
+        const auto roll = testkit::play("page 0 2\ndown 0.1 1 0.3 0.3\ndown 0.2 2 0.3712 0.95\nend 0.6\n");
         QCOMPARE(int(roll.view.parts[1].data[bass::PubRoll]) - 1, 2); // GALLOP
     }
 
@@ -645,6 +672,96 @@ private slots:
         rig.send(shaper(bass::ShapeBend, -12, 0));
         rig.run(0.6);
         QVERIFY(std::fabs(cents(rig.pitch(), 33)) < 15);
+    }
+
+    // The FILTER finger rides a playing loop: the acid riff, looped with
+    // Space, opens by more than 15 dB between 1 and 4 kHz as the finger
+    // climbs the fader from its foot to its top over two bars, and its
+    // notes play on throughout.
+    void filterFingerRidesTheLoop() {
+        std::string script = "page 0 2\nkey 0.1 R\n";
+        // One bar of sixteenths at 120 BPM, then Space on the next one.
+        const int degrees[16] = {0, -9, 7, 0, 2, -9, 3, 4, 0, -9, 7, 0, 6, -9, 4, 2};
+        for (int k = 0; k < 16; ++k)
+            if (degrees[k] > -9)
+                script += "tap " + std::to_string(0.5 + k * 0.125) + " " +
+                          std::to_string((degrees[k] + 2 + 0.5) / 12.0) + " 0.25 len=0.1\n";
+        script += "key 2.5 Space\n"
+                  "down 4.5 50 0.745 0.765\nglide 4.6 8.5 50 0.745 0.995\nend 10.5\n";
+        const auto take = testkit::play(script);
+        QCOMPARE(int(take.view.parts[1].clips[0].state), int(ClipView::Playing));
+        const double before = bandPower(stretch(take, 4.6, 5.4), 1000, 4000); // the finger at the bottom
+        const double after = bandPower(stretch(take, 8.5, 10.5), 1000, 4000);
+        QVERIFY2(after > before + 15, qPrintable(QStringLiteral("%1 → %2 dB").arg(before).arg(after)));
+        QVERIFY(take.rms(8.5, 10.5) > 0.02);
+        QVERIFY(take.view.parts[1].data[bass::PubFilter] > 0.6f);
+    }
+
+    // The +12 row never bends: an octave tap that drifts stays in tune.
+    void octaveTapsStayInTune() {
+        const auto take = testkit::play("page 0 2\nkey 0.2 Q\ndown 0.5 1 0.5417 0.45\n" // E2
+                                        "down 1.0 2 0.16 0.94\nglide 1.05 1.4 2 0.161 0.946\nend 2.4\n");
+        QVERIFY2(std::fabs(cents(stretch(take, 1.6, 2.4).pitch(0.7), 52)) < 3, "E3, in tune");
+    }
+
+    // The BEND row: still within a hair of where it landed, no bend; moved
+    // and held, it bends, then lands on a note of the key.
+    void bendHasADeadZoneAndLandsInKey() {
+        const std::string note = "page 0 2\nkey 0.2 Q\ndown 0.5 1 0.5417 0.45\n"; // E2
+        const auto still = testkit::play(note + "down 1.0 2 0.16 0.82\nglide 1.05 1.3 2 0.16 0.835\nend 2.4\n");
+        QVERIFY(std::fabs(cents(stretch(still, 1.6, 2.4).pitch(0.7), 40)) < 3);
+        // Down 0.1: about three semitones under E2, between C# and C. It
+        // settles on C, the note of A minor nearest.
+        const auto bent = testkit::play(note + "down 1.0 2 0.16 0.82\nglide 1.05 1.3 2 0.16 0.72\nend 2.6\n");
+        QVERIFY2(std::fabs(cents(stretch(bent, 1.8, 2.6).pitch(0.7), 36)) < 10, qPrintable(QString::number(stretch(bent, 1.8, 2.6).pitch(0.7))));
+    }
+
+    // A note a loop carries in where it had slid to starts there, rather
+    // than sliding over again on every downbeat.
+    void aCarriedSlideStartsWhereItEnded() {
+        Rig rig;
+        Command on = noteOn(kReplay | 1, 2, bass::Sub); // C2
+        rig.send(on);
+        Command mv;
+        mv.type = Command::Move;
+        mv.id = kReplay | 1;
+        mv.i[0] = 0; // to A1
+        mv.f[0] = 0.75f;
+        mv.f[1] = 0.5f;
+        mv.f[2] = 0.3f;
+        rig.send(mv);
+        rig.run(0.06);
+        // Rising zero crossings of the first 50 ms: A1's rate, not C2's.
+        int n = 0;
+        for (size_t i = 481; i < size_t(0.0505 * 48000); ++i)
+            n += rig.left[i - 1] < 0 && rig.left[i] >= 0;
+        QVERIFY2(n >= 2 && n <= 3, qPrintable(QString::number(n)));
+        QVERIFY(std::fabs(rig.pub[bass::PubMidi] - 33.0f) < 0.05f);
+    }
+
+    // GROWL folding hard: what folds back stays 45 dB under the harmonics.
+    void growlFoldStaysClean() {
+        Rig rig;
+        rig.send(shaper(bass::ShapeGrit, 1.0f, 1.0f));
+        rig.send(noteOn(1, 0, bass::Growl, 0, 0.8f, 0.6f));
+        rig.run(1.0);
+        const size_t n = 24000, from = rig.left.size() - n;
+        double harmonic = 0, other = 0;
+        for (double f = 1500; f < 12000; f += 4) {
+            double re = 0, im = 0;
+            const double w = 2 * M_PI * f / 48000.0;
+            for (size_t i = 0; i < n; i += 2) {
+                const double x = double(i) / double(n);
+                const double win = 0.42 - 0.5 * std::cos(2 * M_PI * x) + 0.08 * std::cos(4 * M_PI * x);
+                const double v = 0.5 * (rig.left[from + i] + rig.right[from + i]) * win;
+                re += v * std::cos(w * double(i));
+                im += v * std::sin(w * double(i));
+            }
+            const double h = f / 55.0;
+            (std::fabs(h - std::round(h)) * 55.0 < 8 ? harmonic : other) += re * re + im * im;
+        }
+        const double db = 10 * std::log10(other / harmonic);
+        QVERIFY2(db < -45, qPrintable(QStringLiteral("%1 dB").arg(db)));
     }
 
     // Leaving the page ends what the fingers hold.

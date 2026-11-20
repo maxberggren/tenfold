@@ -100,6 +100,8 @@ public:
     Q_INVOKABLE void toggleMetronome() { m_session->toggleMetronome(); }
     Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
     Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }
+    Q_INVOKABLE void undoTake() { m_session->undoTake(); }
+    Q_INVOKABLE void startOver() { m_session->startOver(); }
     // A key for the pages; returns true when one used it.
     Q_INVOKABLE bool sendKey(int key, int modifiers, bool down, bool repeat, const QString &text);
 

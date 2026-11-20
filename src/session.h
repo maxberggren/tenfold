@@ -12,6 +12,8 @@
 //   Ctrl+[ / Ctrl+]         mode darker / brighter
 //   Ctrl+M                  metronome
 //   Ctrl+Backspace          stop every clip at the next bar
+//   Ctrl+Z                  take back the newest loop (on any page)
+//   Ctrl+N, Ctrl+N          start over: every loop cleared
 //   Space                   record a loop on this page from the next bar; Space
 //                           again closes it (unless the page records its own way)
 // Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
@@ -69,6 +71,10 @@ public:
     void shiftMode(int step);
     void toggleMetronome();
     void stopAll();
+    // Ctrl+Z: take back the newest loop on any page; what played before
+    // plays again. Ctrl+N: start over, every loop cleared (asks first).
+    void undoTake();
+    void startOver();
     // Space: arm a loop on this part from the next bar, or close it.
     void toggleRecording(ControlContext &ctx);
 
@@ -92,6 +98,9 @@ private:
     StudioView m_view;
     float m_aspect = 1.6f;
     double m_lastFrame = 0;
+    std::vector<int> m_takeOrder;          // the part of each take that landed, oldest first
+    uint32_t m_takesSeen[kMaxParts] = {};
+    double m_startOverAsked = -1;
     Frame m_last;            // the last frame, as the pad sent it
     std::vector<int> m_ignored; // fingers down when the page changed, until they lift
     QString m_notice;

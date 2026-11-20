@@ -292,6 +292,8 @@ bool Session::key(const KeyEvent &k) {
         case Qt::Key_BracketRight: shiftMode(-1); return true;
         case Qt::Key_M: toggleMetronome(); return true;
         case Qt::Key_Backspace: stopAll(); return true;
+        case Qt::Key_Z: undoTake(); return true;
+        case Qt::Key_N: startOver(); return true;
         default: return false;
         }
     }
@@ -313,8 +315,19 @@ bool Session::key(const KeyEvent &k) {
 
 void Session::refresh() {
     std::lock_guard lock(m_lock);
-    if (m_studio->fetchView())
+    if (m_studio->fetchView()) {
         m_view = m_studio->view();
+        // Takes land in the studio; remember which part made each, in
+        // order, so Ctrl+Z takes back the newest first.
+        for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
+            while (m_takesSeen[p] < m_view.parts[p].takes) {
+                ++m_takesSeen[p];
+                m_takeOrder.push_back(p);
+            }
+        }
+        if (m_takeOrder.size() > 64)
+            m_takeOrder.erase(m_takeOrder.begin(), m_takeOrder.end() - 64);
+    }
 }
 
 void Session::paint(QPainter &painter, const QRectF &pad, double time) {
@@ -569,6 +582,43 @@ void Session::toggleRecording(ControlContext &base) {
         ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
     else
         ctx.notice(QStringLiteral("Looping %1 in slot %2 at the bar").arg(what).arg(slot + 1));
+}
+
+void Session::undoTake() {
+    std::lock_guard lock(m_lock);
+    // The studio keeps the last four takes per part; older ones are gone.
+    if (m_takeOrder.empty()) {
+        context(m_page).notice(QStringLiteral("No loop to take back"));
+        return;
+    }
+    const int part = m_takeOrder.back();
+    m_takeOrder.pop_back();
+    StudioMsg m;
+    m.kind = StudioMsg::UndoTake;
+    m.part = int8_t(part);
+    m_studio->post(m);
+    context(m_page).notice(QStringLiteral("Took back the last %1 loop").arg(pageName(part)));
+}
+
+void Session::startOver() {
+    std::lock_guard lock(m_lock);
+    const double t = now();
+    if (m_startOverAsked < 0 || t - m_startOverAsked > 3.0) {
+        m_startOverAsked = t;
+        context(m_page).notice(QStringLiteral("Ctrl+N again to clear every loop"));
+        return;
+    }
+    m_startOverAsked = -1;
+    StudioMsg m;
+    m.kind = StudioMsg::ClearAll;
+    m_studio->post(m);
+    m_takeOrder.clear();
+    for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
+        m_view.parts[p].playing = -1;
+        for (auto &c : m_view.parts[p].clips)
+            c.state = ClipView::Empty;
+    }
+    context(m_page).notice(QStringLiteral("Starting over: the next loop sets the tempo"));
 }
 
 void Session::shiftTempo(double delta) {

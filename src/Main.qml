@@ -306,6 +306,16 @@ ApplicationWindow {
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            label: qsTr("Undo loop"); key: "Ctrl Z"; color: win.amber
+                            onClicked: backend.undoTake()
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            label: qsTr("Start over"); key: "Ctrl N ×2"; color: win.red
+                            onClicked: backend.startOver()
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
                             onClicked: win.helpVisible = !win.helpVisible
                         }

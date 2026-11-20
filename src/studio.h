@@ -35,6 +35,8 @@ struct StudioMsg {
         Key,         // part = root, slot = family, value = brightness
         Metronome,   // value = on
         Silence,     // part (−1: all), value = hard
+        UndoTake,    // part: take back that part's latest take, and play what played before
+        ClearAll,    // every clip of every part goes, every sound stops: start over
     };
     Kind kind = ToPart;
     int8_t part = 0;

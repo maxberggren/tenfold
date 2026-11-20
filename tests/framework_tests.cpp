@@ -109,6 +109,46 @@ private slots:
         QCOMPARE(take.view.parts[1].clips[0].events, 16);
     }
 
+    void ctrlZTakesBackTheNewestLoopAndBringsBackTheOneBefore() {
+        // The beat, then two bass loops one after the other: the second
+        // replaces the first. Ctrl+Z takes the second back and the first
+        // plays again; Ctrl+Z again takes the first back too, and the beat
+        // plays on.
+        const auto take = testkit::play(std::string(kBeat) +
+                                        "page 3.0 2\n"
+                                        "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                        "key 6.6 Space\n"
+                                        "tap 6.55 0.6 0.5\ntap 7.05 0.8 0.5\ntap 7.55 0.7 0.5\ntap 8.05 0.6 0.5\n"
+                                        "key 8.6 Space\n"
+                                        "key 9.5 Ctrl+Z\nend 10.5\n");
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QVERIFY(take.view.parts[1].clips[1].state == ClipView::Empty);
+        QCOMPARE(take.view.parts[0].playing, 0);
+        const auto twice = testkit::play(std::string(kBeat) +
+                                         "page 3.0 2\n"
+                                         "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                         "key 6.6 Space\nkey 7.5 Ctrl+Z\nkey 7.8 Ctrl+Z\nend 9\n");
+        QCOMPARE(twice.view.parts[1].playing, -1);
+        QVERIFY(twice.view.parts[1].clips[0].state == ClipView::Empty);
+        QCOMPARE(twice.view.parts[0].playing, -1); // the second Ctrl+Z took the beat back
+        QVERIFY(twice.view.parts[0].clips[0].state == ClipView::Empty);
+    }
+
+    void ctrlNTwiceStartsOver() {
+        // Once only asks; twice clears every loop, and the next loop sets a
+        // new tempo of its own.
+        const auto once = testkit::play(std::string(kBeat) + "key 4.0 Ctrl+N\nend 5\n");
+        QCOMPARE(once.view.parts[0].playing, 0);
+        const auto take = testkit::play(std::string(kBeat) +
+                                        "key 4.0 Ctrl+N\nkey 4.5 Ctrl+N\n"
+                                        "tap 6.0 0.12 0.12\ntap 6.4 0.38 0.12\ntap 6.8 0.12 0.12\ntap 7.2 0.38 0.12\n"
+                                        "key 7.6 Space\nend 9\n");
+        QCOMPARE(take.view.parts[0].playing, 0);
+        QCOMPARE(take.view.parts[0].clips[0].events, 4);
+        QCOMPARE(int(std::lround(take.view.bpm)), 150);
+        QVERIFY(take.rms(5.0, 5.9) < 0.002); // silence between clearing and the new loop
+    }
+
     void spaceWithNothingPlayedMakesNoLoop() {
         const auto take = testkit::play("page 0 2\nkey 0.5 Space\nend 2\n");
         QCOMPARE(take.view.parts[1].playing, -1);

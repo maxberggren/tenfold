@@ -38,6 +38,9 @@ something playing, Space finds the bars you repeated and loops them from the
 bar line, leaving out whatever you tried before. F1–F8 launch a page's eight
 slots and Backspace stops it.
 
+**Changed your mind?** Ctrl+Z takes back the newest loop on any page, and
+what was playing before comes back. Ctrl+N twice starts over.
+
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
 metronome, Ctrl+R record to `~/Music/tenfold`, Ctrl+Q quit.
 

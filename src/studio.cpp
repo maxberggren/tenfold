@@ -78,6 +78,17 @@ struct Studio::PartState {
         double anchor = 0; // a beat where the clip's position is 0
     };
     Clip clips[kClipSlots];
+    // The last few takes, as the slots were before them, newest last, so a
+    // take can be taken back: its slot gets its old clip, and the clip that
+    // was playing plays again.
+    static constexpr int kUndo = 4;
+    struct Before {
+        std::vector<Event> events;
+        double length = 0, anchor = 0;
+        int slot = -1, playing = -1;
+    };
+    Before undo[kUndo];
+    int undoCount = 0;
     int playing = -1;
     int queued = -1;
     uint32_t takes = 0;       // clips made from what was played, ever
@@ -190,6 +201,8 @@ int Studio::addPart(std::unique_ptr<PartEngine> engine, const float *channel) {
     for (int i = 0; i < ChannelCount; ++i)
         p->channel[i] = p->channelTarget[i] = channel ? channel[i] : kDefaultChannel[i];
     p->history.resize(kHistory);
+    for (auto &u : p->undo)
+        u.events.reserve(kClipEvents);
     for (auto &c : p->clips)
         c.events.reserve(kClipEvents);
     m_parts.push_back(std::move(p));
@@ -259,6 +272,19 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     const double len = snapLength(raw);
     const double k = stretch ? len / raw : 1.0;
     auto &clip = p.clips[slot];
+    // Keep the slot as it was, to take the take back. The vectors' room is
+    // reserved, so the copies don't allocate.
+    if (p.undoCount == Studio::PartState::kUndo) {
+        for (int i = 1; i < Studio::PartState::kUndo; ++i)
+            std::swap(p.undo[i - 1], p.undo[i]);
+        --p.undoCount;
+    }
+    auto &before = p.undo[p.undoCount++];
+    before.events.assign(clip.events.begin(), clip.events.end());
+    before.length = clip.length;
+    before.anchor = clip.anchor;
+    before.slot = slot;
+    before.playing = p.playing;
     if (p.playing == slot)
         stopClip(p, s);
     clip.events.clear();
@@ -374,7 +400,13 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     }
     sortClip(clip.events);
     if (clip.events.empty()) {
-        clip.length = 0;
+        // Nothing was caught: the slot goes back to what it held.
+        auto &b = p.undo[--p.undoCount];
+        clip.events.assign(b.events.begin(), b.events.end());
+        clip.length = b.length;
+        clip.anchor = b.anchor;
+        if (b.playing == slot && clip.length > 0)
+            startClip(p, s, slot, clip.anchor);
         return;
     }
     if (std::getenv("TENFOLD_DEBUG")) {
@@ -571,6 +603,39 @@ void Studio::apply(const StudioMsg &m) {
         break;
     case StudioMsg::Metronome:
         s.metronome = m.value != 0;
+        break;
+    case StudioMsg::UndoTake: {
+        if (!p || p->undoCount == 0)
+            return;
+        auto &b = p->undo[--p->undoCount];
+        auto &clip = p->clips[b.slot];
+        if (p->playing == b.slot)
+            stopClip(*p, s);
+        if (p->recording == b.slot)
+            p->recording = -1;
+        clip.events.assign(b.events.begin(), b.events.end());
+        clip.length = b.length;
+        clip.anchor = b.anchor;
+        // What was playing before the take plays again, in its own time.
+        if (b.playing >= 0 && p->clips[b.playing].length > 0)
+            startClip(*p, s, b.playing, p->clips[b.playing].anchor);
+        break;
+    }
+    case StudioMsg::ClearAll:
+        s.pendingCount = 0;
+        for (auto &q : m_parts) {
+            stopClip(*q, s);
+            q->queued = -1;
+            q->stopQueued = false;
+            q->recording = -1;
+            q->overdub = false;
+            q->undoCount = 0;
+            for (auto &c : q->clips) {
+                c.events.clear();
+                c.length = 0;
+            }
+            q->engine->silence(false);
+        }
         break;
     case StudioMsg::Silence:
         for (int i = 0; i < s.pendingCount;)

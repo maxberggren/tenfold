@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 
 #include "fx.h"
@@ -12,7 +14,10 @@ namespace {
 
 double floorMod(double a, double m) {
     const double r = std::fmod(a, m);
-    return r < 0 ? r + m : r;
+    const double w = r < 0 ? r + m : r;
+    // A hair below zero wraps to m itself in floating point; that position
+    // would never play, so it is the start.
+    return w >= m - 1e-9 ? 0.0 : w;
 }
 
 constexpr int kHistory = 4096;     // live commands remembered per part, for captures
@@ -75,6 +80,7 @@ struct Studio::PartState {
     Clip clips[kClipSlots];
     int playing = -1;
     int queued = -1;
+    bool catchUp = false; // a new clip's first block also plays what it just passed
     double queuedAt = 0;
     bool stopQueued = false;
     double stopAt = 0;
@@ -237,6 +243,7 @@ static void startClip(Studio::PartState &p, Studio::Impl &s, int slot, double an
     p.clips[slot].anchor = anchor;
     p.queued = -1;
     p.stopQueued = false;
+    p.catchUp = false;
 }
 
 // Makes a clip from what the part played between beats b0 and b1. With
@@ -265,9 +272,56 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     const size_t from = head > size_t(kHistory) ? head - size_t(kHistory) : 0;
     constexpr double eps = 1e-6;
     constexpr double grid = 0.25;
+    // A take in the studio's time reaches an eighth of a beat early at both
+    // ends: a note landed a hair before the bar line belongs to that bar,
+    // not to the one before.
+    const double early = stretch ? 0.0 : 0.125;
+    bool playedOnTheOne = false;
+    // What was already going on when a take in the studio's time began: a
+    // note still held (a bass root landed before the bar and held through
+    // it) and the last setting of each knob. Both go in at the clip's start,
+    // so the loop sounds the way the take did.
+    if (!stretch) {
+        Command held[32];
+        int heldCount = 0;
+        Command knobs[32];
+        int knobCount = 0;
+        for (size_t h = from; h < head; ++h) {
+            const auto &lg = p.history[h % size_t(kHistory)];
+            if (lg.beat >= b0 - early - eps)
+                break;
+            const Command &c = lg.c;
+            if (c.type == Command::On && !(c.flags & Command::Quantize)) {
+                if (heldCount < 32)
+                    held[heldCount++] = c;
+            } else if (c.type == Command::Off) {
+                for (int i = 0; i < heldCount; ++i)
+                    if (held[i].id == c.id) {
+                        held[i] = held[--heldCount];
+                        break;
+                    }
+            } else if (c.type == Command::Param) {
+                int i = 0;
+                while (i < knobCount && knobs[i].i[0] != c.i[0])
+                    ++i;
+                if (i < 32) {
+                    knobs[i] = c;
+                    knobCount = std::max(knobCount, i + 1);
+                }
+            }
+        }
+        for (int i = 0; i < knobCount; ++i)
+            clip.events.push_back({0.0, knobs[i], -1e18});
+        for (int i = 0; i < heldCount && openCount < 64; ++i) {
+            clip.events.push_back({0.0, held[i], -1e18});
+            open[openCount++] = {held[i].id, 0.0, 0.0};
+        }
+    }
     for (size_t h = from; h < head; ++h) {
         const auto &lg = p.history[h % size_t(kHistory)];
-        if (lg.beat < b0 - eps || lg.beat >= b1 - eps)
+        if (lg.beat >= b1 - 0.12 && (lg.c.type == Command::On || (lg.c.flags & Command::Quantize)))
+            playedOnTheOne = true;
+        if (lg.beat < b0 - early - eps || lg.beat >= b1 - early - eps)
             continue;
         if (int(clip.events.size()) >= kClipEvents - 64)
             break;
@@ -305,7 +359,16 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         clip.length = 0;
         return;
     }
+    if (std::getenv("TENFOLD_DEBUG")) {
+        std::fprintf(stderr, "tenfold: clip slot %d len %.3f anchor %.4f now %.4f:", slot, len, anchor, s.transportState.beat);
+        for (auto &e : clip.events)
+            std::fprintf(stderr, " %d@%.4f", int(e.c.type), e.pos);
+        std::fprintf(stderr, "\n");
+    }
     startClip(p, s, slot, anchor);
+    // A loop closed by a key rather than a note on its ONE (Space with nothing
+    // playing) starts a moment after its downbeat: play what it just passed.
+    p.catchUp = stretch && !playedOnTheOne;
 }
 
 void Studio::apply(const StudioMsg &m) {
@@ -614,6 +677,11 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             for (; it != clip.events.end() && it->pos < to; ++it)
                 fire(*it, it->pos + base);
         };
+        if (p.catchUp) {
+            p.catchUp = false;
+            if (pos0 > 0 && pos0 < 0.25)
+                fireRange(0, pos0, 0);
+        }
         fireRange(pos0, std::min(pos0 + span, clip.length), 0);
         if (pos0 + span > clip.length)
             fireRange(0, pos0 + span - clip.length, clip.length);

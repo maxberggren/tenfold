@@ -157,6 +157,7 @@ public:
             const int slot = k.key - Qt::Key_F1;
             if (shift) {
                 ctx.clear(slot);
+                resetSlot(slot, ctx);
                 ctx.notice(QStringLiteral("Bass slot %1 cleared").arg(slot + 1));
             } else {
                 ctx.launch(slot);
@@ -174,6 +175,7 @@ public:
                 ctx.notice(QStringLiteral("Bass recording ends at the bar"));
             } else {
                 const int slot = std::max(0, ctx.freeSlot());
+                resetSlot(slot, ctx);
                 ctx.record(slot, 8);
                 ctx.notice(QStringLiteral("Bass records into slot %1 from the next bar").arg(slot + 1));
             }
@@ -305,6 +307,7 @@ private:
         float tone = 0, pressure = 0, morph = 0, fat = 0; // as last sent
         float amount = 0, second = 0;                     // a shaper's two axes
         int index = 0;                                    // a shaper's pattern or rate
+        float sentA = 0, sentB = 0;                       // what this shaper last asked for
         bool long_ = false, looped = false;
     };
     struct KeyNote {
@@ -438,8 +441,17 @@ private:
         } else if (h.role != NoRole) {
             remember(h);
             const Shaper s = shaperOf(h.role);
-            if (!m_latched[s])
-                sendShaper(s, s == ShapeOct ? float(octFingers()) : 0.0f, 0, time, ctx, true);
+            // Another finger still in the same zone takes over where it is.
+            Finger *other = nullptr;
+            for (auto &f : m_fingers)
+                if (f.id >= 0 && f.role == h.role && (!other || f.t0 > other->t0))
+                    other = &f;
+            if (s == ShapeOct)
+                sendShaper(s, float(octFingers()), 0, time, ctx, true);
+            else if (other)
+                sendShaper(s, other->sentA, other->sentB, time, ctx, true);
+            else if (!m_latched[s])
+                sendShaper(s, 0, 0, time, ctx, true);
         }
     }
 
@@ -473,6 +485,8 @@ private:
         default:
             return;
         }
+        h.sentA = a;
+        h.sentB = b;
         sendShaper(shaperOf(h.role), a, b, time, ctx, first);
     }
 
@@ -577,10 +591,20 @@ private:
         if (m_phrase.taps().empty() || m_phrase.taps().front().group != group || !m_phrase.closes(t0, group, &start))
             return false;
         const int slot = std::max(0, ctx.freeSlot());
+        resetSlot(slot, ctx);
         ctx.capture(slot, start, t0);
         ctx.notice(QStringLiteral("Bass loop in slot %1").arg(slot + 1));
         m_phrase.clear();
         return true;
+    }
+
+    void resetSlot(int slot, ControlContext &ctx) {
+        Command c;
+        c.type = Command::Param;
+        c.flags = Command::NoRecord;
+        c.i[0] = ResetSlot;
+        c.f[0] = float(slot);
+        ctx.send(c);
     }
 
     void off(int id, double time, ControlContext &ctx) {

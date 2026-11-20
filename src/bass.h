@@ -34,11 +34,12 @@ enum Sound : int { Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, SoundCo
 //          f[0] velocity, f[1] tone 0..1, f[2] morph 0..1, f[3] fat 0..1, f[4] glide 0..1
 //   Move   id; i[0] degree, i[1] octave; f[0] pressure, f[1] tone, f[2] morph, f[3] fat
 //   Off    id
-//   Param  i[0] Shaper; f[0] amount (0 = off), f[1] its second axis
+//   Param  i[0] Shaper; f[0] amount (0 = off), f[1] its second axis;
+//          or i[0] ResetSlot, f[0] the slot (never recorded)
 //   Strike id: the note this id plays is struck again with an accent (the click)
 constexpr uint16_t kStrike = Command::User;
 enum NoteFlag : int { Follow = 1, Accent = 2 };
-enum Shaper : int { ShapeOct, ShapeRoll, ShapeWob, ShapeGrit, ShaperCount };
+enum Shaper : int { ShapeOct, ShapeRoll, ShapeWob, ShapeGrit, ShaperCount, ResetSlot = 15 };
 
 // The roll's rhythms, one beat each: a held note is struck on the lit steps.
 // The kick owns the downbeat, so most of them leave it free.
@@ -420,7 +421,10 @@ public:
     // A note starts. beat is where in the bar it lands, for the roll.
     void noteOn(const Note &n, const Harmony &h, const Shape &sh, double beat) {
         remove(n.id);
-        const bool legato = m_count > 0;
+        // A different note while one is held slides to it; the same note
+        // again is struck again, so two fingers drumming one note, which
+        // always overlap a little, still articulate.
+        const bool legato = m_count > 0 && (n.degree != m_cur.degree || n.octave != m_cur.octave);
         if (m_count == kStack)
             remove(m_notes[0].id);
         m_notes[m_count++] = n;
@@ -574,7 +578,7 @@ public:
 
         float cutNow = m_cutNow;
         float lfo = m_lfo;
-        float g = 1, comp = 1, fmIndex = 0, d2 = 1, d3 = 1, envAmt = 0;
+        float g = 1, comp = 1, fmIndex = 0, d2 = 1, d3 = 1, envAmt = 0, hiScale = 1;
         float peak = 0;
         auto shapeFn = [&character](float v) {
             // Warm (tanh), tube (lopsided: even harmonics), fold (sine
@@ -633,10 +637,15 @@ public:
                                            0.0f, 3.999f);
                     setVowel(v);
                 }
-                fmIndex = R.fmIndex + morph * R.mFm + wobDepth * lfo * R.wobFm + grit * sh.gritChar * 3.0f;
+                // FM and folding run at the base rate, so they too thin out
+                // as the note climbs.
+                hiScale = clampf(320.0f / hz0, 0.2f, 1.0f);
+                fmIndex = (R.fmIndex + morph * R.mFm + wobDepth * lfo * R.wobFm + grit * sh.gritChar * 3.0f) * hiScale;
                 const float drv = R.drive + tone * R.toneDrive + morph * R.mDrive + grit * 1.1f +
                                   m_accent * 0.15f * R.accent + std::max(0.0f, press - 0.55f) * 0.5f;
-                g = 1.0f + 14.0f * drv * drv;
+                // High up the drive eases off: there its harmonics would
+                // reach past what even twice the rate can hold.
+                g = 1.0f + 14.0f * drv * drv * hiScale;
                 comp = 1.0f / std::sqrt(1.0f + 0.5f * (g - 1.0f));
                 // The crossover follows the note: everything at the note's
                 // own pitch is the sub's, everything from its second harmonic
@@ -735,7 +744,7 @@ public:
                     m_fmPhase -= 1.0f;
                 float c = std::sin(kTwoPi * ph + fmIndex * std::sin(kTwoPi * m_fmPhase));
                 if (R.foldPre > 0)
-                    c = std::sin(c * (1.0f + 3.0f * R.foldPre) * 1.5707963f);
+                    c = std::sin(c * (1.0f + 3.0f * R.foldPre * hiScale) * 1.5707963f);
                 osc += fmL * c;
             }
 
@@ -966,7 +975,8 @@ public:
         m_pendingCount = 0;
         if (hard) {
             m_shapeLive = Shape{};
-            m_shapeClip = Shape{};
+            for (Shape &sh : m_shapeSlot)
+                sh = Shape{};
         }
     }
 
@@ -985,7 +995,7 @@ public:
             d[PubGate] = ln.gate() ? 1.0f : 0.0f;
         }
         const Lane &shown = m_live.active() || !m_clip.active() ? m_live : m_clip;
-        const Shape sh = &shown == &m_live ? m_shapeLive : Shape::over(m_shapeClip, m_shapeLive);
+        const Shape sh = &shown == &m_live ? m_shapeLive : Shape::over(clipShape(), m_shapeLive);
         data[PubLfo] = shown.lfo();
         data[PubWobDepth] = shown.lfoDepth();
         data[PubWobRate] = float(sh.wob > 0 ? sh.rate : 3);
@@ -1015,8 +1025,10 @@ private:
     void apply(const Command &c, AudioContext &ctx, int off) {
         const bool replay = (c.id >> 24) != 0;
         Lane &lane = replay ? m_clip : m_live;
-        Shape &own = replay ? m_shapeClip : m_shapeLive;
-        const Shape eff = replay ? Shape::over(m_shapeClip, m_shapeLive) : m_shapeLive;
+        // A loop's shapers belong to its slot, so one loop's wobble never
+        // leaks into the next.
+        Shape &own = replay ? m_shapeSlot[slotOf(c.id)] : m_shapeLive;
+        const Shape eff = replay ? Shape::over(own, m_shapeLive) : m_shapeLive;
         switch (c.type) {
         case Command::On: {
             Note n;
@@ -1057,6 +1069,11 @@ private:
                 own.grit = clampf(c.f[0], 0, 1);
                 own.gritChar = clampf(c.f[1], 0, 1);
                 break;
+            case ResetSlot:
+                // The page is about to fill a slot: what an old loop there
+                // left set goes with it.
+                m_shapeSlot[std::clamp(int(c.f[0]), 0, kClipSlots - 1)] = Shape{};
+                break;
             default:
                 break;
             }
@@ -1070,6 +1087,9 @@ private:
         }
     }
 
+    static int slotOf(int id) { return std::clamp((id >> 24) & 0x3F, 0, kClipSlots - 1); }
+    const Shape &clipShape() const { return m_shapeSlot[slotOf(m_clip.current().id)]; }
+
     void segment(float *l, float *r, int n, int off0, AudioContext &ctx) {
         uint8_t wraps[kBlock] = {};
         // The shown lane marks its cycles for the scope.
@@ -1077,7 +1097,7 @@ private:
         float mixL[kBlock] = {}, mixR[kBlock] = {};
         m_live.render(mixL, mixR, n, off0, ctx, m_shapeLive, 1.0f, liveShown ? wraps : nullptr);
         // The loop steps aside while the player holds a note.
-        m_clip.render(mixL, mixR, n, off0, ctx, Shape::over(m_shapeClip, m_shapeLive), m_live.holding() ? 0.0f : 1.0f,
+        m_clip.render(mixL, mixR, n, off0, ctx, Shape::over(clipShape(), m_shapeLive), m_live.holding() ? 0.0f : 1.0f,
                       liveShown ? nullptr : wraps);
         for (int i = 0; i < n; ++i) {
             l[i] += mixL[i];
@@ -1114,7 +1134,7 @@ private:
 
     float m_rate = 48000;
     Lane m_live, m_clip;
-    Shape m_shapeLive, m_shapeClip;
+    Shape m_shapeLive, m_shapeSlot[kClipSlots];
     Pending m_pending[kPending];
     int m_pendingCount = 0;
     Harmony m_harmony;

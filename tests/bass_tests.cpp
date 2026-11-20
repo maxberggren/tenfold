@@ -236,6 +236,22 @@ private slots:
         QVERIFY(std::fabs(cents(legato.pitch(0.3), 33)) < 15);
     }
 
+    // Two fingers drumming one note overlap a little; each still strikes.
+    void theSameNoteAgainStrikesAgain() {
+        Rig again, slide;
+        for (Rig *r : {&again, &slide}) {
+            r->send(noteOn(1, 0, bass::Pluck));
+            r->run(0.5);
+        }
+        again.send(noteOn(2, 0, bass::Pluck));
+        slide.send(noteOn(2, 4, bass::Pluck));
+        again.run(0.2);
+        slide.run(0.2);
+        // As hard as the first attack, and well above a slide.
+        QVERIFY(again.topRms(0.5, 0.56) > again.topRms(0.0, 0.06) - 1);
+        QVERIFY(again.topRms(0.5, 0.56) > slide.topRms(0.5, 0.56) + 3);
+    }
+
     // A line that follows the chords moves its root with them; one that
     // doesn't, stays.
     void followTheChordsMovesTheLine() {
@@ -317,6 +333,19 @@ private slots:
         rig.send(shaper(bass::ShapeOct, 0, 0));
         rig.run(0.5);
         QVERIFY(std::fabs(cents(rig.pitch(), 33)) < 15);
+    }
+
+    // A loop's shapers stay with its slot: the next loop starts clean.
+    void loopShapesStayWithTheirSlot() {
+        Rig rig;
+        rig.send(shaper(bass::ShapeWob, 0.9f, 3, kReplay | (1 << 24) | 1)); // slot 2 left a wobble on
+        rig.send(noteOn(kReplay | (1 << 24) | 7, 0, bass::Sub));
+        rig.run(0.3);
+        QVERIFY(rig.pub[bass::PubWobDepth] > 0.8f);
+        rig.send(noteOff(kReplay | (1 << 24) | 7));
+        rig.send(noteOn(kReplay | (2 << 24) | 7, 0, bass::Sub)); // slot 3 plays
+        rig.run(0.3);
+        QVERIFY(rig.pub[bass::PubWobDepth] < 0.01f);
     }
 
     // The wobble is locked to the tempo, at the rate the finger picks.
@@ -437,6 +466,9 @@ private slots:
         const std::string base = "page 0 2\nkey 0.1 W\ndown 0.2 1 0.3 0.3\ndown 0.4 2 0.6 0.9\n";
         QVERIFY(wobbling(base + "end 1.0\n"));
         QVERIFY(!wobbling(base + "up 0.8 2\nend 1.2\n"));
+        // Two fingers in the zone: lifting one leaves the other in charge.
+        QVERIFY(wobbling(base + "down 0.5 3 0.65 0.85\nup 0.8 3\nend 1.2\n"));
+        QVERIFY(wobbling(base + "down 0.5 3 0.65 0.85\nup 0.8 2\nend 1.2\n"));
         // Latch: click with the wobble finger alone, lift it, then play.
         QVERIFY(wobbling("page 0 2\nkey 0.1 W\ndown 0.2 2 0.6 0.9\nclick 0.4\nup 0.7 2\n"
                          "down 0.9 1 0.3 0.3\nend 1.5\n"));

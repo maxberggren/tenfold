@@ -100,6 +100,16 @@ double lowRms(const testkit::Take &take, double from, double to) {
     return n ? std::sqrt(sum / double(n)) : 0;
 }
 
+std::string num(double v) { return QString::number(v, 'f', 4).toStdString(); }
+
+// The mouse: a press and release on a point of the pad, a quick click or a
+// held one (its "hold").
+std::string mouseClick(double t, float x, float y, double len = 0.1) {
+    const std::string id = std::to_string(kMouseId);
+    return "down " + num(t) + " " + id + " " + num(x) + " " + num(y) + "\nup " + num(t + len) + " " + id + "\n";
+}
+std::string mouseHold(double t, float x, float y) { return mouseClick(t, x, y, 0.6); }
+
 // How far a beat is from the nearest bar line, in beats.
 double offBar(double beat) { return beat - 4.0 * std::round(beat / 4.0); }
 
@@ -148,11 +158,10 @@ private slots:
         QVERIFY2(std::fabs(offBar(startedBeat)) < 1e-3, qPrintable(QString::number(startedBeat)));
     }
 
-    void aTapStartsAClipAndATapStopsIt() {
-        // Bass playing: a tap on its cell stops it on the bar; another starts it again.
+    void aMouseClickStopsAClipAndAnotherStartsIt() {
+        // Bass playing: a click on its cell stops it on the bar; another starts it again.
         int afterStop = 99, afterStart = -9;
-        watch(loops("tap 15.3 " + std::to_string(cellX(0)) + " " + std::to_string(laneY(1)) + "\n" +
-                    "tap 17.3 " + std::to_string(cellX(0)) + " " + std::to_string(laneY(1)) + "\nend 19\n"),
+        watch(loops(mouseClick(15.3, cellX(0), laneY(1)) + mouseClick(17.3, cellX(0), laneY(1)) + "end 19\n"),
               [&](double t, Session &s) {
                   if (at(t, 17.2))
                       afterStop = s.view().parts[1].playing;
@@ -197,8 +206,8 @@ private slots:
 
     void aClickLatchesTheRide() {
         const float y = laneY(1);
-        const auto take = testkit::play(loops("down 15.5 9 0.5 " + std::to_string(y) +
-                                              "\nglide 15.6 16.0 9 0.3 " + std::to_string(y) +
+        const auto take = testkit::play(loops("down 15.5 9 0.8 " + std::to_string(y) +
+                                              "\nglide 15.6 16.0 9 0.6 " + std::to_string(y) +
                                               "\nclick 16.2\nup 16.6 9\nend 17.5\n"));
         QVERIFY2(take.view.parts[1].channel.value[Filter] < 0.3f,
                  qPrintable(QString::number(take.view.parts[1].channel.value[Filter])));
@@ -207,7 +216,7 @@ private slots:
     void pressureThrowsALaneIntoTheEcho() {
         float echo = 0;
         const float y = laneY(2);
-        watch(loops("down 15.5 9 0.5 " + std::to_string(y) + " p=0.5\nglide 15.6 15.9 9 0.5 " + std::to_string(y) +
+        watch(loops("down 15.5 9 0.8 " + std::to_string(y) + " p=0.5\nglide 15.6 15.9 9 0.8 " + std::to_string(y) +
                     " p=0.95\nup 16.4 9\nend 16.6\n"),
               [&](double t, Session &s) {
                   if (at(t, 16.2))
@@ -483,8 +492,7 @@ private slots:
     void theDropLaunchesNothingThePlayerHasNotPlayed() {
         // The bass is stopped (a tap on its clip) and stays stopped for more
         // than sixteen bars; the drop brings back the others, not the bass.
-        const std::string tapBass = std::to_string(cellX(0)) + " " + std::to_string(laneY(1));
-        const auto take = testkit::play(loops("tap 15.3 " + tapBass + "\nkey 51.3 Return\nend 55\n"));
+        const auto take = testkit::play(loops(mouseClick(15.3, cellX(0), laneY(1)) + "key 51.3 Return\nend 55\n"));
         QCOMPARE(take.view.parts[1].playing, -1);
         for (int p : {0, 2, 5})
             QCOMPARE(take.view.parts[p].playing, 0);
@@ -493,18 +501,201 @@ private slots:
         QVERIFY(none.rms(0, 6) < 1e-4);
     }
 
-    void aHeldClipAndAClickClearsIt() {
-        // Hold the chords clip still, click: the slot is empty. Touch the
-        // bass clip, press Delete: that one too.
-        const std::string chords = std::to_string(cellX(0)) + " " + std::to_string(laneY(2));
-        const std::string bass = std::to_string(cellX(0)) + " " + std::to_string(laneY(1));
-        const auto take = testkit::play(loops("down 15.3 9 " + chords + "\nclick 15.9\nup 16.1 9\n" +
-                                              "down 16.5 10 " + bass + "\nup 16.9 10\nkey 17.0 Delete\nend 18\n"));
-        QVERIFY(take.view.parts[2].clips[0].state == ClipView::Empty);
-        QVERIFY(take.view.parts[1].clips[0].state == ClipView::Empty);
-        QVERIFY(take.view.parts[0].clips[0].state != ClipView::Empty);
-        // Holding a clip to clear it doesn't also launch or stop anything.
-        QCOMPARE(take.view.parts[0].playing, 0);
+    // --- touching: the pointer, the second finger, the mouse ---
+
+    void thePointerMovesLikeACursorAndASecondFingerActs() {
+        // The pointer starts at (0.42, 0.5). A finger landing in the clip area
+        // and moving slowly moves it as far as itself: here onto the bass's
+        // clip (slot 1). Nothing happens on landing; the status names what it
+        // would do; a second finger's tap (anywhere in the clip area) stops
+        // the bass on the bar.
+        const float dx = cellX(0) - 0.42f, dy = laneY(1) - 0.5f;
+        QString hint;
+        int bassAfter = 99, bassDuring = 99;
+        watch(loops("down 15.2 1 0.5 0.4\nglide 15.3 18.3 1 " + num(0.5 + dx) + " " + num(0.4 + dy) + "\n" +
+                    "tap 18.6 0.3 0.2 len=0.08\nup 18.9 1\nend 21\n"),
+              [&](double t, Session &s) {
+                  if (at(t, 18.4)) {
+                      hint = s.pageStatus();
+                      bassDuring = s.view().parts[1].playing;
+                  }
+                  if (at(t, 20.8))
+                      bassAfter = s.view().parts[1].playing;
+              });
+        QVERIFY2(hint.contains(QStringLiteral("start / stop")), qPrintable(hint));
+        QCOMPARE(bassDuring, 0);
+        QCOMPARE(bassAfter, -1);
+    }
+
+    void aFastFingerMovesThePointerFurther() {
+        // The same distance, quickly: the pointer goes further (acceleration),
+        // past the bass to the chords' row or beyond.
+        QString slow, fast;
+        watch(loops("down 15.2 1 0.5 0.4\nglide 15.3 18.3 1 0.5 0.55\nend 18.5\n"),
+              [&](double t, Session &s) {
+                  if (at(t, 18.4))
+                      slow = s.pageStatus();
+              });
+        watch(loops("down 15.2 1 0.5 0.4\nglide 15.3 15.4 1 0.5 0.55\nend 15.6\n"),
+              [&](double t, Session &s) {
+                  if (at(t, 15.5))
+                      fast = s.pageStatus();
+              });
+        // Slow: up 0.15 from 0.5 lands on the chords' row (0.68 is the bass's).
+        // Fast: further up, onto the bass's row or the drums'.
+        QVERIFY(slow != fast);
+    }
+
+    void aHeldSecondFingerSolosAndTheClickActs() {
+        // The pointer on the bass's name: a second finger held solos it while
+        // held; the pad's click then mutes it.
+        float soloHeld = 0, soloAfter = 1, muteAfter = 0;
+        const float dx = 0.06f - 0.42f, dy = laneY(1) - 0.5f;
+        watch(loops("down 15.2 1 0.6 0.4\nglide 15.3 18.3 1 " + num(0.6 + dx) + " " + num(0.4 + dy) + "\n" +
+                    "down 18.5 2 0.3 0.2\nup 19.4 2\nclick 19.8\nup 20.2 1\nend 20.5\n"),
+              [&](double t, Session &s) {
+                  if (at(t, 19.2))
+                      soloHeld = s.view().parts[1].channel.value[Solo];
+                  if (at(t, 19.6))
+                      soloAfter = s.view().parts[1].channel.value[Solo];
+                  if (at(t, 20.3))
+                      muteAfter = s.view().parts[1].channel.value[Mute];
+              });
+        QCOMPARE(soloHeld, 1.0f);
+        QCOMPARE(soloAfter, 0.0f);
+        QCOMPARE(muteAfter, 1.0f);
+    }
+
+    void theMouseClicksWhatItIsOnAndRidesTheMixer() {
+        // A click on scene 1's cell launches it; a drag up the fader builds.
+        float top = 0.5f;
+        const auto take = watch(loops("key 15.2 Backspace\n" + mouseClick(17.0, cellX(0), 0.95f) +
+                                      "down 19.0 " + std::to_string(kMouseId) + " 0.94 0.3\nglide 19.1 19.6 " +
+                                      std::to_string(kMouseId) + " 0.94 0.55\nup 19.7 " + std::to_string(kMouseId) +
+                                      "\nend 20\n"),
+                                [&](double t, Session &s) {
+                                    if (t > 19)
+                                        top = std::max(top, s.view().master[MasterFilter]);
+                                });
+        for (int p : {0, 1, 2, 5})
+            QCOMPARE(take.view.parts[p].playing, 0);
+        QVERIFY(top > 0.52f);
+    }
+
+    // --- editing clips ---
+
+    void aHeldClipIsPickedAndDoubledInTime() {
+        // A held mouse button picks the bass; D copies it into the next free
+        // slot, in time with the original; the other parts are untouched.
+        int drumsEvents = -1, chordsEvents = -1;
+        const auto take = watch(loops(mouseHold(15.2, cellX(0), laneY(1)) + "key 16.0 D\nend 18.6\n"),
+                                [&](double t, Session &s) {
+                                    if (at(t, 15.1)) {
+                                        drumsEvents = s.view().parts[0].clips[0].events;
+                                        chordsEvents = s.view().parts[2].clips[0].events;
+                                    }
+                                });
+        const auto &bass = take.view.parts[1];
+        QVERIFY(bass.clips[1].state != ClipView::Empty);
+        QCOMPARE(bass.clips[1].events, bass.clips[0].events);
+        QCOMPARE(bass.clips[1].lengthBeats, bass.clips[0].lengthBeats);
+        QVERIFY(std::fabs(bass.clips[1].phase - bass.clips[0].phase) < 1e-4);
+        QCOMPARE(bass.playing, 0);
+        QCOMPARE(take.view.parts[0].clips[0].events, drumsEvents);
+        QCOMPARE(take.view.parts[2].clips[0].events, chordsEvents);
+        for (int p : {0, 2, 5})
+            QVERIFY(take.view.parts[p].clips[1].state == ClipView::Empty);
+    }
+
+    void ctrlZTakesADoubleBack() {
+        const auto take = testkit::play(loops(mouseHold(15.2, cellX(0), laneY(1)) + "key 16.0 D\nkey 16.6 Ctrl+Z\nend 17.5\n"));
+        QVERIFY(take.view.parts[1].clips[1].state == ClipView::Empty);
+        QVERIFY(take.view.parts[1].clips[0].state != ClipView::Empty);
+    }
+
+    void twoPickedClipsLayerOrChain() {
+        // Double the bass, pick both (hold slot 1, then hold slot 2), chain:
+        // slot 1 becomes twice as long; slot 2 is as it was. Ctrl+Z takes the
+        // chain back. Then layer: the same length, twice the events.
+        const std::string pick = mouseHold(15.2, cellX(0), laneY(1)) + "key 16.0 D\n" +
+                                 mouseHold(16.4, cellX(1), laneY(1));
+        const auto chained = testkit::play(loops(pick + "key 17.3 Shift+M\nend 18\n"));
+        const auto &b = chained.view.parts[1];
+        QCOMPARE(b.clips[0].lengthBeats, 2 * b.clips[1].lengthBeats);
+        QCOMPARE(b.clips[0].events, 2 * b.clips[1].events);
+        const auto undone = testkit::play(loops(pick + "key 17.3 Shift+M\nkey 17.6 Ctrl+Z\nend 18\n"));
+        QCOMPARE(undone.view.parts[1].clips[0].lengthBeats, undone.view.parts[1].clips[1].lengthBeats);
+        const auto layered = testkit::play(loops(pick + "key 17.3 M\nend 18\n"));
+        const auto &l = layered.view.parts[1];
+        QCOMPARE(l.clips[0].lengthBeats, l.clips[1].lengthBeats);
+        QCOMPARE(l.clips[0].events, 2 * l.clips[1].events);
+        for (int p : {0, 2, 5})
+            QCOMPARE(layered.view.parts[p].clips[1].state, uint8_t(ClipView::Empty));
+    }
+
+    void deletingAClipAsksTwice() {
+        const auto once = testkit::play(loops(mouseHold(15.2, cellX(0), laneY(2)) + "key 16.0 Delete\nend 16.5\n"));
+        QVERIFY(once.view.parts[2].clips[0].state != ClipView::Empty);
+        const auto twice =
+            testkit::play(loops(mouseHold(15.2, cellX(0), laneY(2)) + "key 16.0 Delete\nkey 16.3 Delete\nend 16.5\n"));
+        QVERIFY(twice.view.parts[2].clips[0].state == ClipView::Empty);
+        QVERIFY(twice.view.parts[1].clips[0].state != ClipView::Empty);
+    }
+
+    void aMovedClipCarriesOnInTime() {
+        // Pick the bass and press ] twice: it moves to slot 2. Playing, it
+        // carries on from there at the next bar, and slot 1 is cleared then.
+        double anchorBefore = -1, anchorAfter = -1;
+        const auto take = watch(loops(mouseHold(15.2, cellX(0), laneY(1)) + "key 16.0 ]\nkey 16.2 ]\nend 19\n"),
+                                [&](double t, Session &s) {
+                                    const PartView &b = s.view().parts[1];
+                                    const auto anchor = [&](int slot) {
+                                        return s.view().beat - b.clips[slot].phase * b.clips[slot].lengthBeats;
+                                    };
+                                    if (at(t, 16.1))
+                                        anchorBefore = std::fmod(anchor(0), 4.0);
+                                    if (at(t, 18.9))
+                                        anchorAfter = std::fmod(anchor(1), 4.0);
+                                });
+        const auto &b = take.view.parts[1];
+        QCOMPARE(b.playing, 1);
+        QVERIFY(b.clips[0].state == ClipView::Empty);
+        QVERIFY(std::fabs(anchorBefore - anchorAfter) < 1e-3 || std::fabs(std::fabs(anchorBefore - anchorAfter) - 4) < 1e-3);
+    }
+
+    // --- editing the song ---
+
+    void songSectionsAreRemovedDoubledJoinedAndMovedAndComeBack() {
+        // A written track (I twice), stopped (P); the arrows pick sections.
+        // The song's length shows in the status once P plays it again.
+        auto lengthAfter = [&](const std::string &edits) {
+            int n = 0;
+            watch(loops("key 15.2 I\nkey 15.4 I\nkey 16.0 P\n" + edits + "key 20.0 P\nend 21\n"),
+                  [&](double t, Session &s) {
+                      const QString st = s.pageStatus();
+                      const int slash = st.indexOf('/'), sp = st.indexOf(' ', slash);
+                      if (slash > 0 && at(t, 20.8))
+                          n = st.mid(slash + 1, sp - slash - 1).toInt();
+                  });
+            return n;
+        };
+        // The long form: intro 8, groove 8, build 4, drop 8 + 8, break 8, build 4,
+        // drop 8 + 8, outro 8, end 2 = 74 bars. Right picks the intro, Right
+        // again the groove.
+        QCOMPARE(lengthAfter(""), 74);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 Delete\n"), 66);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 D\n"), 82);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 Delete\nkey 17.5 Shift+O\n"), 74);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 17.0 [\n"), 74);
+        // Joining keeps the bars and makes one section of two.
+        QString picked;
+        watch(loops("key 15.2 I\nkey 15.4 I\nkey 16.0 P\nkey 16.5 Right\nkey 17.0 M\nkey 17.5 Right\nend 18\n"),
+              [&](double t, Session &s) {
+                  if (at(t, 17.8))
+                      picked = s.pageStatus();
+              });
+        // After the join, the second section is the build (the groove joined the intro).
+        QVERIFY2(picked.contains(QStringLiteral("build")), qPrintable(picked));
     }
 
     void aFaderClickLeavesAClipUnderARestingFingerAlone() {
@@ -633,16 +824,21 @@ private slots:
         watch(ss.str(), [&](double t, Session &s) {
             const StudioView &v = s.view();
             const int bar = int(std::floor(v.beat / 4));
-            if (bar == lastBar)
+            static QString lastNotice;
+            if (bar == lastBar && s.notice(nullptr) == lastNotice)
                 return;
             lastBar = bar;
+            lastNotice = s.notice(nullptr);
             std::string line;
             for (int p = 0; p < v.partCount; ++p) {
                 const auto &pv = v.parts[p];
-                line += std::to_string(pv.playing) + (pv.channel.value[Mute] > 0.5f ? "m " : "  ");
+                line += std::to_string(pv.playing) + (pv.channel.value[Mute] > 0.5f ? "m" : "") + "[";
+                for (const auto &c : pv.clips)
+                    line += c.state == ClipView::Empty ? "." : "#";
+                line += "] ";
             }
-            std::printf("t=%7.2f bar=%4d %s mf=%.2f | %s\n", t, bar, line.c_str(), v.master[MasterFilter],
-                        s.pageStatus().toStdString().c_str());
+            std::printf("t=%7.2f bar=%4d %s mf=%.2f | %s | %s\n", t, bar, line.c_str(), v.master[MasterFilter],
+                        s.pageStatus().toStdString().c_str(), s.notice(nullptr).toStdString().c_str());
         });
     }
 };

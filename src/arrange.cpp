@@ -54,6 +54,9 @@ constexpr float kStripR = 0.87f; // lane readouts end here; the tension fader ta
 constexpr float kTopY = 0.885f;  // the scene strip and the move buttons, above the lanes
 
 float clampf01(float v) { return std::clamp(v, 0.0f, 1.0f); }
+
+// The mouse arrives as a touch with an id of its own.
+bool isMouse(int id) { return id == kMouseId; }
 double fract(double v) { return v - std::floor(v); }
 float smooth01(float u) {
     u = clampf01(u);
@@ -86,6 +89,7 @@ struct SongBar {
     int8_t slot[P];       // the clip each part plays, -1 none
     uint8_t relaunch = 0; // parts whose clip starts from its top at this bar
     uint8_t label = LNone;
+    bool join = false;    // continues the section before (two sections joined)
     SongBar() { std::fill(std::begin(slot), std::end(slot), int8_t(-1)); }
 };
 
@@ -207,6 +211,12 @@ public:
                 m_lastPlayedBar[p] = int(std::floor(beat / kBeatsPerBar));
             }
 
+        // A moved clip's old slot, once the new one has taken over.
+        for (auto &pc : m_pendingClear)
+            if (pc.part >= 0 && beat >= pc.beat) {
+                ctx.clearPart(pc.part, pc.slot);
+                pc = PendingClear{};
+            }
         springs(dt > 0 && dt < 0.1 ? dt : 0.0);
         songMoves(beat, ctx);
         earlyPhase(beat, ctx);
@@ -217,8 +227,19 @@ public:
     }
 
     // --- fingers --------------------------------------------------------------
+    //
+    // The pad is small and its cells are many, so touching is pointing: the
+    // first finger moves a pointer (relative, like a trackpad cursor, faster
+    // for a fast finger) and lights the target under it; nothing fires on
+    // landing. A second finger's tap, anywhere, or the pad's click, does
+    // what the target does; holding that second finger does its "hold"
+    // (select a clip, store a scene, solo a part, play from a section). The
+    // mixer stays direct: a finger landing on a lane's readouts rides that
+    // lane, one landing on the tension fader rides the fader. A mouse simply
+    // clicks what it is on.
 
     void frame(const Frame &f, ControlContext &ctx) override {
+        const double dt = std::clamp(f.t - m_frame.t, 0.001, 0.1);
         m_frame = f;
         m_parts = std::clamp(ctx.studio().partCount, 0, P);
         for (auto &fg : m_fingers) {
@@ -241,6 +262,7 @@ public:
                     land(*fg, t, f.t, ctx);
                 continue;
             }
+            const float px = fg->x, py = fg->y;
             fg->x = t.x;
             fg->y = t.y;
             fg->pressure = t.pressure;
@@ -248,14 +270,27 @@ public:
             fg->trust = t.eccentricity;
             if (std::hypot((t.x - fg->x0) * ctx.aspect(), t.y - fg->y0) > 0.035f)
                 fg->moved = true;
-            if (fg->kind == Finger::Name && !fg->solo && f.t - fg->t0 > 0.28) {
-                fg->solo = true;
-                m_heldSolo[fg->lane] = true;
+            if (fg->kind == Finger::Pointer) {
+                // Relative, with acceleration: a slow finger moves the
+                // pointer as far as itself, a fast one up to 2.5 times.
+                const float dx = t.x - px, dy = t.y - py;
+                const float speed = std::hypot(dx * ctx.aspect(), dy) / float(dt);
+                const float gain = 1.0f + 1.5f * clampf01((speed - 0.3f) / 1.2f);
+                m_cursorX = std::clamp(m_cursorX + dx * gain, 0.0f, 1.0f);
+                m_cursorY = std::clamp(m_cursorY + dy * gain, m_bandY0 - 0.01f, 1.0f);
+                m_cursorAt = f.t;
+            }
+            // A second finger held still: the target's "hold".
+            if ((fg->kind == Finger::Activator || fg->kind == Finger::Mouse) && !fg->held && !fg->moved &&
+                f.t - fg->t0 >= 0.4) {
+                fg->held = true;
+                hold(fg->target, ctx);
             }
             if (fg->kind == Finger::Tension)
                 m_tensionLive = std::clamp(fg->value0 + (t.y - fg->y0) * 1.9f, -1.0f, 1.0f);
         }
-        // The click: latches what a finger rides, stores a scene, drops.
+        // The click: does what the pointer is on, latches what a finger
+        // rides, drops a fader held high.
         if (f.button && !m_button)
             click(ctx);
         m_button = f.button;
@@ -281,6 +316,23 @@ public:
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const bool shift = k.modifiers & Qt::ShiftModifier;
+        // The edit keys act on what is picked: clips, or a song section.
+        prunePick(ctx.studio());
+        const bool picked = clipsPicked() || m_selSection >= 0;
+        if (picked && (k.key == Qt::Key_D || k.key == Qt::Key_M || k.key == Qt::Key_BracketLeft || k.key == Qt::Key_BracketRight ||
+                       k.key == Qt::Key_Delete)) {
+            if (!k.down || k.repeat)
+                return true;
+            const bool section = m_selSection >= 0;
+            switch (k.key) {
+            case Qt::Key_D: section ? duplicateSection(ctx) : duplicateClips(ctx); break;
+            case Qt::Key_M: section ? joinSections(ctx) : mergePicked(shift, ctx); break;
+            case Qt::Key_BracketLeft: section ? moveSection(-1, ctx) : movePicked(-1, ctx); break;
+            case Qt::Key_BracketRight: section ? moveSection(1, ctx) : movePicked(1, ctx); break;
+            default: section ? removeSection(ctx) : deletePicked(ctx); break;
+            }
+            return true;
+        }
         // Solos are held: A S D F G H J, while the key is down.
         static const int soloKeys[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G, Qt::Key_H, Qt::Key_J};
         for (int p = 0; p < 7; ++p)
@@ -335,7 +387,12 @@ public:
                 toggleRecord(ctx);
             return true;
         case Qt::Key_P: togglePlay(shift, ctx); return true;
-        case Qt::Key_Delete: clearSlot(m_selPart, m_selSlot, ctx); return true;
+        case Qt::Key_Delete:
+        case Qt::Key_M:
+        case Qt::Key_BracketLeft:
+        case Qt::Key_BracketRight:
+            ctx.notice(QStringLiteral("Pick something first: hold a clip or a song section with a second finger"));
+            return true;
         case Qt::Key_Left: jumpSection(-1, ctx); return true;
         case Qt::Key_Right: jumpSection(1, ctx); return true;
         case Qt::Key_Backspace:
@@ -354,20 +411,27 @@ public:
 
     QString help() const override {
         return QStringLiteral(
-            "tap a clip\tstarts it on the next bar; tap a playing one to stop it\n"
-            "hold a lane and slide\tup and down rides its level, left and right its DJ filter (springs back)\n"
-            "press harder on a lane\tthrows it into the echo; a twist pumps it harder\n"
-            "second finger on a lane\tup washes it in reverb, sideways pans it\n"
-            "click while riding\tlatches the filter and sends where they are\n"
-            "hold a clip still, then click\tclears it (or touch it and press Delete)\n"
-            "tap a part's name\tmutes it; hold the name to solo it, click to keep the solo\n"
-            "tension fader, right\tup builds (filter, wash, an echo roll), down sinks the mix\n"
-            "let go of it high\tthe build drops on the next ONE\n"
-            "scene strip, top\ttap a scene to launch it on the bar; hold it and click to store\n"
-            "BUILD, BREAK, DROP\tthe moves, on the bar\n"
+            "one finger\tmoves the pointer (like a trackpad cursor: slow for fine, fast to cross) and lights what it is on; "
+            "nothing fires\n"
+            "a second finger's tap, anywhere\tdoes what the pointer is on: start or stop a clip, launch a scene, mute a part, "
+            "BUILD, BREAK, DROP, pick a song section (the pad's click does the same)\n"
+            "hold that second finger\tpicks a clip for editing (another of its part's clips joins the pick), stores a scene, "
+            "solos a part while held, plays the song from a section\n"
+            "the mouse\tclicks what it is on; held, it does the hold; hovering lights the target\n"
+            "a finger on a lane's readouts (LVL FLT ECH VRB)\trides it at once: up and down its level, sideways its DJ filter "
+            "(springs back), harder throws it into the echo, a twist pumps it\n"
+            "a second finger there\tup washes it in reverb, sideways pans it; a click latches the ride\n"
+            "tension fader, right\tup builds (filter, wash, an echo roll), down sinks the mix; let go high and it drops on the "
+            "next ONE\n"
+            "picked clips: D · M · Shift+M\tdouble into a free slot · layer the others into the first · chain them after it "
+            "(Ctrl+Z takes each back)\n"
+            "picked clips: [ ] · Delete\tmove one to the free slot left or right · clear them (both ask twice: a cleared slot "
+            "can't come back)\n"
+            "picked section: Delete · D · M · [ ]\tremove it · double it · join it with the next · swap it with a neighbour "
+            "(Shift+O takes each back)\n"
             "F1–F8\tlaunch a scene; Shift stores what plays into it\n"
             "Q W E R T Y U\tmute a part now; with Shift, on the next bar\n"
-            "A S D F G H J\tsolo while held; with Shift, latched\n"
+            "A S D F G H J\tsolo while held; with Shift, latched (D doubles while something is picked)\n"
             "Return\tDROP: everything back on the next ONE, after a breath\n"
             "B\tBUILD to the end of the 4-bar phrase (Shift: 8), then the drop\n"
             "N\tbreakdown to chords and atmos; again to bring it back\n"
@@ -378,23 +442,33 @@ public:
             "V\tevery part to its next clip on the bar\n"
             "I\twrite a whole track from the loops and play it (Shift: a short one; twice while clips play)\n"
             "Space or O\trecord the song from the next bar (punch in while it plays); again to stop\n"
-            "Shift+O\tback to the song before the last take, write or clear\n"
+            "Shift+O\tback to the song before the last take, write, clear or edit (eight deep)\n"
             "P\tplay the song from the top (Shift: loop it); again to stop\n"
-            "Left, Right\tjump a section back or on, on the bar\n"
+            "Left, Right\tjump a section back or on, on the bar; stopped, pick a section\n"
             "Backspace\tstop everything on the bar; Shift+Backspace twice clears the song");
     }
 
     QString status() const override;
 
 private:
+public:
+    // What the pointer (or the mouse) can be on.
+    struct Target {
+        enum Kind : uint8_t { None, Clip, Scene, Name, Button, Section, Strip, Fader } kind = None;
+        int a = -1, b = -1; // clip: lane, slot · scene, button, section: index · name, strip: lane
+        bool operator==(const Target &o) const { return kind == o.kind && a == o.a && b == o.b; }
+    };
+
+private:
     struct Finger {
-        enum Kind : uint8_t { None, Scene, Button, Name, Lane, Send, Tension } kind = None;
+        enum Kind : uint8_t { None, Pointer, Activator, Mouse, Lane, Send, Tension } kind = None;
         int id = -1;
         int lane = -1, index = -1;
         double t0 = 0;
         float x0 = 0, y0 = 0, x = 0, y = 0, a0 = 0, angle = 0, pressure = 0.5f, trust = 0;
         float value0 = 0, dGain = 0;
-        bool moved = false, clicked = false, solo = false;
+        bool moved = false, clicked = false, held = false;
+        Target target; // an activator's or the mouse's, taken as it lands
     };
     struct Ride {
         float filt = 0, echo = 0, verb = 0, pump = 0, pan = 0;
@@ -951,7 +1025,14 @@ private:
         r = Ride{};
     }
 
-    void land(Finger &f, const Touch &t, double time, ControlContext &) {
+    bool pointing() const {
+        for (const auto &f : m_fingers)
+            if (f.id >= 0 && f.kind == Finger::Pointer)
+                return true;
+        return false;
+    }
+
+    void land(Finger &f, const Touch &t, double time, ControlContext &ctx) {
         f = Finger{};
         f.id = t.id;
         f.t0 = time;
@@ -960,21 +1041,10 @@ private:
         f.a0 = f.angle = t.angle;
         f.pressure = t.pressure;
         f.trust = t.eccentricity;
-        if (t.y >= kTopY) {
-            if (t.x < kNameW) {
-                f.kind = Finger::Button;
-                f.index = BBuild;
-            } else if (t.x < kCellsR) {
-                f.kind = Finger::Scene;
-                f.index = std::clamp(int((t.x - kNameW) / (kCellsR - kNameW) * kClipSlots), 0, kClipSlots - 1);
-            } else {
-                f.kind = Finger::Button;
-                f.index = t.x < kStripR ? BBreak : BDrop;
-            }
-            return;
-        }
-        if (t.x >= kStripR) {
-            // The tension fader picks up where it is, wherever the finger lands.
+        const Target at = targetAt(t.x, t.y);
+        const bool mouse = isMouse(t.id);
+        // The mixer rides directly: the tension fader, a lane's readouts.
+        if (at.kind == Target::Fader) {
             for (auto &o : m_fingers)
                 if (o.id >= 0 && o.id != f.id && o.kind == Finger::Tension)
                     o.kind = Finger::None;
@@ -983,44 +1053,45 @@ private:
             m_tensionHeld = true;
             return;
         }
-        const int lanes = std::max(1, m_parts);
-        f.lane = std::clamp(int((kTopY - t.y) / kTopY * float(lanes)), 0, lanes - 1);
-        if (t.x < kNameW) {
-            f.kind = Finger::Name;
+        if (at.kind == Target::Strip) {
+            f.lane = at.a;
+            bool first = true;
+            for (const auto &o : m_fingers)
+                first = first && !(o.id >= 0 && o.id != f.id && o.kind == Finger::Lane && o.lane == f.lane);
+            f.kind = first ? Finger::Lane : Finger::Send;
+            if (f.kind == Finger::Lane)
+                f.value0 = m_playing ? gainOfSong(f.lane) : m_home[f.lane][Gain];
             return;
         }
-        f.index = t.x < kCellsR
-                      ? std::clamp(int((t.x - kNameW) / (kCellsR - kNameW) * kClipSlots), 0, kClipSlots - 1)
-                      : -1;
-        bool first = true;
-        for (const auto &o : m_fingers)
-            first = first && !(o.id >= 0 && o.id != f.id && o.kind == Finger::Lane && o.lane == f.lane);
-        f.kind = first ? Finger::Lane : Finger::Send;
-        if (f.index >= 0) {
-            m_selPart = f.lane;
-            m_selSlot = f.index;
+        if (mouse) {
+            // A mouse is on what it presses: it clicks that.
+            f.kind = Finger::Mouse;
+            f.target = at;
+            return;
         }
-        if (f.kind == Finger::Lane)
-            f.value0 = m_playing ? gainOfSong(f.lane) : m_home[f.lane][Gain];
+        if (pointing()) {
+            // A second finger (anywhere but the mixer's readouts and the
+            // fader, which ride): it acts on what the pointer is on.
+            f.kind = Finger::Activator;
+            f.target = targetAt(m_cursorX, m_cursorY);
+            return;
+        }
+        f.kind = Finger::Pointer;
+        m_cursorAt = time;
+        (void)ctx;
     }
 
     void lift(Finger &f, double time, ControlContext &ctx) {
-        const bool tap = time - f.t0 < 0.3 && !f.moved;
+        const bool tap = time - f.t0 < 0.4 && !f.moved;
         switch (f.kind) {
-        case Finger::Scene:
-            if (tap && !f.clicked)
-                launchScene(f.index, ctx);
-            break;
-        case Finger::Button:
-            // The move buttons act on a tap's lift, never on a brush.
-            if (time - f.t0 < 0.5 && !f.moved)
-                f.index == BBuild ? build(4, ctx) : f.index == BBreak ? breakdown(ctx) : drop(ctx);
-            break;
-        case Finger::Name:
-            if (f.solo)
-                m_heldSolo[f.lane] = false;
-            else if (tap)
-                toggleMute(f.lane);
+        case Finger::Activator:
+        case Finger::Mouse:
+            if (f.held) {
+                if (f.target.kind == Target::Name)
+                    m_heldSolo[f.target.a] = false;
+            } else if (tap && !f.clicked) {
+                activate(f.target, ctx);
+            }
             break;
         case Finger::Lane:
         case Finger::Send:
@@ -1028,8 +1099,6 @@ private:
                 foldGain(f.lane, f.dGain);
             if (f.clicked)
                 latch(f.lane);
-            if (tap && f.index >= 0 && !f.clicked)
-                toggleClip(f.lane, f.index, ctx);
             break;
         case Finger::Tension:
             m_tensionHeld = false;
@@ -1045,11 +1114,9 @@ private:
     // when they press alike. Other fingers resting on the pad are left alone.
     void click(ControlContext &ctx) {
         Finger *f = nullptr;
-        int down = 0;
         for (auto &g : m_fingers) {
             if (g.id < 0)
                 continue;
-            ++down;
             if (!f || g.pressure > f->pressure + 0.05f || (std::fabs(g.pressure - f->pressure) <= 0.05f && g.t0 > f->t0))
                 f = &g;
         }
@@ -1057,21 +1124,8 @@ private:
             return;
         f->clicked = true;
         switch (f->kind) {
-        case Finger::Scene: storeScene(f->index, ctx); break;
-        case Finger::Lane:
-        case Finger::Send:
-            // A clip held still for half a second by the only finger on the
-            // pad, then a click: it is cleared. With other fingers down a
-            // click only latches the ride.
-            if (down == 1 && f->index >= 0 && !f->moved && m_frame.t - f->t0 > 0.5 && f->dGain == 0 &&
-                m_ride[f->lane].filt == 0 && m_ride[f->lane].echo < 0.01f)
-                clearSlot(f->lane, f->index, ctx);
-            break;
-        case Finger::Name:
-            m_heldSolo[f->lane] = false;
-            toggleLatchedSolo(f->lane, ctx);
-            f->kind = Finger::None;
-            break;
+        case Finger::Pointer: activate(targetAt(m_cursorX, m_cursorY), ctx); break;
+        case Finger::Activator: activate(f->target, ctx); break;
         case Finger::Tension:
             // Only a build drops: below the line where letting go would drop,
             // a click on the fader does nothing.
@@ -1081,6 +1135,81 @@ private:
                 dropFromFader(ctx);
             }
             break;
+        default: break; // a lane finger's click latches its ride on lift
+        }
+    }
+
+    // Where a point on the pad (or just under it, the song band) lands.
+    Target targetAt(float x, float y) const {
+        Target t;
+        if (y < 0) {
+            const int n = m_song.length();
+            if (n == 0 || y < m_bandY0 - 0.02f || m_rec == &m_take)
+                return t;
+            const int span = std::max(1, n);
+            const float bar = x * float(span);
+            for (int i = 0; i < int(m_sections.size()); ++i)
+                if (bar >= m_sections[size_t(i)].bar0 && bar < m_sections[size_t(i)].bar0 + m_sections[size_t(i)].bars) {
+                    t.kind = Target::Section;
+                    t.a = i;
+                }
+            return t;
+        }
+        if (y >= kTopY) {
+            t.kind = x < kNameW || x >= kCellsR ? Target::Button : Target::Scene;
+            t.a = x < kNameW    ? BBuild
+                  : x < kCellsR ? std::clamp(int((x - kNameW) / (kCellsR - kNameW) * kClipSlots), 0, kClipSlots - 1)
+                  : x < kStripR ? BBreak
+                                : BDrop;
+            return t;
+        }
+        if (x >= kStripR) {
+            t.kind = Target::Fader;
+            return t;
+        }
+        const int lanes = std::max(1, m_parts);
+        t.a = std::clamp(int((kTopY - y) / kTopY * float(lanes)), 0, lanes - 1);
+        if (x < kNameW) {
+            t.kind = Target::Name;
+        } else if (x < kCellsR) {
+            t.kind = Target::Clip;
+            t.b = std::clamp(int((x - kNameW) / (kCellsR - kNameW) * kClipSlots), 0, kClipSlots - 1);
+        } else {
+            t.kind = Target::Strip;
+        }
+        return t;
+    }
+
+    // What a tap (a second finger's, the click's, the mouse's) does.
+    void activate(const Target &t, ControlContext &ctx) {
+        switch (t.kind) {
+        case Target::Clip: toggleClip(t.a, t.b, ctx); break;
+        case Target::Scene: launchScene(t.a, ctx); break;
+        case Target::Name: toggleMute(t.a); break;
+        case Target::Button: t.a == BBuild ? build(4, ctx) : t.a == BBreak ? breakdown(ctx) : drop(ctx); break;
+        case Target::Section:
+            m_selSection = t.a;
+            m_selSlots.clear();
+            ctx.notice(QStringLiteral("%1 selected: Delete removes it, D doubles it, M joins the next, [ and ] move it")
+                           .arg(sectionName(t.a)));
+            break;
+        case Target::Strip:
+        case Target::Fader: ctx.notice(QStringLiteral("Land a finger there to ride it")); break;
+        default:
+            // Nothing there: the selection goes.
+            m_selSlots.clear();
+            m_selSection = -1;
+            break;
+        }
+    }
+
+    // What a held second finger (or a held mouse button) does.
+    void hold(const Target &t, ControlContext &ctx) {
+        switch (t.kind) {
+        case Target::Clip: selectClip(t.a, t.b, ctx); break;
+        case Target::Scene: storeScene(t.a, ctx); break;
+        case Target::Name: m_heldSolo[t.a] = true; break;
+        case Target::Section: playFromSection(t.a, ctx); break;
         default: break;
         }
     }
@@ -1097,19 +1226,292 @@ private:
             m_relaunchAt[p] = bar;
     }
 
-    // Clears a slot made by accident (the part's page made it; only the
-    // player clears it).
-    void clearSlot(int p, int slot, ControlContext &ctx) {
-        if (p < 0 || p >= m_parts || slot < 0)
+    // --- editing: clips ---------------------------------------------------------
+    //
+    // Clips are picked with a held second finger (or a held mouse button);
+    // more clips of the same part join the pick. D doubles them into free
+    // slots, M layers the others into the first, Shift+M chains them after
+    // it, [ and ] move one to the free slot on its left or right, Delete
+    // clears them. Copies and merges are the studio's, taken back by Ctrl+Z;
+    // clearing isn't, so it (and a move, which clears the old slot) asks for
+    // a second press.
+
+    bool confirm(const QString &key, const QString &ask, ControlContext &ctx) {
+        if (m_confirmKey == key && m_lastT - m_confirmAt < 3.0) {
+            m_confirmKey.clear();
+            return true;
+        }
+        m_confirmKey = key;
+        m_confirmAt = m_lastT;
+        ctx.notice(ask);
+        return false;
+    }
+    QString clipName(int p, int slot) const { return QStringLiteral("%1 %2").arg(m_names.value(p)).arg(slot + 1); }
+    QString pickText() const {
+        QStringList s;
+        for (int slot : m_selSlots)
+            s << QString::number(slot + 1);
+        return QStringLiteral("%1 %2").arg(m_names.value(m_selPart), s.join(QStringLiteral(" + ")));
+    }
+    bool clipsPicked() const { return m_selPart >= 0 && !m_selSlots.empty(); }
+    // Drops picks of slots that emptied (cleared, taken back).
+    void prunePick(const StudioView &v) {
+        if (m_selPart < 0 || m_selPart >= m_parts)
             return;
+        m_selSlots.erase(std::remove_if(m_selSlots.begin(), m_selSlots.end(),
+                                        [&](int s) { return v.parts[m_selPart].clips[s].state == ClipView::Empty; }),
+                         m_selSlots.end());
+    }
+
+    void selectClip(int p, int slot, ControlContext &ctx) {
         if (ctx.studio().parts[p].clips[slot].state == ClipView::Empty) {
-            ctx.notice(QStringLiteral("%1 slot %2 is already empty").arg(m_names.value(p)).arg(slot + 1));
+            ctx.notice(QStringLiteral("%1 is empty").arg(clipName(p, slot)));
             return;
         }
-        ctx.clearPart(p, slot);
-        if (m_lastSlot[p] == slot)
-            m_lastSlot[p] = -1;
-        ctx.notice(QStringLiteral("Cleared %1 slot %2").arg(m_names.value(p)).arg(slot + 1));
+        m_selSection = -1;
+        if (p != m_selPart)
+            m_selSlots.clear();
+        m_selPart = p;
+        const auto it = std::find(m_selSlots.begin(), m_selSlots.end(), slot);
+        if (it != m_selSlots.end())
+            m_selSlots.erase(it);
+        else
+            m_selSlots.push_back(slot);
+        if (m_selSlots.empty())
+            ctx.notice(QStringLiteral("Nothing picked"));
+        else if (m_selSlots.size() == 1)
+            ctx.notice(QStringLiteral("%1 picked: D doubles it, [ ] move it, Delete clears it; hold another of its clips to "
+                                      "merge them")
+                           .arg(pickText()));
+        else
+            ctx.notice(QStringLiteral("%1 picked: M layers them into %2, Shift+M chains them")
+                           .arg(pickText())
+                           .arg(m_selSlots.front() + 1));
+    }
+
+    // The empty slot a copy of a part's clip goes into: the next one after
+    // `after` (wrapping), or before it when dir < 0; -1 when the part is full.
+    int emptySlot(const StudioView &v, int p, int after, int dir, uint32_t taken = 0) const {
+        for (int k = 1; k < kClipSlots; ++k) {
+            const int s = dir < 0 ? after - k : after + k;
+            if (dir != 0 && (s < 0 || s >= kClipSlots))
+                break;
+            const int w = (s + kClipSlots) % kClipSlots;
+            if (v.parts[p].clips[w].state == ClipView::Empty && !((taken >> w) & 1))
+                return w;
+        }
+        return -1;
+    }
+
+    void duplicateClips(ControlContext &ctx) {
+        const StudioView &v = ctx.studio();
+        uint32_t taken = 0;
+        QStringList done;
+        for (int slot : m_selSlots) {
+            const int to = emptySlot(v, m_selPart, slot, 0, taken);
+            if (to < 0)
+                break;
+            taken |= 1u << to;
+            ctx.copyClip(m_selPart, slot, to);
+            done << QStringLiteral("%1 → %2").arg(slot + 1).arg(to + 1);
+        }
+        if (done.isEmpty())
+            ctx.notice(QStringLiteral("%1 has no empty slot for a copy").arg(m_names.value(m_selPart)));
+        else
+            ctx.notice(QStringLiteral("Doubled %1 %2, in time with the original (Ctrl+Z takes it back)")
+                           .arg(m_names.value(m_selPart), done.join(QStringLiteral(", "))));
+    }
+
+    void mergePicked(bool chain, ControlContext &ctx) {
+        if (m_selSlots.size() < 2) {
+            ctx.notice(QStringLiteral("Pick two clips of one part to %1 them (hold one, then another)")
+                           .arg(chain ? QStringLiteral("chain") : QStringLiteral("layer")));
+            return;
+        }
+        const int into = m_selSlots.front();
+        QStringList others;
+        for (size_t i = 1; i < m_selSlots.size(); ++i) {
+            ctx.mergeClips(m_selPart, into, m_selSlots[i], chain);
+            others << QString::number(m_selSlots[i] + 1);
+        }
+        ctx.notice(chain ? QStringLiteral("Chained %1 after %2 into slot %3; %1 is as it was (Ctrl+Z takes it back)")
+                               .arg(others.join(QStringLiteral(", ")), clipName(m_selPart, into))
+                               .arg(into + 1)
+                         : QStringLiteral("Layered %1 into %2; %1 is as it was (Ctrl+Z takes it back)")
+                               .arg(others.join(QStringLiteral(", ")), clipName(m_selPart, into)));
+        m_selSlots = {into};
+    }
+
+    void deletePicked(ControlContext &ctx) {
+        const QString what = pickText();
+        if (!confirm(QStringLiteral("delete ") + what,
+                     QStringLiteral("Delete again clears %1 (Ctrl+Z can't bring a cleared clip back)").arg(what), ctx))
+            return;
+        for (int slot : m_selSlots) {
+            ctx.clearPart(m_selPart, slot);
+            if (m_lastSlot[m_selPart] == slot)
+                m_lastSlot[m_selPart] = -1;
+        }
+        m_selSlots.clear();
+        ctx.notice(QStringLiteral("Cleared %1").arg(what));
+    }
+
+    // Moves a clip to the empty slot on its left or right: a copy (which
+    // keeps its place against the bars), then the old slot cleared. A clip
+    // that plays carries on from the new slot at the next bar, and its old
+    // slot is cleared once that has happened.
+    void movePicked(int dir, ControlContext &ctx) {
+        if (m_selSlots.size() != 1) {
+            ctx.notice(QStringLiteral("Pick one clip to move"));
+            return;
+        }
+        const StudioView &v = ctx.studio();
+        const int p = m_selPart, from = m_selSlots.front();
+        const int to = emptySlot(v, p, from, dir);
+        if (to < 0) {
+            ctx.notice(QStringLiteral("No empty slot to the %1 of %2")
+                           .arg(dir < 0 ? QStringLiteral("left") : QStringLiteral("right"), clipName(p, from)));
+            return;
+        }
+        if (!confirm(QStringLiteral("move %1 %2 %3").arg(p).arg(from).arg(to),
+                     QStringLiteral("Again moves %1 to slot %2 (the old slot is cleared: Ctrl+Z can't bring it back)")
+                         .arg(clipName(p, from))
+                         .arg(to + 1),
+                     ctx))
+            return;
+        ctx.copyClip(p, from, to);
+        const bool plays = predicted(v, p, nextBar()) == from;
+        if (plays) {
+            post(ctx, p, to, nextBar(), false);
+            m_pendingClear[p] = {p, from, nextBar() * double(kBeatsPerBar) + 0.25};
+        } else {
+            ctx.clearPart(p, from);
+        }
+        if (m_lastSlot[p] == from)
+            m_lastSlot[p] = to;
+        m_selSlots = {to};
+        ctx.notice(QStringLiteral("Moved %1 to slot %2").arg(clipName(p, from)).arg(to + 1));
+    }
+
+    // --- editing: the song --------------------------------------------------------
+    //
+    // A section is picked with the pointer on the song band (a second
+    // finger's tap). Delete removes it, D doubles it, M joins it with the
+    // next, [ and ] swap it with its neighbours; held, it plays from there.
+    // Every edit keeps the song before it for Shift+O.
+
+    QString sectionName(int i) const {
+        if (i < 0 || i >= int(m_sections.size()))
+            return {};
+        const Section &s = m_sections[size_t(i)];
+        return QStringLiteral("%1 (bars %2–%3)")
+            .arg(QString::fromUtf8(labelName(s.label)).toUpper())
+            .arg(s.bar0 + 1)
+            .arg(s.bar0 + s.bars);
+    }
+
+    // A new song from the old one's sections, in a new order (a section may
+    // come twice, or not at all): bars, steps and the moves that start in them.
+    Song songFrom(const std::vector<int> &order) const {
+        Song out;
+        out.bpm = m_song.bpm;
+        out.root = m_song.root;
+        out.family = m_song.family;
+        out.brightness = m_song.brightness;
+        for (int i : order) {
+            const Section &sec = m_sections[size_t(i)];
+            const int at = out.length();
+            for (int b = sec.bar0; b < sec.bar0 + sec.bars; ++b) {
+                out.bars.push_back(m_song.bars[size_t(b)]);
+                for (int k = 0; k < kSteps; ++k)
+                    out.steps.push_back(m_song.steps[size_t(b) * kSteps + size_t(k)]);
+            }
+            // Its first bar starts every loop from its top, wherever it lands now.
+            SongBar &first = out.bars[size_t(at)];
+            first.join = false;
+            for (int p = 0; p < P; ++p)
+                if (first.slot[p] >= 0)
+                    first.relaunch |= uint8_t(1 << p);
+            for (const SongMove &m : m_song.moves)
+                if (m.step >= sec.bar0 * kSteps && m.step < (sec.bar0 + sec.bars) * kSteps)
+                    out.moves.push_back({m.step + (at - sec.bar0) * kSteps, m.kind, m.param});
+        }
+        std::stable_sort(out.moves.begin(), out.moves.end(),
+                         [](const SongMove &a, const SongMove &b) { return a.step < b.step; });
+        return out;
+    }
+    void editSong(const std::vector<int> &order, int select, const QString &what, ControlContext &ctx) {
+        keepSong();
+        m_song = songFrom(order);
+        sections();
+        m_selSection = std::clamp(select, -1, int(m_sections.size()) - 1);
+        m_moveCursorOrigin = -1; // the song's moves are read again from where it plays
+        ctx.notice(what + QStringLiteral(" (Shift+O takes it back)"));
+    }
+    std::vector<int> sectionOrder() const {
+        std::vector<int> o(m_sections.size());
+        for (size_t i = 0; i < o.size(); ++i)
+            o[i] = int(i);
+        return o;
+    }
+
+    void removeSection(ControlContext &ctx) {
+        const int i = m_selSection;
+        if (i < 0 || m_sections.size() < 2) {
+            ctx.notice(QStringLiteral("A song keeps at least one section"));
+            return;
+        }
+        const QString name = sectionName(i);
+        auto o = sectionOrder();
+        o.erase(o.begin() + i);
+        editSong(o, std::min(i, int(o.size()) - 1), QStringLiteral("Removed %1").arg(name), ctx);
+    }
+    void duplicateSection(ControlContext &ctx) {
+        const int i = m_selSection;
+        auto o = sectionOrder();
+        o.insert(o.begin() + i + 1, i);
+        editSong(o, i + 1, QStringLiteral("Doubled %1").arg(sectionName(i)), ctx);
+    }
+    void moveSection(int dir, ControlContext &ctx) {
+        const int i = m_selSection, j = i + dir;
+        if (j < 0 || j >= int(m_sections.size()))
+            return;
+        auto o = sectionOrder();
+        std::swap(o[size_t(i)], o[size_t(j)]);
+        editSong(o, j, QStringLiteral("Moved %1 %2").arg(sectionName(i), dir < 0 ? "earlier" : "later"), ctx);
+    }
+    // Two neighbouring sections become one, named as the first.
+    void joinSections(ControlContext &ctx) {
+        const int i = m_selSection;
+        if (i < 0 || i + 1 >= int(m_sections.size())) {
+            ctx.notice(QStringLiteral("Pick a section with one after it to join them"));
+            return;
+        }
+        const QString a = sectionName(i), b = sectionName(i + 1);
+        keepSong();
+        const Section &next = m_sections[size_t(i + 1)];
+        for (int bar = next.bar0; bar < next.bar0 + next.bars; ++bar) {
+            m_song.bars[size_t(bar)].label = uint8_t(m_sections[size_t(i)].label);
+            m_song.bars[size_t(bar)].join = true;
+        }
+        sections();
+        m_selSection = i;
+        ctx.notice(QStringLiteral("Joined %1 and %2 (Shift+O takes it back)").arg(a, b));
+    }
+
+    void playFromSection(int i, ControlContext &ctx) {
+        if (i < 0 || i >= int(m_sections.size()))
+            return;
+        m_selSection = i;
+        const int bar = nextBar();
+        if (!m_playing)
+            startSong(bar, false, ctx);
+        m_origin = bar - m_sections[size_t(i)].bar0;
+        m_jumpBar = bar;
+        m_moveCursorOrigin = -1;
+        if (bar <= m_plannedBar)
+            planBar(bar, ctx, true);
+        ctx.notice(QStringLiteral("%1 plays from the bar").arg(sectionName(i)));
     }
 
     void toggleClip(int p, int slot, ControlContext &ctx) {
@@ -1856,10 +2258,13 @@ private:
                              : QStringLiteral("Recording the song from the next bar (Space again stops)"));
     }
 
-    // The song before the last take, write or clear, for Shift+O.
+    // The songs before the last takes, writes, clears and edits, for Shift+O.
     void keepSong() {
-        if (!m_song.empty())
-            m_songUndo = m_song;
+        if (m_song.empty())
+            return;
+        m_songUndo.push_back(m_song);
+        if (m_songUndo.size() > 8)
+            m_songUndo.erase(m_songUndo.begin());
     }
     void undoSong(ControlContext &ctx) {
         if (m_songUndo.empty()) {
@@ -1874,9 +2279,13 @@ private:
             m_rec = &m_song;
             m_take = Song{};
         }
-        std::swap(m_song, m_songUndo);
-        labelSong();
-        ctx.notice(QStringLiteral("The earlier song is back: %1 bars (P plays it)").arg(m_song.length()));
+        m_song = std::move(m_songUndo.back());
+        m_songUndo.pop_back();
+        sections();
+        m_selSection = -1;
+        ctx.notice(QStringLiteral("The earlier song is back: %1 bars (P plays it; %2 more to go back to)")
+                       .arg(m_song.length())
+                       .arg(m_songUndo.size()));
     }
 
     void togglePlay(bool loop, ControlContext &ctx) {
@@ -1937,8 +2346,17 @@ private:
     }
 
     void jumpSection(int dir, ControlContext &ctx) {
-        if (!m_playing || m_sections.empty())
+        if (m_sections.empty())
             return;
+        // Stopped, the arrows pick a section to edit.
+        if (!m_playing) {
+            m_selSlots.clear();
+            m_selSection = std::clamp(m_selSection < 0 ? (dir > 0 ? 0 : int(m_sections.size()) - 1) : m_selSection + dir, 0,
+                                      int(m_sections.size()) - 1);
+            ctx.notice(QStringLiteral("%1 picked: Delete removes it, D doubles it, M joins the next, [ and ] move it")
+                           .arg(sectionName(m_selSection)));
+            return;
+        }
         const int bar = nextBar();
         const int sb = bar - 1 - m_origin;
         int cur = 0;
@@ -2049,8 +2467,9 @@ private:
             const int l = m_song.bars[size_t(b)].label;
             // A section breaks where the label changes, and long drops at
             // eight bars, so the timeline reads in phrases.
-            if (m_sections.empty() || m_sections.back().label != l ||
-                (l == LDrop && m_song.bars[size_t(b)].relaunch && m_sections.back().bars >= 8))
+            const bool join = m_song.bars[size_t(b)].join && !m_sections.empty();
+            if (!join && (m_sections.empty() || m_sections.back().label != l ||
+                          (l == LDrop && m_song.bars[size_t(b)].relaunch && m_sections.back().bars >= 8)))
                 m_sections.push_back({b, 1, l});
             else
                 ++m_sections.back().bars;
@@ -2280,6 +2699,9 @@ private:
     void paintSong(QPainter &p, const PaintContext &pc);
     void paintHeader(QPainter &p, const PaintContext &pc);
     void paintMoments(QPainter &p, const PaintContext &pc);
+    void paintPointer(QPainter &p, const PaintContext &pc);
+    QRectF targetRect(const Target &t, const PaintContext &pc) const;
+    QString targetHint(const Target &t, bool mouse) const;
     QString fingerLabel(const Finger &f) const;
     QString movesText() const;
     QString songText() const;
@@ -2330,9 +2752,22 @@ private:
     } m_scene[kClipSlots];
     int m_sceneQueued = -1, m_sceneQueuedBar = -1;
     bool m_anyClip = false;
-    int m_selPart = -1, m_selSlot = -1; // the clip last touched: Delete clears it
+    // The pointer, in pad units (below 0: the song band), and the selection.
+    float m_cursorX = 0.42f, m_cursorY = 0.5f, m_bandY0 = -0.07f, m_bandY1 = -0.015f;
+    double m_cursorAt = -1e9;
+    float m_hoverX = -1, m_hoverY = -1;
+    bool m_hover = false;
+    int m_selPart = -1, m_selSection = -1;
+    std::vector<int> m_selSlots; // in the order they were picked: the first is what the others go into
+    QString m_confirmKey;
+    double m_confirmAt = -1e9;
+    struct PendingClear {
+        int part = -1, slot = -1;
+        double beat = 0;
+    } m_pendingClear[P];
 
-    Song m_song, m_songUndo, m_take;
+    Song m_song, m_take;
+    std::vector<Song> m_songUndo; // newest last, eight at most
     Song *m_rec = &m_song; // where a recording goes: the song, or a new take
     double m_confirmI = -1e9, m_confirmClear = -1e9;
     std::vector<Section> m_sections;
@@ -2392,9 +2827,13 @@ void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
         for (const auto &fg : m_fingers)
             if (fg.id == t.id)
                 f = &fg;
+        if (isMouse(t.id))
+            continue; // the mouse has its own highlight, no fingertip
         QColor col = pc.color;
-        if (f && f->lane >= 0 && (f->kind == Finger::Lane || f->kind == Finger::Send || f->kind == Finger::Name))
+        if (f && f->lane >= 0 && (f->kind == Finger::Lane || f->kind == Finger::Send))
             col = laneColor(f->lane, pc.color);
+        if (f && (f->kind == Finger::Pointer || f->kind == Finger::Activator))
+            col = c::alpha(Qt::white, 0.7f);
         const QString label = f ? fingerLabel(*f) : QString();
         const float glow = f && f->kind == Finger::Tension ? std::fabs(m_tensionShown) : 0.0f;
         if (t.x < 0.72f) {
@@ -2411,9 +2850,112 @@ void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
             }
         }
     }
+    paintPointer(p, pc);
     paintHeader(p, pc);
     c::beats(p, pc, pc.color);
     paintSong(p, pc);
+}
+
+QRectF ArrangeControl::targetRect(const Target &t, const PaintContext &pc) const {
+    const int parts = std::max(1, m_parts);
+    auto lane = [&](int i, float x0, float x1) {
+        return pc.rect(x0, kTopY * (1.0f - float(i + 1) / parts), x1, kTopY * (1.0f - float(i) / parts));
+    };
+    auto col = [&](int s, float y0, float y1) {
+        return pc.rect(kNameW + (kCellsR - kNameW) * float(s) / kClipSlots, y0,
+                       kNameW + (kCellsR - kNameW) * float(s + 1) / kClipSlots, y1);
+    };
+    switch (t.kind) {
+    case Target::Clip: return lane(t.a, 0, 1).intersected(col(t.b, 0, 1)).adjusted(1, 3, -1, -3);
+    case Target::Scene: return col(t.a, kTopY, 1).adjusted(1, 12, -1, -3);
+    case Target::Name: return lane(t.a, 0, kNameW).adjusted(2, 2, -2, -2);
+    case Target::Strip: return lane(t.a, kCellsR, kStripR).adjusted(2, 2, -2, -2);
+    case Target::Fader: return pc.rect(kStripR, 0, 1, kTopY).adjusted(6, 6, -6, -6);
+    case Target::Button:
+        return (t.a == BBuild ? pc.rect(0, kTopY, kNameW, 1) : t.a == BBreak ? pc.rect(kCellsR, kTopY, kStripR, 1)
+                                                                             : pc.rect(kStripR, kTopY, 1, 1))
+            .adjusted(4, 12, -4, -3);
+    case Target::Section: {
+        if (t.a < 0 || t.a >= int(m_sections.size()))
+            return {};
+        const QRectF band(pc.pad.left(), pc.pad.bottom() + 10, pc.pad.width(), 30);
+        const double span = std::max(1, m_song.length());
+        const Section &s = m_sections[size_t(t.a)];
+        return QRectF(band.left() + band.width() * s.bar0 / span, band.top(), band.width() * s.bars / span, band.height());
+    }
+    default: return {};
+    }
+}
+
+QString ArrangeControl::targetHint(const Target &t, bool mouse) const {
+    const QString tap = mouse ? QStringLiteral("CLICK") : QStringLiteral("TAP");
+    switch (t.kind) {
+    case Target::Clip: {
+        const bool picked = t.a == m_selPart && std::find(m_selSlots.begin(), m_selSlots.end(), t.b) != m_selSlots.end();
+        return QStringLiteral("%1 · %2: START / STOP · HOLD: %3")
+            .arg(clipName(t.a, t.b).toUpper(), tap, picked ? QStringLiteral("UNPICK") : QStringLiteral("PICK"));
+    }
+    case Target::Scene: return QStringLiteral("%1: LAUNCH SCENE %2 · HOLD: STORE").arg(tap).arg(t.a + 1);
+    case Target::Name: return QStringLiteral("%1 · %2: MUTE · HOLD: SOLO").arg(m_names.value(t.a).toUpper(), tap);
+    case Target::Button:
+        return QStringLiteral("%1: %2").arg(tap, t.a == BBuild ? QStringLiteral("BUILD") : t.a == BBreak ? QStringLiteral("BREAKDOWN")
+                                                                                                         : QStringLiteral("DROP"));
+    case Target::Section: return QStringLiteral("%1 · %2: PICK · HOLD: PLAY FROM HERE").arg(sectionName(t.a), tap);
+    case Target::Strip: return mouse ? QStringLiteral("DRAG: LEVEL AND FILTER") : QStringLiteral("LAND A FINGER HERE TO RIDE");
+    case Target::Fader: return mouse ? QStringLiteral("DRAG: BUILD / SINK") : QStringLiteral("LAND A FINGER HERE TO RIDE");
+    default: return {};
+    }
+}
+
+// The pointer and what it is on; the mouse's hover the same way.
+void ArrangeControl::paintPointer(QPainter &p, const PaintContext &pc) {
+    // Where the song band sits under the pad, in pad units, for the pointer.
+    m_bandY1 = float(-10.0 / pc.pad.height());
+    m_bandY0 = float(-40.0 / pc.pad.height());
+    auto highlight = [&](const Target &t, bool mouse, float a) {
+        const QRectF r = targetRect(t, pc);
+        if (r.isEmpty())
+            return;
+        const QColor w = c::alpha(Qt::white, a);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(w, 2));
+        p.drawRect(r);
+        // Corner brackets, so it reads over any colour.
+        const qreal k = std::min<qreal>(10, r.width() / 4);
+        p.setPen(QPen(w, 4));
+        for (const QPointF &c0 : {r.topLeft(), r.topRight(), r.bottomLeft(), r.bottomRight()}) {
+            const qreal sx = c0.x() == r.left() ? 1 : -1, sy = c0.y() == r.top() ? 1 : -1;
+            p.drawLine(c0, c0 + QPointF(sx * k, 0));
+            p.drawLine(c0, c0 + QPointF(0, sy * k));
+        }
+        const QString hint = targetHint(t, mouse);
+        if (!hint.isEmpty()) {
+            const QFont f = c::font(10, true);
+            const qreal tw = QFontMetricsF(f).horizontalAdvance(hint) + 12;
+            qreal x = std::clamp(r.center().x() - tw / 2, pc.pad.left() + 2, pc.pad.right() - tw - 2);
+            const qreal y = t.kind == Target::Section ? r.top() - 10 : r.bottom() + 9;
+            c::tag(p, QPointF(x, y), hint, w, 10);
+        }
+    };
+    if (pc.hover && pc.hoverX >= 0 && pc.hoverX <= 1)
+        highlight(targetAt(pc.hoverX, pc.hoverY), true, 0.9f);
+    const bool live = pointing();
+    if (!live && pc.time - m_cursorAt > 4.0)
+        return;
+    highlight(targetAt(m_cursorX, m_cursorY), false, live ? 1.0f : 0.45f);
+    // The cursor: a console crosshair with a dot.
+    const QPointF at = pc.at(m_cursorX, m_cursorY);
+    const QColor col = c::alpha(Qt::white, live ? 1.0f : 0.5f);
+    p.setPen(QPen(QColor(0, 0, 0, 200), 5));
+    p.drawLine(at + QPointF(-11, 0), at + QPointF(11, 0));
+    p.drawLine(at + QPointF(0, -11), at + QPointF(0, 11));
+    p.setPen(QPen(col, 2));
+    p.drawLine(at + QPointF(-10, 0), at + QPointF(-3, 0));
+    p.drawLine(at + QPointF(3, 0), at + QPointF(10, 0));
+    p.drawLine(at + QPointF(0, -10), at + QPointF(0, -3));
+    p.drawLine(at + QPointF(0, 3), at + QPointF(0, 10));
+    p.setBrush(col);
+    p.drawEllipse(at, 1.8, 1.8);
 }
 
 void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) {
@@ -2468,10 +3010,6 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
                 p.drawRect(cell);
                 if (cell.width() > 44)
                     c::text(p, cell, QStringLiteral("EMPTY"), c::alpha(col, 0.2f), 9, false, Qt::AlignCenter);
-                if (i == m_selPart && s == m_selSlot) {
-                    p.setPen(QPen(QColor(255, 255, 255, 140), 1, Qt::DashLine));
-                    p.drawRect(cell.adjusted(-2, -2, 2, 2));
-                }
                 continue;
             }
             const QString len = cv.lengthBeats >= 4 ? QStringLiteral("%1 BAR").arg(int(cv.lengthBeats / 4))
@@ -2541,10 +3079,18 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
             label(QString::number(s + 1), px, Qt::AlignLeft | Qt::AlignTop, 2, 2);
             label(state, small, Qt::AlignRight | Qt::AlignTop, 2, 2);
             label(len, px, Qt::AlignRight | Qt::AlignBottom, 2, 2);
-            if (i == m_selPart && s == m_selSlot) {
-                p.setBrush(Qt::NoBrush);
-                p.setPen(QPen(QColor(255, 255, 255, 170), 1, Qt::DashLine));
-                p.drawRect(cell.adjusted(-2, -2, 2, 2));
+            // Picked for editing: a white frame and its place in the pick.
+            if (i == m_selPart) {
+                const auto it = std::find(m_selSlots.begin(), m_selSlots.end(), s);
+                if (it != m_selSlots.end()) {
+                    p.setBrush(Qt::NoBrush);
+                    p.setPen(QPen(Qt::white, 2, Qt::DashLine));
+                    p.drawRect(cell.adjusted(-3, -3, 3, 3));
+                    c::tag(p, QPointF(cell.center().x(), cell.top() - 1),
+                           m_selSlots.size() > 1 ? QStringLiteral("PICK %1").arg(int(it - m_selSlots.begin()) + 1)
+                                                 : QStringLiteral("PICKED"),
+                           Qt::white, 9, true);
+                }
             }
             // Where the plan sends this part on the next bar.
             if (m_posted[i].bar == next && m_posted[i].slot == s && cv.state != ClipView::Queued && m_posted[i].relaunch)
@@ -2574,6 +3120,27 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
         }
         if (!audible)
             p.fillRect(pc.rect(kNameW, y0, kStripR, y1), QColor(0, 0, 0, 110));
+    }
+    // Picked clips: where D would put a copy, and the keys that edit them.
+    if (m_selPart >= 0 && m_selPart < parts && !m_selSlots.empty()) {
+        const int to = emptySlot(v, m_selPart, m_selSlots.front(), 0);
+        if (to >= 0) {
+            const QRectF ghost = targetRect(Target{Target::Clip, m_selPart, to}, pc);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(Qt::white, 0.5f), 1, Qt::DashLine));
+            p.drawRect(ghost);
+            c::text(p, ghost, QStringLiteral("D →"), c::alpha(Qt::white, 0.6f), 10, true, Qt::AlignCenter);
+        }
+        const QString keys = m_selSlots.size() > 1
+                                 ? QStringLiteral("M LAYER INTO %1   ·   SHIFT+M CHAIN   ·   D DOUBLE   ·   DEL CLEAR")
+                                       .arg(m_selSlots.front() + 1)
+                                 : QStringLiteral("D DOUBLE   ·   [ ] MOVE   ·   DEL CLEAR   ·   HOLD ANOTHER TO MERGE");
+        const QString line = QStringLiteral("PICKED %1   ·   ").arg(pickText().toUpper()) + keys + QStringLiteral("   ·   CTRL+Z UNDOES");
+        const QFont f = c::font(10, true);
+        const qreal w = QFontMetricsF(f).horizontalAdvance(line) + 14;
+        const QRectF r(pc.pad.center().x() - w / 2, pc.pad.bottom() - 9, w, 18);
+        p.fillRect(r, QColor(0, 0, 0));
+        c::text(p, r, line, Qt::white, 10, true, Qt::AlignCenter);
     }
     // No loops anywhere: say plainly where they come from.
     bool anyClip = false;
@@ -2851,6 +3418,18 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
             if (r.width() > 34)
                 c::text(p, r.adjusted(4, 0, -2, 0), t, col, int(std::clamp(r.width() / 6, 8.0, 11.0)), true);
         }
+        // The picked section: a white frame, and what the keys would do to it.
+        if (m_selSection >= 0 && m_selSection < int(m_sections.size())) {
+            const Section &s = m_sections[size_t(m_selSection)];
+            const QRectF r(xAt(s.bar0) - 1, band.top() - 2, xAt(s.bar0 + s.bars) - xAt(s.bar0) + 2, band.height() + 4);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(Qt::white, 2, Qt::DashLine));
+            p.drawRect(r);
+            c::text(p, QRectF(band.left(), band.bottom() + 4, band.width(), 14),
+                    QStringLiteral("PICKED %1   ·   DEL REMOVE   ·   D DOUBLE   ·   M JOIN NEXT   ·   [ ] MOVE   ·   SHIFT+O UNDO")
+                        .arg(sectionName(m_selSection)),
+                    Qt::white, 10, true, Qt::AlignCenter);
+        }
     } else {
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(c::alpha(c::red(), 0.6f), 1));
@@ -2889,9 +3468,9 @@ QString ArrangeControl::fingerLabel(const Finger &f) const {
         return t;
     }
     case Finger::Send: return QStringLiteral("VERB %1 PAN").arg(int(std::lround(m_shown[f.lane].verb * 100)));
-    case Finger::Name: return f.solo ? QStringLiteral("SOLO") : QStringLiteral("MUTE?");
     case Finger::Tension: return {}; // the fader says it itself
-    case Finger::Scene: return QStringLiteral("SCENE %1").arg(f.index + 1);
+    case Finger::Pointer: return {}; // the pointer shows itself
+    case Finger::Activator: return f.held ? QStringLiteral("HOLD") : QStringLiteral("TAP");
     default: return {};
     }
 }
@@ -2953,13 +3532,24 @@ QString ArrangeControl::songText() const {
 QString ArrangeControl::status() const {
     QStringList parts;
     for (const auto &f : m_fingers) {
-        if (f.id < 0)
+        if (f.id < 0 || f.kind == Finger::Pointer || f.kind == Finger::Activator || f.kind == Finger::Mouse)
             continue;
         const QString l = fingerLabel(f);
         if (!l.isEmpty())
             parts << l.toLower();
     }
     parts.removeDuplicates();
+    if (pointing() || (m_lastT - m_cursorAt < 4.0)) {
+        const Target t = targetAt(m_cursorX, m_cursorY);
+        const QString h = targetHint(t, false);
+        if (!h.isEmpty())
+            parts << h.toLower();
+    }
+    if (clipsPicked())
+        parts << QStringLiteral("picked %1: %2").arg(pickText(), m_selSlots.size() > 1 ? QStringLiteral("M layers, Shift+M chains")
+                                                                                       : QStringLiteral("D doubles, [ ] move, Delete clears"));
+    else if (m_selSection >= 0)
+        parts << QStringLiteral("picked %1: Delete removes, D doubles, M joins, [ ] move").arg(sectionName(m_selSection).toLower());
     if (m_tensionHeld)
         parts << (m_tensionLive >= 0.6f ? QStringLiteral("tension %1: let go to drop").arg(int(m_tensionLive * 100))
                                         : QStringLiteral("tension %1").arg(int(m_tensionLive * 100)));

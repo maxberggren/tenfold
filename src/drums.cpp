@@ -1504,6 +1504,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
 PartSpec makeDrums() {
     PartSpec s;
+    s.followsChords = false;
     s.name = QStringLiteral("Drums");
     s.blurb = QStringLiteral("kicks, snares, hats, rolls, grooves");
     s.color = QColor("#FF8A1F");

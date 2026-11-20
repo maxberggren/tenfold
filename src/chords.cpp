@@ -1165,6 +1165,7 @@ QString Control::status() const {
 
 PartSpec makeChords() {
     PartSpec s;
+    s.followsChords = false; // it sets the chord
     s.name = QStringLiteral("Chords");
     s.blurb = QStringLiteral("progressions, stabs, gates");
     s.color = QColor("#2EE6FF");

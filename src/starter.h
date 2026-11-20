@@ -3,11 +3,10 @@
 // Starter parts: the simplest thing each page can be, built on the shared
 // synth voices, so the studio plays end to end before a part has its own
 // design. They also show the framework in use: commands in scale degrees,
-// the tap-then-hold loop through Phrase and capture(), console drawing.
+// recording a loop with Enter, console drawing.
 //
 //   notes  columns are the notes of the scale over two octaves; a finger is a
-//          note, sliding up opens its filter; tap a rhythm and hold the next
-//          beat to loop it.
+//          note, sliding up opens its filter; Enter records a loop.
 //   drums  six zones across the pad: kick, snare, clap, hat, open hat, perc.
 
 #include <QPainter>
@@ -22,6 +21,20 @@
 namespace tf::starter {
 
 // --- notes ------------------------------------------------------------------
+
+// Enter records this part from the next bar; Enter again ends the loop at
+// the bar after. Loops only ever come from this, never from timing.
+inline bool toggleRecording(ControlContext &ctx) {
+    if (ctx.studio().parts[ctx.part()].recording >= 0) {
+        ctx.stopRecording();
+        ctx.notice(QStringLiteral("Loop closes at the bar"));
+    } else {
+        const int slot = std::max(0, ctx.freeSlot());
+        ctx.record(slot, 8);
+        ctx.notice(QStringLiteral("Recording slot %1 from the next bar").arg(slot + 1));
+    }
+    return true;
+}
 
 struct NotesConfig {
     Patch patch = Patch::Lead;
@@ -163,8 +176,7 @@ public:
 
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
-        const int perOctave = ctx.studio().family == 1 ? 5 : 7;
+                const int perOctave = ctx.studio().family == 1 ? 5 : 7;
         const int cells = perOctave * m_cfg.span + 1;
         // Lifts first.
         for (auto &h : m_held) {
@@ -180,8 +192,6 @@ public:
             off.id = h.id;
             off.t = f.t;
             ctx.send(off);
-            if (!h.looped && !h.long_)
-                m_phrase.tap(h.t0, f.t - h.t0, 0);
             h.id = -1;
         }
         for (int i = 0; i < f.count; ++i) {
@@ -215,14 +225,6 @@ public:
             }
             if (!h->long_ && f.t - h->t0 >= 0.25) {
                 h->long_ = true;
-                double start = 0;
-                if (m_phrase.closes(h->t0, 0, &start)) {
-                    const int slot = std::max(0, ctx.freeSlot());
-                    ctx.capture(slot, start, h->t0);
-                    ctx.notice(QStringLiteral("Loop in slot %1").arg(slot + 1));
-                    h->looped = true;
-                    m_phrase.clear();
-                }
             }
         }
     }
@@ -252,6 +254,8 @@ public:
             ctx.stop();
             return true;
         }
+        if (k.key == Qt::Key_Return || k.key == Qt::Key_Enter)
+            return toggleRecording(ctx);
         return false;
     }
 
@@ -288,7 +292,7 @@ public:
 
     QString help() const override {
         return QStringLiteral("touch\ta note of the scale; higher on the pad, brighter\n"
-                              "tap a rhythm, hold the next beat\tloops it into the next free slot\n"
+                              "Enter\trecord a loop from the next bar; Enter again closes it\n"
                               "F1–F8\tlaunch a slot at the next bar\n"
                               "Backspace\tstop this part at the next bar");
     }
@@ -310,7 +314,6 @@ private:
     NotesConfig m_cfg;
     QString m_legend;
     std::array<Held, 16> m_held{};
-    Phrase m_phrase;
     Frame m_frame;
 };
 
@@ -392,8 +395,7 @@ class DrumsControl : public PartControl {
 public:
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
-        constexpr int pieces = int(Drum::Count);
+                constexpr int pieces = int(Drum::Count);
         for (auto &h : m_held) {
             if (h.id < 0)
                 continue;
@@ -401,8 +403,6 @@ public:
             for (int i = 0; i < f.count; ++i)
                 still |= f.touches[i].id == h.id;
             if (!still) {
-                if (!h.long_)
-                    m_phrase.tap(h.t0, f.t - h.t0, 0);
                 h.id = -1;
             }
         }
@@ -429,13 +429,6 @@ public:
             }
             if (!h->long_ && f.t - h->t0 >= 0.3) {
                 h->long_ = true;
-                double start = 0;
-                if (m_phrase.closes(h->t0, 0, &start)) {
-                    const int slot = std::max(0, ctx.freeSlot());
-                    ctx.capture(slot, start, h->t0);
-                    ctx.notice(QStringLiteral("Beat in slot %1").arg(slot + 1));
-                    m_phrase.clear();
-                }
             }
         }
     }
@@ -455,6 +448,8 @@ public:
             ctx.stop();
             return true;
         }
+        if (k.key == Qt::Key_Return || k.key == Qt::Key_Enter)
+            return toggleRecording(ctx);
         return false;
     }
     void paint(QPainter &p, const PaintContext &pc) override {
@@ -475,7 +470,7 @@ public:
     }
     QString help() const override {
         return QStringLiteral("tap\ta drum: kick, snare, clap, hat, open hat, perc\n"
-                              "tap a rhythm, hold the next beat\tloops it\n"
+                              "Enter\trecord a loop from the next bar; Enter again closes it\n"
                               "F1–F8\tlaunch a slot\nBackspace\tstop the beat");
     }
 
@@ -492,7 +487,6 @@ private:
         return nullptr;
     }
     std::array<Held, 16> m_held{};
-    Phrase m_phrase;
     Frame m_frame;
 };
 

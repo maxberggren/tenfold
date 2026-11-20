@@ -45,9 +45,12 @@ about 60 times a second and the page reads as `pc.view->data`.
 - **Clips: eight slots per part.** Everything a part sends is remembered for a
   few bars:
   - `ctx.capture(slot, t0, t1)` turns what was played between t0 and t1 into a
-    loop and plays it at once. This is the tap-then-hold gesture; `src/phrase.h`
-    has the timing rules, tuned on a real trackpad, so reuse it. If nothing else
-    is playing, that first loop sets the studio's tempo.
+    loop and plays it at once. If nothing else is playing, that first loop sets
+    the studio's tempo. Loops must be deliberate and visible: the player asked
+    "what is triggering the loop in slot?" when timing alone (the tap-then-hold
+    rule in `src/phrase.h`) made them. Make a loop only from an explicit act
+    (the click, Enter, a marked zone), show a cue before it happens, and say
+    what was captured.
   - `ctx.record(slot, maxBars)` / `ctx.stopRecording()` record armed from the
     next bar.
   - `ctx.overdub(on)` adds to the playing clip.

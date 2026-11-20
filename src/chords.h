@@ -62,11 +62,11 @@ struct StyleDef {
 inline const StyleDef &styleDef(int s) {
     static const StyleDef defs[StyleCount] = {
         // name     blurb                          osc            uni det   a      d     s     r     cut   env   envD  res   leg   retr  sprd  glide  ctr    gain   pump strum   width pattern
-        {"PAD", "big supersaw pad", StyleDef::Saw, 7, 26.0f, 0.28f, 1.2f, 0.85f, 0.45f, 0.66f, 0.10f, 0.6f, 0.12f, true, false, true, 0.16f, 62.0f, 0.36f, 0.0f, 0.0f, 1.0f, Hold},
-        {"TRANCE", "gated supersaw", StyleDef::Saw, 7, 20.0f, 0.004f, 0.4f, 0.9f, 0.09f, 0.76f, 0.14f, 0.25f, 0.18f, true, false, false, 0.04f, 66.0f, 0.34f, 0.0f, 0.0f, 0.85f, TranceGate},
-        {"ORGAN", "house organ stabs", StyleDef::OrganOsc, 1, 5.0f, 0.002f, 0.5f, 0.42f, 0.05f, 0.80f, 0.12f, 0.15f, 0.05f, false, true, false, 0.02f, 64.0f, 0.38f, 0.0f, 0.0f, 0.5f, Offbeat},
-        {"PIANO", "house piano", StyleDef::PianoOsc, 1, 4.0f, 0.001f, 2.4f, 0.0f, 0.22f, 0.86f, 0.10f, 0.45f, 0.05f, false, true, false, 0.02f, 63.0f, 0.4f, 0.0f, 0.007f, 0.6f, Charleston},
-        {"PLUCK", "supersaw pluck", StyleDef::Saw, 5, 16.0f, 0.001f, 0.55f, 0.0f, 0.25f, 0.36f, 0.62f, 0.2f, 0.22f, false, true, false, 0.02f, 67.0f, 0.48f, 0.0f, 0.004f, 0.8f, Tresillo},
+        {"PAD", "big supersaw pad", StyleDef::Saw, 7, 26.0f, 0.28f, 1.2f, 0.85f, 0.45f, 0.70f, 0.10f, 0.6f, 0.12f, true, false, true, 0.16f, 62.0f, 0.36f, 0.0f, 0.0f, 1.0f, Hold},
+        {"TRANCE", "gated supersaw", StyleDef::Saw, 7, 20.0f, 0.004f, 0.4f, 0.9f, 0.09f, 0.76f, 0.14f, 0.25f, 0.18f, true, false, false, 0.04f, 66.0f, 0.42f, 0.0f, 0.0f, 0.85f, TranceGate},
+        {"ORGAN", "house organ stabs", StyleDef::OrganOsc, 1, 5.0f, 0.003f, 0.5f, 0.42f, 0.05f, 0.80f, 0.12f, 0.15f, 0.05f, false, true, false, 0.02f, 64.0f, 0.31f, 0.0f, 0.0f, 0.5f, Offbeat},
+        {"PIANO", "house piano", StyleDef::PianoOsc, 1, 4.0f, 0.0015f, 2.4f, 0.0f, 0.22f, 0.88f, 0.10f, 0.45f, 0.05f, false, true, false, 0.02f, 63.0f, 0.22f, 0.0f, 0.007f, 0.6f, Charleston},
+        {"PLUCK", "supersaw pluck", StyleDef::Saw, 5, 16.0f, 0.001f, 0.55f, 0.0f, 0.25f, 0.36f, 0.62f, 0.2f, 0.22f, false, true, false, 0.02f, 67.0f, 0.4f, 0.0f, 0.004f, 0.8f, Tresillo},
         {"PUMP", "filtered, sidechained", StyleDef::Saw, 4, 13.0f, 0.012f, 0.5f, 0.92f, 0.22f, 0.56f, 0.12f, 0.4f, 0.42f, true, false, false, 0.06f, 60.0f, 0.44f, 0.82f, 0.0f, 0.7f, Hold},
     };
     return defs[std::clamp(s, 0, StyleCount - 1)];
@@ -760,7 +760,7 @@ private:
         if (g.hits[next] == '.')
             return 0;
         const double waitSamples = (1.0 - into) / stepsPerBeat / tr.beatsPerSample;
-        return waitSamples < 0.06 * double(m_rate) ? int(waitSamples) : 0;
+        return waitSamples < 0.035 * double(m_rate) ? int(waitSamples) : 0;
     }
 
     // Plays the lane's front chord: a fresh onset (a finger landing) or a
@@ -1191,7 +1191,7 @@ private:
                 const float bright = clampf(1.4f - (nt.midi - 60.0f) / 40.0f, 0.4f, 1.4f);
                 float strike = v.strike;
                 const float sDecay = std::exp(-1.0f / (0.32f * m_rate));
-                const float idx0 = (0.25f + 1.5f * v.vel) * bright / kTwoPi;
+                const float idx0 = (0.7f + 2.3f * v.vel) * bright / kTwoPi;
                 const float gl = v.panL[0], gr = v.panR[1];
                 for (int i = start; i < n; ++i) {
                     pl = wrap01(pl + incL);
@@ -1266,7 +1266,7 @@ private:
             float xl = bL[i], xr = bR[i];
             if (click && v.clickEnv > 1e-4f) {
                 // The hammer, or the organ's key click.
-                const float c = v.clickBp.step(v.rng.bipolar()).band * v.clickEnv * (v.style == Piano ? 0.5f : 0.3f);
+                const float c = v.clickBp.step(v.rng.bipolar()).band * v.clickEnv * (v.style == Piano ? 0.16f : 0.1f);
                 xl += c;
                 xr += c;
                 v.clickEnv *= clickDecay;

@@ -25,6 +25,7 @@
 // Every chord that sounds, live or from a loop, tells the studio
 // (ctx.setChord), so Bass, Arp and Lead can follow it.
 
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QStringList>
 #include <array>
@@ -59,6 +60,17 @@ Tuning tuningOf(const StudioView &s) {
 }
 
 int pitchClass(double midi) { return ((int(std::lround(midi)) % 12) + 12) % 12; }
+
+// Chord names keep their case: the console's capitals would make A minor
+// read as A major.
+void chordText(QPainter &p, const QRectF &r, const QString &s, QColor color, int px, bool bold = true,
+               Qt::Alignment align = Qt::AlignCenter) {
+    QFont f = console::font(px, bold);
+    f.setCapitalization(QFont::MixedCase);
+    p.setFont(f);
+    p.setPen(color);
+    p.drawText(r, int(align), s);
+}
 
 // A chord's name from what it is made of: the intervals of its tones above
 // the root, whatever scale they came from.
@@ -101,6 +113,19 @@ QString chordName(const Tuning &t, const Shape &s) {
 }
 
 QString chordName(const Tuning &t, int degree, int colour) { return chordName(t, shapeOf(t, degree, colour)); }
+
+// A lit tag like the console's, keeping the chord name's case.
+QRectF nameTag(QPainter &p, QPointF at, const QString &s, QColor color, int px) {
+    QFont f = console::font(px, true);
+    f.setCapitalization(QFont::MixedCase);
+    p.setFont(f);
+    const qreal w = QFontMetricsF(f).horizontalAdvance(s) + 12, h = px + 7;
+    const QRectF r(at.x(), at.y() - h / 2, w, h);
+    p.fillRect(r, color);
+    p.setPen(QColor::fromRgb(console::kInk));
+    p.drawText(r, Qt::AlignCenter, s);
+    return r;
+}
 
 // The degree as a roman numeral, its case and mark from the triad on it.
 QString roman(const Tuning &t, int degree) {
@@ -175,7 +200,7 @@ public:
         }
         // The progression as it goes by, live or from a loop.
         const StudioView &s = ctx.studio();
-        if (s.chordSeq != m_seenSeq) {
+        if (s.chordSeq != m_seenSeq || (m_heard && m_ribbonCount == 0)) {
             m_seenSeq = s.chordSeq;
             Shape sh;
             sh.count = s.chordCount;
@@ -759,9 +784,8 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
 
     // The chord's name, huge and faint behind the grid, breathing with it.
     if (ld) {
-        p.setFont(c::font(int(field.height() * 0.36), true));
-        p.setPen(c::alpha(col, 0.06f + 0.12f * level));
-        p.drawText(field, Qt::AlignCenter, chordName(t, showDegree, showColour));
+        chordText(p, field, chordName(t, showDegree, showColour), c::alpha(col, 0.06f + 0.12f * level),
+                  int(field.height() * 0.36));
     }
 
     // Columns lit by what sounds in them: the fingers' bright, a loop's softer.
@@ -784,11 +808,10 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
             const QString name = chordName(t, k, r);
             if (k == showColumn && r == showColour) {
                 p.fillRect(cell.adjusted(3, 3, -3, -3), c::alpha(col, 0.4f + 0.5f * level));
-                c::text(p, cell, name, QColor::fromRgb(c::kInk), int(std::clamp(cellH * 0.2, 11.0, 17.0)), true,
-                        Qt::AlignCenter);
+                chordText(p, cell, name, QColor::fromRgb(c::kInk), int(std::clamp(cellH * 0.21, 12.0, 19.0)));
             } else {
-                c::text(p, cell, name, c::alpha(col, r == Triad ? 0.8f : 0.5f),
-                        int(std::clamp(cellH * 0.16, 10.0, 15.0)), r == Triad, Qt::AlignCenter);
+                chordText(p, cell, name, c::alpha(col, r == Triad ? 0.85f : 0.55f),
+                          int(std::clamp(cellH * 0.17, 11.0, 16.0)), r == Triad);
             }
         }
         // The numeral heads its column.
@@ -811,39 +834,50 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
 
     paintRail(p, pc, d);
 
-    // The progression so far, oldest first, along the bottom edge.
+    // The progression so far along the top edge, newest at the right, just
+    // left of the beat lights.
     if (m_ribbonCount > 0) {
-        qreal x = pc.pad.left() + 60;
-        const qreal y = pc.pad.bottom() - 30;
-        for (int i = 0; i < m_ribbonCount; ++i) {
+        QFont f = c::font(11, true);
+        f.setCapitalization(QFont::MixedCase);
+        const QFontMetricsF fm(f);
+        qreal x = pc.pad.right() - 16 - 4 * 14 - 3 * 6 - 14;
+        const qreal y = pc.pad.top();
+        for (int i = m_ribbonCount - 1; i >= 0; --i) {
             const Shape &s = m_ribbon[(m_ribbonHead - m_ribbonCount + i + 2 * kRibbon) % kRibbon];
+            const QString name = chordName(t, s);
+            const qreal w = fm.horizontalAdvance(name) + 12;
+            if (x - w < pc.pad.left() + pc.pad.width() * 0.42)
+                break;
+            x -= w;
             const bool last = i == m_ribbonCount - 1;
-            const QRectF r = c::tag(p, QPointF(x, y), chordName(t, s), last ? col : c::alpha(col, 0.3f + 0.06f * i), 10);
-            x = r.right() + 3;
-            if (!last) {
-                c::text(p, QRectF(x, y - 7, 10, 14), QStringLiteral("›"), c::alpha(col, 0.6f), 11, true);
-                x += 10;
-            }
+            p.fillRect(QRectF(x - 3, y - 10, w + 6, 20), QColor(0, 0, 0));
+            nameTag(p, QPointF(x, y), name, last ? col : c::alpha(col, 0.35f + 0.08f * float(i)), 11);
+            x -= 8;
         }
     }
 
-    // Fingers, each with what it is doing.
+    // Fingers, each with what it is doing: a chord finger its chord, a rail
+    // finger its rhythm.
     for (int i = 0; i < m_frame.count; ++i) {
         const Touch &tc = m_frame.touches[i];
-        QString label;
-        float glow = 0;
+        const Held *held = nullptr;
         for (const auto &h : m_held)
-            if (h.touch == tc.id) {
-                if (h.role == Held::Chord) {
-                    label = chordName(t, h.degree, h.colour);
-                    glow = 0.4f + 0.6f * level;
-                } else {
-                    label = QString::fromUtf8(gateDef(h.cell).name);
-                    if (&h == leadRail() && m_rate > 1)
-                        label += QStringLiteral(" ×%1").arg(m_rate);
-                }
+            if (h.touch == tc.id)
+                held = &h;
+        if (!held || held->role == Held::Rail) {
+            QString label;
+            if (held) {
+                label = QString::fromUtf8(gateDef(held->cell).name);
+                if (held == leadRail() && m_rate > 1)
+                    label += QStringLiteral(" ×%1").arg(m_rate);
             }
-        c::finger(p, pc, tc, col, label, glow);
+            c::finger(p, pc, tc, col, label);
+            continue;
+        }
+        c::finger(p, pc, tc, col, {}, 0.4f + 0.6f * level);
+        const QPointF at = pc.at(tc.x, tc.y);
+        const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(tc.size, 0.6f, 4.0f);
+        nameTag(p, QPointF(at.x() + r + 6, at.y() - r * 0.6), chordName(t, held->degree, held->colour), col, 13);
     }
 
     // Along the top edge: the sound, hold, the register, overdub.

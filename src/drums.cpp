@@ -42,12 +42,15 @@ namespace {
 using namespace drums;
 
 constexpr int kCols = 4, kRows = 4;
-// A finger still down after this repeats. Short, so a roll starts on the
-// first step of the grid it can (at least kFirstStepSecs after landing)
-// instead of leaving a hole; the first step itself only goes out if the
-// finger is still down just before it, so a long tap never sprouts one.
+// A finger still down after kHoldSecs is held: it stops being a possible
+// fill and becomes a roll or a groove. Its first repeat is the first grid
+// step at least kFirstStepSecs after landing, and goes out only if the
+// finger is still down kFirstLeadSecs before it. So a tap must last about
+// 130 ms to sprout a step, longer than a tap lasts, while a roll still
+// starts within a step and kFirstStepSecs of landing, with no hole after.
 constexpr double kHoldSecs = 0.08;
-constexpr double kFirstStepSecs = 0.09;
+constexpr double kFirstStepSecs = 0.14;
+constexpr double kFirstLeadSecs = 0.012;
 constexpr double kTogetherSecs = 0.08; // fingers landing this close are one hand
 // A light first reading is often a finger still coming down: such a landing
 // waits one more frame (a few milliseconds) and takes the hardest it pressed.
@@ -98,8 +101,8 @@ float twistBetween(float from, float to) {
 float landingVelocity(float pressure, float size) {
     return clampf(0.12f + 1.0f * pressure + 0.08f * (size - 1.0f), 0.08f, 1.0f);
 }
-// How loud a held finger keeps a roll: pressing harder swells it.
-float holdingDynamics(float pressure) { return clampf(0.45f + 0.85f * pressure, 0.3f, 1.05f); }
+
+
 
 class DrumsControl : public PartControl {
 public:
@@ -362,6 +365,7 @@ private:
         int degree = 0; // the 808's glide, in degrees
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
+        float p0 = 0.5f; // the pressure its landing was played at
         Edit editFrom;
     };
 
@@ -446,6 +450,7 @@ private:
     void sendLanding(Holder &h, ControlContext &ctx) {
         h.landing = false;
         h.vel = landingVelocity(h.peak, h.size);
+        h.p0 = h.peak;
         if (h.pad == Sub)
             sendSubOn(h, h.t0, ctx);
         else
@@ -572,7 +577,7 @@ private:
         }
         if (!h.key) {
             g.decay = clampf(twistBetween(h.angle0, h.angle) * 1.3f, -2.0f, 2.0f);
-            g.dyn = holdingDynamics(h.pressure);
+            g.dyn = heldVelocity(h);
         }
     }
 
@@ -666,11 +671,18 @@ private:
             g.start = g.cursor;
             g.sx = std::clamp(h.x0 * kCols - float(h.pad % kCols), 0.0f, 1.0f);
             g.sy = std::clamp(h.y0 * kRows - float(h.pad / kCols), 0.0f, 1.0f);
-            g.dyn = h.key ? (h.vel >= 1.0f ? 1.0f : 0.85f) : holdingDynamics(h.pressure);
+            g.dyn = heldVelocity(h);
             h.gen = int(i);
             return &g;
         }
         return nullptr;
+    }
+
+    // How hard a held pad keeps playing: as hard as it landed, and pressing
+    // harder or easing off from there swells or softens it, a pressure
+    // step for a velocity step.
+    static float heldVelocity(const Holder &h) {
+        return h.key ? h.vel : clampf(h.vel + (h.pressure - h.p0), 0.05f, 1.0f);
     }
 
     // Measure the ladder from where the finger is when it starts to
@@ -802,7 +814,7 @@ private:
     void schedule(double now, ControlContext &ctx) {
         const double beatNow = ctx.beatAt(now);
         const double horizon = ctx.beatAt(now + kLookahead);
-        const double tight = ctx.beatAt(now + 0.015); // how far ahead a roll's first step may go
+        const double tight = ctx.beatAt(now + kFirstLeadSecs); // how far ahead a roll's first step may go
 
         if (m_keep.active && beatNow > m_keep.until + kBeatsPerBar) {
             // The clock jumped (a loop on another page set a new tempo):
@@ -840,9 +852,7 @@ private:
             // rather than catch up with a burst.
             if (g.cursor < beatNow - 0.25)
                 g.cursor = beatNow;
-            // Until its first step has gone, a held roll looks only a
-            // moment ahead: a finger that lifts just before it is a tap.
-            double end = g.first && g.holder >= 0 ? std::min(to, tight) : to;
+            double end = to;
             bool finishing = false;
             if (g.until >= 0 && g.until <= to) {
                 end = g.until;
@@ -850,8 +860,14 @@ private:
             }
             if (end <= g.cursor)
                 continue;
+            // Until its first step has gone, a held roll waits for it until
+            // just before it is heard (swing included): a finger that lifts
+            // before then was a tap.
+            const bool gated = g.first && g.holder >= 0;
+            const double swing = double(m_swing - 0.5f) * 0.5;
             constexpr double bar = kBeatsPerBar;
-            for (long b0 = long(std::floor(g.cursor / bar)); double(b0) * bar <= end; ++b0) {
+            bool held = false;
+            for (long b0 = long(std::floor(g.cursor / bar)); !held && double(b0) * bar <= end; ++b0) {
                 for (int i = 0; i < g.pattern.count; ++i) {
                     const Step &s = g.pattern.steps[i];
                     const double b = double(b0) * bar + double(s.tick) * bar / kTicks;
@@ -861,12 +877,17 @@ private:
                         continue;
                     if (b < beatNow - 0.02)
                         continue; // too late to play in time
+                    if (gated && g.first && b + (g.swing && s.tick % 12 == 6 ? swing : 0.0) > tight) {
+                        end = b - 1e-6; // not yet: come back for it
+                        held = true;
+                        break;
+                    }
                     sendStep(g, s, b, ctx);
                     g.first = false;
                 }
             }
             g.cursor = end;
-            if (finishing)
+            if (finishing && !held)
                 g.active = false;
         }
     }
@@ -881,7 +902,9 @@ private:
         uint32_t hash = uint32_t(g.pad) * 2654435761u ^ uint32_t(s.tick) * 40503u;
         hash ^= hash >> 13;
         hash *= 0x5bd1e995u;
-        const float human = 1.0f + 0.07f * (float(hash >> 8 & 0xFFFF) / 32768.0f - 1.0f);
+        // A roll stays close to the hit that began it; a groove breathes more.
+        const float spread = g.groove ? 0.07f : 0.03f;
+        const float human = 1.0f + spread * (float(hash >> 8 & 0xFFFF) / 32768.0f - 1.0f);
         Command c;
         c.type = Hit;
         c.flags = g.preview ? Command::NoRecord : 0;
@@ -1175,7 +1198,10 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
             const double hx = strip.left() + strip.width() * barPos;
             p.drawLine(QPointF(hx, strip.top() - 3 * s), QPointF(hx, strip.bottom() + 2 * s));
             // Under a finger its tag says this; a kept one has no finger.
-            if (!shaping && (gen->holder < 0 || m_holders[size_t(gen->holder)].key)) {
+            bool fingerOn = gen->holder >= 0 && !m_holders[size_t(gen->holder)].key;
+            for (const auto &h : m_holders)
+                fingerOn |= h.used && !h.key && h.pad == pad && h.mode == Mode::Kept;
+            if (!shaping && !fingerOn) {
                 QString what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
                                            : QString::fromUtf8(rateName(gen->rate));
                 if (gen->until >= 0)

@@ -238,12 +238,13 @@ inline bool euclid(int k, int n, int r, int step) {
     return ((s * k) % n) < k;
 }
 
-// A roll: every step at the rate, the beat a little stronger than the rest.
+// A roll: every step at the rate, the beat a touch stronger than the rest,
+// and on average as loud as the hit that began it.
 inline Pattern rollPattern(int rate) {
     Pattern p;
     const int step = rateTicks(rate);
     for (int t = 0; t < kTicks; t += step)
-        p.add(t, t % 24 == 0 ? 1.0f : t % 12 == 0 ? 0.88f : 0.76f);
+        p.add(t, t % 24 == 0 ? 1.04f : t % 12 == 0 ? 1.0f : 0.96f);
     return p;
 }
 
@@ -754,10 +755,10 @@ struct Voice {
             mul[0] = dm(0.5f);
             env[1] = 1; // stick
             mul[1] = decayMul(0.0015f, rate);
-            k[0] = 0.42f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
+            k[0] = 0.55f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
             f1.set(6500.0f, 0.7f, rate);
             f2.set(5000.0f, 1.2f, rate);
-            f3.set(std::min(12000.0f, rate * 0.4f), 0.6f, rate); // a ride's wash, not fizz
+            f3.set(std::min(14500.0f, rate * 0.4f), 0.6f, rate); // air in the wash, not fizz
             gain = 0.17f;
             pan = 0.3f;
             send = 0.1f;

@@ -513,6 +513,59 @@ private slots:
         QCOMPARE(int(onsets(take, 0.9, 2.0).size()), 1);
     }
 
+    void longTapsDontSproutASecondHit() {
+        // 24 taps spread across a sixteenth, at each length, on the hat
+        // (1/16) and the rim (1/8), at 124 BPM in the house kit: a tap of
+        // 110 ms never sprouts a step, one of 130 ms almost never.
+        auto strays = [&](int pad, double len) {
+            std::string s = "page 0 1\n";
+            for (int i = 0; i < 24; ++i) {
+                const double t = 1.0 + i * 1.0 + i * (0.25 * kSpb / 24.0);
+                s += "tap " + std::to_string(t) + " " + at(pad) + " p=0.6 len=" + std::to_string(len) + "\n";
+            }
+            s += "end 26\n";
+            const auto take = testkit::play(s);
+            int extra = 0;
+            for (int i = 0; i < 24; ++i) {
+                const double t = 1.0 + i * 1.0 + i * (0.25 * kSpb / 24.0);
+                extra += std::max(0, int(onsets(take, t - 0.02, t + 0.6).size()) - 1);
+            }
+            return extra;
+        };
+        QCOMPARE(strays(drums::Hat, 0.09), 0);
+        QCOMPARE(strays(drums::Hat, 0.11), 0);
+        QVERIFY(strays(drums::Hat, 0.13) <= 1);
+        QCOMPARE(strays(drums::Rim, 0.11), 0);
+        QVERIFY(strays(drums::Rim, 0.13) <= 1);
+    }
+
+    void aRollStartsAsLoudAsItsHitAndPressureSwellsIt() {
+        // Straight techno snare held at three pressures: the first roll
+        // steps sit within 1.5 dB of the hit that began them.
+        auto peakAt = [](const testkit::Take &take, double t) {
+            double p = 0;
+            for (size_t i = size_t(t * kRate); i < size_t((t + 0.02) * kRate) && i < take.left.size(); ++i)
+                p = std::max({p, double(std::fabs(take.left[i])), double(std::fabs(take.right[i]))});
+            return 20 * std::log10(p);
+        };
+        for (const char *p : {"0.3", "0.5", "0.8"}) {
+            const auto take = testkit::play(std::string("page 0 1\nkey 0.1 Right\ndown 1.0 1 ") + at(drums::Snare) +
+                                            " p=" + p + "\nup 2.5 1\nend 2.6\n");
+            const auto on = onsets(take, 0.95, 2.4);
+            QVERIFY(on.size() >= 4);
+            const double hit = peakAt(take, on[0]);
+            for (size_t i = 1; i < 4; ++i)
+                QVERIFY2(std::fabs(peakAt(take, on[i]) - hit) < 1.5,
+                         qPrintable(QStringLiteral("p=%1 step %2: %3 dB against %4").arg(p).arg(i).arg(peakAt(take, on[i])).arg(hit)));
+        }
+        // Landing light and pressing hard swells the roll by 10 dB or more.
+        const auto swell = testkit::play(std::string("page 0 1\nkey 0.1 Right\ndown 1.0 1 ") + at(drums::Snare) +
+                                         " p=0.3\nglide 1.5 2.5 1 0.375 0.125 p=1.0\nup 3.5 1\nend 3.6\n");
+        const auto on = onsets(swell, 0.95, 3.4);
+        QVERIFY(on.size() >= 8);
+        QVERIFY(peakAt(swell, on.back()) - peakAt(swell, on[1]) > 10.0);
+    }
+
     void swingLeavesThirtySecondsEven() {
         // Garage swings 62%, but a rim rolling in thirty-seconds stays even.
         const auto take = testkit::play("page 0 1\nkey 0.1 Left\n"

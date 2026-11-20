@@ -513,7 +513,7 @@ void Session::toggleRecording(ControlContext &base) {
     for (size_t i = 0; i < n; ++i)
         times.push_back(ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()]);
     std::sort(times.begin(), times.end(), [](const auto &x, const auto &y) { return x.t < y.t; });
-    double first = -1, earliest = -1, last = -1;
+    double first = -1, earliest = -1, last = -1, lastReal = -1;
     bool clocked = false; // sounds carried on through the phrase: it already runs on the clock
     for (size_t i = times.size(); i-- > 0;) {
         const double t = times[i].t;
@@ -527,8 +527,11 @@ void Session::toggleRecording(ControlContext &base) {
             break;
         }
         earliest = t;
-        if (times[i].real)
+        if (times[i].real) {
             first = t;
+            if (lastReal < 0)
+                lastReal = t;
+        }
         else
             clocked = true;
     }
@@ -601,15 +604,19 @@ void Session::toggleRecording(ControlContext &base) {
                            : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
         return;
     }
-    // Something still held down counts as playing until now.
-    if (ctx.heldCount > 0)
-        last = nowT;
     const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
     // The loop ends where the playing did: now, or a beat after the last
     // note if there was a pause before Space, on the sixteenth grid. It
     // doesn't wait for a bar line: whatever repeats, repeats from any point,
     // and the studio stores the loop in step with the bars.
-    const double end = std::round(std::min(beatNow, beatLast + 1.0) * 4.0) / 4.0;
+    double end = std::round(std::min(beatNow, beatLast + 1.0) * 4.0) / 4.0;
+    // Only held sounds carry the phrase on past its last new note (a chord
+    // held through the bar): the loop ends at the bar line after that note,
+    // not wherever Space came, so it stays whole bars on the bar lines.
+    if (ctx.heldCount > 0 && lastReal >= 0) {
+        const double bar = std::ceil((ctx.beatAt(lastReal) + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+        end = std::min(bar, std::round(beatNow * 4.0) / 4.0);
+    }
     // Did the player settle into a pattern? The shortest whole number of
     // bars that what was just played repeats with, stretched back over
     // every repeat, leaving out what came before it.

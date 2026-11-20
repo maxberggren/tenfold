@@ -534,7 +534,13 @@ private:
             // The bus high-pass: about 75 Hz half way up the fader, 800 Hz at the top.
             m.master[MasterFilter] += 0.28f * std::pow(tFilt, 1.5f);
             m.master[RoomSize] += std::max(0.0f, 0.86f - m_masterHome[RoomSize]) * tPos;
-            m.master[RoomShimmer] += 0.35f * tPos;
+            // The top rises with it: the room's octave-up shimmer, and the
+            // drums (their hats most of all) washed into it.
+            m.master[RoomShimmer] += 0.7f * tPos;
+            if (drums >= 0) {
+                m.add[drums][ReverbSend] += 0.4f * tPos * tPos;
+                m.add[drums][Gain] += 0.12f * tPos * tPos;
+            }
             m.master[EchoFeedback] += std::max(0.0f, 0.62f - m_masterHome[EchoFeedback]) * tPos;
             m.master[MasterDrive] += 0.12f * tPos;
             for (int p = 0; p < m_parts; ++p) {
@@ -2260,7 +2266,10 @@ private:
         m_recArmBar = m_recStopBar = -1;
         sections();
         startSong(nextBar(), false, ctx);
-        ctx.notice(QStringLiteral("A track from your loops: %1 bars, from the next bar").arg(m_song.length()));
+        ctx.notice(m_songUndo.empty()
+                       ? QStringLiteral("A track from your loops: %1 bars, from the next bar").arg(m_song.length())
+                       : QStringLiteral("A track from your loops: %1 bars, from the next bar (Shift+O restores the old song)")
+                             .arg(m_song.length()));
     }
 
     // --- drawing helpers --------------------------------------------------------

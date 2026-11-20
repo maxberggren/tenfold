@@ -188,6 +188,8 @@ struct PartView {
     int recording = -1;  // the slot being recorded, or a take waiting for it, or -1
     float takeBeats = 0; // a waiting take's length in beats (0 while open-ended)
     double takeAt = 0;   // the beat it starts looping at
+    uint32_t takes = 0;  // counts up each time a take lands (Space, take(), record):
+                         // a take can land within one frame of being asked for
     ChannelView channel;
     int voices = 0;
     float data[kPartData] = {};

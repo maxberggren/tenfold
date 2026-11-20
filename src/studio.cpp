@@ -369,6 +369,7 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         std::fprintf(stderr, "\n");
     }
     startClip(p, s, slot, anchor);
+    ++p.takes;
     // A loop closed by a key rather than a note on its ONE (Space with nothing
     // playing) starts a moment after its downbeat: play what it just passed.
     p.catchUp = stretch && !playedOnTheOne;
@@ -988,6 +989,7 @@ void Studio::publish() {
         o.queued = p.queued;
         o.overdub = p.overdub;
         o.recording = p.recording;
+        o.takes = p.takes;
         o.takeBeats = p.recording >= 0 && p.recEnd >= 0 ? float(p.recEnd - p.recStart) : 0.0f;
         o.takeAt = p.recording >= 0 && p.recEnd >= 0 ? p.recEnd : 0.0;
         for (int c = 0; c < ChannelCount; ++c)

@@ -371,6 +371,7 @@ void Session::toggleRecording(ControlContext &base) {
         times.push_back(ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()]);
     std::sort(times.begin(), times.end(), [](const auto &x, const auto &y) { return x.t < y.t; });
     double first = -1, earliest = -1, last = -1;
+    bool clocked = false; // sounds carried on through the phrase: it already runs on the clock
     for (size_t i = times.size(); i-- > 0;) {
         const double t = times[i].t;
         if (t > nowT + 0.05)
@@ -385,6 +386,8 @@ void Session::toggleRecording(ControlContext &base) {
         earliest = t;
         if (times[i].real)
             first = t;
+        else
+            clocked = true;
     }
     if (first < 0)
         first = earliest;
@@ -414,7 +417,7 @@ void Session::toggleRecording(ControlContext &base) {
     bool anyPlaying = false;
     for (int p = 0; p < m_view.partCount; ++p)
         anyPlaying |= m_view.parts[p].playing >= 0 || m_view.parts[p].queued >= 0;
-    if (!anyPlaying && !m_view.metronome) {
+    if (!anyPlaying && !m_view.metronome && !clocked) {
         if (nowT - first < 0.3) {
             ctx.notice(QStringLiteral("Press Space where the phrase starts again"));
             return;

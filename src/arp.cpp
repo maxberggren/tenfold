@@ -1568,7 +1568,7 @@ public:
         if (m_loopBar > INT64_MIN) {
             const double left = std::max(0.0, double(m_loopBar) * kBeatsPerBar - pc.beat);
             c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
-                   QStringLiteral("LOOP ARMED · LAST %1 BAR%2 → SLOT %3 IN %4 BEATS")
+                   QStringLiteral("LOOP ARMED · LAST %1 BAR%2 INTO SLOT %3 IN %4 BEATS")
                        .arg(m_loopBars)
                        .arg(m_loopBars > 1 ? "S" : "")
                        .arg(m_loopSlot + 1)
@@ -2597,7 +2597,7 @@ void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
     QColor ink = c::alpha(pc.color, 0.75f);
     if (m_loopBar > INT64_MIN) {
         const double left = std::max(0.0, double(m_loopBar) * kBeatsPerBar - pc.beat);
-        line = QStringLiteral("LOOP ARMED · %1 BAR%2 IN %3").arg(m_loopBars).arg(m_loopBars > 1 ? "S" : "")
+        line = QStringLiteral("LOOP ARMED · %1 BAR%2 IN %3 BEATS").arg(m_loopBars).arg(m_loopBars > 1 ? "S" : "")
                    .arg(QString::number(left, 'f', 1));
         ink = c::red();
     } else if (pc.view->data[kDataOverlay] > 0.5f) {

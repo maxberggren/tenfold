@@ -198,6 +198,8 @@ void Session::frame(const Frame &f) {
     std::lock_guard lock(m_lock);
     m_lastFrame = f.t;
     m_last = f;
+    for (auto &page : m_pages)
+        page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
     if (m_ignored.empty()) {
         p.spec.control->frame(f, *p.ctx);
@@ -219,6 +221,8 @@ void Session::frame(const Frame &f) {
 
 void Session::idle(double t) {
     std::lock_guard lock(m_lock);
+    for (auto &page : m_pages)
+        page->spec.control->background(t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
     p.spec.control->idle(t, *p.ctx);
 }

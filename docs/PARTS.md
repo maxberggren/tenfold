@@ -68,6 +68,10 @@ about 60 times a second and the page reads as `pc.view->data`.
   buttons, fingers, grid, the bar's beats and the clip strip. Use it, so every
   page reads as one panel: black glass, phosphor lines in your part's colour,
   condensed capitals.
+- **Background time.** `PartControl::background(t, ctx)` reaches every page,
+  showing or not, with every frame and idle tick (about 60–125 Hz). Use it for
+  anything that must keep going while another page is showing, such as an
+  arrangement launching clips bar by bar.
 - **Starter code.** `src/starter.h` is the simplest working page, in two kinds,
   notes and drums. Read it to see the framework in use, then replace it.
   `src/electro.h` (supersaw, ladder filter, ADSR, drum voices) and `src/fx.h`

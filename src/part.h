@@ -307,6 +307,10 @@ public:
     // Touch frames while this part's page is showing.
     virtual void frame(const Frame &f, ControlContext &ctx) = 0;
     virtual void idle(double t, ControlContext &ctx) { (void)t, (void)ctx; }
+    // Every page, showing or not, about a hundred times a second (with every
+    // frame and idle tick): for work that must go on in the background, such
+    // as an arrangement that launches clips as the bars go by. Keep it cheap.
+    virtual void background(double t, ControlContext &ctx) { (void)t, (void)ctx; }
     // Return true when the key was used.
     virtual bool key(const KeyEvent &k, ControlContext &ctx) { (void)k, (void)ctx; return false; }
     // The page is shown, or left. Leaving must end every sound a finger or

@@ -245,7 +245,7 @@ public:
             "Z X C V B N M ,\tthe bottom row's hits, held as long as the key\n"
             "Left / Right\tdrop style: clean, a half-beat gap, or drums and bass out for the last bar\n"
             "Q\tthe whole build falls away\n"
-            "W\tbuilds move the mix (high-pass, drive, room) or leave it alone\n"
+            "W\tbuilds move the mix (high-pass, room, and drive when pushed) or leave it alone\n"
             "R\trecord FX from the next bar (again to stop)\n"
             "F1–F8\tlaunch a slot at the next bar\n"
             "Backspace\tstop the FX clip at the next bar");
@@ -526,7 +526,13 @@ private:
                 // about 130 Hz, four bars at full tilt to about 650.
                 const float depth = clampf(float(drop - start) / 8.0f, 0.55f, 1.0f) * (0.7f + 0.3f * I);
                 pull(MasterFilter, 0.5f + 0.26f * depth, std::pow(p, 2.2f));
-                pull(MasterDrive, 0.06f + 0.12f * I, p * p * depth);
+                // Drive for the last stretch of a build pushed past its
+                // default (a finger slid up): it is the climax that wants it,
+                // and the bus saturator is the studio's dearest stage, not
+                // to be lit by every riser.
+                const float last = clampf(float(1.0 - (drop - beat) / std::min(4.0, 0.25 * (drop - start))), 0, 1);
+                const float push = clampf((I - 0.65f) / 0.3f, 0, 1);
+                pull(MasterDrive, 0.1f + 0.12f * push, last * last * push);
                 pull(RoomSize, 0.72f, 0.6f * p * depth);
             }
             if (beat < drop - muteLead) {

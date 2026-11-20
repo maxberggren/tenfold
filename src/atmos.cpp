@@ -75,7 +75,7 @@ const FamilyShape kShape[kFamilies] = {
     {"Drone", {"soft", "warm", "bowed"}, 43, 60, 20, 4.0f, 0.62f},
     {"Pad", {"strings", "saw", "hollow"}, 48, 72, 17, 3.2f, 0.62f},
     {"Choir", {"oo", "ah", "ee"}, 52, 74, 15, 3.6f, 0.75f},
-    {"Glass", {"glass", "twinkle", "stars"}, 67, 88, 14, 5.0f, 0.55f},
+    {"Glass", {"pure", "twinkle", "stars"}, 67, 88, 14, 5.0f, 0.55f},
     {"Air", {"wind", "rain", "vinyl"}, 62, 84, 12, 3.0f, 0.55f},
 };
 
@@ -436,16 +436,17 @@ inline void copyCoefficients(Svf &to, const Svf &from) {
     to.k = from.k;
 }
 
-// The bed's own space: eight delay lines through a Hadamard matrix, lines
+// The bed's own space: sixteen delay lines through a Hadamard matrix, lines
 // chorused slowly, an octave-up shimmer fed back into the tail, and a
 // freeze that turns the tail lossless and closes its input, so whatever was
 // sounding hangs in the air for as long as it stays frozen.
 class Halo {
 public:
-    static constexpr int L = 8;
+    static constexpr int L = 16;
     void init(float rate) {
         m_rate = rate;
-        static const float ms[L] = {37.1f, 43.7f, 53.9f, 61.3f, 71.9f, 83.3f, 97.7f, 113.9f};
+        static const float ms[L] = {31.3f, 37.1f, 41.9f, 43.7f, 47.3f, 53.9f, 59.1f, 61.3f,
+                                    67.9f, 71.9f, 79.3f, 83.3f, 89.9f, 97.7f, 103.1f, 113.9f};
         Rng rng(0x4A10u);
         for (int i = 0; i < L; ++i) {
             m_base[i] = ms[i] * 0.001f * rate * 1.35f;
@@ -517,7 +518,7 @@ public:
                     x[j] = a + b;
                     x[j + h] = a - b;
                 }
-        constexpr float norm = 0.35355339f; // 1/√8: the matrix stays unitary
+        constexpr float norm = 0.25f; // 1/√16: the matrix stays unitary
         float oL = 0, oR = 0;
         for (int i = 0; i < L; ++i) {
             float v = x[i] * norm;
@@ -525,14 +526,14 @@ public:
             // running away on rounding.
             if (std::fabs(v) > 1.5f)
                 v = 1.5f * fastTanh(v / 1.5f);
-            m_lines[i].push(v + ((i & 1) ? r : l) * 0.5f);
+            m_lines[i].push(v + ((i & 1) ? r : l) * 0.35f);
             if (i & 1)
                 oR += (i & 2) ? v : -v;
             else
                 oL += (i & 2) ? v : -v;
         }
-        outL = oL * 0.5f;
-        outR = oR * 0.5f;
+        outL = oL * 0.35f;
+        outR = oR * 0.35f;
         m_shift.push(0.5f * (outL + outR));
     }
     void clear() {
@@ -1174,8 +1175,10 @@ private:
         v.lfo2 -= std::floor(v.lfo2);
         const float b1 = std::sin(kTwoPi * v.lfo1), b2 = std::sin(kTwoPi * v.lfo2);
         const float evolve = std::max(0.0f, motion), pulse = std::max(0.0f, -motion);
-        const float breath = 1.0f + (0.07f + 0.08f * evolve) * b1 + 0.05f * b2;
-        float oct = 0.3f * b2 + 1.3f * m_swell;
+        // Air breathes hardest: wind comes in gusts.
+        const float gust = v.family == Air ? 2.5f : 1.0f;
+        const float breath = 1.0f + gust * ((0.07f + 0.08f * evolve) * b1 + 0.05f * b2);
+        float oct = 0.3f * gust * b2 + 1.3f * m_swell;
         if (evolve > 0.04f) {
             // A slow filter sweep locked to the bars: four bars round at a
             // touch of twist, one bar at full.
@@ -1458,7 +1461,7 @@ public:
         if (m_reassertAt > 0 && t >= m_reassertAt - 0.004) {
             m_handed.clear();
             for (Held &h : m_held)
-                if (h.touch >= 0)
+                if (h.touch >= 0 && !h.grabbed)
                     sendOn(h.layer, ctx, m_reassertAt, 0.3f);
             for (Latched &l : m_latched) {
                 sendOn(l.layer, ctx, m_reassertAt, 0.3f);
@@ -1920,7 +1923,7 @@ QString AtmosControl::help() const {
     return QStringLiteral(
         "touch\ta layer of the bed, in the chord: drone, pad, choir, glass, air from left to right\n"
         "slide up or down\tthe voicing climbs or falls through the chord, brighter as it rises\n"
-        "slide across a column\tthe colour: soft to bowed, strings to saw to hollow, oo to ee, glass to stars, wind to rain to vinyl\n"
+        "slide across a column\tthe colour: soft to bowed, strings to saw to hollow, oo to ee, pure glass to twinkles to stars, wind to rain to vinyl\n"
         "press\tswells the layer; a firm landing sounds at once, a light one fades in\n"
         "twist\tclockwise, a slow filter sweep with the bars; anticlockwise, a gate in eighths, then sixteenths\n"
         "flat finger\twider\n"
@@ -1997,7 +2000,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         c::text(p, QRectF(colR.left(), colR.bottom() - 26, colR.width(), 20), QString::fromUtf8(fs.name),
                 c::alpha(fc, 0.85f), std::max(11, int(14 * pc.scale)), true, Qt::AlignCenter);
         const QString axis = QStringLiteral("%1 ‹ › %2").arg(QString::fromUtf8(fs.colours[0]), QString::fromUtf8(fs.colours[2]));
-        c::text(p, QRectF(colR.left(), colR.top() + 30, colR.width(), 16), axis, c::alpha(fc, 0.4f),
+        c::text(p, QRectF(colR.left(), colR.bottom() - 42, colR.width(), 16), axis, c::alpha(fc, 0.45f),
                 std::max(9, int(10 * pc.scale)), false, Qt::AlignCenter);
         p.setFont(tiny);
         const bool drone = f == Drone;
@@ -2012,7 +2015,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
                 }
                 const float m = midiOf(deg);
                 const float y = (m - fs.low) / (fs.high - fs.low);
-                if (y < 0.06f || y > 0.9f)
+                if (y < 0.1f || y > 0.88f)
                     continue;
                 const bool isRoot = ((deg - root) % per + per) % per == 0;
                 const QPointF a = pc.at(float(f) / kFamilies, y);
@@ -2156,9 +2159,10 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         p.drawEllipse(at, orbR, orbR);
         if (l.scene >= 0)
             p.drawEllipse(at, orbR * 0.45, orbR * 0.45);
-        c::text(p, QRectF(at.x() + orbR + 4, at.y() - 8, 110, 16),
+        const bool left = at.x() + orbR + 74 > pc.pad.right();
+        c::text(p, left ? QRectF(at.x() - orbR - 74, at.y() - 8, 70, 16) : QRectF(at.x() + orbR + 4, at.y() - 8, 70, 16),
                 QString::fromUtf8(colourName(l.layer.family, l.layer.colour)), c::alpha(fc, 0.8f),
-                std::max(9, int(10 * pc.scale)), true);
+                std::max(9, int(10 * pc.scale)), true, (left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
     }
 
     // Fingers.
@@ -2176,30 +2180,47 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         shown.y = h.y;
         const QColor fc = familyColor(col, h.layer.family);
         QString label = QString::fromUtf8(colourName(h.layer.family, h.layer.colour));
-        if (h.layer.motion > 0.1f)
-            label += QStringLiteral(" ~");
-        else if (h.layer.motion < -0.1f)
-            label += QStringLiteral(" :");
+        // Motion shows in the aurora itself (a sweep sways it, a gate
+        // flickers it); the tag says only what the layer is.
         if (h.latch || h.grabbed)
-            label += QStringLiteral(" *");
-        c::finger(p, pc, shown, fc, label, 0.4f + 0.6f * h.layer.press);
+            label += QStringLiteral(" ●");
+        // The finger, its tag on whichever side has room.
+        c::finger(p, pc, shown, fc, QString(), 0.4f + 0.6f * h.layer.press);
+        const QPointF at = pc.at(h.x, h.y);
+        const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t->size, 0.6f, 4.0f);
+        const int tpx = 12;
+        const qreal w = QFontMetricsF(c::font(tpx, true)).horizontalAdvance(label) + 12;
+        const bool left = at.x() + r + 6 + w > pc.pad.right() - 4;
+        c::tag(p, QPointF(left ? at.x() - r - 6 - w : at.x() + r + 6, at.y() - r * 0.6), label, fc, tpx);
     }
     p.restore();
 
     // The panel's readouts along the top edge, inside the pad.
     {
         const int px = std::max(10, int(12 * pc.scale));
-        qreal x = pc.pad.left() + 12;
-        const qreal y = pc.pad.top() + 16;
-        auto lit = [&](const QString &s, bool on, QColor cc) {
-            if (on) {
-                x = c::tag(p, QPointF(x, y), s, cc, px).right() + 6;
-            } else {
-                const QFont fnt = c::font(px, true);
-                const qreal w = QFontMetricsF(fnt).horizontalAdvance(s) + 12;
-                c::text(p, QRectF(x, y - 9, w, 18), s, c::alpha(cc, 0.35f), px, true, Qt::AlignCenter);
-                x += w + 6;
+        const QFont fnt = c::font(px, true);
+        qreal x = pc.pad.left() + 12, y = pc.pad.top() + 16;
+        // Readouts run left to right and wrap onto a second row on a narrow pad.
+        auto room = [&](qreal w) {
+            if (x + w > pc.pad.right() - 10) {
+                x = pc.pad.left() + 12;
+                y += 22;
             }
+        };
+        auto lit = [&](const QString &s, bool on, QColor cc) {
+            const qreal w = QFontMetricsF(fnt).horizontalAdvance(s) + 12;
+            room(w);
+            if (on)
+                c::tag(p, QPointF(x, y), s, cc, px);
+            else
+                c::text(p, QRectF(x, y - 9, w, 18), s, c::alpha(cc, 0.35f), px, true, Qt::AlignCenter);
+            x += w + 6;
+        };
+        auto meter = [&](const QString &s, float v, int segments) {
+            room(124);
+            c::text(p, QRectF(x, y - 9, 52, 18), s, c::alpha(col, 0.7f), px, true);
+            c::gauge(p, QRectF(x + 54, y - 5, 60, 10), v, col, segments);
+            x += 134;
         };
         // The chord.
         const int own = int(std::lround(d[PubOwn]));
@@ -2220,26 +2241,17 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         if (!third)
             quality = QStringLiteral("sus");
         const QString chord = QString::fromUtf8(Tuning::noteName(rpc)) + quality;
-        x = c::tag(p, QPointF(x, y),
-                   own >= 0 ? QStringLiteral("%1 · OWN %2").arg(chord, roman(own)) : QStringLiteral("%1 · FOLLOW").arg(chord),
-                   col, px)
-                .right() +
-            10;
+        lit(own >= 0 ? QStringLiteral("%1 · OWN %2").arg(chord, roman(own)) : QStringLiteral("%1 · FOLLOW").arg(chord), true, col);
+        x += 4;
         lit(QStringLiteral("HOLD"), m_hold, col);
         lit(QStringLiteral("FREEZE"), d[PubFreeze] > 0.5f, QColor("#BFE6FF"));
         lit(QStringLiteral("CLOUD"), d[PubCloud] > 0.5f, col);
         static const char *pump[3] = {"PUMP OFF", "PUMP KICK", "PUMP BEAT"};
         lit(QString::fromUtf8(pump[std::clamp(int(std::lround(d[PubPump])), 0, 2)]), d[PubPump] > 0.5f, col);
-        c::text(p, QRectF(x, y - 9, 52, 18), QStringLiteral("SPACE"), c::alpha(col, 0.7f), px, true);
-        x += 54;
-        c::gauge(p, QRectF(x, y - 5, 60, 10), d[PubSpace], col, 5);
-        x += 70;
-        c::text(p, QRectF(x, y - 9, 52, 18), QStringLiteral("SWELL"), c::alpha(col, 0.7f), px, true);
-        x += 54;
-        c::gauge(p, QRectF(x, y - 5, 60, 10), d[PubSwell], col, 6);
-        x += 70;
+        meter(QStringLiteral("SPACE"), d[PubSpace], 5);
+        meter(QStringLiteral("SWELL"), d[PubSwell], 6);
         if (m_scene >= 0)
-            c::tag(p, QPointF(x, y), QString::fromUtf8(kScenes[m_scene].name), familyColor(col, Choir), px);
+            lit(QString::fromUtf8(kScenes[m_scene].name), true, familyColor(col, Choir));
     }
 
     c::beats(p, pc, col);

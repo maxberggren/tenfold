@@ -408,7 +408,7 @@ ApplicationWindow {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects. Space records a loop on any page; put the loops together on 0, the arrange page. ? shows what the fingers do on the page you're on.")
+                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects. Play, then Space loops what you just played on any page; put the loops together on 0, the arrange page. ? shows what the fingers do on the page you're on.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14

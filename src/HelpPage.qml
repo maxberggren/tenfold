@@ -15,7 +15,7 @@ Rectangle {
         "1 – 7\t" + qsTr("the parts: drums, bass, chords, lead, arp, atmosphere, effects"),
         "0\t" + qsTr("arrange: every part's clips together"),
         "Tab\t" + qsTr("next page (Shift: previous)"),
-        "Space\t" + qsTr("record a loop from the next bar; again to close it"),
+        "Space\t" + qsTr("loop what you just played. With nothing else playing, press it where your phrase would start again: that sets the tempo. Over a playing loop, the bars you just played loop from the bar line"),
         "Take pad / Esc\t" + qsTr("take the trackpad (the button) / give it back"),
         "Ctrl ↑ ↓\t" + qsTr("tempo (Shift: by five)"),
         "Ctrl ← →\t" + qsTr("key, by fifths"),

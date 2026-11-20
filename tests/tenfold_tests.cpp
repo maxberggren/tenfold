@@ -379,6 +379,30 @@ private slots:
         QCOMPARE(sink.count(Cmd::LoopBegin), 1);
     }
 
+    void aLightBassLineStillLoops() {
+        // Eight even bass taps barely touching the pad, then a light hold on
+        // the next one: a loop. A 20 ms graze in the middle changes nothing.
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        for (int i = 0; i < 8; ++i) {
+            pad.land({10 + i, 0.1f + 0.05f * (i % 3), kBass, 0.02f});
+            pad.run(0.09);
+            pad.lift(10 + i);
+            pad.run(0.21 - 0.09);
+            if (i == 4) {
+                pad.land({40, 0.7f, kBass, 0.0f});
+                pad.run(0.016);
+                pad.lift(40);
+                pad.run(0.008);
+            }
+        }
+        pad.land({20, 0.1f, kBass, 0.02f});
+        pad.run(0.3);
+        QCOMPARE(sink.count(Cmd::LoopBegin), 1);
+    }
+
     void aKickAndClapTogetherStillMakeALoop() {
         RecordingSink sink;
         Gesture g(&sink);

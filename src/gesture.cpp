@@ -627,15 +627,13 @@ void Gesture::hold(Contact &c, double now) {
         // twice that), or land back where the phrase began. A single tap
         // only loops with a hold right on top of it (a steady pulse).
         // Only a finger on the phrase's own row closes it: a chord landing on
-        // the beat after a bass line is a chord. Above the drums, a finger
-        // laid down very flat or barely touching is reaching for a sustained
-        // note rather than closing a rhythm; on the drum row a hold after a
-        // phrase is almost always the ONE, so it isn't second-guessed.
+        // the beat after a bass line is a chord. Timing alone decides the
+        // rest: how hard or flat a finger lands says too little on real
+        // pads (light players read near zero pressure on every touch).
         bool sameRow = false;
         for (const Tap &t : m_phrase)
             sameRow |= t.row == c.row;
-        const bool voiceFirst =
-            !sameRow || (c.row != DrumRow && (c.peakSize > 2.2f || c.peakPressure < 0.08f));
+        const bool voiceFirst = !sameRow;
         bool closes = false;
         // The rhythm's intervals, leaving out hits played together (a kick
         // and a clap on the same beat are one moment, not a gap).
@@ -645,7 +643,7 @@ void Gesture::hold(Contact &c, double now) {
             if (ioi >= 0.06)
                 iois.push_back(ioi);
         }
-        if (gap > 0 && gap <= 2.2 && !voiceFirst) {
+        if (gap >= 0.1 && gap <= 2.2 && !voiceFirst) {
             if (iois.empty()) {
                 closes = nearLast < 0.08f && gap >= 0.12;
             } else {
@@ -782,6 +780,12 @@ void Gesture::lift(Contact &c, double now) {
             o.f[2] = length;
             send(o);
             ++m_overdubs;
+        } else if (now - c.t0 < 0.04) {
+            // A graze of a frame or two (a knuckle, a finger brushing past)
+            // sounds, but it isn't part of a rhythm.
+            if (std::getenv("TENFOLD_DEBUG"))
+                std::fprintf(stderr, "tenfold: graze on row %d, %.3f s, left out of the phrase\n", c.row,
+                             now - c.t0);
         } else {
             m_phrase.push_back({c.t0, c.x0, c.y0, c.row, c.value, c.vel, length});
             if (std::getenv("TENFOLD_DEBUG"))

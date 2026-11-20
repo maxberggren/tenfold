@@ -197,10 +197,22 @@ void TouchSource::handle(char *line) {
             }
             if (m_pmax > m_pmin) {
                 const float raw = float(v[6] - m_pmin);
-                // Pressure relative to the hardest the player has pressed
-                // lately, never less than a fifth of the hardware's range.
-                m_pressureRef = std::max({m_pressureRef * 0.99998f, raw, 0.2f * float(m_pmax - m_pmin)});
-                t.pressure = std::clamp(raw / m_pressureRef, 0.0f, 1.0f);
+                // Pressure relative to how this player usually touches, so an
+                // ordinary tap reads about a half whatever the hardware's
+                // scale. Pads report ranges far beyond what fingers reach
+                // (and one hard click must not make every later tap read as
+                // nothing), so the reference is learned from contacts a few
+                // frames in, like the fingertip size.
+                if (age == 6 && raw > 0) {
+                    m_pressureTypical = m_pressureTypical <= 0
+                                            ? raw
+                                            : m_pressureTypical + (raw - m_pressureTypical) * 0.1f;
+                    if (std::getenv("TENFOLD_DEBUG") && m_learned % 20 == 0)
+                        std::fprintf(stderr, "tenfold: pressure %.0f of %d, typical %.0f\n", raw,
+                                     m_pmax - m_pmin, m_pressureTypical);
+                }
+                const float ref = std::max(2.0f * m_pressureTypical, 0.002f * float(m_pmax - m_pmin) + 1.0f);
+                t.pressure = m_pressureTypical > 0 ? std::clamp(raw / ref, 0.0f, 1.0f) : 0.5f;
             } else {
                 t.pressure = std::clamp((t.size - 0.6f) / 0.8f, 0.0f, 1.0f);
             }

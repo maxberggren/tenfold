@@ -328,7 +328,12 @@ public:
         case Qt::Key_V: variation(ctx); return true;
         case Qt::Key_I: autoArrange(shift, ctx); return true;
         case Qt::Key_Space: // on the part pages Space records a loop; here, the song
-        case Qt::Key_O: toggleRecord(ctx); return true;
+        case Qt::Key_O:
+            if (shift)
+                undoSong(ctx);
+            else
+                toggleRecord(ctx);
+            return true;
         case Qt::Key_P: togglePlay(shift, ctx); return true;
         case Qt::Key_Delete: clearSlot(m_selPart, m_selSlot, ctx); return true;
         case Qt::Key_Left: jumpSection(-1, ctx); return true;
@@ -371,11 +376,12 @@ public:
             "Z\tfilter the mix out; again to open it back onto a bar\n"
             "L\tlift the key a whole tone on the bar (Shift: down)\n"
             "V\tevery part to its next clip on the bar\n"
-            "I\twrite a whole track from the loops and play it (Shift: a short one)\n"
+            "I\twrite a whole track from the loops and play it (Shift: a short one; twice while clips play)\n"
             "Space or O\trecord the song from the next bar (punch in while it plays); again to stop\n"
+            "Shift+O\tback to the song before the last take, write or clear\n"
             "P\tplay the song from the top (Shift: loop it); again to stop\n"
             "Left, Right\tjump a section back or on, on the bar\n"
-            "Backspace\tstop everything on the bar; Shift clears the song");
+            "Backspace\tstop everything on the bar; Shift+Backspace twice clears the song");
     }
 
     QString status() const override;
@@ -525,7 +531,8 @@ private:
         if (tPos > 0 || tFilt > 0) {
             // A build: the mix thins from below, the room grows and shimmers,
             // the echoes run longer, everything breathes harder with the kick.
-            m.master[MasterFilter] += 0.2f * tFilt * tFilt;
+            // The bus high-pass: about 75 Hz half way up the fader, 800 Hz at the top.
+            m.master[MasterFilter] += 0.28f * std::pow(tFilt, 1.5f);
             m.master[RoomSize] += std::max(0.0f, 0.86f - m_masterHome[RoomSize]) * tPos;
             m.master[RoomShimmer] += 0.35f * tPos;
             m.master[EchoFeedback] += std::max(0.0f, 0.62f - m_masterHome[EchoFeedback]) * tPos;
@@ -582,11 +589,20 @@ private:
             } else {
                 const double u = std::clamp((b - mv.b0) / std::max(0.25, rampEnd - mv.b0), 0.0, 1.0);
                 t = float(0.08 + 0.92 * std::pow(u, 1.5));
-                // The bass leaves for the last two beats, to come back with the drop.
-                const int bass = role(RBass);
                 const double L = mv.b1 - mv.b0, rem = mv.b1 - b;
-                if (bass >= 0 && rem <= 2.0)
+                // The bus high-pass sweeps audibly from the first bar: about
+                // 150 Hz rising to 800 Hz, and lets go inside the breath.
+                if (b < mv.b1 - std::min(mv.gap, 0.2))
+                    m.master[MasterFilter] += 0.13f + 0.15f * float(std::pow(u, 1.3));
+                // The last bar (or two beats of a short build) takes the low
+                // end away: the bass leaves and the drums lose their kick to a
+                // high-pass, so the drop brings both back on the ONE.
+                const int bass = role(RBass);
+                const double out = L >= 8 ? 4.0 : 2.0;
+                if (bass >= 0 && rem <= out)
                     m.mute[bass] = true;
+                if (role(RDrums) >= 0 && rem <= out && b < mv.b1 - std::min(mv.gap, 0.2))
+                    m.add[role(RDrums)][Filter] += 0.22f;
                 // The echo roll: from half way the drums pour into the tape
                 // echo, which steps from quarters to eighths to sixteenths
                 // (and each step zips up in pitch as the tape speeds), so
@@ -601,9 +617,9 @@ private:
                 }
             }
             m.tBuild = std::max(m.tBuild, t);
-            // The filter lets go a moment before the ONE, inside the silent
-            // gap, so the first kick of the drop arrives whole.
-            if (b < mv.b1 - std::min(mv.gap, 0.2))
+            // A held fader's filter lets go a moment before the ONE, inside
+            // the silent gap, so the first kick of the drop arrives whole.
+            if (mv.flat >= 0 && b < mv.b1 - std::min(mv.gap, 0.2))
                 m.tBuildFilter = std::max(m.tBuildFilter, t);
             if (mv.gap > 0 && b >= rampEnd)
                 muteAll();
@@ -627,7 +643,7 @@ private:
             if (b >= mv.b1)
                 return;
             for (int p = 0; p < m_parts; ++p)
-                if ((mv.param >> p) & 1 && b < mv.endFor[p])
+                if (p < 8 && ((mv.param >> p) & 1) && b < mv.endFor[p])
                     m.mute[p] = true;
             const float ramp = smooth01(float((b - mv.b0) / 4.0));
             // No kick, no pump: what is left breathes freely until the drums return.
@@ -640,31 +656,46 @@ private:
                 for (int p = 0; p < m_parts; ++p)
                     if (!((mv.param >> p) & 1))
                         m.add[p][ReverbSend] += 0.24f * ramp;
+                // Drums or bass kept through a breakdown are its ghost: the
+                // drums high-passed, the bass low-passed, both washed.
+                const int bass = role(RBass);
+                if (drums >= 0 && !((mv.param >> drums) & 1)) {
+                    m.add[drums][Filter] += 0.24f * ramp;
+                    m.add[drums][ReverbSend] += 0.2f * ramp;
+                }
+                if (bass >= 0 && !((mv.param >> bass) & 1)) {
+                    m.add[bass][Filter] -= 0.2f * ramp;
+                    m.add[bass][ReverbSend] += 0.15f * ramp;
+                }
                 m.master[RoomSize] += 0.16f * ramp;
                 m.master[MasterFilter] -= 0.07f * ramp;
             }
             break;
         }
         case MEchoOut: {
+            // The last bar pours everything into the echo (the sends are
+            // squared by the mixer, so they go all the way), the clips stop
+            // on the line, and the echo carries on at full feedback for two
+            // bars, slowing like tape to quarter notes, in a wide room, before
+            // it fades over four more.
             const double e = b - mv.b0;
-            const int drums = role(RDrums);
+            const float fbTop = std::max(0.0f, 0.9f - m_masterHome[EchoFeedback]);
             if (e < 4) {
-                // The last bar pours into the echo.
                 const float u = float(e / 4.0);
-                for (int p = 0; p < m_parts; ++p)
-                    m.add[p][EchoSend] += (p == drums ? 0.45f * u : 0.8f * std::pow(u, 0.7f));
-                m.master[EchoFeedback] += std::max(0.0f, 0.74f - m_masterHome[EchoFeedback]) * u;
-                m.master[MasterFilter] += 0.06f * u;
-            } else if (e < 20) {
-                // Then only the echo is left: it slows like tape for a moment
-                // (the delay stretches to a quarter note), and fades.
-                const float v = float((e - 4) / 16.0);
-                const float hold = e < 8 ? 1.0f : 1.0f - smooth01(float((e - 8) / 12.0));
-                m.master[EchoFeedback] += std::max(0.0f, 0.74f - m_masterHome[EchoFeedback]) * hold;
-                m.master[MasterFilter] += 0.06f + 0.08f * v;
+                const float pour = smooth01(u * 1.6f);
+                for (int p = 0; p < m_parts; ++p) {
+                    m.add[p][EchoSend] += pour;
+                    m.add[p][ReverbSend] += 0.6f * u;
+                }
+                m.master[EchoFeedback] += fbTop * pour;
+                m.master[RoomSize] += 0.5f * u;
+            } else if (e < 28) {
+                const float hold = e < 12 ? 1.0f : 1.0f - smooth01(float((e - 12) / 16.0));
+                m.master[EchoFeedback] += fbTop * hold;
+                m.master[RoomSize] += 0.5f * hold;
                 m.echoTime = kEcho4;
                 for (int p = 0; p < m_parts; ++p)
-                    m.add[p][EchoSend] += 0.8f * hold;
+                    m.add[p][EchoSend] += hold;
             }
             break;
         }
@@ -914,7 +945,7 @@ private:
         r = Ride{};
     }
 
-    void land(Finger &f, const Touch &t, double time, ControlContext &ctx) {
+    void land(Finger &f, const Touch &t, double time, ControlContext &) {
         f = Finger{};
         f.id = t.id;
         f.t0 = time;
@@ -927,17 +958,12 @@ private:
             if (t.x < kNameW) {
                 f.kind = Finger::Button;
                 f.index = BBuild;
-                build(4, ctx);
             } else if (t.x < kCellsR) {
                 f.kind = Finger::Scene;
                 f.index = std::clamp(int((t.x - kNameW) / (kCellsR - kNameW) * kClipSlots), 0, kClipSlots - 1);
             } else {
                 f.kind = Finger::Button;
                 f.index = t.x < kStripR ? BBreak : BDrop;
-                if (f.index == BBreak)
-                    breakdown(ctx);
-                else
-                    drop(ctx);
             }
             return;
         }
@@ -979,6 +1005,11 @@ private:
             if (tap && !f.clicked)
                 launchScene(f.index, ctx);
             break;
+        case Finger::Button:
+            // The move buttons act on a tap's lift, never on a brush.
+            if (time - f.t0 < 0.5 && !f.moved)
+                f.index == BBuild ? build(4, ctx) : f.index == BBreak ? breakdown(ctx) : drop(ctx);
+            break;
         case Finger::Name:
             if (f.solo)
                 m_heldSolo[f.lane] = false;
@@ -1004,32 +1035,47 @@ private:
         }
     }
 
+    // The click belongs to one finger: the one pressing hardest, the newest
+    // when they press alike. Other fingers resting on the pad are left alone.
     void click(ControlContext &ctx) {
-        for (auto &f : m_fingers) {
-            if (f.id < 0)
+        Finger *f = nullptr;
+        int down = 0;
+        for (auto &g : m_fingers) {
+            if (g.id < 0)
                 continue;
-            f.clicked = true;
-            switch (f.kind) {
-            case Finger::Scene: storeScene(f.index, ctx); break;
-            case Finger::Lane:
-            case Finger::Send:
-                // A clip held still for a moment, then a click: it is cleared.
-                if (f.index >= 0 && !f.moved && m_frame.t - f.t0 > 0.25 && f.dGain == 0 && m_ride[f.lane].filt == 0 &&
-                    m_ride[f.lane].echo < 0.01f)
-                    clearSlot(f.lane, f.index, ctx);
-                break;
-            case Finger::Name:
-                m_heldSolo[f.lane] = false;
-                toggleLatchedSolo(f.lane, ctx);
-                f.kind = Finger::None;
-                break;
-            case Finger::Tension:
-                f.kind = Finger::None;
+            ++down;
+            if (!f || g.pressure > f->pressure + 0.05f || (std::fabs(g.pressure - f->pressure) <= 0.05f && g.t0 > f->t0))
+                f = &g;
+        }
+        if (!f)
+            return;
+        f->clicked = true;
+        switch (f->kind) {
+        case Finger::Scene: storeScene(f->index, ctx); break;
+        case Finger::Lane:
+        case Finger::Send:
+            // A clip held still for half a second by the only finger on the
+            // pad, then a click: it is cleared. With other fingers down a
+            // click only latches the ride.
+            if (down == 1 && f->index >= 0 && !f->moved && m_frame.t - f->t0 > 0.5 && f->dGain == 0 &&
+                m_ride[f->lane].filt == 0 && m_ride[f->lane].echo < 0.01f)
+                clearSlot(f->lane, f->index, ctx);
+            break;
+        case Finger::Name:
+            m_heldSolo[f->lane] = false;
+            toggleLatchedSolo(f->lane, ctx);
+            f->kind = Finger::None;
+            break;
+        case Finger::Tension:
+            // Only a build drops: below the line where letting go would drop,
+            // a click on the fader does nothing.
+            if (m_tensionLive >= 0.6f) {
+                f->kind = Finger::None;
                 m_tensionHeld = false;
                 dropFromFader(ctx);
-                break;
-            default: break;
             }
+            break;
+        default: break;
         }
     }
 
@@ -1202,9 +1248,10 @@ private:
         if (step < 0)
             return;
         // Kept in order of time, so the song replays them in order.
-        auto at = std::upper_bound(m_song.moves.begin(), m_song.moves.end(), step,
+        Song &take = *m_rec;
+        auto at = std::upper_bound(take.moves.begin(), take.moves.end(), step,
                                    [](int s, const SongMove &m) { return s < m.step; });
-        m_song.moves.insert(at, {step, kind, param});
+        take.moves.insert(at, {step, kind, param});
     }
 
     // Everything comes back on the next ONE, after half a beat of air if
@@ -1288,6 +1335,10 @@ private:
             ctx.notice(QStringLiteral("Already moving"));
             return;
         }
+        if (!anyPlays(ctx.studio())) {
+            ctx.notice(QStringLiteral("Nothing plays to build on"));
+            return;
+        }
         const int start = nextBar();
         int end = (start / phrase + 1) * phrase;
         if (end - start < phrase / 2)
@@ -1325,6 +1376,18 @@ private:
         addMove(b, ctx);
     }
 
+    // Whether anything will be playing once the coming bar line has passed.
+    bool anyPlays(const StudioView &v) const {
+        for (int p = 0; p < m_parts; ++p)
+            if (predicted(v, p, nextBar()) >= 0)
+                return true;
+        return false;
+    }
+
+    // A breakdown lasts eight bars unless N, B or a drop ends it sooner, so
+    // its mutes never outlive it.
+    static constexpr int kBreakBars = 8;
+
     void breakdown(ControlContext &ctx) {
         const int bar = nextBar();
         if (Move *b = active(MBreak)) {
@@ -1334,15 +1397,22 @@ private:
             ctx.notice(QStringLiteral("Back in on the bar"));
             return;
         }
+        if (!anyPlays(ctx.studio())) {
+            ctx.notice(QStringLiteral("Nothing plays to break down"));
+            return;
+        }
         Move m;
         m.kind = MBreak;
         m.b0 = bar * double(kBeatsPerBar);
-        m.param = breakMask(ctx.studio());
+        m.b1 = m.b0 + kBreakBars * kBeatsPerBar;
+        m.param = breakMask(ctx.studio()) | (kBreakBars << 8);
         addMove(m, ctx);
-        ctx.notice(QStringLiteral("BREAKDOWN on the bar"));
+        ctx.notice(QStringLiteral("BREAKDOWN on the bar, for %1 bars (N brings it back)").arg(kBreakBars));
     }
     // What a breakdown takes away: the rhythm, keeping the chords and the
-    // atmosphere (or, with neither, the melody), so it is never silence.
+    // atmosphere (or, with neither, the melody). With nothing melodic it
+    // keeps the drums, high-passed and washed in the room, so a breakdown is
+    // never silence.
     int breakMask(const StudioView &v) const {
         int keep = 0;
         const int bar = nextBar();
@@ -1352,6 +1422,12 @@ private:
                 keep |= 1 << role(r);
         if (!keep)
             for (Role r : {RLead, RArp})
+                if (plays(r)) {
+                    keep |= 1 << role(r);
+                    break;
+                }
+        if (!keep)
+            for (Role r : {RDrums, RBass})
                 if (plays(r)) {
                     keep |= 1 << role(r);
                     break;
@@ -1368,10 +1444,14 @@ private:
     void echoOut(ControlContext &ctx) {
         if (active(MEchoOut))
             return;
+        if (!anyPlays(ctx.studio())) {
+            ctx.notice(QStringLiteral("Nothing plays to echo out"));
+            return;
+        }
         Move m;
         m.kind = MEchoOut;
         m.b0 = nextBar() * double(kBeatsPerBar);
-        m.b1 = m.b0 + 20;
+        m.b1 = m.b0 + 28;
         addMove(m, ctx);
         ctx.notice(QStringLiteral("ECHO-OUT: one more bar"));
     }
@@ -1471,15 +1551,6 @@ private:
                 }
             }
         }
-        // A take starts phrase-aligned: everything playing starts from its top.
-        if (m_recArmBar == bar && !m_playing)
-            for (int p = 0; p < m_parts; ++p) {
-                const int s = predicted(v, p, bar);
-                if (s >= 0) {
-                    want[p] = s;
-                    relaunch[p] = true;
-                }
-            }
         // The moves. A move launches nothing the player didn't play: the
         // drop brings back what was playing (or played in the last sixteen
         // bars, before a breakdown or an echo-out), each on the clip it last
@@ -1567,8 +1638,21 @@ private:
                 m_recStep = long(b - m_origin) * kSteps - 1;
             }
             if (m_recStopBar == b) {
+                const bool was = m_recording;
                 m_recording = false;
                 m_recStopBar = -1;
+                if (m_rec == &m_take) {
+                    // A new take replaces the song only if it holds a bar;
+                    // the song it replaces is kept for Shift+O.
+                    m_rec = &m_song;
+                    if (!was || m_take.empty() || b - m_origin < 1) {
+                        ctx.notice(QStringLiteral("Nothing recorded: the song is as it was"));
+                        continue;
+                    }
+                    keepSong();
+                    m_song = std::move(m_take);
+                    m_take = Song{};
+                }
                 m_song.resize(std::max(m_song.length(), std::min(b - m_origin, kMaxSongBars)));
                 if (m_playing) {
                     // The trims and flips are in the take now.
@@ -1580,10 +1664,8 @@ private:
                 labelSong();
                 ctx.notice(QStringLiteral("Song: %1 bars").arg(m_song.length()));
             }
-            if (m_recording && b - m_origin >= kMaxSongBars) {
-                m_recording = false;
-                labelSong();
-            }
+            if (m_recording && b - m_origin >= kMaxSongBars)
+                m_recStopBar = b + 1;
         }
     }
 
@@ -1643,6 +1725,7 @@ private:
                 break;
             case MBreak:
                 m.kind = MBreak;
+                m.b1 = at + kBeatsPerBar * std::max(1, (sm.param >> 8) & 0xff ? (sm.param >> 8) & 0xff : kBreakBars);
                 addMove(m, ctx);
                 break;
             case MUnbreak:
@@ -1651,7 +1734,7 @@ private:
                 break;
             case MEchoOut:
                 m.kind = MEchoOut;
-                m.b1 = at + 20;
+                m.b1 = at + 28;
                 addMove(m, ctx);
                 break;
             case MCut:
@@ -1690,6 +1773,7 @@ private:
     void record(double beat, const StudioView &v) {
         if (!m_recording)
             return;
+        Song &take = *m_rec;
         const double top = m_origin * double(kBeatsPerBar);
         const long step = long(std::floor((beat - top) * 4.0));
         if (step < 0)
@@ -1697,14 +1781,14 @@ private:
         const int bars = int(step / kSteps) + 1;
         if (bars > kMaxSongBars)
             return;
-        if (bars > m_song.length())
-            m_song.resize(bars);
+        if (bars > take.length())
+            take.resize(bars);
         if (step > m_recStep) {
             float in[P][ChannelCount] = {};
             float tension = 0;
             inputs(beat, in, tension);
             for (long s = std::max(m_recStep + 1, step - 64); s <= step; ++s) {
-                Step &st = m_song.steps[size_t(s)];
+                Step &st = take.steps[size_t(s)];
                 // A fader let go high holds its tension to the drop: so does the take.
                 st.tension = q8(0.5f + 0.5f * (tension >= 0 ? std::max(tension, m_flatShown) : tension));
                 for (int p = 0; p < P; ++p)
@@ -1718,8 +1802,8 @@ private:
         if (bar > m_recBarDone && bar >= m_recStartBar) {
             m_recBarDone = bar;
             const int sb = bar - m_origin;
-            if (sb >= 0 && sb < m_song.length()) {
-                SongBar &sbar = m_song.bars[size_t(sb)];
+            if (sb >= 0 && sb < take.length()) {
+                SongBar &sbar = take.bars[size_t(sb)];
                 sbar.relaunch = 0;
                 for (int p = 0; p < m_parts; ++p) {
                     sbar.slot[p] = int8_t(v.parts[p].playing);
@@ -1730,10 +1814,16 @@ private:
         }
     }
 
+    // Space or O. A take while the song is stopped is recorded on its own
+    // and becomes the song only when it closes with a bar in it; called off,
+    // or empty, it leaves the song as it was. A take while the song plays
+    // punches in, and the song before it is kept for Shift+O.
     void toggleRecord(ControlContext &ctx) {
         if (m_recArmBar >= 0 && !m_recording) {
             m_recArmBar = -1;
-            ctx.notice(QStringLiteral("Recording called off"));
+            m_rec = &m_song;
+            m_take = Song{};
+            ctx.notice(QStringLiteral("Recording called off: the song is as it was"));
             return;
         }
         if (m_recording) {
@@ -1744,23 +1834,43 @@ private:
         m_recArmBar = nextBar();
         m_recBarDone = m_recArmBar - 1;
         if (!m_playing) {
-            // A new take: the old song is kept aside, the new one starts on the bar.
-            m_prevSong = m_song;
-            m_song = Song{};
-            m_sections.clear();
-            m_origin = m_recArmBar;
             const StudioView &v = ctx.studio();
-            m_song.bpm = v.bpm;
-            m_song.root = v.root;
-            m_song.family = v.family;
-            m_song.brightness = v.brightness;
-            m_moves.erase(std::remove_if(m_moves.begin(), m_moves.end(),
-                                         [&](const Move &m) { return m.b0 >= m_recArmBar * double(kBeatsPerBar); }),
-                          m_moves.end());
+            m_take = Song{};
+            m_take.bpm = v.bpm;
+            m_take.root = v.root;
+            m_take.family = v.family;
+            m_take.brightness = v.brightness;
+            m_rec = &m_take;
+            m_origin = m_recArmBar;
+        } else {
+            keepSong();
+            m_rec = &m_song;
         }
-        if (m_recArmBar <= m_plannedBar)
-            planBar(m_recArmBar, ctx, true);
-        ctx.notice(m_playing ? QStringLiteral("Punching in on the bar") : QStringLiteral("Recording from the next bar"));
+        ctx.notice(m_playing ? QStringLiteral("Punching in on the bar (Shift+O undoes)")
+                             : QStringLiteral("Recording the song from the next bar (Space again stops)"));
+    }
+
+    // The song before the last take, write or clear, for Shift+O.
+    void keepSong() {
+        if (!m_song.empty())
+            m_songUndo = m_song;
+    }
+    void undoSong(ControlContext &ctx) {
+        if (m_songUndo.empty()) {
+            ctx.notice(QStringLiteral("No earlier song to go back to"));
+            return;
+        }
+        if (m_playing)
+            stopSong();
+        if (m_recording || m_recArmBar >= 0) {
+            m_recording = false;
+            m_recArmBar = m_recStopBar = -1;
+            m_rec = &m_song;
+            m_take = Song{};
+        }
+        std::swap(m_song, m_songUndo);
+        labelSong();
+        ctx.notice(QStringLiteral("The earlier song is back: %1 bars (P plays it)").arg(m_song.length()));
     }
 
     void togglePlay(bool loop, ControlContext &ctx) {
@@ -1802,7 +1912,15 @@ private:
     }
 
     void clearSong(ControlContext &ctx) {
-        m_prevSong = m_song;
+        if (m_song.empty())
+            return;
+        if (m_lastT - m_confirmClear > 3.0) {
+            m_confirmClear = m_lastT;
+            ctx.notice(QStringLiteral("Shift+Backspace again clears the song (Shift+O brings it back)"));
+            return;
+        }
+        m_confirmClear = -1e9;
+        keepSong();
         m_song = Song{};
         m_sections.clear();
         if (m_playing)
@@ -1933,34 +2051,67 @@ private:
         }
     }
 
-    // Writes a whole track from whatever loops the parts hold: intro,
-    // groove, build, drop, breakdown, build, drop, outro, with the moves a
-    // producer would make, and plays it from the next bar.
+    // A clip's energy, to rank a part's clips: how busy it is per bar
+    // (events per bar), longer clips winning ties.
+    static float clipEnergy(const ClipView &c) {
+        if (c.state == ClipView::Empty || c.lengthBeats <= 0)
+            return -1;
+        return float(c.events) / std::max(1.0f, c.lengthBeats / kBeatsPerBar) + 0.01f * c.lengthBeats;
+    }
+    // A part's calm clip and its strongest: the strongest is kept for the
+    // last drop; the calm one (the next strongest) for everything before.
+    void rankClips(const StudioView &v, int p, int &calm, int &strong) const {
+        calm = strong = -1;
+        if (p < 0 || p >= m_parts)
+            return;
+        float best = -1, second = -1;
+        for (int s = 0; s < kClipSlots; ++s) {
+            const float e = clipEnergy(v.parts[p].clips[s]);
+            if (e < 0)
+                continue;
+            if (e > best) {
+                second = best;
+                calm = strong;
+                best = e;
+                strong = s;
+            } else if (e > second) {
+                second = e;
+                calm = s;
+            }
+        }
+        if (calm < 0)
+            calm = strong;
+    }
+
+    // Writes a whole track from whatever loops the parts hold, with the
+    // moves a producer would make, and plays it from the next bar. The form
+    // follows the material: with four parts or more, intro, groove, build,
+    // drop, breakdown, build, drop, outro (74 bars); with fewer (or Shift),
+    // the short form without the groove (38 bars). Every section is made of
+    // what exists, so no bar before the outro is silent: a breakdown with no
+    // chords, atmos or melody is the bass under a low-pass, or the drums
+    // high-passed in the room.
     void autoArrange(bool shortForm, ControlContext &ctx) {
         const StudioView &v = ctx.studio();
         int filled = 0;
         for (int p = 0; p < m_parts; ++p)
-            filled += hasClips(v, p);
+            filled += hasClips(v, p) && p != role(RFx);
         if (!filled) {
-            ctx.notice(QStringLiteral("No loops yet: make some on pages 1–7 first"));
+            ctx.notice(QStringLiteral("No loops yet: on pages 1–7, play, then Space loops it"));
             return;
         }
+        // Replacing a set that plays takes a second press.
+        if (anyPlays(v) && m_lastT - m_confirmI > 3.0) {
+            m_confirmI = m_lastT;
+            ctx.notice(QStringLiteral("I again writes a track over what plays (Shift+O undoes)"));
+            return;
+        }
+        m_confirmI = -1e9;
         auto has = [&](Role r) { return role(r) >= 0 && hasClips(v, role(r)); };
-        auto slotA = [&](Role r) {
-            const int p = role(r);
-            if (p < 0 || !has(r))
-                return -1;
-            return m_lastSlot[p] >= 0 && v.parts[p].clips[m_lastSlot[p]].state != ClipView::Empty ? m_lastSlot[p]
-                                                                                                 : firstSlot(v, p);
-        };
-        auto slotB = [&](Role r) {
-            const int a = slotA(r);
-            if (a < 0)
-                return -1;
-            const int b = firstSlot(v, role(r), a);
-            return b >= 0 ? b : a;
-        };
-        m_prevSong = m_song;
+        int calm[RoleCount], strong[RoleCount];
+        for (int r = 0; r < RoleCount; ++r)
+            rankClips(v, role(Role(r)), calm[r], strong[r]);
+        keepSong();
         Song song;
         song.bpm = v.bpm;
         song.root = v.root;
@@ -1970,27 +2121,35 @@ private:
         struct Plan {
             int label, bars;
             std::vector<Role> roles, late; // late: they join half way
-            bool second = false;           // the second clips, for variety
             int move = -1;
+            bool last = false;             // the final drop: the strongest clips throughout
         };
         const bool pads = has(RChords) || has(RAtmos);
-        const int u = shortForm ? 1 : 2; // bars per unit of four
-        std::vector<Role> intro = {RAtmos, RDrums};
-        if (!has(RAtmos))
-            intro.push_back(RChords);
+        const bool melody = has(RLead) || has(RArp);
+        const bool full = filled >= 4 && !shortForm;
+        const int u = full ? 2 : 1; // bars per unit of four
+        std::vector<Role> breakRoles, breakLate;
+        if (pads) {
+            breakRoles = {RChords, RAtmos};
+            breakLate = {RLead};
+        } else if (melody) {
+            breakRoles = {RLead, RArp};
+        } else if (has(RBass)) {
+            breakRoles = {RBass};
+            breakLate = {RDrums};
+        } else {
+            breakRoles = {RDrums};
+        }
         std::vector<Plan> plan;
-        plan.push_back({LIntro, 4 * u, intro, {RArp}});
-        if (!shortForm)
+        plan.push_back({LIntro, 4 * u, {RAtmos, RDrums, has(RAtmos) ? RAtmos : RChords}, {RArp}});
+        if (full)
             plan.push_back({LGroove, 8, {RDrums, RBass, RAtmos}, {RArp}});
-        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos}, {}, false, MBuild});
+        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RFx}, {}, MBuild});
         plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos}, {}});
-        if (pads)
-            plan.push_back({LBreak, 4 * u, {RChords, RAtmos}, {RLead}, false, MBreak});
-        else
-            plan.push_back({LBreak, 4 * u, {RLead, RArp}, {}, false, MBreak});
-        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RLead}, {}, false, MBuild});
-        plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos}, {}, true});
-        plan.push_back({LOutro, 4 * u, {RDrums, RAtmos, RChords, RBass}, {}, false, MEchoOut});
+        plan.push_back({LBreak, 4 * u, breakRoles, breakLate, MBreak});
+        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RLead, RFx}, {}, MBuild});
+        plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos}, {}, -1, true});
+        plan.push_back({LOutro, 4 * u, {RDrums, RAtmos, RChords, RBass}, {}, MEchoOut});
         plan.push_back({LEnd, 2, {}, {}});
 
         Step base;
@@ -1999,39 +2158,65 @@ private:
                 base.ch[p][c] = q8(c == Mute || c == Solo ? 0.0f : m_home[p][c]);
         int bar = 0;
         for (const Plan &sec : plan) {
+            const bool drop = sec.label == LDrop;
+            int inSection = 0; // the parts this section plays, for its breakdown mask
             for (int k = 0; k < sec.bars; ++k, ++bar) {
                 SongBar sb;
                 sb.label = uint8_t(sec.label);
-                auto add = [&](Role r, bool second) {
-                    if (has(r))
-                        sb.slot[role(r)] = int8_t(second ? slotB(r) : slotA(r));
+                // The drops: the calm clips first, the strongest from half
+                // way, and the last drop the strongest throughout, so energy
+                // never falls inside a drop.
+                const bool strongNow = drop && (sec.last || k >= sec.bars / 2);
+                auto add = [&](Role r) {
+                    if (has(r) && r != RFx)
+                        sb.slot[role(r)] = int8_t(strongNow ? strong[r] : calm[r]);
                 };
                 for (Role r : sec.roles)
-                    add(r, sec.second);
+                    add(r);
                 if (k >= sec.bars / 2)
                     for (Role r : sec.late)
-                        add(r, sec.second);
-                // The second half of a long drop changes clothes.
-                if (sec.label == LDrop && !sec.second && k >= 8)
-                    for (Role r : sec.roles)
-                        add(r, true);
+                        add(r);
+                // A section that would be silent plays what there is.
+                bool any = false;
+                for (int p = 0; p < m_parts; ++p)
+                    any = any || sb.slot[p] >= 0;
+                if (!any && sec.label != LEnd)
+                    for (int r = 0; r < RoleCount; ++r)
+                        if (Role(r) != RLead || filled == 1)
+                            add(Role(r));
+                // The FX part: its calm clip rises through the builds, its
+                // strongest hits the first bar of each drop.
+                if (has(RFx)) {
+                    if (sec.label == LBuild)
+                        sb.slot[role(RFx)] = int8_t(calm[RFx]);
+                    if (drop && k == 0)
+                        sb.slot[role(RFx)] = int8_t(strong[RFx]);
+                }
                 // The outro thins out: the bass and the chords leave half way.
                 if (sec.label == LOutro && k >= sec.bars / 2) {
-                    if (has(RBass))
+                    if (has(RBass) && filled > 2)
                         sb.slot[role(RBass)] = -1;
                     if (has(RChords) && has(RAtmos))
                         sb.slot[role(RChords)] = -1;
                 }
-                // Every section, and the second half of a long drop, starts
-                // every loop from its top.
-                if (k == 0 || (sec.label == LDrop && k == 8))
-                    for (int p = 0; p < m_parts; ++p)
-                        if (sb.slot[p] >= 0)
-                            sb.relaunch |= uint8_t(1 << p);
+                // Every section, and every clip change, starts loops from their tops.
+                const SongBar *prev = song.bars.empty() ? nullptr : &song.bars.back();
+                for (int p = 0; p < m_parts; ++p)
+                    if (sb.slot[p] >= 0 && (k == 0 || !prev || prev->slot[p] != sb.slot[p]))
+                        sb.relaunch |= uint8_t(1 << p);
+                for (int p = 0; p < m_parts; ++p)
+                    if (sb.slot[p] >= 0)
+                        inSection |= 1 << p;
                 song.bars.push_back(sb);
                 for (int s = 0; s < kSteps; ++s) {
                     Step st = base;
                     const float prog = float(k * kSteps + s) / float(sec.bars * kSteps);
+                    // Everything before a drop (but the build, which the
+                    // high-pass already thins) sits about 3 dB under it, so
+                    // the drop arrives bigger than what led to it.
+                    if (!drop && sec.label != LBuild)
+                        for (int p = 0; p < m_parts; ++p)
+                            st.ch[p][Gain] = q8(m_home[p][Gain] * 0.84f);
                     // Intro: the drums come up out of a high-pass.
                     if (sec.label == LIntro && has(RDrums)) {
                         const int d = role(RDrums);
@@ -2042,13 +2227,13 @@ private:
                         const int c = role(RChords);
                         st.ch[c][Filter] = q8(m_home[c][Filter] - 0.17f * (1 - prog));
                     }
-                    // Drops pump harder: everything but the drums breathes with the kick.
-                    if (sec.label == LDrop)
+                    // Drops pump harder: everything but the drums and bass breathes with the kick.
+                    if (drop)
                         for (int p = 0; p < m_parts; ++p)
                             if (p != role(RDrums) && p != role(RBass))
                                 st.ch[p][PumpDepth] = q8(m_home[p][PumpDepth] + 0.12f);
                     // Drops: the lead throws its last beat into the echo every four bars.
-                    if (sec.label == LDrop && has(RLead) && k % 4 == 3 && s >= 12) {
+                    if (drop && has(RLead) && k % 4 == 3 && s >= 12) {
                         const int l = role(RLead);
                         st.ch[l][EchoSend] = q8(m_home[l][EchoSend] + 0.55f);
                     }
@@ -2059,13 +2244,13 @@ private:
             if (sec.move == MBuild)
                 song.moves.push_back({start * kSteps, MBuild, sec.bars});
             if (sec.move == MBreak) {
+                // The breakdown mutes nothing it plays; what it leaves out is
+                // stopped already. Its kept drums and bass get its filters.
                 int mask = 0;
-                for (Role r : {RDrums, RBass, RArp})
-                    if (role(r) >= 0)
-                        mask |= 1 << role(r);
-                if (!pads)
-                    mask &= ~(role(RArp) >= 0 ? 1 << role(RArp) : 0);
-                song.moves.push_back({start * kSteps, MBreak, mask});
+                for (int p = 0; p < m_parts; ++p)
+                    if (!((inSection >> p) & 1) && p != role(RFx))
+                        mask |= 1 << p;
+                song.moves.push_back({start * kSteps, MBreak, mask | (sec.bars << 8)});
             }
             if (sec.move == MEchoOut)
                 song.moves.push_back({(bar - 1) * kSteps, MEchoOut, 0});
@@ -2138,7 +2323,9 @@ private:
     bool m_anyClip = false;
     int m_selPart = -1, m_selSlot = -1; // the clip last touched: Delete clears it
 
-    Song m_song, m_prevSong;
+    Song m_song, m_songUndo, m_take;
+    Song *m_rec = &m_song; // where a recording goes: the song, or a new take
+    double m_confirmI = -1e9, m_confirmClear = -1e9;
     std::vector<Section> m_sections;
     bool m_playing = false, m_loop = false, m_recording = false;
     int m_origin = 0, m_jumpBar = -1;
@@ -2437,12 +2624,14 @@ void ArrangeControl::paintTop(QPainter &p, const PaintContext &pc, int parts) {
         const float x1 = kNameW + (kCellsR - kNameW) * float(s + 1) / kClipSlots;
         const QRectF r = pc.rect(x0, kTopY, x1, 1).adjusted(3, 14, -3, -5);
         sceneSlots(s, v, sl);
+        // Lit when it is what plays: each of its clips playing, and nothing
+        // playing that it doesn't hold (a column's "keep" parts must be quiet).
         bool any = false, match = true;
         for (int i = 0; i < parts; ++i) {
             any |= sl[i] >= 0;
             if (sl[i] >= 0)
                 match = match && v.parts[i].playing == sl[i];
-            else if (sl[i] == -1)
+            else if (sl[i] == -1 || !m_scene[s].stored)
                 match = match && v.parts[i].playing < 0;
         }
         match = match && any;
@@ -2532,6 +2721,12 @@ void ArrangeControl::paintTension(QPainter &p, const PaintContext &pc) {
     else
         c::text(p, QRectF(r.left(), mid - 10, r.width(), 20), QStringLiteral("TENSION"), c::alpha(pc.color, 0.35f), 9,
                 true, Qt::AlignCenter);
+    // Held high, the fader says what letting go will do.
+    if (m_tensionHeld && m_tensionLive >= 0.6f) {
+        const bool blink = std::fmod(pc.time, 0.4) < 0.2;
+        c::tag(p, QPointF(r.center().x(), r.bottom() - 40), QStringLiteral("LET GO: DROP"),
+               blink ? pc.color : c::alpha(pc.color, 0.6f), 10, true);
+    }
     // The echo roll: what the tape echo is stepping at.
     if (m_echoShown >= 0) {
         const float flash = float(fract(pc.beat * (m_echoShown < 0.1f ? 4 : m_echoShown < 0.4f ? 2 : 1)) < 0.5);
@@ -2603,7 +2798,9 @@ void ArrangeControl::paintHeader(QPainter &p, const PaintContext &pc) {
 
 void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
     const QRectF band(pc.pad.left(), pc.pad.bottom() + 10, pc.pad.width(), 30);
-    const int n = m_song.length();
+    // A take in progress shows instead of the song it may replace.
+    const Song &sg = m_rec == &m_take ? m_take : m_song;
+    const int n = sg.length();
     if (n == 0) {
         const QString s = m_recArmBar >= 0 ? QStringLiteral("● RECORDING FROM THE NEXT BAR")
                                            : QStringLiteral("NO SONG YET   ·   SPACE RECORDS ONE AS YOU PLAY   ·   I WRITES ONE FROM YOUR LOOPS");
@@ -2621,7 +2818,7 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
         for (int b = 0; b < n; ++b) {
             int e = 0;
             for (int i = 0; i < m_parts; ++i)
-                e += m_song.bars[size_t(b)].slot[i] >= 0;
+                e += sg.bars[size_t(b)].slot[i] >= 0;
             const qreal y = band.bottom() - band.height() * 0.85 * e / std::max(1, m_parts);
             if (b == 0)
                 path.moveTo(xAt(0), y);
@@ -2633,7 +2830,7 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
         path.closeSubpath();
         p.fillPath(path, c::alpha(m_recording ? c::red() : pc.color, m_recording ? 0.3f : 0.08f));
     }
-    if (!m_sections.empty() && !m_recording) {
+    if (!m_sections.empty() && !m_recording && m_rec != &m_take) {
         for (const auto &s : m_sections) {
             const QRectF r(xAt(s.bar0) + 1, band.top(), xAt(s.bar0 + s.bars) - xAt(s.bar0) - 2, band.height());
             const QColor col = labelColor(s.label, pc.color);
@@ -2684,9 +2881,7 @@ QString ArrangeControl::fingerLabel(const Finger &f) const {
     }
     case Finger::Send: return QStringLiteral("VERB %1 PAN").arg(int(std::lround(m_shown[f.lane].verb * 100)));
     case Finger::Name: return f.solo ? QStringLiteral("SOLO") : QStringLiteral("MUTE?");
-    case Finger::Tension:
-        return m_tensionShown >= 0.6f ? QStringLiteral("LET GO: DROP") : m_tensionShown < 0 ? QStringLiteral("SINK")
-                                                                                            : QStringLiteral("BUILD");
+    case Finger::Tension: return {}; // the fader says it itself
     case Finger::Scene: return QStringLiteral("SCENE %1").arg(f.index + 1);
     default: return {};
     }
@@ -2756,6 +2951,9 @@ QString ArrangeControl::status() const {
             parts << l.toLower();
     }
     parts.removeDuplicates();
+    if (m_tensionHeld)
+        parts << (m_tensionLive >= 0.6f ? QStringLiteral("tension %1: let go to drop").arg(int(m_tensionLive * 100))
+                                        : QStringLiteral("tension %1").arg(int(m_tensionLive * 100)));
     const QString mv = movesText();
     if (!mv.isEmpty())
         parts << mv.toLower();

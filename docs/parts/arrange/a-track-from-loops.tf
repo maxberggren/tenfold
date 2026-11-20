@@ -145,6 +145,7 @@ tap 51.875 0.58 0.5 p=0.4 len=0.05
 tap 52.250 0.75 0.5 p=0.6
 key 52.650 Space
 page 53.000 0
-# I writes a whole track from the loops and plays it from the next bar.
+# I writes a whole track from the loops and plays it from the next bar (twice, as clips play).
+key 53.250 I
 key 53.500 I
-end 210.500
+end 214.500

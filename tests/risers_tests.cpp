@@ -149,6 +149,9 @@ private slots:
         QVERIFY2(rmsDb(take, tDrop - 0.2, tDrop - 0.02) < rmsDb(take, tDrop - 0.5, tDrop - 0.3) - 12,
                  qPrintable(QString::number(rmsDb(take, tDrop - 0.2, tDrop - 0.02))));
         QVERIFY(rmsDb(take, tDrop, tDrop + 0.2) > -30);
+        // And the drop after the gap is on time: loud within 3 ms of the line.
+        QVERIFY2(rmsDb(take, tDrop + 0.001, tDrop + 0.004) > -30,
+                 qPrintable(QString::number(rmsDb(take, tDrop + 0.001, tDrop + 0.004))));
         for (int p = 0; p < after.partCount; ++p)
             QCOMPARE(after.parts[p].channel.value[Mute], 0.0f);
     }

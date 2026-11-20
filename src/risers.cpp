@@ -509,10 +509,12 @@ private:
         const float *d = data(ctx);
         const double beat = ctx.beatAt(t);
         const double bps = sv.bpm / 60.0;
-        // Smoothed by the studio over 30 ms, the filter and drive must start
-        // home a little before the ONE to be all the way there on it; a mute
-        // lifts in two.
-        const double lead = 0.075 * bps, muteLead = 0.012 * bps;
+        // The studio smooths every setting over 30 ms, so the filter and
+        // drive must start home a little before the ONE to be all the way
+        // there on it; a mute flips when its smoothed value crosses half,
+        // about 21 ms after it is sent, and this runs on ticks up to 8 ms
+        // apart.
+        const double lead = 0.075 * bps, muteLead = 0.032 * bps;
         const int parts = std::min(sv.partCount, kMaxParts);
         for (Mod &m : m_mods)
             m.w = m.wt = 0;

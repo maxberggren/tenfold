@@ -1117,7 +1117,9 @@ private:
             v.ph[0] -= std::floor(v.ph[0]);
             const float attack = std::min(1.0f, v.t * 400.0f);
             const float s = sin01(v.ph[0]);
-            const float o = fastTanh(1.6f * s + 0.25f * s * s) * v.env * attack * vel;
+            // A touch of second harmonic so small speakers hear it, centred
+            // so it adds no offset.
+            const float o = fastTanh(1.6f * s + 0.25f * (s * s - 0.5f)) * v.env * attack * vel;
             v.env *= decay;
             l[i] += o;
             r[i] += o;
@@ -1212,7 +1214,8 @@ private:
             float ph = v.ph[0] + 0.25f * mod;
             ph -= std::floor(ph);
             const float s = sin01(ph) + 0.25f * (v.ph[0] < 0.5f ? 1.0f : -1.0f) * v.pitchEnv;
-            const float o = s * v.env * v.vel * 0.15f * (0.8f + 0.4f * I);
+            const float attack = std::min(1.0f, v.t * 1000.0f);
+            const float o = s * v.env * v.vel * 0.15f * (0.8f + 0.4f * I) * attack;
             v.env *= decay;
             const float pan = v.env4;
             l[i] += o * (1.0f - pan);

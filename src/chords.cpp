@@ -186,7 +186,19 @@ public:
 
     void background(double t, ControlContext &ctx) override {
         m_beatNow = ctx.beatAt(t);
+        carryOn(t, ctx);
         m_take = ctx.studio().parts[ctx.part()];
+        // A loop just landed (Space's take is made at once, Return's at its
+        // bar line): say what it holds, for a bar.
+        if (m_take.takes != m_seenTakes) {
+            if (m_seenTakesValid && m_take.playing >= 0) {
+                m_landedAt = m_beatNow;
+                m_landedSlot = m_take.playing;
+                m_landedBeats = m_take.clips[m_take.playing].lengthBeats;
+            }
+            m_seenTakes = m_take.takes;
+        }
+        m_seenTakesValid = true;
         // Return's wait ends just before the bar line: the take goes to the
         // studio, which lands it on that line. Until then Return again can
         // still call it off.
@@ -540,14 +552,52 @@ private:
     // --- loops ----------------------------------------------------------------
     //
     // A loop is always something the player asks for, and the page says what
-    // is coming before it does. Space is the studio's: the session finds the
-    // phrase and takes it at a bar line (or at once, setting the tempo, when
-    // nothing else plays); the page shows the take waiting. Return is this
-    // page's own: the last whole bars at the tempo already running.
+    // it caught. Space is the studio's: the session finds the phrase (one
+    // cycle of what was repeated, or the whole phrase in whole bars) and
+    // loops it at once, setting the tempo when nothing else plays; the page
+    // announces it as it lands. Return is this page's own: the last whole
+    // bars at the tempo already running, taken at the bar line, with the
+    // page counting down to it.
 
-    // What is about to happen with loops, for the screen and the status
-    // line; empty when nothing is pending.
-    QString loopCue(double beat, const PartView &v) const {
+    // Space ends a take a beat after the last onset it heard, which would
+    // cut a chord held across a bar short. While a beat can be heard and a
+    // chord is held (by a finger, a key or hold), each beat sends a marker
+    // that says the playing goes on: an On flagged Continue (never an
+    // onset of its own), closed at once, which the engine ignores.
+    void carryOn(double t, ControlContext &ctx) {
+        const StudioView &sv = ctx.studio();
+        bool audible = sv.metronome;
+        for (int p = 0; p < sv.partCount; ++p)
+            audible |= sv.parts[p].playing >= 0;
+        bool held = m_latched != 0;
+        for (const auto &h : m_held)
+            held |= (h.touch >= 0 || h.key != 0) && h.role == Held::Chord;
+        const double beat = std::floor(ctx.beatAt(t));
+        if (!audible || !held || beat <= m_carriedBeat) {
+            if (!held)
+                m_carriedBeat = beat;
+            return;
+        }
+        m_carriedBeat = beat;
+        Command on;
+        on.type = Command::On;
+        on.flags = Command::Continue;
+        on.id = kCarryOnId;
+        on.t = t;
+        ctx.send(on);
+        Command off;
+        off.type = Command::Off;
+        off.id = kCarryOnId;
+        off.t = t;
+        ctx.send(off);
+    }
+
+    // What is about to happen with loops, or what just did, for the screen
+    // and the status line; empty when there is nothing to say. *waiting
+    // says whether something is still to come.
+    QString loopCue(double beat, const PartView &v, bool *waiting = nullptr) const {
+        if (waiting)
+            *waiting = m_retroEnd >= 0 || v.recording >= 0;
         auto beats = [](double n) {
             const int b = std::max(1, int(std::ceil(n - 1e-6)));
             return QStringLiteral("%1 BEAT%2").arg(b).arg(b > 1 ? "S" : "");
@@ -567,6 +617,8 @@ private:
         if (v.queued >= 0 && v.queued == v.playing)
             return QStringLiteral("THE LOOP STARTS FROM THE TOP IN %1")
                 .arg(beats(std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar - beat));
+        if (m_landedSlot >= 0 && beat - m_landedAt < kBeatsPerBar && v.playing == m_landedSlot)
+            return QStringLiteral("LOOPED %1 · SLOT %2").arg(bars(m_landedBeats)).arg(m_landedSlot + 1);
         return {};
     }
 
@@ -793,6 +845,12 @@ private:
     std::array<Held, kHeldMax> m_held{};
     double m_beatNow = 0;
     PartView m_take; // this part as the studio last showed it: a take waiting, a loop queued
+    double m_carriedBeat = 0; // the last beat a carry-on marker went out for
+    uint32_t m_seenTakes = 0;
+    bool m_seenTakesValid = false;
+    double m_landedAt = -1e9; // the beat the last loop landed, its slot and length
+    int m_landedSlot = -1;
+    float m_landedBeats = 0;
     int m_retroBars = 0;
     Frame m_frame;
     bool m_button = false, m_heard = false;
@@ -913,15 +971,19 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         }
     }
 
-    // A loop on its way (Space's take or Return's) waiting for its bar line:
+    // A loop on its way (Return's, or a take still waiting for its bar line):
     // the pad framed in red, pulsing on the beat, and what is coming in amber.
-    const QString cue = loopCue(pc.beat, *pc.view);
+    // A loop just landed: what it holds, in the part's own colour.
+    bool waiting = false;
+    const QString cue = loopCue(pc.beat, *pc.view, &waiting);
     if (!cue.isEmpty()) {
-        const float pulse = 1.0f - float(pc.beat - std::floor(pc.beat));
-        p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(c::alpha(c::red(), 0.45f + 0.5f * pulse), 3.0));
-        p.drawRect(pc.pad.adjusted(-4, -4, 4, 4));
-        c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, kRail).y()), cue, c::amber(), 15, true);
+        if (waiting) {
+            const float pulse = 1.0f - float(pc.beat - std::floor(pc.beat));
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(c::red(), 0.45f + 0.5f * pulse), 3.0));
+            p.drawRect(pc.pad.adjusted(-4, -4, 4, 4));
+        }
+        c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, kRail).y()), cue, waiting ? c::amber() : col, 15, true);
     }
 
     // Fingers: a chord finger glows (its cell already names the chord), the
@@ -1070,7 +1132,7 @@ QString Control::help() const {
         "hold the rail\tplay that rhythm over everything, loops too, while the finger stays\n"
         "higher on the rail · twist there\tlonger hits · swing\n"
         "two, three fingers on the rail\tdouble, then quadruple time, brighter: a build-up\n"
-        "play, then Space\tloops what you just played (Space again calls it off)\n"
+        "play, then Space\tloops what you just played at once: played twice, one cycle of it\n"
         "A S D F G H J\tchords I to VII; Q row add9, Z row sus; Shift for sevenths (Z row: power)\n"
         "Return · Shift+Return\tloop the last whole bars at the tempo running (1, 2, 4 or 8) · overdub\n"
         "← → · ↑ ↓\tthe sound: pad, trance, organ, piano, pluck, pump · voicing higher or lower\n"

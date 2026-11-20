@@ -154,6 +154,9 @@ constexpr int Columns = 48;  // per lane 8 apart: how loud each degree is soundi
 }
 
 constexpr int kLiveLane = 0, kReplayLane = 1, kLanes = 2;
+// The id of the page's carry-on markers: never a chord's (those count up
+// from 1 and wrap below it).
+constexpr int kCarryOnId = 0xFFFFF0;
 inline int laneOf(int id) { return (id >> 24) != 0 ? kReplayLane : kLiveLane; }
 
 // --- harmony ----------------------------------------------------------------
@@ -522,6 +525,10 @@ public:
     }
 
     void command(const Command &c, AudioContext &ctx) override {
+        // The page's beat markers for a held chord (see kCarryOn in
+        // chords.cpp) tell Space the playing goes on; they carry no sound.
+        if ((c.id & 0xFFFFFF) == kCarryOnId)
+            return;
         const int lane = laneOf(c.id);
         Lane &L = m_lanes[lane];
         checkKey(ctx);

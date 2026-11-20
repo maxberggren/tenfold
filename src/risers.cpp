@@ -238,7 +238,8 @@ public:
             "flick down as you lift\tpull that riser out: it falls away\n"
             "click the pad, Return\tdrop on the next bar line: everything rising rushes into it\n"
             "bottom row\timpact, sub drop, downlifter, laser zap, power-down, echo throw, reverb wash, DJ sweep\n"
-            "hold a hit\tsub sustains, zaps fire sixteenths, throw and wash hold, sweep follows the slide\n"
+            "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger\n"
+            "hold the sweep\tslide left to close a low-pass on the whole mix, up to open a high-pass; press for drive\n"
             "tap a rhythm on the bottom row, hold the next beat\tloops it into a free slot\n"
             "A S D F G\tnoise, pitch, saw, roll, swell risers; Up / Down sets their length\n"
             "Z X C V B N M ,\tthe bottom row's hits, held as long as the key\n"
@@ -280,7 +281,7 @@ private:
         double t0 = 0, drop = -1;
         float x0 = 0, y0 = 0, a0 = 0;
         float x = 0, y = 0, size = 1, press = 0.5f, angle = 0;
-        float int0 = 0.6f;
+        float int0 = 0.6f, tone0 = 0;
         float tone = 0, intensity = 0.6f, motion = 0, grit = 0;
         bool sent = false, dropFinger = false, long_ = false, looped = false, isKey = false;
         float last[5] = {-9, -9, -9, -9, -9};
@@ -322,9 +323,13 @@ private:
         h.hn = 1;
         h.grit = clampf((h.size - 1.25f) / 0.8f, 0, 1);
         if (t.y < kHitTop) {
-            h.kind = kRisers + std::clamp(int(t.x * kHits), 0, kHits - 1);
-            // Higher in the cell, bigger.
+            const float cell = t.x * kHits;
+            h.kind = kRisers + std::clamp(int(cell), 0, kHits - 1);
+            // Higher in the cell, bigger. Across a zap's cell, a few steps
+            // of the scale either side of the chord's root.
             h.int0 = h.intensity = clampf(0.35f + 0.65f * t.y / kHitTop, 0, 1);
+            if (h.kind == Zap)
+                h.tone0 = h.tone = clampf((cell - std::floor(cell) - 0.5f) * 0.9f, -1, 1);
             sendOn(h, ctx);
             return;
         }
@@ -358,7 +363,11 @@ private:
         h.ht[h.hn % 8] = time;
         h.hy[h.hn % 8] = t.y;
         ++h.hn;
-        h.tone = clampf((h.x - h.x0) * 3.0f, -1, 1);
+        h.tone = clampf(h.tone0 + (h.x - h.x0) * 3.0f, -1, 1);
+        // The sweep lives in the pad's bottom corner: left closes the
+        // low-pass, up (or right) opens the high-pass.
+        if (h.kind == Sweep)
+            h.tone = clampf((h.x - h.x0 + h.y - h.y0) * 2.5f, -1, 1);
         h.intensity = clampf(h.int0 + (h.y - h.y0) * 2.2f, 0, 1);
         // An ellipse's angle repeats every half turn.
         float twist = h.angle - h.a0;
@@ -643,25 +652,6 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     p.setPen(QPen(c::alpha(col, 0.1f), 1, Qt::DotLine));
     for (int r = 1; r < kRows; ++r)
         p.drawLine(pc.at(0, kHitTop + r * kRowH), pc.at(1, kHitTop + r * kRowH));
-    // Row lengths down the left edge; with a drop coming, when each row
-    // would come in.
-    for (int r = 0; r < kRows; ++r) {
-        const QRectF cell = pc.rect(0, kHitTop + r * kRowH, 1.0f / kRisers, kHitTop + (r + 1) * kRowH);
-        const int bars = rowBars(r);
-        QString label = bars == 1 ? QStringLiteral("1 BAR") : QStringLiteral("%1 BARS").arg(bars);
-        if (drop > beat) {
-            const double enter = drop - 4.0 * bars;
-            label = QStringLiteral("%1 · %2").arg(bars).arg(
-                enter <= beat ? QStringLiteral("NOW") : QStringLiteral("IN %1").arg(std::ceil((enter - beat) / 4.0 - 1e-6)));
-        }
-        c::text(p, QRectF(cell.left() + 8, cell.bottom() - 20, cell.width(), 16), label, c::alpha(col, 0.45f), 10, true);
-    }
-    for (int k = 0; k < kRisers; ++k) {
-        const QRectF head = pc.rect(float(k) / kRisers, 1 - kRowH, float(k + 1) / kRisers, 1);
-        c::text(p, QRectF(head.left(), head.top() + 48, head.width(), 18), QString::fromUtf8(columns[k]),
-                c::alpha(col, 0.85f), 13, true, Qt::AlignCenter);
-    }
-
     // Each riser climbs its column, reaching the top on the drop.
     int perColumn[kRisers] = {}, seen[kRisers] = {};
     for (int v = 0; v < pub::MaxVoices; ++v) {
@@ -693,7 +683,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             const double in = o[pub::VStart] - beat;
             c::text(p, QRectF(r.left(), r.top() + 6, r.width(), 16),
                     in >= 4 ? QStringLiteral("IN %1 BARS").arg(std::ceil(in / 4.0 - 1e-6))
-                            : QStringLiteral("IN %1").arg(std::ceil(in - 1e-6)),
+                            : QStringLiteral("IN %1 BEATS").arg(std::ceil(in - 1e-6)),
                     col, 10, true, Qt::AlignCenter);
             continue;
         }
@@ -708,6 +698,25 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         if (o[pub::VWho] > 1.5f)
             c::text(p, QRectF(fill.left(), fill.top() - 18, fill.width(), 14), QStringLiteral("CLIP"), c::alpha(tint, 0.7f), 9,
                     true, Qt::AlignCenter);
+    }
+
+    // Row lengths down the left edge; with a drop coming, when each row
+    // would come in.
+    for (int r = 0; r < kRows; ++r) {
+        const QRectF cell = pc.rect(0, kHitTop + r * kRowH, 1.0f / kRisers, kHitTop + (r + 1) * kRowH);
+        const int bars = rowBars(r);
+        QString label = bars == 1 ? QStringLiteral("1 BAR") : QStringLiteral("%1 BARS").arg(bars);
+        if (drop > beat) {
+            const double enter = drop - 4.0 * bars;
+            label = QStringLiteral("%1 · %2").arg(bars).arg(
+                enter <= beat ? QStringLiteral("NOW") : QStringLiteral("IN %1").arg(std::ceil((enter - beat) / 4.0 - 1e-6)));
+        }
+        c::text(p, QRectF(cell.left() + 8, cell.bottom() - 20, cell.width(), 16), label, c::alpha(col, 0.45f), 10, true);
+    }
+    for (int k = 0; k < kRisers; ++k) {
+        const QRectF head = pc.rect(float(k) / kRisers, 1 - kRowH, float(k + 1) / kRisers, 1);
+        c::text(p, QRectF(head.left(), head.top() + 48, head.width(), 18), QString::fromUtf8(columns[k]),
+                c::alpha(col, 0.85f), 13, true, Qt::AlignCenter);
     }
 
     // The hit row.
@@ -736,8 +745,19 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         c::text(p, QRectF(cell.left() + 6, cell.top() + 4, 30, 14), QString(QChar(kHitKeys[k])), c::alpha(col, 0.4f), 10, true);
     }
 
-    // The drop: a countdown and the build's timeline along the top.
-    const QRectF band(pc.pad.left() + pc.pad.width() * 0.28, pc.pad.top() + 14, pc.pad.width() * 0.4, 14);
+    // The top band: the drop style and the keys' length on the left, the
+    // build's timeline and its countdown in the middle, what the page is
+    // doing to the mix on the right.
+    const qreal bandTop = pc.pad.top() + 12;
+    {
+        QRectF r = c::tag(p, QPointF(pc.pad.left() + 12, bandTop + 7),
+                          QStringLiteral("DROP %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()), col, 11);
+        r = c::tag(p, QPointF(r.right() + 6, r.center().y()), QStringLiteral("KEYS %1 BAR").arg(rowBars(m_keyRow)),
+                   c::alpha(col, 0.7f), 11);
+        if (!m_buildMix)
+            c::tag(p, QPointF(pc.pad.left() + 12, bandTop + 29), QStringLiteral("MIX LEFT ALONE"), c::alpha(col, 0.5f), 11);
+    }
+    const QRectF band(pc.pad.left() + pc.pad.width() * 0.26, bandTop, pc.pad.width() * 0.3, 10);
     if (drop > beat) {
         const double span = std::max(0.25, drop - start);
         const double prog = std::clamp((beat - start) / span, 0.0, 1.0);
@@ -749,28 +769,25 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             p.drawLine(QPointF(x, band.top() - 3), QPointF(x, band.bottom() + 3));
         }
         const double left = drop - beat;
+        const int beatsLeft = int(std::ceil(left - 1e-6));
         const QString count = left >= 4 ? QStringLiteral("DROP IN %1 BARS").arg(left / 4.0, 0, 'f', 1)
-                                        : QStringLiteral("DROP IN %1").arg(int(std::ceil(left - 1e-6)));
-        c::tag(p, QPointF(band.center().x(), band.bottom() + 16), count, col, 14, true);
+                                        : QStringLiteral("DROP IN %1").arg(beatsLeft);
+        c::tag(p, QPointF(band.center().x(), band.bottom() + 13), count, col, 13, true);
         if (left < 4) {
             // The last bar: the beats to the ONE, big.
             const float within = float(left - std::floor(left));
             const qreal size = unit * (0.16 + 0.06 * within);
-            c::text(p, QRectF(pc.pad.left(), pc.at(0, 0.6f).y() - size / 2, pc.pad.width(), size),
-                    QString::number(int(std::ceil(left - 1e-6))), c::alpha(col, 0.2f + 0.3f * within), int(size), true,
-                    Qt::AlignCenter);
+            c::text(p, QRectF(pc.pad.left(), pc.at(0, 0.58f).y() - size / 2, pc.pad.width(), size),
+                    QString::number(beatsLeft), c::alpha(col, 0.2f + 0.3f * within), int(size), true, Qt::AlignCenter);
         }
     } else {
         p.setPen(QPen(c::alpha(col, 0.25f), 1, Qt::DotLine));
         p.setBrush(Qt::NoBrush);
         p.drawRect(band);
-        c::text(p, band, QStringLiteral("NO DROP COMING · LAND A RISER OR CLICK"), c::alpha(col, 0.45f), 10, true,
-                Qt::AlignCenter);
+        c::text(p, QRectF(band.left(), band.bottom() + 4, band.width(), 16), QStringLiteral("LAND A RISER, OR CLICK TO DROP"),
+                c::alpha(col, 0.45f), 10, true, Qt::AlignCenter);
     }
-
-    // What the page is doing to the mix, right now.
     {
-        const qreal x0 = pc.pad.right() - 230, y0 = pc.pad.top() + 18;
         struct Meter {
             const char *name;
             float value;
@@ -780,19 +797,12 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
                                  {"DRIVE", sv.master[MasterDrive], false},
                                  {"ROOM", sv.master[RoomSize], false},
                                  {"ECHO", sv.master[EchoFeedback], false}};
+        const qreal w = std::min<qreal>(150, pc.pad.width() * 0.13);
         for (int k = 0; k < 4; ++k) {
-            const qreal y = y0 + k * 14;
-            c::text(p, QRectF(x0, y - 1, 60, 12), QString::fromUtf8(meters[k].name), c::alpha(col, 0.6f), 9, true);
-            c::gauge(p, QRectF(x0 + 62, y + 1, 150, 8), meters[k].value, col, 15, meters[k].bipolar);
+            const qreal x = pc.pad.right() - 2 * (w + 54) - 8 + (k % 2) * (w + 54), y = bandTop + 2 + (k / 2) * 16;
+            c::text(p, QRectF(x, y - 2, 48, 12), QString::fromUtf8(meters[k].name), c::alpha(col, 0.6f), 9, true);
+            c::gauge(p, QRectF(x + 48, y, w, 8), meters[k].value, col, 12, meters[k].bipolar);
         }
-    }
-    // Style and the keys' length, top left.
-    {
-        const QPointF at(pc.pad.left() + 12, pc.pad.top() + 26);
-        QRectF r = c::tag(p, at, QStringLiteral("DROP %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()), col, 11);
-        r = c::tag(p, QPointF(at.x(), at.y() + 22), QStringLiteral("KEYS %1 BAR").arg(rowBars(m_keyRow)), c::alpha(col, 0.7f), 11);
-        if (!m_buildMix)
-            c::tag(p, QPointF(at.x(), at.y() + 44), QStringLiteral("MIX ALONE"), c::alpha(col, 0.5f), 11);
     }
 
     // Fingers, with what each one plays.

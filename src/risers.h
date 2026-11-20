@@ -253,7 +253,8 @@ public:
         }
     }
 
-    void render(float *l, float *r, int n, AudioContext &ctx) override {
+    void render(float *outL, float *outR, int n, AudioContext &ctx) override {
+        float *l = outL, *r = outR;
         const Transport &tr = ctx.transport();
         const Harmony &h = ctx.harmony();
         const double b0 = tr.beat, bps = tr.beatsPerSample, b1 = b0 + bps * n;
@@ -280,9 +281,19 @@ public:
             }
         }
 
+        // Risers render apart from the hits, so they can breathe with the
+        // kick on their own: the impact must never duck itself.
+        float rl[kBlock] = {}, rr[kBlock] = {};
         for (Voice &v : m_voices) {
             if (!v.active)
                 continue;
+            if (isRiser(v.kind)) {
+                l = rl;
+                r = rr;
+            } else {
+                l = outL;
+                r = outR;
+            }
             v.sPress += (v.press - v.sPress) * smooth;
             v.sTone += (v.tone - v.sTone) * smooth;
             v.sInt += (v.intensity - v.sInt) * smooth;
@@ -306,6 +317,14 @@ public:
             case Sweep: renderMove(v, n, b0); break;
             default: v.active = false; break;
             }
+        }
+        const float *duck = ctx.duck();
+        l = outL;
+        r = outR;
+        for (int i = 0; i < n; ++i) {
+            const float g = 1.0f - 0.32f * duck[i];
+            l[i] += rl[i] * g;
+            r[i] += rr[i] * g;
         }
         // The FX bus: a soft compressor, so that five risers stacked at full
         // pressure are a wall, not five times the level.
@@ -376,7 +395,7 @@ public:
             case Sweep:
                 if (v.amount > 0.001f) {
                     d[pub::Sweep] = clampf(v.sTone * 1.6f, -1, 1) * v.amount;
-                    d[pub::SweepDrive] = std::max(d[pub::SweepDrive], clampf(v.sInt - 0.5f, 0, 0.5f) * 2.0f * v.amount);
+                    d[pub::SweepDrive] = std::max(d[pub::SweepDrive], clampf(v.sPress - 0.6f, 0, 0.4f) * 2.5f * v.amount);
                 }
                 break;
             case Stop:
@@ -945,8 +964,10 @@ private:
         v.aR.set(cut * 1.05f, 0.9f, m_rate);
         v.bL.set(4200.0f, 0.7f, m_rate);
         v.bR.set(4600.0f, 0.7f, m_rate);
-        v.cL.set(7500.0f, 1.2f, m_rate);
-        static const float metal[6] = {349.0f, 517.5f, 628.3f, 888.6f, 918.0f, 1360.0f};
+        v.cL.set(8500.0f, 0.9f, m_rate);
+        // The cluster of a cymbal: six square waves at unrelated pitches,
+        // band-passed high so they shimmer rather than ring.
+        static const float metal[6] = {593.0f, 879.8f, 1068.1f, 1510.6f, 1560.6f, 2312.0f};
         const float cym = 0.45f + 0.55f * I, pad = 0.9f - 0.4f * I;
         float peak = 0;
         for (int i = 0; i < n; ++i) {
@@ -959,7 +980,7 @@ private:
                 m += v.ph[k] < 0.5f ? 1.0f : -1.0f;
             }
             const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
-            const float metalBand = v.cL.step(m * 0.12f).band;
+            const float metalBand = v.cL.step(m * 0.07f).band;
             const float cL = (v.bL.step(n1).high + metalBand) * cym;
             const float cR = (v.bR.step(n2).high + metalBand) * cym;
             float sl = 0, sr = 0;

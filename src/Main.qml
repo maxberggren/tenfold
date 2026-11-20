@@ -72,10 +72,10 @@ ApplicationWindow {
         // Every other key goes to the session: page numbers, tempo and key on
         // Ctrl, and whatever the showing page plays from the keyboard.
         Keys.onPressed: event => {
-            event.accepted = backend.key(event.key, event.modifiers, true, event.isAutoRepeat, event.text)
+            event.accepted = backend.sendKey(event.key, event.modifiers, true, event.isAutoRepeat, event.text)
         }
         Keys.onReleased: event => {
-            event.accepted = backend.key(event.key, event.modifiers, false, event.isAutoRepeat, event.text)
+            event.accepted = backend.sendKey(event.key, event.modifiers, false, event.isAutoRepeat, event.text)
         }
 
         ColumnLayout {

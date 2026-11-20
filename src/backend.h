@@ -101,7 +101,7 @@ public:
     Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
     Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }
     // A key for the pages; returns true when one used it.
-    Q_INVOKABLE bool key(int key, int modifiers, bool down, bool repeat, const QString &text);
+    Q_INVOKABLE bool sendKey(int key, int modifiers, bool down, bool repeat, const QString &text);
 
     void shutdown();
     // Plays a script into the session and studio up to a moment, as fast as

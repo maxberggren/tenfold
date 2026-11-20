@@ -1,0 +1,9 @@
+post_install() {
+  # Apply the touchpad rule now, so no logout or reboot is needed.
+  udevadm control --reload-rules 2>/dev/null || true
+  udevadm trigger --subsystem-match=input --action=change 2>/dev/null || true
+}
+
+post_upgrade() {
+  post_install
+}

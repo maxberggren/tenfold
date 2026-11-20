@@ -44,6 +44,10 @@ constexpr int kClipSlots = 8;
 constexpr int kPartData = 256;
 constexpr int kBlock = 32; // the studio renders in blocks of at most this many frames
 constexpr int kBeatsPerBar = 4;
+// The mouse, held down on the pad, arrives in frames as one more touch with
+// this id (pressure 0.5, a normal fingertip), whether or not the trackpad is
+// taken. A page can treat it as a finger, or as a pointer that clicks.
+constexpr int kMouseId = 0x7FFF;
 
 // A message to a part's engine.
 struct Command {
@@ -285,6 +289,11 @@ public:
 
     // The same, for any part: the arrange page's tools.
     virtual void launchPart(int part, int slot, bool now = false) = 0;
+    // Clip edits, each undone by Ctrl+Z like a take. Copy keeps the clip's
+    // place against the bars. Merge puts `other` into `into`: layered (both
+    // at once, the shorter repeated) or chained (into, then other).
+    virtual void copyClip(int part, int from, int to) = 0;
+    virtual void mergeClips(int part, int into, int other, bool chain) = 0;
     virtual void stopPart(int part, bool now = false) = 0;
     virtual void clearPart(int part, int slot) = 0;
     // A time t (the touch clock, as ctx.timeAt(beat) gives it) schedules the
@@ -308,6 +317,8 @@ struct PaintContext {
     double time = 0;      // the touch clock, for animation
     double beat = 0;      // the beat at that moment
     float scale = 1;      // device pixels per pad unit hint: pad.height() / 600
+    bool hover = false;   // the mouse is over the pad (not pressed or pressed)
+    float hoverX = 0, hoverY = 0; // where, in pad coordinates
     // Pad coordinates (0..1, y up) to item pixels and back.
     QPointF at(float x, float y) const {
         return {pad.left() + double(x) * pad.width(), pad.bottom() - double(y) * pad.height()};

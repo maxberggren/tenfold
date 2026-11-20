@@ -33,6 +33,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString pageHelp READ pageHelp NOTIFY pageChanged)
     Q_PROPERTY(QString pageStatus READ pageStatus NOTIFY changed)
     Q_PROPERTY(QVariantList pagesPlaying READ pagesPlaying NOTIFY changed)
+    Q_PROPERTY(QVariantList pagesSilenced READ pagesSilenced NOTIFY changed)
     Q_PROPERTY(QString key READ key NOTIFY changed)
     Q_PROPERTY(QString mode READ mode NOTIFY changed)
     Q_PROPERTY(QString chord READ chord NOTIFY changed)
@@ -71,6 +72,9 @@ public:
     QString pageHelp() const { return m_session->pageHelp(m_session->page()); }
     QString pageStatus() const { return m_session->pageStatus(); }
     QVariantList pagesPlaying() const;
+    // Per page: "" when it can be heard, else why not ("muted", "solo
+    // elsewhere"): a part silenced on the arrange page says so everywhere.
+    QVariantList pagesSilenced() const;
     QString key() const;
     QString mode() const;
     QString chord() const;

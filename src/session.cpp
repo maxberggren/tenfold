@@ -38,6 +38,17 @@ public:
             onsets[onsetHead % onsets.size()] = {c.t > 0 ? c.t : now(), !(c.flags & Command::Continue), key};
             ++onsetHead;
         }
+        if (!(c.flags & Command::NoRecord)) {
+            if (c.type == Command::On && heldCount < int(held.size())) {
+                held[size_t(heldCount++)] = c.id;
+            } else if (c.type == Command::Off) {
+                for (int i = 0; i < heldCount; ++i)
+                    if (held[size_t(i)] == c.id) {
+                        held[size_t(i)] = held[size_t(--heldCount)];
+                        break;
+                    }
+            }
+        }
         StudioMsg m;
         m.kind = StudioMsg::ToPart;
         m.part = int8_t(m_part);
@@ -82,6 +93,16 @@ public:
     void clear(int slot) override { clearPart(m_part, slot); }
 
     void launchPart(int part, int slot, bool now) override { simple(StudioMsg::Launch, part, slot, now); }
+    void copyClip(int part, int from, int to) override { simple(StudioMsg::CopyClip, part, from, to); }
+    void mergeClips(int part, int into, int other, bool chain) override {
+        StudioMsg m;
+        m.kind = StudioMsg::MergeClips;
+        m.part = int8_t(part);
+        m.slot = int8_t(into);
+        m.value = other;
+        m.f = chain ? 1.0f : 0.0f;
+        post(m);
+    }
     void stopPart(int part, bool now) override { simple(StudioMsg::Stop, part, 0, now); }
     void clearPart(int part, int slot) override { simple(StudioMsg::Clear, part, slot, 0); }
     void setChannel(int part, int channel, float value, double t) override {
@@ -138,6 +159,10 @@ public:
     };
     std::array<Onset, 256> onsets{};
     size_t onsetHead = 0;
+    // Sounds started and not yet ended: a chord or a pad held down is still
+    // playing, so the phrase hasn't paused.
+    std::array<int32_t, 64> held{};
+    int heldCount = 0;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
 
 private:
@@ -230,8 +255,41 @@ QString Session::pageStatus() const {
 
 void Session::frame(const Frame &f) {
     std::lock_guard lock(m_lock);
-    m_lastFrame = f.t;
     m_last = f;
+    deliver(withMouse(f));
+}
+
+Frame Session::withMouse(Frame f) const {
+    if (m_mouseDown && f.count < int(f.touches.size())) {
+        Touch &t = f.touches[f.count++];
+        t.id = kMouseId;
+        t.x = std::clamp(m_mouseX, 0.0f, 1.0f);
+        t.y = std::clamp(m_mouseY, 0.0f, 1.0f);
+        t.size = 1.0f;
+        t.pressure = 0.5f;
+    }
+    return f;
+}
+
+void Session::pointer(float x, float y, bool down, bool inside) {
+    std::lock_guard lock(m_lock);
+    const bool was = m_mouseDown;
+    m_mouseX = x;
+    m_mouseY = y;
+    m_mouseIn = inside;
+    m_mouseDown = down;
+    if (!down && !was)
+        return;
+    // A frame of its own: the pad's fingers as they last were, plus the
+    // mouse (or without it, on release).
+    Frame f = m_last;
+    f.t = now();
+    f.button = false;
+    deliver(withMouse(f));
+}
+
+void Session::deliver(const Frame &f) {
+    m_lastFrame = f.t;
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
@@ -343,6 +401,9 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     pc.time = time;
     pc.beat = context(m_page).beatAt(time);
     pc.scale = float(pad.height() / 600.0);
+    pc.hover = m_mouseIn;
+    pc.hoverX = m_mouseX;
+    pc.hoverY = m_mouseY;
     painter.save();
     p.spec.control->paint(painter, pc);
     painter.restore();
@@ -452,7 +513,7 @@ void Session::toggleRecording(ControlContext &base) {
     for (size_t i = 0; i < n; ++i)
         times.push_back(ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()]);
     std::sort(times.begin(), times.end(), [](const auto &x, const auto &y) { return x.t < y.t; });
-    double first = -1, earliest = -1, last = -1;
+    double first = -1, earliest = -1, last = -1, lastReal = -1;
     bool clocked = false; // sounds carried on through the phrase: it already runs on the clock
     for (size_t i = times.size(); i-- > 0;) {
         const double t = times[i].t;
@@ -466,8 +527,11 @@ void Session::toggleRecording(ControlContext &base) {
             break;
         }
         earliest = t;
-        if (times[i].real)
+        if (times[i].real) {
             first = t;
+            if (lastReal < 0)
+                lastReal = t;
+        }
         else
             clocked = true;
     }
@@ -545,7 +609,14 @@ void Session::toggleRecording(ControlContext &base) {
     // note if there was a pause before Space, on the sixteenth grid. It
     // doesn't wait for a bar line: whatever repeats, repeats from any point,
     // and the studio stores the loop in step with the bars.
-    const double end = std::round(std::min(beatNow, beatLast + 1.0) * 4.0) / 4.0;
+    double end = std::round(std::min(beatNow, beatLast + 1.0) * 4.0) / 4.0;
+    // Only held sounds carry the phrase on past its last new note (a chord
+    // held through the bar): the loop ends at the bar line after that note,
+    // not wherever Space came, so it stays whole bars on the bar lines.
+    if (ctx.heldCount > 0 && lastReal >= 0) {
+        const double bar = std::ceil((ctx.beatAt(lastReal) + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+        end = std::min(bar, std::round(beatNow * 4.0) / 4.0);
+    }
     // Did the player settle into a pattern? The shortest whole number of
     // bars that what was just played repeats with, stretched back over
     // every repeat, leaving out what came before it.
@@ -573,9 +644,10 @@ void Session::toggleRecording(ControlContext &base) {
     }
     const bool settled = length > 0;
     if (!settled) {
-        // Played once: the whole phrase, in whole bars (1, 2, 4 or 8).
-        const double played = std::max(1.0, std::ceil((end - beatFirst - 0.25) / kBeatsPerBar));
-        length = kBeatsPerBar * std::clamp(std::exp2(std::ceil(std::log2(played))), 1.0, 8.0);
+        // Played once: the whole phrase, in whole bars, with no bars of
+        // silence added to round it.
+        const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
+        length = kBeatsPerBar * std::clamp(played, 1.0, 8.0);
     }
     const int bars = int(std::lround(length / kBeatsPerBar));
     StudioMsg m;

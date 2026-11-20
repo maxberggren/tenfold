@@ -105,6 +105,7 @@ ApplicationWindow {
                         readonly property color tint: backend.pageColors[index]
                         readonly property bool current: backend.page === index
                         readonly property bool sounding: backend.pagesPlaying[index] === true
+                        readonly property string silenced: backend.pagesSilenced[index] || ""
                         Layout.fillWidth: true
                         Layout.preferredHeight: 58
                         Layout.minimumWidth: 92
@@ -131,7 +132,7 @@ ApplicationWindow {
                             anchors.bottom: parent.bottom
                             anchors.bottomMargin: 6
                             width: parent.width - 30
-                            text: backend.pageBlurbs[tab.index]
+                            text: tab.silenced !== "" ? "■ " + tab.silenced : backend.pageBlurbs[tab.index]
                             color: tab.current ? "#0a0806" : tab.tint
                             opacity: 0.75
                             font.family: win.mono
@@ -339,6 +340,8 @@ ApplicationWindow {
                           : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
                           : backend.padState === Backend.Ready ? qsTr("Paused, pointer released")
                           : qsTr("Standby: Take pad to play"))
+                          + ((backend.pagesSilenced[backend.page] || "") !== ""
+                             ? "     " + qsTr("Silent: %1 on the arrange page").arg(backend.pagesSilenced[backend.page]) : "")
                           + (backend.pageStatus !== "" ? "     " + backend.pageStatus : "")
                           + (backend.audioOk || backend.audioError === "" ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
                           + (backend.lastRecording !== "" ? "     " + qsTr("Saved %1").arg(backend.lastRecording) : "")

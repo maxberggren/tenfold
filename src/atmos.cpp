@@ -375,6 +375,9 @@ enum ParamId : int { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord, PChordT
 // The page marks the latched layers a loop is about to take, so the loop's
 // first round can take their voices over (never recorded).
 constexpr uint16_t kAdoptable = Command::User + 1;
+// The page says a loop stopped: the layers it was carrying over its seam
+// let go (never recorded; i[0] the slot).
+constexpr uint16_t kSeamRelease = Command::User + 2;
 enum PumpMode : int { PumpOff = 0, PumpKick, PumpBeat };
 
 // Published numbers, read by the page.
@@ -414,7 +417,7 @@ struct Slot {
 
 struct Voice {
     bool active = false, releasing = false;
-    bool frozen = false, holdEnv = false, pendingOff = false, adoptable = false;
+    bool frozen = false, holdEnv = false, pendingOff = false, adoptable = false, seamHold = false;
     float agcRms = 0.2f, agc = 1.0f;
     float lfo3 = 0, rate3 = 0.02f;
     int id = 0, family = 0;
@@ -758,6 +761,7 @@ public:
                 // over what is held): take the new shape, and if it was
                 // fading, swell back from where it is.
                 setTargets(*v, c);
+                v->seamHold = false;
                 if (v->releasing) {
                     v->releasing = false;
                     v->ramp = clampf(0.5f - std::sin(std::asin(clampf(1.0f - 2.0f * v->env, -1.0f, 1.0f)) / 3.0f), 0.0f, 1.0f);
@@ -775,12 +779,28 @@ public:
             break;
         case Command::Off:
             if (Voice *v = find(c.id, false)) {
-                // A frozen layer keeps sounding until the thaw.
+                // A frozen layer keeps sounding until the thaw. A loop's
+                // layer that was still sounding when the take ended carries
+                // on over the seam to its next start, the way the bed was
+                // sounding when it was taken; the page lets it go if the
+                // loop stops.
                 if (v->frozen)
                     v->pendingOff = true;
+                else if ((c.id & (1 << 30)) && c.f[7] < 0.5f)
+                    v->seamHold = true;
                 else
                     v->releasing = true;
             }
+            break;
+        case kSeamRelease:
+            for (Voice &v : m_voices)
+                if (v.active && v.seamHold && ((v.id >> 24) & 63) == (c.i[0] & 63)) {
+                    v.seamHold = false;
+                    if (v.frozen)
+                        v.pendingOff = true;
+                    else
+                        v.releasing = true;
+                }
             break;
         case kAdoptable:
             if (Voice *v = find(c.id, false))
@@ -1090,7 +1110,7 @@ private:
     void start(Voice &v, const Command &c) {
         v.active = true;
         v.releasing = false;
-        v.frozen = v.holdEnv = v.pendingOff = v.adoptable = false;
+        v.frozen = v.holdEnv = v.pendingOff = v.adoptable = v.seamHold = false;
         v.agcRms = 0.3f;
         v.agc = 1.0f / 0.3f;
         v.lfo3 = v.rng.unit();
@@ -1653,41 +1673,40 @@ public:
         const PartView &pv = ctx.studio().parts[ctx.part()];
         m_cue = loopCue(ctx.beatAt(t), pv);
 
-        // A Space take: while it waits, remember its slot; once it closes,
-        // the latched layers it took leave the page as soon as the loop has
-        // taken their voices over. Called off, they are the hand's again.
-        if (m_pendingTake) {
-            if (pv.recording >= 0 && pv.takeBeats > 0) {
-                reassert(ctx, ctx.timeAt(pv.takeAt - pv.takeBeats), false);
-                m_pendingTake = false;
-            } else if (pv.recording < 0 && t - m_spaceAt > 0.2) {
-                m_pendingTake = false;
-            }
-        }
-        // A loop taken with Space starts playing: whatever chords it holds
-        // drive the bed from now on, until a chord key takes them back.
-        if (pv.playing >= 0 && pv.playing != m_lastPlaying && m_lastRecording == pv.playing) {
+        // A loop that stopped (Backspace, another slot, Ctrl+Z) lets go of
+        // the layers it was carrying over its seam.
+        if (m_lastPlaying >= 0 && pv.playing != m_lastPlaying) {
             Command c;
-            c.type = Command::Param;
+            c.type = kSeamRelease;
             c.flags = Command::NoRecord;
-            c.i[0] = PChordToLoop;
+            c.i[0] = m_lastPlaying;
             c.t = t;
             ctx.send(c);
         }
         m_lastPlaying = pv.playing;
-        if (pv.recording >= 0)
-            m_lastRecording = pv.recording;
-        if (pv.recording >= 0) {
-            m_takeSlot = pv.recording;
-        } else if (m_takeSlot >= 0) {
-            if (pv.playing == m_takeSlot) {
-                const double len = std::max(1.0f, pv.clips[m_takeSlot].lengthBeats);
-                m_handUntil = t + (len + 4.0) * 60.0 / std::max(1.0, ctx.studio().bpm);
-            } else {
+
+        // A Space take lands (the studio counts it): its loop's chords drive
+        // the bed from now on, until a chord key takes them back, and the
+        // latched layers leave the page as soon as the loop has taken their
+        // voices over. A take called off or refused leaves them the hand's.
+        if (m_takeSlot >= 0 && pv.recording < 0) {
+            if (pv.takes != m_takesAtSpace) {
+                if (pv.playing >= 0) {
+                    Command c;
+                    c.type = Command::Param;
+                    c.flags = Command::NoRecord;
+                    c.i[0] = PChordToLoop;
+                    c.t = t;
+                    ctx.send(c);
+                    const double len = std::max(1.0f, pv.clips[pv.playing].lengthBeats);
+                    m_handUntil = t + (len + 4.0) * 60.0 / std::max(1.0, ctx.studio().bpm);
+                }
+                m_takeSlot = -1;
+            } else if (t - m_spaceAt > 0.3) {
                 for (Latched &l : m_latched)
                     l.handed = false;
+                m_takeSlot = -1;
             }
-            m_takeSlot = -1;
         }
         if (m_handUntil > 0) {
             const float *d = pv.data;
@@ -1742,12 +1761,14 @@ public:
         const float *d = pv.data;
         if (k.key == Qt::Key_Space) {
             // Space is the session's: it loops what was just played. Seeing
-            // it first, the page says every layer still sounding again at the
-            // start of the take, so the loop holds the whole bed.
+            // it first, the page offers its latched layers to the loop, which
+            // takes their voices over as it starts, so the bed neither
+            // doubles nor drops.
             if (k.down && !k.repeat && pv.recording < 0) {
                 m_spaceAt = ctx.now();
-                m_lastRecording = ctx.freeSlot();
-                prepareTake(ctx);
+                m_takesAtSpace = pv.takes;
+                m_takeSlot = ctx.freeSlot();
+                handOver(ctx);
             }
             return false;
         }
@@ -1978,74 +1999,13 @@ private:
         Command c;
         c.type = Command::Off;
         c.id = id;
+        c.f[7] = 1; // a lift, not the end of a take
         c.t = t > 0 ? t : ctx.now();
         ctx.send(c);
     }
 
-    // Before the session takes a loop: the same reading of the phrase as
-    // the session's (the onsets back from the latest, until two bars of
-    // nothing), so every layer that began before the take's first moment is
-    // said again right at it, flagged Continue so it isn't mistaken for new
-    // playing. Latched layers are marked for the loop to take over.
-    void prepareTake(ControlContext &ctx) {
-        const StudioView &v = ctx.studio();
-        const PartView &pv = v.parts[ctx.part()];
-        const double nowT = ctx.now();
-        const double spb = 60.0 / std::max(1.0, v.bpm);
-        if (ctx.freeSlot() < 0)
-            return;
-        std::vector<Onset> times;
-        const size_t n = std::min(m_onsetHead, m_onsets.size());
-        for (size_t i = 0; i < n; ++i)
-            times.push_back(m_onsets[(m_onsetHead - 1 - i) % m_onsets.size()]);
-        std::sort(times.begin(), times.end(), [](const Onset &a, const Onset &b) { return a.t < b.t; });
-        double first = -1, earliest = -1, last = -1;
-        for (size_t i = times.size(); i-- > 0;) {
-            const double t = times[i].t;
-            if (t > nowT + 0.05)
-                continue;
-            if (last < 0) {
-                if (nowT - t > 8 * spb)
-                    break;
-                last = t;
-            } else if (earliest - t > 8 * spb) {
-                break;
-            }
-            earliest = t;
-            if (times[i].real)
-                first = t;
-        }
-        if (first < 0)
-            first = earliest;
-        bool anyPlaying = false;
-        for (int p = 0; p < v.partCount; ++p)
-            anyPlaying |= v.parts[p].playing >= 0 || v.parts[p].queued >= 0;
-        const double beatNow = ctx.beatAt(nowT);
-        const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
-        const double nextEnd = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
-        double t0 = 0, end = 0;
-        bool stretch = false;
-        if (first < 0) {
-            if (pv.voices <= 0)
-                return;
-            end = nextEnd; // the bar going by, carried in whole
-            t0 = ctx.timeAt(end - kBeatsPerBar);
-        } else if (!anyPlaying && !v.metronome) {
-            if (nowT - first < 0.3)
-                return;
-            t0 = first;
-            stretch = true;
-        } else {
-            const double beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
-            end = std::ceil((beatLast + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-            end = std::min(end, nextEnd);
-            end = std::max(end, std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar + kBeatsPerBar);
-            const double startBar = std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-            const double played = std::max(1.0, (end - startBar) / kBeatsPerBar);
-            const int bars = std::clamp(int(std::lround(std::exp2(std::round(std::log2(played))))), 1, 8);
-            t0 = ctx.timeAt(end - bars * kBeatsPerBar);
-        }
-        // The loop is to take the latched layers over.
+    // Latched layers are marked for the loop to take over.
+    void handOver(ControlContext &ctx) {
         for (Latched &l : m_latched)
             if (!l.grabbed) {
                 Command c;
@@ -2054,35 +2014,7 @@ private:
                 c.id = l.layer.id;
                 ctx.send(c);
                 l.handed = true;
-                m_takeSlot = ctx.freeSlot();
             }
-        // A take that waits for its bar is placed by the studio itself; the
-        // page says the bed again once it shows where (background()).
-        if (!stretch && end > beatNow + 1e-3) {
-            m_pendingTake = true;
-            return;
-        }
-        reassert(ctx, t0, stretch);
-    }
-
-    // Every layer still sounding is said again right at the take's start,
-    // flagged Continue, so the loop holds it from its first moment to its
-    // last and never drops at the seam. In the studio's own time the take
-    // already carries in what began before its start; only what began
-    // inside it needs saying.
-    void reassert(ControlContext &ctx, double t0, bool stretch) {
-        const double eighth = 0.125 * 60.0 / std::max(1.0, ctx.studio().bpm);
-        auto needs = [&](const Layer &L) {
-            if (std::fabs(L.since - t0) < eighth)
-                return false; // it starts the take already
-            return stretch || L.since > t0;
-        };
-        for (Held &h : m_held)
-            if (h.touch >= 0 && !h.cancelled && !h.grabbed && needs(h.layer))
-                sendOn(h.layer, ctx, t0, Command::Continue);
-        for (Latched &l : m_latched)
-            if (needs(l.layer))
-                sendOn(l.layer, ctx, t0, Command::Continue);
     }
 
     int hitOrb(float x, float y, float aspect) const {
@@ -2263,12 +2195,12 @@ private:
         bool real = true;
     };
     std::array<Onset, 256> m_onsets{};
-    bool m_pendingTake = false;
+    uint32_t m_takesAtSpace = 0;
     size_t m_onsetHead = 0;
     Frame m_frame;
     QString m_cue, m_frozen, m_playing;
     double m_buttonAt = 0, m_handUntil = 0;
-    int m_nextId = 0, m_scene = -1, m_takeSlot = -1, m_lastPlaying = -1, m_lastRecording = -1;
+    int m_nextId = 0, m_scene = -1, m_takeSlot = -1, m_lastPlaying = -1;
     double m_spaceAt = 0;
     bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false;
 };

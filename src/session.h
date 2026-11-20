@@ -51,6 +51,9 @@ public:
 
     // FrameSink: touch thread.
     void frame(const Frame &f) override;
+    // The mouse over the pad, in pad coordinates (UI thread): held down it
+    // is one more finger (kMouseId); hovering, pages can show what it is on.
+    void pointer(float x, float y, bool down, bool inside);
     void idle(double t) override;
 
     // UI thread. Returns true when the key was used.
@@ -98,6 +101,10 @@ private:
     StudioView m_view;
     float m_aspect = 1.6f;
     double m_lastFrame = 0;
+    bool m_mouseDown = false, m_mouseIn = false;
+    float m_mouseX = 0, m_mouseY = 0;
+    void deliver(const Frame &f);
+    Frame withMouse(Frame f) const;
     std::vector<int> m_takeOrder;          // the part of each take that landed, oldest first
     uint32_t m_takesSeen[kMaxParts] = {};
     double m_startOverAsked = -1;

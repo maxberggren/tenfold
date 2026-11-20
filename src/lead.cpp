@@ -15,7 +15,7 @@
 // THROW throws the line into its echo.
 //
 // Loops are only ever asked for, with the studio's Space: the page shows
-// what Space would take, then the take counting down to its bar line.
+// when Space has something to take, then what the take became.
 // Playing alone never makes a loop.
 //
 // The engine plays one mono line per source (the live player and each clip),
@@ -1118,14 +1118,32 @@ public:
         const PartView &pv = ctx.studio().parts[ctx.part()];
         // Once Space has taken a phrase (a take waiting, or a new loop
         // playing), those notes are spoken for: the hint waits for new ones.
-        if (pv.recording >= 0 || (pv.playing >= 0 && pv.playing != m_seenPlaying))
+        // A take that has landed: a clip starting to play, or the playing
+        // one replaced. Say what it is, from the clip itself, for a few
+        // seconds: "looping 2 bars in slot 3".
+        const ClipView *clip = pv.playing >= 0 ? &pv.clips[pv.playing] : nullptr;
+        const bool landed = clip && pv.recording < 0 &&
+                            (pv.playing != m_seenPlaying || clip->lengthBeats != m_seenLength || clip->events != m_seenEvents);
+        if (pv.recording >= 0 || landed)
             m_takenAt = t;
+        if (landed && clip->lengthBeats > 0) {
+            const int bars = int(std::lround(clip->lengthBeats / kBeatsPerBar));
+            const QString length = clip->lengthBeats < kBeatsPerBar - 0.01f
+                                       ? QStringLiteral("%1 beats").arg(int(std::lround(clip->lengthBeats)))
+                                       : QStringLiteral("%1 bar%2").arg(bars).arg(bars > 1 ? "s" : "");
+            m_landed = QStringLiteral("looping %1 in slot %2").arg(length).arg(pv.playing + 1);
+            m_landedAt = t;
+        }
         m_seenPlaying = pv.playing;
+        m_seenLength = clip ? clip->lengthBeats : 0;
+        m_seenEvents = clip ? clip->events : 0;
         m_loopText = loopState(ctx.beatAt(t), pv);
+        if (m_loopText.isEmpty() && pv.playing >= 0 && t - m_landedAt < 3.0)
+            m_loopText = m_landed;
         const SpacePlan pl = m_loopText.isEmpty() ? spacePlan(ctx) : SpacePlan{};
         m_loopHint = !pl.any ? QString()
                      : pl.sets ? QStringLiteral("space on the next one loops it")
-                               : QStringLiteral("space loops it from the bar line");
+                               : QStringLiteral("space loops it");
         m_status = describe();
         // The trail: what the lines sang, sampled for the page to draw as
         // it rises away from the note names.
@@ -1316,7 +1334,7 @@ public:
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"
             "BEND\ta pitch wheel: slide up or down, rests on whole steps\n"
             "THROW\tinto the echo; higher throws harder; lift and the repeats ring out\n"
-            "Space, after playing\tloops it (the studio's key): alone, press it on the phrase's next ONE and it sets the tempo; over a loop, its bars loop from the bar line. The pad shows what Space would take and counts the take down\n"
+            "Space, after playing\tloops it (the studio's key): alone, press it on the phrase's next ONE and it sets the tempo; over a loop, what you repeated (or the whole phrase) loops at once. The pad says what it took\n"
             "Space again\tcalls a waiting take off\n"
             "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents\n"
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room\n"
@@ -1405,9 +1423,10 @@ private:
     //
     // Space is the studio's: on every page it loops what was just played.
     // With nothing else playing, Space on the phrase's next ONE closes the
-    // loop and sets the tempo; over a playing loop, the bars holding the
-    // phrase loop from the bar line. This page only shows it coming: what
-    // Space would take, and then the take counting down to its bar line.
+    // loop and sets the tempo; over a playing clock, one cycle of what was
+    // repeated (or the whole phrase, in whole bars) loops at once. This page
+    // only shows it: that Space has something to take, a take waiting if
+    // there is one, and then what the take became.
     // Playing alone never makes a loop.
 
     void logOnset(double t) {
@@ -1692,7 +1711,10 @@ private:
     std::array<KeyHeld, 36> m_keys{};
     Slot m_slots[kHarmSlots];
     double m_takenAt = -1e9; // when Space last took a phrase
-    int m_seenPlaying = -1;
+    int m_seenPlaying = -1, m_seenEvents = 0;
+    float m_seenLength = 0;
+    QString m_landed;        // what the last take turned into
+    double m_landedAt = -1e9;
     std::array<double, 256> m_onsets{}; // when the last notes landed, touch clock
     long m_onsetHead = 0;
     QString m_loopText, m_loopHint; // the take on its way; what Space would do now
@@ -1964,15 +1986,18 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                 c::alpha(col, 0.8f), int(12 * unit + 1), true, Qt::AlignCenter);
     }
 
-    // The take, straight from the studio's view of this part.
+    // The take, straight from the studio's view of this part; once it has
+    // landed, what it became.
     m_loopText = loopState(pc.beat, pv);
+    if (m_loopText.isEmpty() && pv.playing >= 0 && pc.time - m_landedAt < 3.0)
+        m_loopText = m_landed;
     // The loop machinery, at the top of the neck where it can't be missed:
     // a loop counting down to its bar line, a recording armed or running,
     // or, quietly, what Enter would loop right now.
     {
         const QPointF at(neck.center().x(), neck.top() + 16 * unit);
         if (!m_loopText.isEmpty()) {
-            const bool rec = true;
+            const bool rec = !m_loopText.startsWith(QStringLiteral("looping")); // waiting, not landed
             const bool blink = std::fmod(pc.beat, 1.0) < 0.5;
             c::tag(p, at, QStringLiteral("● ") + m_loopText, rec ? (blink ? c::red() : c::alpha(c::red(), 0.6f)) : col,
                    int(13 * unit + 1), true);

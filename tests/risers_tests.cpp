@@ -47,10 +47,11 @@ std::vector<VoiceInfo> voicesOf(const StudioView &v) {
 
 double rmsDb(const testkit::Take &take, double from, double to) { return 20 * std::log10(take.rms(from, to) + 1e-9); }
 
-// Kick, snare, kick, snare half a second apart on the drums page, then Space
-// where the next kick would land: a one-bar loop at 120 BPM.
+// Kick, snare, kick, snare half a second apart on the drums page (its near
+// row of pads: kick, snare, clap, hat), then Space where the next kick would
+// land: a one-bar loop at 120 BPM.
 const char *kBeat = "page 0 1\n"
-                    "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
+                    "tap 0.5 0.12 0.12 p=0.7\ntap 1.0 0.38 0.12 p=0.6\ntap 1.5 0.12 0.12 p=0.7\ntap 2.0 0.38 0.12 p=0.6\n"
                     "key 2.5 Space\n";
 
 // The peak of the mix below 150 Hz between two times: the kick's weight.

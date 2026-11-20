@@ -4,29 +4,31 @@
 # Then an echo throw and a reverb wash from the keys. 128 BPM, A minor.
 #
 # The groove, made the way the studio makes loops: play, then Space.
-# Drums (page 1): kick on every beat, hats between, clap on 2 and 4, then
-# Space where the next ONE would land: a one-bar loop at 128 BPM.
+# Drums (page 1, the 4x4 pads; the near row is kick, snare, clap, hat): kick on
+# every beat, hats between, clap on 2 and 4, then Space where the next ONE
+# would land: a one-bar loop that sets 128 BPM.
 page 0 1
-tap 0.500 0.08 0.5 p=0.7
-tap 0.734 0.58 0.5
-tap 0.969 0.08 0.5 p=0.7
-tap 0.969 0.42 0.5
-tap 1.203 0.58 0.5
-tap 1.438 0.08 0.5 p=0.7
-tap 1.672 0.58 0.5
-tap 1.906 0.08 0.5 p=0.7
-tap 1.906 0.42 0.5
-tap 2.141 0.58 0.5
+tap 0.500 0.12 0.12 p=0.7
+tap 0.734 0.88 0.12 p=0.5
+tap 0.969 0.12 0.12 p=0.7
+tap 0.969 0.62 0.12 p=0.6
+tap 1.203 0.88 0.12 p=0.5
+tap 1.438 0.12 0.12 p=0.7
+tap 1.672 0.88 0.12 p=0.5
+tap 1.906 0.12 0.12 p=0.7
+tap 1.906 0.62 0.12 p=0.6
+tap 2.141 0.88 0.12 p=0.5
 key 2.375 Space
-# Chords (page 3): Am, F, C, G stabs on the half bars of bars 1 and 2, then
-# Space just after the bar line: those two bars loop.
+# Chords (page 3: columns are the key's chords I to VII, the middle row plain
+# triads): Am, F, C, G, two beats each over bars 1 and 2, then Space just
+# after the bar line: those two bars loop.
 page 3.0 3
-tap 4.250 0.033 0.5 len=0.2
-tap 5.188 0.367 0.5 len=0.2
-tap 6.125 0.167 0.5 len=0.2
-tap 7.062 0.433 0.5 len=0.2
+tap 4.250 0.0714 0.40 len=0.85 p=0.6
+tap 5.188 0.7857 0.40 len=0.85 p=0.6
+tap 6.125 0.3571 0.40 len=0.85 p=0.6
+tap 7.062 0.9286 0.40 len=0.85 p=0.6
 key 8.094 Space
-# Bass (page 2): the roots under them, bars 4 and 5.
+# Bass (page 2, a scale-column starter): the roots under them, bars 4 and 5.
 page 8.281 2
 tap 9.875 0.033 0.5 len=0.2
 tap 10.812 0.367 0.5 len=0.2

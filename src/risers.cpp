@@ -574,9 +574,12 @@ private:
             // rings into the ONE. The strip leaves the risers alone for the
             // build's last bar (every other part goes) and ends in the same
             // breath.
+            // Mutes lift 5 ms before the line: the studio ramps a channel in
+            // over a couple of milliseconds, and the kick's first ones are its
+            // edge. The breath is silent there, so nothing leaks.
             for (int part = 0; part < parts; ++part)
                 if (beat >= drop - horizon && beat < drop)
-                    m_mods[ch(part, Mute)].releaseAt = tDrop;
+                    m_mods[ch(part, Mute)].releaseAt = tDrop - 0.005;
             if (beat < drop - horizon) {
                 if (m_style == Gap && beat >= drop - 0.5)
                     for (int part = 0; part < parts; ++part)

@@ -73,6 +73,31 @@ inline float kitSwing(int kit) {
     return swing[std::clamp(kit, 0, KitCount - 1)];
 }
 
+// Roughly how long each drum rings in each kit (its main decay's time
+// constant, in seconds), for drawing.
+inline float displayDecay(int pad, int kit) {
+    kit = std::clamp(kit, 0, KitCount - 1);
+    static const float table[PadCount][KitCount] = {
+        {0.15f, 0.21f, 0.5f, 0.09f, 0.11f},     // kick
+        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f},   // snare
+        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f},     // clap
+        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f}, // hat
+        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f},         // 808
+        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f}, // rim
+        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f}, // shaker
+        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f},     // open
+        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f},    // tom lo
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f},        // tom mid
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f},        // tom hi
+        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f},   // hand drum
+        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f},         // crash
+        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f},        // ride
+        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f},    // bell
+        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f},    // zap
+    };
+    return table[std::clamp(pad, 0, PadCount - 1)][kit];
+}
+
 // Pads whose pitch is a scale degree, so they follow the key.
 inline bool tonal(int pad) {
     return pad == Kick || pad == Sub || pad == TomLo || pad == TomMid || pad == TomHi || pad == Perc || pad == Bell ||
@@ -410,7 +435,7 @@ struct Voice {
     SquareOsc sq[12];
     float sqInc[12] = {};
     Partial partial[7];
-    Svf f1, f2, f3, f4, f5;
+    Svf f1, f2, f3, f4, f5, f6;
     Rng rng, rng2;
 
     // Fades the voice out over a few milliseconds: a choke, or a steal.
@@ -439,6 +464,7 @@ struct Voice {
         f3.reset();
         f4.reset();
         f5.reset();
+        f6.reset();
         const Harmony &h = *su.harmony;
         const Edit &e = su.edit;
         const float vel = clampf(s.vel, 0.02f, 1.0f);
@@ -592,6 +618,7 @@ struct Voice {
             mul[0] = dm(tau);
             f1.set(std::min(9000.0f * std::exp2(0.3f * tone), rate * 0.42f), 1.1f, rate);
             f2.set(6800.0f * std::exp2(0.3f * tone), 0.7f, rate);
+            f4.set(6000.0f * std::exp2(0.3f * tone), 0.7f, rate);
             f3.set(std::min(15000.0f, rate * 0.45f), 0.7f, rate);
             // Brighter and looser kits are trimmed to sit as far under the kick.
             static const float level[KitCount] = {1.0f, 1.0f, 0.7f, 0.8f, 1.0f};
@@ -618,7 +645,7 @@ struct Voice {
             k[2] = 1.6f + 1.2f * std::max(0.0f, tone);
             k[3] = 1.0f / fastTanh(k[2]);
             f1.set(hz[0] * 6.0f, 0.9f, rate);
-            gain = 0.31f;
+            gain = 0.26f;
             pan = pad == TomLo ? -0.3f : pad == TomMid ? 0.0f : 0.3f;
             send = 0.25f;
             break;
@@ -678,28 +705,33 @@ struct Voice {
             k[0] = 1.0f;
             f1.set(4200.0f, 0.7f, rate);
             f2.set(4200.0f, 0.7f, rate);
-            gain = 0.28f;
+            f5.set(3600.0f, 0.7f, rate);
+            f6.set(3600.0f, 0.7f, rate);
+            gain = 0.36f;
             pan = -0.25f;
             send = 0.12f;
             break;
         }
         case Ride: {
-            static const float ratios[7] = {1.0f, 1.479f, 2.11f, 2.73f, 3.31f, 4.13f, 5.4f};
-            static const float amps[7] = {0.5f, 0.6f, 1.0f, 0.8f, 0.6f, 0.5f, 0.35f};
-            static const float taus[7] = {1.4f, 1.2f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f};
+            // The bow: a ping of inharmonic partials up where a ride's
+            // stick sound lives, over a wash. Toward the far edge, the bell:
+            // the partials drop and ring longer and purer.
+            static const float ratios[7] = {1.0f, 1.34f, 1.71f, 2.15f, 2.62f, 3.27f, 4.08f};
+            static const float amps[7] = {0.7f, 1.0f, 0.85f, 0.7f, 0.55f, 0.45f, 0.3f};
+            static const float taus[7] = {1.1f, 0.95f, 0.8f, 0.65f, 0.55f, 0.45f, 0.35f};
             const float bell = clampf(edge, 0.0f, 1.0f);
-            const float base = (kit == Techno ? 560.0f : 470.0f) * ratio * std::exp2(0.2f * tone);
+            const float base = (kit == Techno ? 1500.0f : 1250.0f) * ratio * std::exp2(0.25f * tone) * (1.0f - 0.5f * bell);
             for (int i = 0; i < 7; ++i) {
-                const float lowBoost = i < 3 ? 1.0f + 2.2f * bell : 1.0f - 0.4f * bell;
-                partial[i].set(base * ratios[i], rate, amps[i] * lowBoost / 4.0f,
-                               taus[i] * (1.0f + 0.5f * bell) * decayScale * (kit == Trap ? 0.7f : 1.0f));
+                const float shape = i < 3 ? 1.0f + 1.2f * bell : 1.0f - 0.5f * bell;
+                partial[i].set(base * ratios[i], rate, amps[i] * shape / 5.0f,
+                               taus[i] * (1.0f + 0.8f * bell) * decayScale * (kit == Trap ? 0.7f : 1.0f));
             }
             env[0] = 1; // wash
-            mul[0] = dm(0.3f);
+            mul[0] = dm(0.45f);
             env[1] = 1; // stick
             mul[1] = decayMul(0.0015f, rate);
-            k[0] = 0.18f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
-            f1.set(7500.0f, 0.7f, rate);
+            k[0] = 0.32f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
+            f1.set(6500.0f, 0.7f, rate);
             f2.set(5000.0f, 1.2f, rate);
             gain = 0.17f;
             pan = 0.3f;
@@ -846,7 +878,9 @@ struct Voice {
                 for (int q = 0; q < 6; ++q)
                     m += sq[q].step(sqInc[q]);
                 m = m * (1.0f / 6.0f) + rng.bipolar() * k[0];
-                const float v = f3.step(f2.step(f1.step(m).band + 0.4f * m).high).low;
+                // Two high-pass stages: the cluster's low partials would ring
+                // as a clang, and a hat is all shimmer.
+                const float v = f3.step(f4.step(f2.step(f1.step(m).band + 0.4f * m).high).high).low;
                 env[0] *= mul[0];
                 const float attack = std::min(1.0f, t / (0.0006f * rate));
                 sl = v * env[0] * attack * 2.2f;
@@ -906,8 +940,8 @@ struct Voice {
                 }
                 const float e = (0.55f * env[0] + 0.45f * env[1]) * std::min(1.0f, t / (0.0015f * rate));
                 const float nl = rng.bipolar(), nr = rng2.bipolar();
-                sl = f3.step(f1.step(ml * 0.12f + nl * 0.55f).high).low * e;
-                sr = f4.step(f2.step(mr * 0.12f + nr * 0.55f).high).low * e;
+                sl = f3.step(f5.step(f1.step(ml * 0.12f + nl * 0.55f).high).high).low * e;
+                sr = f4.step(f6.step(f2.step(mr * 0.12f + nr * 0.55f).high).high).low * e;
                 stereo = true;
                 break;
             }

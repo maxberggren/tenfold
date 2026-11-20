@@ -22,6 +22,7 @@
 // loop holds them exactly as heard.
 
 #include <QPainter>
+#include <QPainterPath>
 #include <QStringList>
 #include <array>
 #include <cmath>
@@ -950,6 +951,26 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 keys += QString::fromUtf8(kKeyPads[i].label);
         c::text(p, head, keys, c::alpha(ink, 0.5f), small, false, Qt::AlignRight | Qt::AlignVCenter);
 
+        // The drum's decay, as this kit and any shaping make it: over a
+        // second, a hat is a spike and a crash a long tail.
+        if (!gen) {
+            const QRectF box(cell.right() - cell.width() * 0.42 - 8 * s, cell.bottom() - cell.height() * 0.42 - 6 * s,
+                             cell.width() * 0.42, cell.height() * 0.32);
+            const float tau = displayDecay(pad, m_kit) * std::exp2(m_edit[pad].decay);
+            QPainterPath curve(QPointF(box.left(), box.bottom()));
+            for (int i = 0; i <= 48; ++i) {
+                const float t = float(i) / 48.0f;
+                curve.lineTo(box.left() + box.width() * t, box.bottom() - box.height() * std::exp(-t * 1.2f / tau));
+            }
+            curve.lineTo(box.right(), box.bottom());
+            p.setPen(Qt::NoPen);
+            p.setBrush(c::alpha(col, 0.07f + 0.25f * std::max(live, replay)));
+            p.drawPath(curve);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(col, 0.3f + 0.6f * std::max(live, replay)), 1.2));
+            p.drawPath(curve);
+        }
+
         // A drum that's been shaped shows how: tune, length, tone.
         const Edit &e = m_edit[pad];
         if (e.any()) {
@@ -984,8 +1005,8 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                                          : QString::fromUtf8(rateName(gen->rate));
             if (gen->until >= 0 && !gen->preview)
                 what += QStringLiteral(" · KEPT");
-            c::text(p, QRectF(cell.left(), cell.center().y() - label, cell.width(), 2 * label), what,
-                    c::alpha(col, 0.9f), int(label * 1.3), true, Qt::AlignCenter);
+            c::text(p, QRectF(cell.left(), cell.center().y() - label * 1.4, cell.width(), 2 * label), what,
+                    c::alpha(col, 0.55f), int(label * 1.3), true, Qt::AlignCenter);
         }
     }
 

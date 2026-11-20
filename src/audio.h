@@ -5,13 +5,13 @@
 
 namespace tf {
 
-class Engine;
+class Studio;
 
 // A PipeWire playback stream asking for a 128-frame quantum (2.7 ms at
 // 48 kHz) and rendering on PipeWire's real-time thread.
 class AudioOut {
 public:
-    explicit AudioOut(Engine *engine);
+    explicit AudioOut(Studio *studio);
     ~AudioOut();
 
     bool start();
@@ -24,7 +24,7 @@ public:
     struct Impl;
 
 private:
-    Engine *m_engine;
+    Studio *m_engine;
     Impl *d = nullptr;
     std::string m_error;
     std::atomic<bool> m_running{false};

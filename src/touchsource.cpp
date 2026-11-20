@@ -1,5 +1,7 @@
 #include "touchsource.h"
 
+#include <algorithm>
+
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -7,13 +9,14 @@
 
 #include <cmath>
 #include <ctime>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 namespace tf {
 
-TouchSource::TouchSource(Gesture *gesture) : m_gesture(gesture) {}
+TouchSource::TouchSource(FrameSink *sink) : m_gesture(sink) {}
 
 TouchSource::~TouchSource() { stop(); }
 

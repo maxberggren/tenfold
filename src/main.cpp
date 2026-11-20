@@ -28,11 +28,9 @@ static void usage(FILE *out) {
                "  tenfold [open]                          play (takes the trackpad on Space)\n"
                "  tenfold render <script.tf> <out.wav> [--json]\n"
                "                                          render a scripted performance\n"
-               "  tenfold demo <out.wav> [--json]         render the built-in demo\n"
-               "  tenfold demo-script                     print the demo's script\n"
-               "  tenfold bench [--json]                  time the worst case\n"
-               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--help-page] [--tutorial STEP]\n"
-               "                                          draw the window mid-performance\n",
+               "  tenfold bench [--json]                  time a dense case\n"
+               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
+               "                                          draw the window mid-performance (page 1-7, 0 arrange)\n",
                out);
 }
 
@@ -77,18 +75,16 @@ static int screenshot(int argc, char **argv) {
     Theme theme(QDir::tempPath() + "/tenfold-no-theme");
     Backend backend(false);
 
-    std::string script = tf::demoScript();
+    std::string script = "end 0.5\n";
     if (argc >= 4 && argv[3][0] != '-') {
         std::ifstream f(argv[3]);
         std::stringstream ss;
         ss << f.rdbuf();
         script = ss.str();
     }
-    if (const char *step = option(argc, argv, "--tutorial"))
-        backend.startTutorialAt(std::atoi(step) - 1);
     const char *at = option(argc, argv, "--at");
     std::string error;
-    if (!backend.simulate(script, at ? std::atof(at) : 50.5, &error)) {
+    if (!backend.simulate(script, at ? std::atof(at) : 1e9, &error)) {
         std::fprintf(stderr, "tenfold: %s\n", error.c_str());
         return 1;
     }
@@ -104,6 +100,10 @@ static int screenshot(int argc, char **argv) {
     if (const char *size = option(argc, argv, "--size"))
         std::sscanf(size, "%dx%d", &w, &h);
     window->resize(w, h);
+    if (const char *page = option(argc, argv, "--page")) {
+        const int n = std::atoi(page);
+        backend.setPage(n == 0 ? backend.pageCount() - 1 : n - 1);
+    }
     if (hasFlag(argc, argv, "--help-page"))
         window->setProperty("helpVisible", true);
     for (int i = 0; i < 20; ++i) {
@@ -137,17 +137,6 @@ int main(int argc, char *argv[]) {
         std::stringstream ss;
         ss << f.rdbuf();
         return report(tf::renderScript(ss.str(), argv[3]), json);
-    }
-    if (argc >= 2 && std::strcmp(argv[1], "demo") == 0) {
-        if (argc < 3) {
-            usage(stderr);
-            return 1;
-        }
-        return report(tf::renderScript(tf::demoScript(), argv[2]), json);
-    }
-    if (argc >= 2 && std::strcmp(argv[1], "demo-script") == 0) {
-        std::fputs(tf::demoScript(), stdout);
-        return 0;
     }
     if (argc >= 2 && std::strcmp(argv[1], "bench") == 0)
         return report(tf::runBench(8.0), json);

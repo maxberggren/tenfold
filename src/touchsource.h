@@ -5,7 +5,7 @@
 #include <string>
 #include <thread>
 
-#include "gesture.h"
+#include "touch.h"
 
 namespace tf {
 
@@ -16,7 +16,7 @@ class TouchSource {
 public:
     enum Status { Idle, Starting, Ready, Grabbed, Failed };
 
-    explicit TouchSource(Gesture *gesture);
+    explicit TouchSource(FrameSink *sink);
     ~TouchSource();
 
     void start(const std::string &devicePath);
@@ -34,7 +34,7 @@ private:
     void handle(char *line);
     void send(const char *line);
 
-    Gesture *m_gesture;
+    FrameSink *m_gesture;
     std::thread m_thread;
     int m_in = -1, m_out = -1;
     int m_pid = -1;

@@ -1,36 +1,46 @@
 #pragma once
 
+#include <QColor>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
+#include <QVariantList>
 #include <atomic>
 #include <memory>
 #include <thread>
 
 #include "audio.h"
-#include "engine.h"
-#include "enginesink.h"
-#include "gesture.h"
+#include "session.h"
+#include "studio.h"
 #include "touchsource.h"
-#include "tutorial.h"
 #include "wav.h"
 
-// The app's state for QML: owns the engine, the gesture layer, the touch
-// helper, the audio stream and the recorder, and turns them into properties.
+// The app's state for QML: owns the studio, the session (the pages), the
+// touch helper, the audio stream and the recorder, and turns them into
+// properties.
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(int padState READ padState NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
     Q_PROPERTY(QString padName READ padName NOTIFY changed)
+    Q_PROPERTY(int page READ page WRITE setPage NOTIFY pageChanged)
+    Q_PROPERTY(int pageCount READ pageCount CONSTANT)
+    Q_PROPERTY(QStringList pageNames READ pageNames CONSTANT)
+    Q_PROPERTY(QStringList pageBlurbs READ pageBlurbs CONSTANT)
+    Q_PROPERTY(QVariantList pageColors READ pageColors CONSTANT)
+    Q_PROPERTY(QString pageHelp READ pageHelp NOTIFY pageChanged)
+    Q_PROPERTY(QString pageStatus READ pageStatus NOTIFY changed)
+    Q_PROPERTY(QVariantList pagesPlaying READ pagesPlaying NOTIFY changed)
     Q_PROPERTY(QString key READ key NOTIFY changed)
     Q_PROPERTY(QString mode READ mode NOTIFY changed)
-    Q_PROPERTY(bool just READ just NOTIFY changed)
+    Q_PROPERTY(QString chord READ chord NOTIFY changed)
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
-    Q_PROPERTY(bool tempoSet READ tempoSet NOTIFY changed)
-    Q_PROPERTY(int loops READ loops NOTIFY changed)
+    Q_PROPERTY(QString position READ position NOTIFY changed)
+    Q_PROPERTY(bool metronome READ metronome NOTIFY changed)
+    Q_PROPERTY(int clips READ clips NOTIFY changed)
     Q_PROPERTY(int voices READ voices NOTIFY changed)
-    Q_PROPERTY(int frozen READ frozen NOTIFY changed)
     Q_PROPERTY(double cpu READ cpu NOTIFY changed)
     Q_PROPERTY(double latencyMs READ latencyMs NOTIFY changed)
     Q_PROPERTY(bool audioOk READ audioOk NOTIFY changed)
@@ -39,14 +49,6 @@ class Backend : public QObject {
     Q_PROPERTY(double recordSeconds READ recordSeconds NOTIFY changed)
     Q_PROPERTY(QString lastRecording READ lastRecording NOTIFY changed)
     Q_PROPERTY(double level READ level NOTIFY changed)
-    Q_PROPERTY(int octave READ octave NOTIFY changed)
-    Q_PROPERTY(double damper READ damper NOTIFY changed)
-    Q_PROPERTY(bool tutorialActive READ tutorialActive NOTIFY changed)
-    Q_PROPERTY(int tutorialStep READ tutorialStep NOTIFY changed)
-    Q_PROPERTY(int tutorialCount READ tutorialCount NOTIFY changed)
-    Q_PROPERTY(QString tutorialTitle READ tutorialTitle NOTIFY changed)
-    Q_PROPERTY(QString tutorialText READ tutorialText NOTIFY changed)
-    Q_PROPERTY(bool tutorialDone READ tutorialDone NOTIFY changed)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
 
 public:
@@ -60,67 +62,56 @@ public:
     int padState() const;
     QString error() const;
     QString padName() const;
+    int page() const { return m_session->page(); }
+    void setPage(int page);
+    int pageCount() const { return m_session->pageCount(); }
+    QStringList pageNames() const;
+    QStringList pageBlurbs() const;
+    QVariantList pageColors() const;
+    QString pageHelp() const { return m_session->pageHelp(m_session->page()); }
+    QString pageStatus() const { return m_session->pageStatus(); }
+    QVariantList pagesPlaying() const;
     QString key() const;
     QString mode() const;
-    bool just() const { return m_gv.just; }
-    double bpm() const;
-    bool tempoSet() const { return m_engine->view().tempoSet; }
-    int loops() const;
+    QString chord() const;
+    double bpm() const { return m_session->view().bpm; }
+    QString position() const;
+    bool metronome() const { return m_session->view().metronome; }
+    int clips() const;
     int voices() const;
-    int frozen() const;
-    double cpu() const { return m_engine->view().cpu; }
+    double cpu() const { return m_session->view().cpu; }
     double latencyMs() const;
     bool audioOk() const { return m_audio->running(); }
     QString audioError() const { return QString::fromStdString(m_audio->error()); }
     bool recording() const { return m_recording; }
     double recordSeconds() const;
     QString lastRecording() const { return m_lastRecording; }
-    double level() const { return m_engine->view().rms; }
-    int octave() const { return m_gv.octave; }
-    double damper() const { return m_gv.damper; }
-    bool tutorialActive() const { return m_tutorial.active(); }
-    int tutorialStep() const { return m_tutorial.index() + 1; }
-    int tutorialCount() const { return m_tutorial.count(); }
-    QString tutorialTitle() const { return m_tutorial.active() ? m_tutorial.step().title : QString(); }
-    QString tutorialText() const { return m_tutorial.active() ? m_tutorial.step().text : QString(); }
-    bool tutorialDone() const { return m_tutorial.justDone(); }
-    // The part of the pad the current step is about (pad coordinates, y up).
-    QRectF tutorialHighlight() const { return m_tutorial.active() ? m_tutorial.step().highlight : QRectF(); }
-    QString tutorialHighlightLabel() const { return m_tutorial.active() ? m_tutorial.step().highlightLabel : QString(); }
-    QString notice() const { return QString::fromUtf8(m_gv.notice); }
+    double level() const { return m_session->view().rms; }
+    QString notice() const { return m_notice; }
 
-    tf::Engine *engine() const { return m_engine.get(); }
-    const tf::GestureView &gestureView() const { return m_gv; }
+    tf::Session *session() const { return m_session.get(); }
     float padAspect() const { return m_touch->aspect(); }
 
-    Q_INVOKABLE void play();         // take the trackpad
-    Q_INVOKABLE void giveBack();     // let go of it, sound keeps going
+    Q_INVOKABLE void play();     // take the trackpad
+    Q_INVOKABLE void giveBack(); // let go of it, sound keeps going
     Q_INVOKABLE void togglePlay();
     Q_INVOKABLE void windowActive(bool active);
-    Q_INVOKABLE void shiftRoot(int fifths);
-    Q_INVOKABLE void shiftFamily(int step);
-    Q_INVOKABLE void toggleJust();
-    Q_INVOKABLE void toggleTutorial();
-    Q_INVOKABLE void tutorialNext();
-    Q_INVOKABLE void tutorialBack();
-    void startTutorialAt(int step);
-    Q_INVOKABLE void shiftOctave(int step);
-    Q_INVOKABLE void resetKnobs();
-    Q_INVOKABLE void dissolve();
-    Q_INVOKABLE void dissolveAll();
     Q_INVOKABLE void toggleRecording();
-    Q_INVOKABLE QString roleName(int role) const;
-    Q_INVOKABLE QString roleSlide(int role) const;
-    Q_INVOKABLE QString roleTwist(int role) const;
+    Q_INVOKABLE void toggleMetronome() { m_session->toggleMetronome(); }
+    Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
+    Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }
+    // A key for the pages; returns true when one used it.
+    Q_INVOKABLE bool key(int key, int modifiers, bool down, bool repeat, const QString &text);
 
     void shutdown();
-    // Plays a script into the gesture layer and engine up to a moment, as
-    // fast as it renders, with the screen following for its last second.
+    // Plays a script into the session and studio up to a moment, as fast as
+    // it renders, for screenshots.
     bool simulate(const std::string &script, double until, std::string *error);
 
 signals:
     void changed();
     void frame();
+    void pageChanged();
     void noticeChanged();
 
 private:
@@ -128,21 +119,18 @@ private:
     void stopRecording();
     void recorderLoop();
 
-    std::unique_ptr<tf::Engine> m_engine;
-    std::unique_ptr<tf::EngineSink> m_sink;
-    std::unique_ptr<tf::Gesture> m_gesture;
+    std::unique_ptr<tf::Studio> m_studio;
+    std::unique_ptr<tf::Session> m_session;
     std::unique_ptr<tf::TouchSource> m_touch;
     std::unique_ptr<tf::AudioOut> m_audio;
-    tf::GestureView m_gv;
     QTimer m_timer;
     QString m_device;
     bool m_wantPlay = false;
     bool m_pausedByFocus = false;
     bool m_simulated = false;
     uint32_t m_noticeSeq = 0;
-    Tutorial m_tutorial;
-    QElapsedTimer m_tickClock;
-    bool m_metronome = false;
+    QString m_notice;
+    int m_lastPage = -1;
 
     bool m_recording = false;
     QString m_recordPath, m_lastRecording;

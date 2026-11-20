@@ -4,9 +4,9 @@ import QtQuick.Controls.Material
 import QtQuick.Layouts
 import Tenfold
 
-// The window is a console: phosphor outlines on black glass, a different
-// phosphor for each kind of thing. Amber is the panel itself, green is
-// "ready", cyan is the scale, magenta the loops, red recording and alarms.
+// The window is a console: phosphor outlines on black glass. Each part has
+// its own phosphor, and its page fills the glass when its number is pressed;
+// amber is the panel itself, green "ready", red recording and alarms.
 ApplicationWindow {
     id: win
     width: 1440
@@ -24,25 +24,15 @@ ApplicationWindow {
     readonly property color amber: "#FFB000"
     readonly property color green: "#39FF88"
     readonly property color cyan: "#2EE6FF"
-    readonly property color magenta: "#FF4FD8"
     readonly property color red: "#FF4136"
-    readonly property color orange: "#FF8A1F"
     readonly property string wide: "JetBrainsMono Nerd Font"
     readonly property string mono: "Noto Sans Mono"
 
     property bool helpVisible: false
     readonly property bool playing: backend.padState === Backend.Playing
-    property date now: new Date()
-    property double started: Date.now()
+    readonly property color pageColor: backend.pageColors[backend.page]
 
     onActiveChanged: backend.windowActive(active)
-
-    Timer {
-        interval: 500
-        running: true
-        repeat: true
-        onTriggered: win.now = new Date()
-    }
 
     function quit() {
         if (backend.recording)
@@ -56,8 +46,8 @@ ApplicationWindow {
             quitDialog.open()
         }
     }
-    function pad2(n) { return (n < 10 ? "0" : "") + n }
-    function pad4(n) { return ("000" + n).slice(-4) }
+    // The number a page answers to: 1–7 for the parts, 0 for arrange.
+    function pageKey(i) { return i === backend.pageCount - 1 ? "0" : String(i + 1) }
 
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: backend.togglePlay() }
     Shortcut {
@@ -65,99 +55,106 @@ ApplicationWindow {
         onActivated: win.helpVisible ? win.helpVisible = false : backend.giveBack()
     }
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
-    Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
-    Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; onActivated: backend.shiftRoot(1) }
-    Shortcut { sequence: "Left"; context: Qt.ApplicationShortcut; onActivated: backend.shiftRoot(-1) }
-    Shortcut { sequence: "Up"; context: Qt.ApplicationShortcut; onActivated: backend.shiftFamily(1) }
-    Shortcut { sequence: "Down"; context: Qt.ApplicationShortcut; onActivated: backend.shiftFamily(-1) }
-    Shortcut { sequence: "J"; context: Qt.ApplicationShortcut; onActivated: backend.toggleJust() }
-    Shortcut { sequences: ["PgUp", "]"]; context: Qt.ApplicationShortcut; onActivated: backend.shiftOctave(1) }
-    Shortcut { sequences: ["PgDown", "["]; context: Qt.ApplicationShortcut; onActivated: backend.shiftOctave(-1) }
-    Shortcut { sequence: "R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleRecording() }
-    Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; onActivated: backend.toggleTutorial() }
-    Shortcut { sequence: "N"; context: Qt.ApplicationShortcut; enabled: backend.tutorialActive; onActivated: backend.tutorialNext() }
-    Shortcut { sequence: "B"; context: Qt.ApplicationShortcut; enabled: backend.tutorialActive; onActivated: backend.tutorialBack() }
-    Shortcut { sequence: "Backspace"; context: Qt.ApplicationShortcut; onActivated: backend.dissolve() }
-    Shortcut { sequence: "Shift+Backspace"; context: Qt.ApplicationShortcut; onActivated: backend.dissolveAll() }
-    Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; onActivated: backend.resetKnobs() }
+    Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
+    Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleRecording() }
     Shortcut {
-        sequence: "F"; context: Qt.ApplicationShortcut
+        sequence: "F11"; context: Qt.ApplicationShortcut
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
     }
 
     Item {
         id: screen
         anchors.fill: parent
+        focus: true
         LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
         LayoutMirroring.childrenInherit: true
+
+        // Every other key goes to the session: page numbers, tempo and key on
+        // Ctrl, and whatever the showing page plays from the keyboard.
+        Keys.onPressed: event => {
+            event.accepted = backend.key(event.key, event.modifiers, true, event.isAutoRepeat, event.text)
+        }
+        Keys.onReleased: event => {
+            event.accepted = backend.key(event.key, event.modifiers, false, event.isAutoRepeat, event.text)
+        }
 
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 20
             spacing: 10
 
-            // Wordmark, mode line, and the two console buttons.
+            // Wordmark and the pages, one tab each, numbered as the keys are.
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 14
+                spacing: 10
 
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 2
-                    Text {
-                        text: "TENFOLD"
-                        color: win.amber
-                        font.family: win.wide
-                        font.pixelSize: 34
-                        font.weight: Font.Black
-                        font.letterSpacing: 6
-                    }
-                    Text {
-                        text: win.playing ? qsTr("Pad live — play mode") : qsTr("Pointer — standby mode")
-                        color: win.amber
-                        font.family: win.wide
-                        font.pixelSize: 24
-                        font.weight: Font.Bold
-                        font.letterSpacing: 3
-                        font.capitalization: Font.AllUppercase
-                    }
-                    Rectangle {
+                Text {
+                    Layout.alignment: Qt.AlignVCenter
+                    Layout.rightMargin: 8
+                    text: "TENFOLD"
+                    color: win.amber
+                    font.family: win.wide
+                    font.pixelSize: 30
+                    font.weight: Font.Black
+                    font.letterSpacing: 5
+                }
+                Repeater {
+                    model: backend.pageCount
+                    delegate: Item {
+                        id: tab
+                        required property int index
+                        readonly property color tint: backend.pageColors[index]
+                        readonly property bool current: backend.page === index
+                        readonly property bool sounding: backend.pagesPlaying[index] === true
                         Layout.fillWidth: true
-                        height: 3
-                        color: win.amber
+                        Layout.preferredHeight: 58
+                        Layout.minimumWidth: 92
+                        Rectangle {
+                            anchors.fill: parent
+                            color: tab.current ? tab.tint : "transparent"
+                            border.color: tab.tint
+                            border.width: 2
+                        }
+                        Text {
+                            x: 8
+                            y: 5
+                            width: parent.width - 16
+                            text: win.pageKey(tab.index) + " " + backend.pageNames[tab.index]
+                            color: tab.current ? "#0a0806" : tab.tint
+                            font.family: win.mono
+                            font.pixelSize: 15
+                            font.weight: Font.Bold
+                            font.capitalization: Font.AllUppercase
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            x: 8
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: 6
+                            width: parent.width - 30
+                            text: backend.pageBlurbs[tab.index]
+                            color: tab.current ? "#0a0806" : tab.tint
+                            opacity: 0.75
+                            font.family: win.mono
+                            font.pixelSize: 10
+                            font.capitalization: Font.AllUppercase
+                            elide: Text.ElideRight
+                        }
+                        // Lit while one of the part's clips is playing.
+                        Rectangle {
+                            visible: tab.sounding
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 7
+                            width: 10
+                            height: 10
+                            color: tab.current ? "#0a0806" : tab.tint
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: backend.page = tab.index
+                        }
                     }
-                }
-                PanelButton {
-                    Layout.preferredWidth: 170
-                    Layout.preferredHeight: 72
-                    Layout.alignment: Qt.AlignTop
-                    label: qsTr("Tutorial")
-                    key: "T"
-                    color: win.green
-                    active: backend.tutorialActive
-                    onClicked: backend.toggleTutorial()
-                }
-                PanelButton {
-                    Layout.preferredWidth: 170
-                    Layout.preferredHeight: 72
-                    Layout.alignment: Qt.AlignTop
-                    label: qsTr("Gestures")
-                    key: "?"
-                    color: win.cyan
-                    active: win.helpVisible
-                    onClicked: win.helpVisible = !win.helpVisible
-                }
-                PanelButton {
-                    Layout.preferredWidth: 170
-                    Layout.preferredHeight: 72
-                    Layout.alignment: Qt.AlignTop
-                    label: backend.recording
-                           ? qsTr("Rec %1").arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
-                           : qsTr("Record")
-                    key: "R"
-                    color: win.red
-                    active: backend.recording
-                    onClicked: backend.toggleRecording()
                 }
             }
 
@@ -166,151 +163,48 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 spacing: 16
 
-                ColumnLayout {
+                Surface {
+                    id: surface
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    spacing: 12
-
-                    Surface {
-                        id: surface
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        app: backend
-                        accent: win.amber
-                    }
-
-                    // The tutorial, in place of the banner while it runs.
-                    Rectangle {
-                        visible: backend.tutorialActive
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: tutorialColumn.implicitHeight + 20
-                        color: "#000000"
-                        border.color: win.green
-                        border.width: 3
-
-                        ColumnLayout {
-                            id: tutorialColumn
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.margins: 10
-                            spacing: 8
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 10
-                                Rectangle {
-                                    color: backend.tutorialDone ? win.amber : win.green
-                                    implicitWidth: stepLabel.implicitWidth + 20
-                                    implicitHeight: 28
-                                    Text {
-                                        id: stepLabel
-                                        anchors.centerIn: parent
-                                        text: backend.tutorialDone
-                                              ? qsTr("Done ✓")
-                                              : qsTr("Step %1 / %2").arg(backend.tutorialStep).arg(backend.tutorialCount)
-                                        color: "#0a0806"
-                                        font.family: win.mono
-                                        font.pixelSize: 15
-                                        font.weight: Font.Bold
-                                        font.capitalization: Font.AllUppercase
-                                    }
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: backend.tutorialTitle
-                                    color: win.green
-                                    font.family: win.wide
-                                    font.pixelSize: 22
-                                    font.weight: Font.Bold
-                                    font.letterSpacing: 2
-                                    font.capitalization: Font.AllUppercase
-                                    elide: Text.ElideRight
-                                }
-                                PanelButton {
-                                    Layout.preferredWidth: 96; Layout.preferredHeight: 34
-                                    label: qsTr("Back"); key: "B"; color: win.green; labelSize: 13
-                                    onClicked: backend.tutorialBack()
-                                }
-                                PanelButton {
-                                    Layout.preferredWidth: 96; Layout.preferredHeight: 34
-                                    label: qsTr("Next"); key: "N"; color: win.green; labelSize: 13
-                                    onClicked: backend.tutorialNext()
-                                }
-                                PanelButton {
-                                    Layout.preferredWidth: 96; Layout.preferredHeight: 34
-                                    label: qsTr("Exit"); key: "T"; color: win.green; labelSize: 13
-                                    onClicked: backend.toggleTutorial()
-                                }
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                text: backend.tutorialText
-                                color: win.green
-                                wrapMode: Text.Wrap
-                                font.family: win.mono
-                                font.pixelSize: 16
-                            }
-                        }
-                    }
-
-                    // The mode banner.
-                    Rectangle {
-                        visible: !backend.tutorialActive
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 54
-                        color: "transparent"
-                        border.color: win.playing ? win.green : win.amber
-                        border.width: 3
-                        Text {
-                            anchors.centerIn: parent
-                            text: win.playing ? "**  " + qsTr("Pad live") + "  **" : "**  " + qsTr("Pointer mode") + "  **"
-                            color: win.playing ? win.green : win.amber
-                            font.family: win.wide
-                            font.pixelSize: 30
-                            font.weight: Font.Black
-                            font.letterSpacing: 8
-                            font.capitalization: Font.AllUppercase
-                        }
-                    }
+                    app: backend
                 }
 
-                // The right-hand column: what the instrument is set to, what's
-                // ready, its readouts, and its buttons.
+                // The right-hand column: the clock and key every part shares,
+                // what's ready, the readouts, and the buttons.
                 ColumnLayout {
-                    Layout.preferredWidth: 340
-                    Layout.maximumWidth: 340
+                    Layout.preferredWidth: 300
+                    Layout.maximumWidth: 300
                     Layout.fillHeight: true
                     spacing: 12
 
                     PanelBox {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 104
-                        title: qsTr("Scale information")
-                        color: win.cyan
+                        Layout.preferredHeight: 128
+                        title: qsTr("Transport")
+                        color: win.amber
                         Column {
-                            spacing: 4
+                            spacing: 2
                             Text {
-                                text: qsTr("Key: %1").arg(backend.key)
+                                text: qsTr("%1 BPM").arg(backend.bpm.toFixed(0)) + "   " + backend.position
+                                color: win.amber
+                                font.family: win.mono
+                                font.pixelSize: 26
+                                font.weight: Font.Bold
+                            }
+                            Text {
+                                text: qsTr("Key %1 %2").arg(backend.key).arg(backend.mode)
                                 color: win.cyan
                                 font.family: win.mono
-                                font.pixelSize: 19
+                                font.pixelSize: 16
                                 font.weight: Font.DemiBold
                                 font.capitalization: Font.AllUppercase
                             }
                             Text {
-                                text: qsTr("Mode: %1").arg(backend.mode)
+                                text: qsTr("Chord %1").arg(backend.chord)
                                 color: win.cyan
                                 font.family: win.mono
-                                font.pixelSize: 15
-                                font.capitalization: Font.AllUppercase
-                            }
-                            Text {
-                                text: (backend.just ? qsTr("Just intonation") : qsTr("Equal temperament"))
-                                      + "  ·  " + qsTr("Oct %1").arg((backend.octave > 0 ? "+" : "") + backend.octave)
-                                color: win.cyan
-                                font.family: win.mono
-                                font.pixelSize: 13
+                                font.pixelSize: 14
                                 font.capitalization: Font.AllUppercase
                             }
                         }
@@ -321,55 +215,44 @@ ApplicationWindow {
                         spacing: 6
                         StatusLamp { label: qsTr("Trackpad grabbed"); on: win.playing; color: win.green }
                         StatusLamp { label: qsTr("Audio running"); on: backend.audioOk; color: win.green }
-                        StatusLamp { label: qsTr("Tempo locked"); on: backend.tempoSet; color: win.magenta }
+                        StatusLamp { label: qsTr("Metronome"); on: backend.metronome; color: win.amber }
                         StatusLamp { label: qsTr("Recording"); on: backend.recording; color: win.red }
-                        StatusLamp { label: qsTr("Palm damper"); on: backend.damper > 0.05; color: win.orange }
                     }
 
-                    // Readouts: an inverse title bar over a large value.
-                    Repeater {
-                        model: 2
-                        delegate: Column {
-                            id: readout
-                            Layout.fillWidth: true
-                            spacing: 0
-                            readonly property color tint: [win.green, win.magenta, win.amber][index]
-                            readonly property string heading: [qsTr("DSP values"), qsTr("Tempo"), qsTr("Landscape")][index]
-                            readonly property string value: index === 0
-                                ? (backend.cpu * 100).toFixed(0) + " %   " + (backend.latencyMs > 0 ? backend.latencyMs.toFixed(1) + " MS" : "— MS")
-                                : index === 1
-                                  ? (backend.tempoSet ? backend.bpm.toFixed(1) + " BPM" : qsTr("Free"))
-                                  : qsTr("%1 loops  %2 held  %3 frozen").arg(backend.loops).arg(backend.voices).arg(backend.frozen)
-                            Rectangle {
-                                width: parent.width
-                                height: 22
-                                color: readout.tint
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: readout.heading
-                                    color: "#0a0806"
-                                    font.family: win.mono
-                                    font.pixelSize: 14
-                                    font.weight: Font.Bold
-                                    font.letterSpacing: 1.5
-                                    font.capitalization: Font.AllUppercase
-                                }
+                    Column {
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Rectangle {
+                            width: parent.width
+                            height: 22
+                            color: win.green
+                            Text {
+                                anchors.centerIn: parent
+                                text: qsTr("DSP values")
+                                color: "#0a0806"
+                                font.family: win.mono
+                                font.pixelSize: 14
+                                font.weight: Font.Bold
+                                font.letterSpacing: 1.5
+                                font.capitalization: Font.AllUppercase
                             }
-                            Rectangle {
-                                width: parent.width
-                                height: 38
-                                color: "transparent"
-                                border.color: readout.tint
-                                border.width: 2
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: readout.value
-                                    color: readout.tint
-                                    font.family: win.mono
-                                    font.pixelSize: index === 2 ? 17 : 24
-                                    font.weight: Font.DemiBold
-                                    font.capitalization: Font.AllUppercase
-                                }
+                        }
+                        Rectangle {
+                            width: parent.width
+                            height: 38
+                            color: "transparent"
+                            border.color: win.green
+                            border.width: 2
+                            Text {
+                                anchors.centerIn: parent
+                                text: (backend.cpu * 100).toFixed(0) + " %   "
+                                      + (backend.latencyMs > 0 ? backend.latencyMs.toFixed(1) + " MS" : "— MS")
+                                      + "   " + qsTr("%n voices", "", backend.voices)
+                                color: win.green
+                                font.family: win.mono
+                                font.pixelSize: 17
+                                font.weight: Font.DemiBold
+                                font.capitalization: Font.AllUppercase
                             }
                         }
                     }
@@ -391,106 +274,71 @@ ApplicationWindow {
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Dissolve"); key: "⌫"; color: win.magenta
-                            onClicked: backend.dissolve()
+                            label: backend.recording
+                                   ? qsTr("Rec %1").arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
+                                   : qsTr("Record")
+                            key: "Ctrl R"; color: win.red; active: backend.recording
+                            onClicked: backend.toggleRecording()
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Key ◀"); key: "←"; color: win.cyan
+                            label: qsTr("Tempo −"); key: "Ctrl ↓"; color: win.amber
+                            onClicked: backend.shiftTempo(-1)
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            label: qsTr("Tempo +"); key: "Ctrl ↑"; color: win.amber
+                            onClicked: backend.shiftTempo(1)
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            label: qsTr("Key ◀"); key: "Ctrl ←"; color: win.cyan
                             onClicked: backend.shiftRoot(-1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Key ▶"); key: "→"; color: win.cyan
+                            label: qsTr("Key ▶"); key: "Ctrl →"; color: win.cyan
                             onClicked: backend.shiftRoot(1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Oct −"); key: "["; color: win.cyan
-                            onClicked: backend.shiftOctave(-1)
+                            label: qsTr("Click"); key: "Ctrl M"; color: win.amber; active: backend.metronome
+                            onClicked: backend.toggleMetronome()
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Oct +"); key: "]"; color: win.cyan
-                            onClicked: backend.shiftOctave(1)
-                        }
-                        PanelButton {
-                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Scale"); key: "↑ ↓"; color: win.cyan
-                            onClicked: backend.shiftFamily(1)
-                        }
-                        PanelButton {
-                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: backend.just ? qsTr("Just") : qsTr("Equal"); key: "J"; color: win.cyan
-                            active: backend.just
-                            onClicked: backend.toggleJust()
-                        }
-                        PanelButton {
-                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Reset knobs"); key: "0"; color: win.amber
-                            onClicked: backend.resetKnobs()
-                        }
-                        PanelButton {
-                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: qsTr("Clear all"); key: "⇧⌫"; color: win.red
-                            onClicked: backend.dissolveAll()
+                            label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
+                            onClicked: win.helpVisible = !win.helpVisible
                         }
                     }
                 }
             }
 
-            // Status and clock, in inverse video across the bottom.
-            Column {
+            // Status in inverse video across the bottom: the pad, then what
+            // the showing page says its fingers are doing.
+            Rectangle {
                 Layout.fillWidth: true
-                spacing: 4
-                Rectangle {
-                    width: parent.width
-                    height: 28
-                    color: win.amber
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: 16
-                        width: parent.width - 32
-                        elide: Text.ElideRight
-                        text: qsTr("Status: %1").arg(
-                                  backend.padState === Backend.Playing ? qsTr("playing")
-                                : backend.padState === Backend.Starting ? qsTr("waiting for the trackpad")
-                                : backend.padState === Backend.Failed ? qsTr("fault — %1").arg(backend.error)
-                                : backend.padState === Backend.Ready ? qsTr("paused, pointer released")
-                                : qsTr("standby, press Space"))
-                              + "     " + qsTr("Landscape: %1 loops · %2 held · %3 frozen").arg(backend.loops).arg(backend.voices).arg(backend.frozen)
-                              + (backend.audioOk ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
-                        color: "#0a0806"
-                        font.family: win.mono
-                        font.pixelSize: 16
-                        font.weight: Font.Bold
-                        font.letterSpacing: 1
-                        font.capitalization: Font.AllUppercase
-                    }
-                }
-                Rectangle {
-                    width: parent.width
-                    height: 28
-                    color: Qt.darker(win.amber, 1.25)
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: 16
-                        width: parent.width - 32
-                        elide: Text.ElideMiddle
-                        text: {
-                            const s = Math.max(0, Math.floor((win.now.getTime() - win.started) / 1000))
-                            return qsTr("Show time %1:%2 (MM:SS)").arg(win.pad4(Math.floor(s / 60))).arg(win.pad2(s % 60))
-                                   + "     " + qsTr("Date %1").arg(Qt.formatDate(win.now, "MM/dd/yy"))
-                                   + "     " + qsTr("Time %1").arg(Qt.formatTime(win.now, "HH:mm:ss"))
-                                   + (backend.lastRecording !== "" ? "     " + qsTr("Saved %1").arg(backend.lastRecording) : "")
-                        }
-                        color: "#0a0806"
-                        font.family: win.mono
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        font.letterSpacing: 1
-                        font.capitalization: Font.AllUppercase
-                    }
+                Layout.preferredHeight: 28
+                color: win.pageColor
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: 16
+                    width: parent.width - 32
+                    elide: Text.ElideRight
+                    text: (backend.padState === Backend.Playing ? qsTr("Playing")
+                          : backend.padState === Backend.Starting ? qsTr("Waiting for the trackpad")
+                          : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
+                          : backend.padState === Backend.Ready ? qsTr("Paused, pointer released")
+                          : qsTr("Standby, press Space"))
+                          + (backend.pageStatus !== "" ? "     " + backend.pageStatus : "")
+                          + (backend.audioOk || backend.audioError === "" ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
+                          + (backend.lastRecording !== "" ? "     " + qsTr("Saved %1").arg(backend.lastRecording) : "")
+                    color: "#0a0806"
+                    font.family: win.mono
+                    font.pixelSize: 15
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1
+                    font.capitalization: Font.AllUppercase
                 }
             }
         }
@@ -553,16 +401,7 @@ ApplicationWindow {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("New here? Press T for the tutorial: it builds a track with you step by step.")
-                    color: win.green
-                    font.family: win.mono
-                    font.pixelSize: 15
-                    font.weight: Font.DemiBold
-                    wrapMode: Text.Wrap
-                }
-                Text {
-                    Layout.fillWidth: true
-                    text: qsTr("Drums on the bottom row, then bass, chords, lead and arp. Tap to play, hold to sustain and turn a knob. Tap a rhythm and hold on the next beat to loop it. Press down to keep what you hold.")
+                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects. Make loops on each, then put them together on 0, the arrange page. ? shows what the fingers do on the page you're on.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14
@@ -571,17 +410,20 @@ ApplicationWindow {
             }
         }
 
-        // What a swipe just changed, big for a moment.
+        // A notice from a page or a key, big for a moment.
         Text {
             id: noticeLabel
             anchors.centerIn: parent
+            width: parent.width - 80
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
             text: backend.notice
             font.family: win.wide
-            font.pixelSize: 72
+            font.pixelSize: 64
             font.weight: Font.Black
             font.letterSpacing: 6
             font.capitalization: Font.AllUppercase
-            color: win.cyan
+            color: win.pageColor
             opacity: 0
             Connections {
                 target: backend
@@ -595,9 +437,12 @@ ApplicationWindow {
             }
         }
 
-        GestureGuide {
+        HelpPage {
             anchors.fill: parent
             visible: win.helpVisible
+            title: win.pageKey(backend.page) + " " + backend.pageNames[backend.page]
+            tint: win.pageColor
+            pageHelp: backend.pageHelp
         }
     }
 

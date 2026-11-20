@@ -1,7 +1,5 @@
-QT += core testlib
-QT -= gui
-
-CONFIG += c++20 console testcase release
+QT += core gui testlib
+CONFIG += c++20 console testcase release link_pkgconfig
 TARGET = tenfold_tests
 TEMPLATE = app
 
@@ -10,11 +8,19 @@ QMAKE_CXXFLAGS_RELEASE += -O3 -ffast-math -fno-finite-math-only
 
 INCLUDEPATH += ../src
 
-HEADERS += ../src/tutorial.h ../src/electro.h ../src/engine.h ../src/gesture.h ../src/tuning.h ../src/offline.h ../src/dsp.h ../src/fx.h ../src/voices.h
-SOURCES += tenfold_tests.cpp \
-    ../src/engine.cpp \
-    ../src/gesture.cpp \
+# Everything but the window: the studio, the session, every part, the
+# offline player.
+HEADERS += testkit.h \
+    ../src/console.h ../src/dsp.h ../src/electro.h ../src/fx.h ../src/offline.h ../src/part.h \
+    ../src/parts.h ../src/phrase.h ../src/session.h ../src/starter.h ../src/studio.h ../src/touch.h \
+    ../src/tuning.h ../src/wav.h
+
+PARTS = ../src/drums.cpp ../src/bass.cpp ../src/chords.cpp ../src/lead.cpp ../src/arp.cpp \
+        ../src/atmos.cpp ../src/risers.cpp ../src/arrange.cpp
+
+SOURCES += main.cpp framework_tests.cpp \
+    drums_tests.cpp bass_tests.cpp chords_tests.cpp lead_tests.cpp arp_tests.cpp \
+    atmos_tests.cpp risers_tests.cpp arrange_tests.cpp \
+    ../src/console.cpp ../src/offline.cpp ../src/parts.cpp ../src/session.cpp ../src/studio.cpp \
     ../src/tuning.cpp \
-    ../src/offline.cpp \
-    ../src/demo.cpp \
-    ../src/tutorial.cpp
+    $$PARTS

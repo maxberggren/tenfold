@@ -1,0 +1,125 @@
+# Building a part
+
+tenfold is a studio of pages. Each part of an electronic track has its own
+page and is played with up to ten fingers on the trackpad, plus the keyboard
+where that helps. The pages are 1 Drums, 2 Bass, 3 Chords, 4 Lead, 5 Arp,
+6 Atmos, 7 FX, and 0 Arrange, where the parts' clips become a track. Each page
+is a different instrument, designed from scratch for what that part needs to
+do in a great track.
+
+This file is the contract between a part and the studio around it. Read
+`src/part.h` next: the interface is documented there in full.
+
+## The shape of a part
+
+A part is one file, `src/<part>.cpp`, with a `make<Part>()` that returns a
+`PartSpec`: name, a few words for the tab, the colour, default mixer channel
+settings, a `PartControl` and a `PartEngine`.
+
+- **PartControl** runs on the touch and UI threads, always under the session's
+  lock. It turns touch frames and keys into `Command`s for its engine, keeps
+  the page's state, and paints the page. It never needs locks of its own.
+- **PartEngine** runs on the audio thread. It hears Commands, live or replayed
+  from a clip, and renders the part's dry stereo signal, at most `kBlock` (32)
+  frames at a time. It never allocates, locks, blocks or does I/O.
+
+They share no memory. The only paths between them are Commands (control to
+engine) and `publish(float *data)`, which is up to 256 floats the engine fills
+about 60 times a second and the page reads as `pc.view->data`.
+
+## What the studio gives you
+
+- **One clock.** `ctx.transport()` on the audio side: bpm, beat position,
+  samples per beat. On the control side, `ctx.beatAt(t)` / `ctx.timeAt(beat)`.
+  4/4, beats counted since the studio started.
+- **One key.** `ctx.harmony().tuning` (root, scale, mode) and `harmony.midi(degree, octave)`.
+  Send scale **degrees** in Commands, not pitches, and resolve pitch in the
+  engine at the moment you play. That way clips follow key changes.
+- **The chord of the moment.** The Chords part calls `ctx.setChord(root, tones, n)`
+  whenever it plays a chord (live or from a clip). Every engine can read
+  `harmony().chordRoot / chordTones / chordSeq`, and every page reads
+  `studio().chordRoot` and so on. Bass, Arp and Lead should be able to follow it.
+- **The pump.** Drums call `ctx.pump(offset, strength)` on every kick. The
+  mixer ducks every channel by its `PumpDepth`. `ctx.duck()` is the envelope for
+  this block, for a part that wants to pump something of its own.
+- **Clips: eight slots per part.** Everything a part sends is remembered for a
+  few bars:
+  - `ctx.capture(slot, t0, t1)` turns what was played between t0 and t1 into a
+    loop and plays it at once. This is the tap-then-hold gesture; `src/phrase.h`
+    has the timing rules, tuned on a real trackpad, so reuse it. If nothing else
+    is playing, that first loop sets the studio's tempo.
+  - `ctx.record(slot, maxBars)` / `ctx.stopRecording()` record armed from the
+    next bar.
+  - `ctx.overdub(on)` adds to the playing clip.
+  - `ctx.launch(slot)`, `ctx.stop()` and `ctx.clear(slot)` work at the next
+    bar unless `now`.
+
+  Clips replay your own Commands through `command()`, with ids rewritten
+  (bits above 1 << 24) and exact times. The studio sends Offs for anything a
+  clip left on when it stops. Onsets (`On`, or any command flagged
+  `Command::Quantize`) are pulled toward the 16th grid. `Move` and `Param` are
+  replayed as they were, so knob sweeps and slides loop too.
+- **A mixer channel per part:** level, pan, DJ filter, reverb and echo sends,
+  pump depth, mute and solo. Set the defaults in `PartSpec::channel`. Any page
+  can change any channel with `ctx.setChannel(part, Channel, value)`. The room
+  (reverb, tape echo) and the master bus (filter, drive, glue, limiter) are
+  shared, set with `ctx.setMaster(Master, value)`.
+- **The console look.** `src/console.h` gives you the pad, tags, gauges,
+  buttons, fingers, grid, the bar's beats and the clip strip. Use it, so every
+  page reads as one panel: black glass, phosphor lines in your part's colour,
+  condensed capitals.
+- **Starter code.** `src/starter.h` is the simplest working page, in two kinds,
+  notes and drums. Read it to see the framework in use, then replace it.
+  `src/electro.h` (supersaw, ladder filter, ADSR, drum voices) and `src/fx.h`
+  (reverb, tape echo, saturator, grain cloud) are there to reuse or outgrow.
+
+## Rules
+
+1. **Own only your files:** `src/<part>.cpp`, and if you need one, a header
+   `src/<part>.h` included only by it. Your tests go in `tests/<part>_tests.cpp`.
+   Don't edit anything else: `part.h`, `studio.*`, `session.*`, `console.*`,
+   `starter.h`, `phrase.h`, `electro.h`, `fx.h`, `dsp.h`, the QML, or the `.pro`
+   files. Copy what you need into your own file. If the framework truly lacks
+   something, work around it and say so in your report.
+2. **Ten fingers, all of them meaningful.** Design the page so one finger is
+   instantly musical, and every further finger adds a dimension. The meaning
+   can depend on landing order, on where a finger lands, or on what the others
+   are doing. Use slide, pressure, contact size, twist (`Touch::angle`) and the
+   click (`Frame::button`) where they help.
+3. **Musical and pleasant first.** Everything must sit in the key and in time
+   by default. Electronic, big, modern, polished: a producer should want to
+   use it in a real track.
+4. **The keyboard is yours,** except the digits, Space, Escape, Tab, `?` and
+   every Ctrl combination (the session's). Convention across pages: F1–F8
+   launch your slots, Backspace stops your clip. Use letter keys where they
+   make the instrument better (a piano row, chord buttons, pads).
+5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about
+   0.5%) and at most about 60 Hz per finger. A clip holds 2048 events.
+6. **Ids** stay below `1 << 24`.
+7. **`leave()`** ends every sound a finger or key holds. Clips keep playing.
+8. **CPU:** the whole studio runs in one 128-frame callback (2.7 ms). Keep your
+   part under about 6% of that at its busiest (`tenfold bench` and your own
+   renders report load). No allocation on the audio thread.
+9. **Paint** inside `pc.pad`, plus the band just below it (about 44 px from
+   `pad.bottom()`) for your clip strip and readouts. `help()` returns one
+   `gesture\twhat it does` per line: it is the page's guide (the `?` key).
+   `status()` is one short line on what the fingers are doing now.
+10. Comments explain why, in full sentences. Commit with short imperative
+    messages.
+
+## Trying it
+
+```sh
+bin/build                      # build/tenfold
+bin/test                       # every test, yours included
+build/tenfold render script.tf out.wav     # a scripted performance; see src/offline.h
+build/tenfold screenshot out.png script.tf --page N --at SECONDS
+build/tenfold bench
+uv run --with numpy --with matplotlib python tools/analyze.py out.wav   # spectrum and levels
+```
+
+Scripts drive the real session: `page`, `down`, `move`, `glide`, `up`, `tap`,
+`click`, `key` (Qt key names: `A`, `F1`, `Shift+Left`, with optional `down` or
+`up`), `tempo` and `end`. A render reports the tempo and what every slot
+holds. Listen with your analysis: levels, spectra, timing against the beat
+grid, clipping. A screenshot shows the page as the player sees it.

@@ -1,0 +1,335 @@
+#include "session.h"
+
+#include <QPainter>
+#include <Qt>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+
+#include "parts.h"
+
+namespace tf {
+
+struct Session::Page {
+    PartSpec spec;
+    int part = -1; // the studio's index, or −1 for the arrange page
+    std::unique_ptr<Context> ctx;
+};
+
+class Session::Context : public ControlContext {
+public:
+    Context(Session *s, int part) : m_s(s), m_part(part) {}
+
+    int part() const override { return m_part; }
+    void send(const Command &c) override {
+        if (m_part < 0)
+            return;
+        StudioMsg m;
+        m.kind = StudioMsg::ToPart;
+        m.part = int8_t(m_part);
+        m.cmd = c;
+        post(m);
+    }
+    const StudioView &studio() const override { return m_s->m_view; }
+    double beatAt(double t) const override {
+        const StudioView &v = m_s->m_view;
+        return v.beat + (t - v.time) * v.bpm / 60.0;
+    }
+    double timeAt(double beat) const override {
+        const StudioView &v = m_s->m_view;
+        return v.time + (beat - v.beat) * 60.0 / std::max(1.0, v.bpm);
+    }
+    double now() const override { return m_s->now(); }
+
+    void capture(int slot, double t0, double t1, float quantize) override {
+        StudioMsg m;
+        m.kind = StudioMsg::Capture;
+        m.part = int8_t(m_part);
+        m.slot = int8_t(slot);
+        m.d0 = t0;
+        m.d1 = t1;
+        m.f = quantize;
+        post(m);
+    }
+    void record(int slot, int maxBars) override { simple(StudioMsg::Record, m_part, slot, maxBars); }
+    void stopRecording() override { simple(StudioMsg::StopRecord, m_part, 0, 0); }
+    void overdub(bool on) override { simple(StudioMsg::Overdub, m_part, 0, on); }
+    void launch(int slot, bool now) override { launchPart(m_part, slot, now); }
+    void stop(bool now) override { stopPart(m_part, now); }
+    void clear(int slot) override { clearPart(m_part, slot); }
+
+    void launchPart(int part, int slot, bool now) override { simple(StudioMsg::Launch, part, slot, now); }
+    void stopPart(int part, bool now) override { simple(StudioMsg::Stop, part, 0, now); }
+    void clearPart(int part, int slot) override { simple(StudioMsg::Clear, part, slot, 0); }
+    void setChannel(int part, int channel, float value) override {
+        StudioMsg m;
+        m.kind = StudioMsg::SetChannel;
+        m.part = int8_t(part);
+        m.slot = int8_t(channel);
+        m.f = value;
+        post(m);
+        // Shown at once, before the studio's next view says so.
+        if (part >= 0 && part < kMaxParts && channel >= 0 && channel < ChannelCount)
+            m_s->m_view.parts[part].channel.value[channel] = value;
+    }
+    void setMaster(int master, float value) override {
+        StudioMsg m;
+        m.kind = StudioMsg::SetMaster;
+        m.slot = int8_t(master);
+        m.f = value;
+        post(m);
+        if (master >= 0 && master < MasterCount)
+            m_s->m_view.master[master] = value;
+    }
+    void setTempo(double bpm) override {
+        StudioMsg m;
+        m.kind = StudioMsg::Tempo;
+        m.d0 = bpm;
+        post(m);
+        m_s->m_view.bpm = std::clamp(bpm, 40.0, 240.0);
+    }
+    void setKey(int root, int family, int brightness) override {
+        StudioMsg m;
+        m.kind = StudioMsg::Key;
+        m.part = int8_t(((root % 12) + 12) % 12);
+        m.slot = int8_t(family);
+        m.value = brightness;
+        post(m);
+        m_s->m_view.root = m.part;
+        m_s->m_view.family = family;
+        m_s->m_view.brightness = brightness;
+    }
+    float aspect() const override { return m_s->m_aspect; }
+    void notice(const QString &text) override {
+        m_s->m_notice = text;
+        ++m_s->m_noticeSeq;
+    }
+
+private:
+    void post(const StudioMsg &m) { m_s->m_studio->post(m); }
+    void simple(StudioMsg::Kind k, int part, int slot, int value) {
+        StudioMsg m;
+        m.kind = k;
+        m.part = int8_t(part);
+        m.slot = int8_t(slot);
+        m.value = value;
+        post(m);
+    }
+    Session *m_s;
+    int m_part;
+};
+
+Session::Session(Studio *studio) : m_studio(studio) {
+    std::vector<PartSpec> parts = makeParts();
+    QStringList names;
+    std::vector<QColor> colors;
+    for (auto &spec : parts) {
+        names << spec.name;
+        colors.push_back(spec.color);
+    }
+    for (auto &spec : parts) {
+        auto page = std::make_unique<Page>();
+        page->part = m_studio->addPart(std::move(spec.engine), spec.channel);
+        page->spec = std::move(spec);
+        page->ctx = std::make_unique<Context>(this, page->part);
+        m_pages.push_back(std::move(page));
+    }
+    m_partCount = int(m_pages.size());
+    auto arrange = std::make_unique<Page>();
+    arrange->spec = makeArrange(names, colors);
+    arrange->part = -1;
+    arrange->ctx = std::make_unique<Context>(this, -1);
+    m_pages.push_back(std::move(arrange));
+    m_view.partCount = m_partCount;
+    for (int i = 0; i < m_partCount && i < kMaxParts; ++i)
+        for (int c = 0; c < ChannelCount; ++c)
+            m_view.parts[i].channel.value[c] = m_pages[size_t(i)]->spec.channel[c];
+    m_pages[0]->spec.control->enter(*m_pages[0]->ctx);
+}
+
+Session::~Session() = default;
+
+double Session::now() const {
+    if (m_clock)
+        return m_clock();
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+}
+
+Session::Context &Session::context(int page) { return *m_pages[size_t(page)]->ctx; }
+
+void Session::setPage(int page) {
+    std::lock_guard lock(m_lock);
+    page = std::clamp(page, 0, pageCount() - 1);
+    if (page == m_page)
+        return;
+    Page &old = *m_pages[size_t(m_page)];
+    old.spec.control->leave(*old.ctx);
+    // Fingers still down belong to the page they landed on: the next page
+    // sees only fingers that land after it appears.
+    m_ignored.clear();
+    for (int i = 0; i < m_last.count; ++i)
+        m_ignored.push_back(m_last.touches[i].id);
+    m_page = page;
+    Page &next = *m_pages[size_t(m_page)];
+    next.spec.control->enter(*next.ctx);
+}
+
+QString Session::pageName(int page) const {
+    return page >= 0 && page < pageCount() ? m_pages[size_t(page)]->spec.name : QString();
+}
+QString Session::pageBlurb(int page) const {
+    return page >= 0 && page < pageCount() ? m_pages[size_t(page)]->spec.blurb : QString();
+}
+QColor Session::pageColor(int page) const {
+    return page >= 0 && page < pageCount() ? m_pages[size_t(page)]->spec.color : QColor();
+}
+QString Session::pageHelp(int page) const {
+    std::lock_guard lock(m_lock);
+    return page >= 0 && page < pageCount() ? m_pages[size_t(page)]->spec.control->help() : QString();
+}
+QString Session::pageStatus() const {
+    std::lock_guard lock(m_lock);
+    return m_pages[size_t(m_page)]->spec.control->status();
+}
+
+void Session::frame(const Frame &f) {
+    std::lock_guard lock(m_lock);
+    m_lastFrame = f.t;
+    m_last = f;
+    Page &p = *m_pages[size_t(m_page)];
+    if (m_ignored.empty()) {
+        p.spec.control->frame(f, *p.ctx);
+        return;
+    }
+    Frame g = f;
+    g.count = 0;
+    std::vector<int> still;
+    for (int i = 0; i < f.count; ++i) {
+        const int id = f.touches[i].id;
+        if (std::find(m_ignored.begin(), m_ignored.end(), id) != m_ignored.end())
+            still.push_back(id);
+        else
+            g.touches[g.count++] = f.touches[i];
+    }
+    m_ignored = still;
+    p.spec.control->frame(g, *p.ctx);
+}
+
+void Session::idle(double t) {
+    std::lock_guard lock(m_lock);
+    Page &p = *m_pages[size_t(m_page)];
+    p.spec.control->idle(t, *p.ctx);
+}
+
+bool Session::key(const KeyEvent &k) {
+    std::lock_guard lock(m_lock);
+    const bool ctrl = k.modifiers & Qt::ControlModifier;
+    const bool shift = k.modifiers & Qt::ShiftModifier;
+    if (k.down && !ctrl) {
+        if (k.key >= Qt::Key_1 && k.key <= Qt::Key_9) {
+            const int page = k.key - Qt::Key_1;
+            if (page < m_partCount)
+                setPage(page);
+            return true;
+        }
+        if (k.key == Qt::Key_0) {
+            setPage(arrangePage());
+            return true;
+        }
+        if (k.key == Qt::Key_Tab || k.key == Qt::Key_Backtab) {
+            const int step = (k.key == Qt::Key_Backtab || shift) ? -1 : 1;
+            setPage((m_page + step + pageCount()) % pageCount());
+            return true;
+        }
+    }
+    if (ctrl) {
+        if (!k.down)
+            return true;
+        switch (k.key) {
+        case Qt::Key_Up: shiftTempo(shift ? 5 : 1); return true;
+        case Qt::Key_Down: shiftTempo(shift ? -5 : -1); return true;
+        case Qt::Key_Left: shiftRoot(-1); return true;
+        case Qt::Key_Right: shiftRoot(1); return true;
+        case Qt::Key_BracketLeft: shiftMode(1); return true;
+        case Qt::Key_BracketRight: shiftMode(-1); return true;
+        case Qt::Key_M: toggleMetronome(); return true;
+        case Qt::Key_Backspace: stopAll(); return true;
+        default: return false;
+        }
+    }
+    if (k.key == Qt::Key_Space || k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
+        return false;
+    Page &p = *m_pages[size_t(m_page)];
+    return p.spec.control->key(k, *p.ctx);
+}
+
+void Session::refresh() {
+    std::lock_guard lock(m_lock);
+    if (m_studio->fetchView())
+        m_view = m_studio->view();
+}
+
+void Session::paint(QPainter &painter, const QRectF &pad, double time) {
+    std::lock_guard lock(m_lock);
+    Page &p = *m_pages[size_t(m_page)];
+    PaintContext pc;
+    pc.pad = pad;
+    pc.studio = &m_view;
+    pc.view = p.part >= 0 ? &m_view.parts[p.part] : nullptr;
+    pc.color = p.spec.color;
+    pc.time = time;
+    pc.beat = context(m_page).beatAt(time);
+    pc.scale = float(pad.height() / 600.0);
+    painter.save();
+    p.spec.control->paint(painter, pc);
+    painter.restore();
+}
+
+QString Session::notice(uint32_t *seq) const {
+    std::lock_guard lock(m_lock);
+    if (seq)
+        *seq = m_noticeSeq;
+    return m_notice;
+}
+
+void Session::shiftTempo(double delta) {
+    std::lock_guard lock(m_lock);
+    const double bpm = std::clamp(std::round(m_view.bpm) + delta, 60.0, 200.0);
+    context(m_page).setTempo(bpm);
+    context(m_page).notice(QStringLiteral("%1 BPM").arg(bpm));
+}
+
+void Session::shiftRoot(int fifths) {
+    std::lock_guard lock(m_lock);
+    const int root = ((m_view.root + 7 * fifths) % 12 + 12) % 12;
+    context(m_page).setKey(root, m_view.family, m_view.brightness);
+    context(m_page).notice(QStringLiteral("Key of %1").arg(QString::fromUtf8(Tuning::noteName(root))));
+}
+
+void Session::shiftMode(int step) {
+    std::lock_guard lock(m_lock);
+    const ScaleFamily &fam = family(m_view.family);
+    const int b = std::clamp(m_view.brightness + step, 0, fam.modeCount - 1);
+    context(m_page).setKey(m_view.root, m_view.family, b);
+    context(m_page).notice(QString::fromUtf8(fam.modeNames[b]));
+}
+
+void Session::toggleMetronome() {
+    std::lock_guard lock(m_lock);
+    StudioMsg m;
+    m.kind = StudioMsg::Metronome;
+    m.value = !m_view.metronome;
+    m_view.metronome = m.value;
+    m_studio->post(m);
+}
+
+void Session::stopAll() {
+    std::lock_guard lock(m_lock);
+    for (int i = 0; i < m_partCount; ++i)
+        context(m_page).stopPart(i, false);
+    context(m_page).notice(QStringLiteral("Everything stops at the bar"));
+}
+
+}

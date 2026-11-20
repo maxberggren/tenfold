@@ -6,7 +6,7 @@
 #include <time.h>
 
 #include "dsp.h"
-#include "engine.h"
+#include "studio.h"
 
 namespace tf {
 
@@ -62,7 +62,7 @@ static const pw_stream_events streamEvents = [] {
     return e;
 }();
 
-AudioOut::AudioOut(Engine *engine) : m_engine(engine) {}
+AudioOut::AudioOut(Studio *studio) : m_engine(studio) {}
 
 AudioOut::~AudioOut() { stop(); }
 

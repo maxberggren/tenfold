@@ -16,39 +16,54 @@ contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=native
 HEADERS += \
     src/audio.h \
     src/backend.h \
+    src/console.h \
     src/device.h \
     src/dsp.h \
-    src/engine.h \
     src/electro.h \
-    src/enginesink.h \
     src/fx.h \
-    src/gesture.h \
     src/helper.h \
     src/offline.h \
+    src/part.h \
+    src/parts.h \
+    src/phrase.h \
+    src/session.h \
+    src/starter.h \
+    src/studio.h \
     src/surface.h \
     src/theme.h \
+    src/touch.h \
     src/touchsource.h \
     src/translator.h \
     src/tuning.h \
-    src/tutorial.h \
-    src/voices.h \
     src/wav.h
+
+# One file per part: each page's controls and engine.
+PARTS = \
+    src/drums.cpp \
+    src/bass.cpp \
+    src/chords.cpp \
+    src/lead.cpp \
+    src/arp.cpp \
+    src/atmos.cpp \
+    src/risers.cpp \
+    src/arrange.cpp
 
 SOURCES += \
     src/main.cpp \
     src/audio.cpp \
     src/backend.cpp \
-    src/demo.cpp \
+    src/console.cpp \
     src/device.cpp \
-    src/engine.cpp \
-    src/gesture.cpp \
     src/helper.cpp \
     src/offline.cpp \
+    src/parts.cpp \
+    src/session.cpp \
+    src/studio.cpp \
     src/surface.cpp \
     src/theme.cpp \
     src/touchsource.cpp \
     src/translator.cpp \
     src/tuning.cpp \
-    src/tutorial.cpp
+    $$PARTS
 
 RESOURCES += src/resources.qrc

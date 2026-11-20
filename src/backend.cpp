@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 
 #include "device.h"
@@ -14,12 +15,12 @@
 using namespace tf;
 
 Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!live) {
-    m_engine = std::make_unique<Engine>(48000.0f);
-    m_audio = std::make_unique<AudioOut>(m_engine.get());
-    m_sink = std::make_unique<EngineSink>(m_engine.get(), 1.6f);
-    m_gesture = std::make_unique<Gesture>(m_sink.get());
-    m_touch = std::make_unique<TouchSource>(m_gesture.get());
-    m_gv = m_gesture->view();
+    m_studio = std::make_unique<Studio>(48000.0f);
+    m_audio = std::make_unique<AudioOut>(m_studio.get());
+    m_session = std::make_unique<Session>(m_studio.get());
+    m_touch = std::make_unique<TouchSource>(m_session.get());
+    if (!live)
+        m_session->setClock(&scriptClock);
 
     if (live) {
         m_audio->start();
@@ -66,38 +67,94 @@ QString Backend::error() const {
 
 QString Backend::padName() const { return QString::fromStdString(m_touch->padName()); }
 
-QString Backend::key() const { return QString::fromUtf8(Tuning::noteName(m_gv.root)); }
+void Backend::setPage(int page) {
+    m_session->setPage(page);
+    if (m_session->page() != m_lastPage) {
+        m_lastPage = m_session->page();
+        emit pageChanged();
+    }
+}
+
+QStringList Backend::pageNames() const {
+    QStringList l;
+    for (int i = 0; i < m_session->pageCount(); ++i)
+        l << m_session->pageName(i);
+    return l;
+}
+
+QStringList Backend::pageBlurbs() const {
+    QStringList l;
+    for (int i = 0; i < m_session->pageCount(); ++i)
+        l << m_session->pageBlurb(i);
+    return l;
+}
+
+QVariantList Backend::pageColors() const {
+    QVariantList l;
+    for (int i = 0; i < m_session->pageCount(); ++i)
+        l << m_session->pageColor(i);
+    return l;
+}
+
+QVariantList Backend::pagesPlaying() const {
+    QVariantList l;
+    const StudioView &v = m_session->view();
+    for (int i = 0; i < m_session->pageCount(); ++i)
+        l << (i < v.partCount && v.parts[i].playing >= 0);
+    return l;
+}
+
+QString Backend::key() const { return QString::fromUtf8(Tuning::noteName(m_session->view().root)); }
 
 QString Backend::mode() const {
-    const ScaleFamily &f = family(m_gv.family);
-    return tr("%1 %2").arg(QString::fromUtf8(f.modeNames[std::clamp(m_gv.brightness, 0, f.modeCount - 1)]),
-                           f.count == 5 && m_gv.family == 1 ? tr("pentatonic") : QString::fromUtf8(f.name).toLower());
+    const StudioView &v = m_session->view();
+    const ScaleFamily &f = family(v.family);
+    return QString::fromUtf8(f.modeNames[std::clamp(v.brightness, 0, f.modeCount - 1)]);
 }
 
-double Backend::bpm() const {
-    const float bar = m_engine->view().barSec;
-    return bar > 0 ? 240.0 / bar : 0;
+QString Backend::chord() const {
+    // The chord of the moment, as a roman numeral of the key.
+    static const char *numerals[] = {"I", "II", "III", "IV", "V", "VI", "VII"};
+    const StudioView &v = m_session->view();
+    const int r = ((v.chordRoot % 7) + 7) % 7;
+    return QString::fromLatin1(numerals[r]);
 }
 
-int Backend::loops() const {
+QString Backend::position() const {
+    const double beat = std::max(0.0, m_session->view().beat);
+    const long b = long(std::floor(beat));
+    return QStringLiteral("%1.%2").arg(b / kBeatsPerBar + 1).arg(b % kBeatsPerBar + 1);
+}
+
+int Backend::clips() const {
     int n = 0;
-    for (const auto &l : m_engine->view().loops)
-        n += l.active;
+    const StudioView &v = m_session->view();
+    for (int p = 0; p < v.partCount; ++p)
+        n += v.parts[p].playing >= 0;
     return n;
 }
 
 int Backend::voices() const {
     int n = 0;
-    for (const auto &v : m_engine->view().voices)
-        n += v.active && !v.frozen && v.finger >= 0 && v.finger < (1 << 20); // not notes a loop is playing
+    const StudioView &v = m_session->view();
+    for (int p = 0; p < v.partCount; ++p)
+        n += v.parts[p].voices;
     return n;
 }
 
-int Backend::frozen() const {
-    int n = 0;
-    for (const auto &v : m_engine->view().voices)
-        n += v.active && v.frozen;
-    return n;
+bool Backend::key(int key, int modifiers, bool down, bool repeat, const QString &text) {
+    KeyEvent k;
+    k.key = key;
+    k.modifiers = modifiers;
+    k.down = down;
+    k.repeat = repeat;
+    k.text = text;
+    const bool used = m_session->key(k);
+    if (m_session->page() != m_lastPage) {
+        m_lastPage = m_session->page();
+        emit pageChanged();
+    }
+    return used;
 }
 
 double Backend::latencyMs() const {
@@ -145,44 +202,6 @@ void Backend::windowActive(bool active) {
     }
 }
 
-void Backend::shiftRoot(int fifths) { m_gesture->shiftRoot(fifths); }
-void Backend::shiftFamily(int step) { m_gesture->shiftFamily(step); }
-void Backend::toggleJust() { m_gesture->toggleJust(); }
-void Backend::shiftOctave(int step) { m_gesture->shiftOctave(step); }
-
-void Backend::toggleTutorial() {
-    if (m_tutorial.active())
-        m_tutorial.stop();
-    else
-        m_tutorial.start(m_gesture->view());
-    emit changed();
-}
-
-void Backend::tutorialNext() {
-    if (m_tutorial.active())
-        m_tutorial.next(m_gesture->view());
-    emit changed();
-}
-
-void Backend::tutorialBack() {
-    if (m_tutorial.active())
-        m_tutorial.back(m_gesture->view());
-    emit changed();
-}
-
-void Backend::startTutorialAt(int step) {
-    m_tutorial.start(m_gesture->view());
-    for (int i = 0; i < step; ++i)
-        m_tutorial.next(m_gesture->view());
-}
-void Backend::resetKnobs() { m_gesture->resetKnobs(); }
-void Backend::dissolve() { m_gesture->dissolve(); }
-void Backend::dissolveAll() { m_gesture->dissolveAll(); }
-
-QString Backend::roleName(int r) const { return QCoreApplication::translate("Role", tf::roleName(r)); }
-QString Backend::roleSlide(int r) const { return QCoreApplication::translate("Role", tf::roleSlide(r)); }
-QString Backend::roleTwist(int r) const { return QCoreApplication::translate("Role", tf::roleTwist(r)); }
-
 void Backend::toggleRecording() {
     if (m_recording) {
         stopRecording();
@@ -198,7 +217,7 @@ void Backend::toggleRecording() {
     m_recorderRun = true;
     m_recording = true;
     m_recordClock.start();
-    m_engine->setRecording(true);
+    m_studio->setRecording(true);
     m_recorder = std::thread([this] { recorderLoop(); });
     emit changed();
 }
@@ -208,7 +227,7 @@ void Backend::recorderLoop() {
     // half-written file never sits under the final name.
     const std::string part = (m_recordPath + ".part").toStdString();
     WavWriter wav;
-    if (!wav.open(part, int(m_engine->sampleRate()))) {
+    if (!wav.open(part, int(m_studio->sampleRate()))) {
         m_recorderRun = false;
         return;
     }
@@ -216,7 +235,7 @@ void Backend::recorderLoop() {
     for (;;) {
         const bool more = m_recorderRun.load();
         size_t n;
-        while ((n = m_engine->drainRecording(buf.data(), 48000)) > 0)
+        while ((n = m_studio->drainRecording(buf.data(), 48000)) > 0)
             wav.write(buf.data(), n);
         if (!more)
             break;
@@ -230,7 +249,7 @@ void Backend::recorderLoop() {
 void Backend::stopRecording() {
     if (!m_recording)
         return;
-    m_engine->setRecording(false);
+    m_studio->setRecording(false);
     m_recorderRun = false;
     if (m_recorder.joinable())
         m_recorder.join();
@@ -243,34 +262,19 @@ void Backend::tick() {
         // Let held-back lifts through even when the pad has gone quiet.
         timespec ts{};
         clock_gettime(CLOCK_MONOTONIC, &ts);
-        m_gesture->idle(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
+        m_session->idle(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
     }
-    m_engine->fetchView();
-    m_gv = m_gesture->view();
-
-    // The tutorial watches what's been played, and runs a click while the
-    // player learns to tap a loop (until the first loop sets the tempo).
-    const double dt = m_tickClock.isValid() ? m_tickClock.restart() / 1000.0 : 0.016;
-    if (!m_tickClock.isValid())
-        m_tickClock.start();
-    Tutorial::State ts;
-    ts.playing = padState() == Playing;
-    ts.recording = m_recording;
-    ts.gesture = &m_gv;
-    ts.engine = &m_engine->view();
-    m_tutorial.update(ts, std::min(dt, 0.1));
-    const bool click = m_tutorial.active() && m_tutorial.step().metronome && !m_engine->view().tempoSet;
-    if (click != m_metronome) {
-        m_metronome = click;
-        tf::Command c;
-        c.type = tf::Cmd::Metronome;
-        c.f[0] = click ? 1.0f : 0.0f;
-        m_engine->send(c);
-    }
-
-    if (m_gv.noticeSeq != m_noticeSeq) {
-        m_noticeSeq = m_gv.noticeSeq;
+    m_session->refresh();
+    uint32_t seq = 0;
+    const QString n = m_session->notice(&seq);
+    if (seq != m_noticeSeq) {
+        m_noticeSeq = seq;
+        m_notice = n;
         emit noticeChanged();
+    }
+    if (m_session->page() != m_lastPage) {
+        m_lastPage = m_session->page();
+        emit pageChanged();
     }
     emit frame();
     emit changed();
@@ -280,17 +284,18 @@ bool Backend::simulate(const std::string &script, double until, std::string *err
     ScriptPlayer player;
     if (!player.load(script, error))
         return false;
-    m_engine->setTimeOrigin(0);
+    until = std::min(until, player.end());
+    m_studio->setTimeOrigin(0);
     std::vector<float> buf(384 * 2);
     for (int tick = 0;; ++tick) {
         const double t = tick / 125.0;
         if (t > until)
             break;
-        player.tick(t, *m_gesture);
-        m_engine->render(buf.data(), 384);
-        if (t > until - 1.0)
-            this->tick();
+        m_session->refresh();
+        player.tick(t, *m_session);
+        m_studio->render(buf.data(), 384);
     }
+    setScriptClock(until);
     this->tick();
     return true;
 }

@@ -80,6 +80,35 @@ private slots:
         QCOMPARE(take.view.parts[1].clips[0].events, 8);
     }
 
+    void spaceLeavesOutTheTinkeringBeforeARepeatedBeat() {
+        // A few stray pads while finding the groove, then kick-snare-kick-
+        // snare twice, then Space on the next kick: the loop is the eight
+        // hits that repeat (two bars at 120 BPM), not the noodling.
+        const auto take = testkit::play("page 0 1\n"
+                                        "tap 0.3 0.38 0.38\ntap 0.55 0.62 0.62\ntap 0.8 0.88 0.38\n"
+                                        "tap 1.5 0.12 0.12\ntap 2.0 0.38 0.12\ntap 2.5 0.12 0.12\ntap 3.0 0.38 0.12\n"
+                                        "tap 3.5 0.12 0.12\ntap 4.0 0.38 0.12\ntap 4.5 0.12 0.12\ntap 5.0 0.38 0.12\n"
+                                        "key 5.5 Space\nend 8\n");
+        QCOMPARE(int(std::lround(take.view.bpm)), 120);
+        QCOMPARE(take.view.parts[0].playing, 0);
+        QCOMPARE(take.view.parts[0].clips[0].events, 8);
+    }
+
+    void overABeatSpaceLoopsTheBarsThatRepeat() {
+        // Over the beat (bars at 4.5, 6.5, 8.5 s): a bar of trying things,
+        // then the same bass bar twice, then Space after the bar line. The
+        // loop is the two repeated bars, without the bar before them.
+        const auto take = testkit::play(std::string(kBeat) +
+                                        "page 3.0 2\n"
+                                        "tap 4.6 0.7 0.5\ntap 5.3 0.9 0.5\ntap 6.1 0.5 0.5\n"
+                                        "tap 6.55 0.1 0.5\ntap 7.05 0.3 0.5\ntap 7.55 0.2 0.5\ntap 8.05 0.1 0.5\n"
+                                        "tap 8.55 0.1 0.5\ntap 9.05 0.3 0.5\ntap 9.55 0.2 0.5\ntap 10.05 0.1 0.5\n"
+                                        "key 10.7 Space\nend 13\n");
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 8);
+        QCOMPARE(take.view.parts[1].clips[0].events, 16);
+    }
+
     void spaceWithNothingPlayedMakesNoLoop() {
         const auto take = testkit::play("page 0 2\nkey 0.5 Space\nend 2\n");
         QCOMPARE(take.view.parts[1].playing, -1);

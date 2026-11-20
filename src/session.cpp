@@ -29,7 +29,11 @@ public:
         if (!(c.flags & Command::NoRecord) && (c.type == Command::On || (c.flags & Command::Quantize))) {
             // A Continue keeps a phrase going (an arp running from held
             // notes) but never starts one.
-            onsets[onsetHead % onsets.size()] = {c.t > 0 ? c.t : now(), !(c.flags & Command::Continue)};
+            // Its key says which sound it was (a pad, a note, a chord): the
+            // first field is each page's "what", so Space can tell a
+            // repeated pattern from new playing.
+            const uint32_t key = uint32_t(c.type) * 2654435761u ^ uint32_t(c.i[0]) * 40503u;
+            onsets[onsetHead % onsets.size()] = {c.t > 0 ? c.t : now(), !(c.flags & Command::Continue), key};
             ++onsetHead;
         }
         StudioMsg m;
@@ -128,6 +132,7 @@ public:
     struct Onset {
         double t = 0;
         bool real = false;
+        uint32_t key = 0;
     };
     std::array<Onset, 256> onsets{};
     size_t onsetHead = 0;
@@ -335,6 +340,68 @@ QString Session::notice(uint32_t *seq) const {
     return m_notice;
 }
 
+namespace {
+
+struct Hit {
+    double x;
+    uint32_t key;
+};
+
+// How well what was played in [a, b) repeats what was played one period
+// earlier, from 0 to 1: every hit with a twin (the same sound, at the same
+// place a period before) counts, on both sides.
+// The windows reach `edge` early, for hits a little ahead of their place.
+double repeats(const std::vector<Hit> &hits, double a, double b, double period, double tol, double edge) {
+    std::vector<const Hit *> now, before;
+    for (const Hit &h : hits) {
+        if (h.x >= a - edge && h.x < b - edge)
+            now.push_back(&h);
+        if (h.x >= a - period - edge && h.x < b - period - edge)
+            before.push_back(&h);
+    }
+    if (now.empty() || before.empty())
+        return 0;
+    std::vector<bool> used(before.size(), false);
+    int matched = 0;
+    for (const Hit *h : now)
+        for (size_t j = 0; j < before.size(); ++j)
+            if (!used[j] && before[j]->key == h->key && std::fabs(h->x - period - before[j]->x) < tol) {
+                used[j] = true;
+                ++matched;
+                break;
+            }
+    return 2.0 * matched / double(now.size() + before.size());
+}
+
+// The loop the player meant: the shortest period that what was just played
+// repeats with, then stretched back over as many repeats as there are, so
+// the tinkering before the pattern settled stays out. Periods are the
+// candidates given, longest stretch at most `longest`; returns the loop's
+// length (a whole number of periods), or 0 when nothing repeats.
+double settledLoop(const std::vector<Hit> &hits, double end, double earliest, const std::vector<double> &periods,
+                   double longest, double tol, double minScore, double edge) {
+    for (double p : periods) {
+        if (end - 2 * p < earliest - tol)
+            break; // no room for a repeat before it
+        if (repeats(hits, end - p, end, p, tol, edge) < minScore)
+            continue;
+        double length = p;
+        for (double m = 2; m * p <= longest + 1e-9; m *= 2) {
+            const double start = end - m * p;
+            if (start < earliest - tol)
+                break;
+            // Every repeat from there on matches the one before it.
+            if (repeats(hits, start + p, end, p, tol, edge) < minScore)
+                break;
+            length = m * p;
+        }
+        return length;
+    }
+    return 0;
+}
+
+}
+
 void Session::toggleRecording(ControlContext &base) {
     // Space loops what was just played. Play first, then press Space:
     //   * nothing else playing: press it where the phrase would start again
@@ -422,9 +489,40 @@ void Session::toggleRecording(ControlContext &base) {
             ctx.notice(QStringLiteral("Press Space where the phrase starts again"));
             return;
         }
-        ctx.capture(slot, first, nowT, 0.85f);
+        // If the player went round a pattern more than once, the loop is
+        // that pattern, from where it settled; otherwise the whole phrase.
+        std::vector<Hit> hits;
+        for (const auto &o : times)
+            if (o.real && o.t >= first - 0.01 && o.t <= nowT + 0.05)
+                hits.push_back({o.t, o.key});
+        std::vector<double> periods;
+        for (size_t i = hits.size(); i-- > 0;) {
+            const double p = nowT - hits[i].x;
+            if (p >= 0.3)
+                periods.push_back(p);
+        }
+        double start = first;
+        bool settled = false;
+        for (double p : periods) {
+            const double tol = 0.06 + 0.03 * p;
+            const double length = settledLoop(hits, nowT, first, {p}, 16.0, tol, 0.8, tol / 2);
+            if (length > 0) {
+                // Start on the hit nearest the found start: the player's own time.
+                const double want = nowT - length;
+                double bestD = 1e9;
+                for (const Hit &h : hits)
+                    if (std::fabs(h.x - want) < bestD) {
+                        bestD = std::fabs(h.x - want);
+                        start = h.x;
+                    }
+                settled = start > first + 0.05;
+                break;
+            }
+        }
+        ctx.capture(slot, start, nowT, 0.85f);
         m_view.parts[part].recording = slot;
-        ctx.notice(QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
+        ctx.notice(settled ? QStringLiteral("Loop of what you repeated, slot %1: it sets the tempo").arg(slot + 1)
+                           : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
         return;
     }
     const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
@@ -441,6 +539,21 @@ void Session::toggleRecording(ControlContext &base) {
     const double played = std::max(1.0, (end - startBar) / kBeatsPerBar);
     int bars = int(std::lround(std::exp2(std::round(std::log2(played)))));
     bars = std::clamp(bars, 1, 8);
+    // If the last bars repeat the ones before them, the loop is the pattern
+    // the player settled into, over as many bars as it held, and whatever
+    // came before it (finding the groove) stays out.
+    bool settled = false;
+    {
+        std::vector<Hit> hits;
+        for (const auto &o : times)
+            if (o.real && o.t >= first - 0.01 && o.t <= nowT + 0.05)
+                hits.push_back({ctx.beatAt(o.t) + 0.125, o.key}); // reach an eighth early, as takes do
+        const double length = settledLoop(hits, end, startBar, {4.0, 8.0, 16.0, 32.0}, 32.0, 0.2, 0.75, 0.0);
+        if (length > 0) {
+            settled = int(std::lround(length / kBeatsPerBar)) != bars || length < end - startBar - 0.5;
+            bars = std::clamp(int(std::lround(length / kBeatsPerBar)), 1, 8);
+        }
+    }
     StudioMsg m;
     m.kind = StudioMsg::TakeBars;
     m.part = int8_t(part);
@@ -449,7 +562,9 @@ void Session::toggleRecording(ControlContext &base) {
     m.d1 = end;
     ctx.post(m);
     m_view.parts[part].recording = slot;
-    const QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
+    QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
+    if (settled)
+        what = QStringLiteral("the %1 you repeated").arg(what);
     if (end <= beatNow)
         ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
     else

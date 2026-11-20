@@ -688,6 +688,19 @@ private:
             gain1[b] = k.level * hg;
             live[b] = b == 0 || l0 > 0 || k.level > 0;
         }
+        // Harmony makes the line bigger, not three times as loud.
+        {
+            float h0 = 0, h1 = 0;
+            for (int b = 1; b < Voice::kBanks; ++b) {
+                h0 += gain0[b];
+                h1 += gain1[b];
+            }
+            const float n0 = 1.0f / (1.0f + 0.55f * h0), n1 = 1.0f / (1.0f + 0.55f * h1);
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                gain0[b] *= n0;
+                gain1[b] *= n1;
+            }
+        }
         v.leadSemis = v.banks[0].pitch;
 
         // Unison: the outer saws furthest out in pitch and in the field. A

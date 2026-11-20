@@ -147,7 +147,7 @@ public:
         case Qt::Key_Q: {
             Command c;
             c.type = CmdFall;
-            c.id = -1;
+            c.id = kEveryone;
             c.t = t;
             ctx.send(c);
             m_localDrop = -1;

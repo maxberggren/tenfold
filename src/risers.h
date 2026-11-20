@@ -58,10 +58,13 @@ inline const char *kindName(int k) {
 //         the onset to the drop (risers).
 //   Move  f[0]..f[4] as in On.
 //   Drop  the drop comes at the next bar line: risers rush into it.
-//   Fall  the riser with this id (or every one, id −1) falls away, and a drop
+//   Fall  the riser with this id (or every one, kEveryone) falls away, and a drop
 //         no riser aims at any more is called off.
 enum : uint16_t { CmdDrop = Command::User, CmdFall = Command::User + 1 };
 enum : int32_t { FlagEnterLate = 1 }; // a riser joining a drop enters its length before it
+// Fall's id for every riser at once: the low 24 bits survive a clip's
+// rewriting of ids, so a replayed "everything falls away" still means it.
+constexpr int32_t kEveryone = 0xFFFFFF;
 
 // The numbers the engine publishes for the page.
 namespace pub {
@@ -144,6 +147,7 @@ struct Voice {
 
     Rng rng;
     Svf aL, aR, bL, bR, cL, cR;
+    OnePoleLp oL, oR;
     Ladder ladL, ladR;
     SawOsc saw[12];
     float ph[8] = {};
@@ -245,7 +249,7 @@ public:
             break;
         case CmdFall:
             for (Voice &v : m_voices)
-                if (v.active && isRiser(v.kind) && (c.id < 0 || v.id == c.id) && v.state <= Running)
+                if (v.active && isRiser(v.kind) && ((c.id & kEveryone) == kEveryone || v.id == c.id) && v.state <= Running)
                     fall(v, tr.beat);
             break;
         default:
@@ -331,7 +335,7 @@ public:
         for (int i = 0; i < n; ++i) {
             const float a = std::max(std::fabs(l[i]), std::fabs(r[i]));
             m_busEnv += (a - m_busEnv) * (a > m_busEnv ? m_busAttack : m_busRelease);
-            constexpr float threshold = 0.22f;
+            constexpr float threshold = 0.32f;
             const float g = m_busEnv > threshold ? std::pow(threshold / m_busEnv, 0.6f) : 1.0f;
             l[i] *= g;
             r[i] *= g;
@@ -962,13 +966,16 @@ private:
         const float cut = 500.0f * std::exp2(4.6f * envAt(bm));
         v.aL.set(cut, 0.9f, m_rate);
         v.aR.set(cut * 1.05f, 0.9f, m_rate);
-        v.bL.set(4200.0f, 0.7f, m_rate);
-        v.bR.set(4600.0f, 0.7f, m_rate);
+        v.bL.set(2600.0f, 0.7f, m_rate);
+        v.bR.set(2900.0f, 0.7f, m_rate);
         v.cL.set(8500.0f, 0.9f, m_rate);
+        const float bright = 3500.0f * std::exp2(2.3f * envAt(bm));
+        v.oL.set(bright, m_rate);
+        v.oR.set(bright * 1.1f, m_rate);
         // The cluster of a cymbal: six square waves at unrelated pitches,
         // band-passed high so they shimmer rather than ring.
         static const float metal[6] = {593.0f, 879.8f, 1068.1f, 1510.6f, 1560.6f, 2312.0f};
-        const float cym = 0.45f + 0.55f * I, pad = 0.9f - 0.4f * I;
+        const float cym = 0.8f + 0.6f * I, pad = 0.65f - 0.25f * I;
         float peak = 0;
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
@@ -981,8 +988,9 @@ private:
             }
             const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
             const float metalBand = v.cL.step(m * 0.07f).band;
-            const float cL = (v.bL.step(n1).high + metalBand) * cym;
-            const float cR = (v.bR.step(n2).high + metalBand) * cym;
+            // Reversed, a cymbal goes from dark to bright.
+            const float cL = v.oL.step(v.bL.step(n1).high + metalBand) * cym;
+            const float cR = v.oR.step(v.bR.step(n2).high + metalBand) * cym;
             float sl = 0, sr = 0;
             for (int k = 0; k < count; ++k) {
                 sl += v.saw[2 * k].step(inc[2 * k]);
@@ -1044,9 +1052,9 @@ private:
             v.bR.set(3900.0f, 0.7f, m_rate);
         }
         const float dt = 1.0f / m_rate;
-        const float boomDecay = std::exp(-dt / (0.45f + 0.7f * I));
+        const float boomDecay = std::exp(-dt / (0.3f + 0.45f * I));
         const float thudDecay = std::exp(-dt / 0.07f);
-        const float crashDecay = std::exp(-dt / (0.9f + 1.4f * I));
+        const float crashDecay = std::exp(-dt / (0.8f + 1.2f * I));
         const float tailDecay = std::exp(-dt / 1.1f);
         const float pitchDecay = std::exp(-dt / 0.035f);
         // The tail sweeps down from bright to dark over a couple of beats.
@@ -1060,7 +1068,7 @@ private:
             v.ph[0] += boomHz * (1.0f + 3.0f * v.pitchEnv) / m_rate;
             v.ph[0] -= std::floor(v.ph[0]);
             const float attack = std::min(1.0f, v.t * 1500.0f);
-            const float boom = fastTanh(1.8f * sin01(v.ph[0])) * v.env * attack;
+            const float boom = fastTanh((1.0f + 1.4f * v.env) * sin01(v.ph[0])) * v.env * attack;
             const float n0 = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
             const float thud = v.aL.step(n0).low * v.env2 * 1.6f;
             const float cl = v.bL.step(n1).high * v.env3, cr = v.bR.step(n2).high * v.env3;
@@ -1099,7 +1107,7 @@ private:
         const float hz = endHz * std::exp2(semis / 12.0f);
         v.note = float(69.0 + 12.0 * std::log2(hz / 440.0));
         const bool sustaining = v.held || (v.releasedAt >= 0 && b0 < v.releasedAt) || v.t < diveSec;
-        const float decay = std::exp(-1.0f / ((sustaining ? 6.0f : 0.5f + 1.2f * I) * m_rate));
+        const float decay = std::exp(-1.0f / ((sustaining ? 6.0f : 0.35f + 0.8f * I) * m_rate));
         if (v.t == 0)
             v.env = 1.0f;
         const float vel = v.vel * pressGain(v) * 0.4f;
@@ -1145,7 +1153,8 @@ private:
         const float midi = target + 36.0f * (1.0f - c);
         v.note = midi;
         const float inc = std::min(midiToHz(midi) / m_rate, 0.45f), inc2 = std::min(midiToHz(midi + 0.1f) / m_rate, 0.45f);
-        const float gEnd = dbToGain(-30.0f * c) * (u >= 0.999f && !v.held ? 0.0f : 1.0f);
+        // The last tenth fades to nothing rather than stopping.
+        const float gEnd = dbToGain(-24.0f * c) * clampf((1.0f - u) / 0.12f, 0, 1);
         const float g0 = v.gain, g1 = gEnd * pressGain(v) * (0.6f + 0.5f * v.sInt) * 0.3f;
         v.gain = g1;
         float peak = 0;
@@ -1182,7 +1191,7 @@ private:
             const double b = b0 + bps * i;
             // Held, it fires again on every sixteenth, walking up the chord.
             const double step = std::floor(b * 4.0 + 1e-9);
-            if (v.t == 0 || (v.held && step != v.lastStep && v.t > 0.05f)) {
+            if (v.t == 0 || (v.held && step != v.lastStep && v.t > 0.2f)) {
                 v.lastStep = step;
                 const int k = v.stepCount++;
                 const int tone = h.chordTones[k % count] + base;

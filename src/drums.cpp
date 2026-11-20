@@ -59,7 +59,12 @@ constexpr double kTogetherSecs = 0.08; // fingers landing this close are one han
 // left to right, the roll rates; a landing within kSnapSecs of a step of
 // the grid counts as that step.
 constexpr float kStripY = 0.05f;
+// A contact this much larger than a fingertip, this near the edge, is a
+// thumb resting: REPEAT too, a little above the drawn strip.
+constexpr float kThumbY = 0.12f;
+constexpr float kThumbSize = 1.3f;
 constexpr double kSnapSecs = 0.03;
+constexpr double kRepeatGapSecs = 0.08; // the closest a first repeat may follow a landing that plays at once
 
 // A light first reading is often a finger still coming down: such a landing
 // waits one more frame (a few milliseconds) and takes the hardest it pressed.
@@ -404,7 +409,8 @@ private:
         double start = 0;  // the first beat it played
         double until = -1; // a kept generator stops here
         bool untilInclusive = false;
-        bool first = true; // its first step goes out only just before it plays
+        bool first = true; // its first step hasn't gone out yet
+        bool strip = false; // REPEAT started it: it follows the strip's rate
         bool swing = true; // a pattern finer than sixteenths isn't swung
         Pattern pattern;
         void setPattern(const Pattern &p) {
@@ -452,7 +458,7 @@ private:
         *h = Holder{};
         h->used = true;
         h->src = t.id;
-        if (t.y < kStripY) {
+        if (t.y < kStripY || (t.y < kThumbY && t.size > kThumbSize)) {
             // A thumb on the strip: no sound, just REPEAT at the rate under it.
             h->mode = Mode::Repeat;
             h->landing = false;
@@ -505,18 +511,31 @@ private:
             h.vel = landingVelocity(h.peak, h.size);
             h.p0 = h.peak;
         }
+        // The landing is step one. Just after a step (within kSnapSecs) it
+        // is that step, played at once. Otherwise it plays at once only if
+        // the next step is at least kRepeatGapSecs away, longer than a tap
+        // lasts, so a quick tap stays one hit; nearer than that, it waits
+        // for the next step and lands on it, as note repeat does. Either
+        // way the repeats carry on from the next step: no hole, and no two
+        // hits close together.
         const double stepBeats = double(rateTicks(rate)) * kBeatsPerBar / kTicks;
         const double landed = ctx.beatAt(h.t0);
-        const double k = std::round(landed / stepBeats);
-        double stepBeat = k * stepBeats;
-        const long tick = long(std::lround(stepBeat * kTicks / kBeatsPerBar)) % kTicks;
-        const bool swung = rateTicks(rate) >= 6 && tick % 12 == 6;
-        const double heard = ctx.timeAt(stepBeat + (swung ? double(m_swing - 0.5f) * 0.5 : 0.0));
+        const double swingBeats = double(m_swing - 0.5f) * 0.5;
+        auto heardAt = [&](double k) {
+            const long tick = (long(std::lround(k * stepBeats * kTicks / kBeatsPerBar)) % kTicks + kTicks) % kTicks;
+            const bool swung = rateTicks(rate) >= 6 && tick % 12 == 6;
+            return ctx.timeAt(k * stepBeats + (swung ? swingBeats : 0.0));
+        };
+        double k = std::floor(landed / stepBeats) + 1;
+        while (heardAt(k) > h.t0)
+            k -= 1; // k: the last step heard at or before the landing
         double t = h.t0;
         double cursor = landed;
-        if (std::fabs(heard - h.t0) <= kSnapSecs) {
-            t = std::max(heard, h.t0);
-            cursor = stepBeat + 1e-6;
+        if (h.t0 - heardAt(k) <= kSnapSecs) {
+            cursor = k * stepBeats + 1e-6;
+        } else if (heardAt(k + 1) - h.t0 < kRepeatGapSecs) {
+            t = heardAt(k + 1);
+            cursor = (k + 1) * stepBeats + 1e-6;
         }
         hit(h.pad, h.vel, h.x0 * kCols - float(h.pad % kCols), h.y0 * kRows - float(h.pad / kCols), t, ctx);
         Gen *g = newGen(h, ctx.now(), ctx);
@@ -527,6 +546,7 @@ private:
             g->cursor = cursor;
             g->start = cursor;
             g->first = false;
+            g->strip = true;
         }
         rebase(h);
     }
@@ -610,9 +630,22 @@ private:
         case Mode::Groove:
             shapeGen(h);
             break;
-        case Mode::Repeat:
-            h.rate = stripRate(h.x);
+        case Mode::Repeat: {
+            const int rate = stripRate(h.x);
+            if (rate == h.rate)
+                break;
+            // Rolls that REPEAT started follow the thumb, each still offset
+            // by however far its finger has climbed.
+            for (auto &g : m_gens) {
+                if (!g.active || !g.strip || g.holder < 0)
+                    continue;
+                Holder &o = m_holders[size_t(g.holder)];
+                o.rate = rate;
+                g.setRoll(std::clamp(rate + ladderSteps(o), 0, kRates - 1));
+            }
+            h.rate = rate;
             break;
+        }
         case Mode::Edit:
             shapeSound(h, ctx);
             break;
@@ -644,10 +677,7 @@ private:
         Gen &g = m_gens[size_t(h.gen)];
         // A rung is a fixed travel, shortened where the pad runs out: the
         // top row can still climb three rungs, the bottom row fall three.
-        const float dy = h.y - h.y0;
-        const float room = dy >= 0 ? 1.0f - h.y0 : h.y0;
-        const float rung = clampf(room / 3.5f, 0.025f, kLadderStep);
-        const int steps = int(std::lround(dy / rung));
+        const int steps = ladderSteps(h);
         const float dx = h.x - h.x0;
         if (g.groove) {
             const int density = std::clamp(h.density + steps, 0, kDensities - 1);
@@ -670,6 +700,16 @@ private:
             g.decay = clampf(twistBetween(h.angle0, h.angle) * 1.3f, -2.0f, 2.0f);
             g.dyn = g.groove ? grooveVelocity(h) : heldVelocity(h);
         }
+    }
+
+    // How many rungs a held finger has climbed (or fallen) since it began
+    // to repeat. A rung is a fixed travel, shortened where the pad runs
+    // out: the top row can still climb three rungs, the bottom row fall three.
+    static int ladderSteps(const Holder &h) {
+        const float dy = h.y - h.y0;
+        const float room = dy >= 0 ? 1.0f - h.y0 : h.y0;
+        const float rung = clampf(room / 3.5f, 0.025f, kLadderStep);
+        return int(std::lround(dy / rung));
     }
 
     // A clicked finger: drag to shape its drum.
@@ -955,10 +995,13 @@ private:
             }
             if (end <= g.cursor)
                 continue;
-            // Until its first step has gone, a held roll waits for it until
-            // just before it is heard (swing included): a finger that lifts
-            // before then was a tap.
-            const bool gated = g.first && g.holder >= 0;
+            // While a finger or key holds it, each step goes out only just
+            // before it is heard (swing included), so a lift stops it at
+            // once and a finger that lifts before the first step was a tap.
+            // The studio holds a command with its exact time until its
+            // block, so this costs no accuracy. Kept generators, with no
+            // finger, look the full lookahead ahead.
+            const bool gated = g.holder >= 0;
             const double swing = double(m_swing - 0.5f) * 0.5;
             constexpr double bar = kBeatsPerBar;
             bool held = false;
@@ -972,7 +1015,7 @@ private:
                         continue;
                     if (b < beatNow - 0.02)
                         continue; // too late to play in time
-                    if (gated && g.first && b + (g.swing && s.tick % 12 == 6 ? swing : 0.0) > tight) {
+                    if (gated && b + (g.swing && s.tick % 12 == 6 ? swing : 0.0) > tight) {
                         end = b - 1e-6; // not yet: come back for it
                         held = true;
                         break;
@@ -1278,7 +1321,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         // one just played lit, and what it is doing in the middle.
         if (gen) {
             // (Above the REPEAT strip on the bottom row.)
-            const double lift = row == 0 ? pc.pad.height() * kStripY : 0.0;
+            const double lift = row == 0 ? pc.pad.height() * kStripY + 6 * s : 0.0;
             const QRectF strip(cell.left() + 8 * s, cell.bottom() - 18 * s - lift, cell.width() - 16 * s, 10 * s);
             const int nowTick = int(barPos * kTicks);
             int lastTick = -1;

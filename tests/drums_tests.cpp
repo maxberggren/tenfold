@@ -609,6 +609,61 @@ private slots:
             QVERIFY(std::fabs(on[i] - on[i - 1] - 0.25 * kSpb) < 0.003);
     }
 
+    void aQuickTapWithRepeatIsOneHit() {
+        // REPEAT at 1/16 (house, swung): 20 taps of 60 ms across a step,
+        // each a single hit; at 1/32 never more than two.
+        auto hits = [&](float stripX) {
+            std::string s = "page 0 1\ndown 0.5 99 " + std::to_string(stripX) + " 0.02\n";
+            std::vector<double> at;
+            for (int i = 0; i < 20; ++i) {
+                const double t = 1.0 + i * 0.9 + i * (0.25 * kSpb / 20.0);
+                at.push_back(t);
+                s += "tap " + std::to_string(t) + " 0.38 0.375 p=0.6 len=0.06\n";
+            }
+            s += "end 20\n";
+            const auto take = testkit::play(s);
+            std::vector<int> n;
+            for (double t : at)
+                n.push_back(int(onsets(take, t - 0.02, t + 0.5, 0.02).size()));
+            return n;
+        };
+        for (int n : hits(0.5f))
+            QCOMPARE(n, 1);
+        for (int n : hits(0.79f))
+            QVERIFY(n >= 1 && n <= 2);
+    }
+
+    void aLiftStopsARollAtOnce() {
+        // A build pushed to 1/32 and let go 40 ms before the drop: nothing
+        // after the lift, so the drop lands in a gap. (A hat, whose hits a
+        // detector can tell apart at that rate; a snare's run together.)
+        const double drop = 12 * kSpb;
+        const auto take = testkit::play("page 0 1\ndown " + std::to_string(4 * kSpb) +
+                                        " 1 0.88 0.08 p=0.6\nglide 2.4194 2.9032 1 0.88 0.30 p=0.9\nup " +
+                                        std::to_string(drop - 0.04) + " 1\nend " + std::to_string(drop + 0.3) + "\n");
+        // (One window over the roll and the drop, so the tail after the
+        // lift is judged against the roll, not against itself.)
+        const auto on = onsets(take, drop - 0.5, drop + 0.3, 0.02);
+        QVERIFY(on.size() >= 6);
+        QVERIFY2(on.back() < drop - 0.04 + 0.015, qPrintable(QString::number(on.back() - (drop - 0.04))));
+    }
+
+    void anEarlyRepeatLandingWaitsForItsStep() {
+        // REPEAT at 1/16, hat landing 40 and 50 ms before a step: it lands on
+        // the step, and no two hits come closer than half a step.
+        for (double early : {0.04, 0.05}) {
+            const double step = 4 * kSpb;
+            const auto take = testkit::play("page 0 1\nkey 0.1 Right\ndown 0.5 99 0.5 0.02\ndown " +
+                                            std::to_string(step - early) + " 1 " + at(drums::Hat) + "\nup " +
+                                            std::to_string(step + 0.5) + " 1\nend " + std::to_string(step + 0.6) + "\n");
+            const auto on = onsets(take, step - 0.1, step + 0.5);
+            QVERIFY(on.size() >= 4);
+            QVERIFY2(std::fabs(on[0] - step) < 0.004, qPrintable(QString::number(on[0] - step)));
+            for (size_t i = 1; i < on.size(); ++i)
+                QVERIFY(on[i] - on[i - 1] > 0.125 * kSpb);
+        }
+    }
+
     void swingLeavesThirtySecondsEven() {
         // Garage swings 62%, but a rim rolling in thirty-seconds stays even.
         const auto take = testkit::play("page 0 1\nkey 0.1 Left\n"

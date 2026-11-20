@@ -35,12 +35,13 @@ enum Sound : int { Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, SoundCo
 //          f[5] the wobble rate a sound that wobbles on its own uses (the WOB finger's last)
 //   Move   id; i[0] degree, i[1] octave; f[0] pressure, f[1] tone, f[2] morph, f[3] fat
 //   Off    id
-//   Param  i[0] Shaper; f[0] amount (0 = off), f[1] its second axis;
+//   Param  i[0] Shaper; f[0] amount (0 = off), f[1] its second axis (ShapeBend: f[0]
+//          semitones, −24..12);
 //          or i[0] ResetSlot, f[0] the slot (never recorded)
 //   Strike id: the note this id plays is struck again with an accent (the click)
 constexpr uint16_t kStrike = Command::User;
-enum NoteFlag : int { Follow = 1, Accent = 2 };
-enum Shaper : int { ShapeOct, ShapeRoll, ShapeWob, ShapeGrit, ShaperCount, ResetSlot = 15 };
+enum NoteFlag : int { Follow = 1, Accent = 2, Square = 4 }; // Square: the saw becomes a square
+enum Shaper : int { ShapeOct, ShapeRoll, ShapeWob, ShapeGrit, ShapeBend, ShaperCount, ResetSlot = 15 };
 
 // The roll's rhythms, one beat each: a held note is struck on the lit steps.
 // The kick owns the downbeat, so most of them leave it free.
@@ -50,7 +51,7 @@ struct Pattern {
 };
 constexpr Pattern kPatterns[] = {
     {"OFFBEAT", "--x-"}, {"SKIP", "-x-x"}, {"GALLOP", "x-xx"}, {"ROLL", "-xxx"},
-    {"DRIVE", "xxxx"},   {"TRIPLET", "-xx"}, {"STUTTER", "xxxxxxxx"},
+    {"DRIVE", "xxxx"},   {"TRIPLET", "-xx"}, {"STUTTER", "xxxxxxxx"}, {"8THS", "x-x-"},
 };
 constexpr int kPatternCount = int(sizeof(kPatterns) / sizeof(kPatterns[0]));
 inline int patternSteps(int p) {
@@ -105,7 +106,7 @@ struct Recipe {
     float sine = 0, saw = 0, square = 0, fm = 0, octSaw = 0;
     int unison = 1;          // saws, 1–3
     float detune = 0;        // cents the outer saws sit from the centre
-    float fmRatio = 1, fmIndex = 0;
+    float fmRatio = 1, fmIndex = 0, fmTone = 0; // fmTone: the height adds this much index
     float foldPre = 0;       // wavefolding of the sine and FM before the filter
     float sub = 1;           // the clean sine under the crossover
     // The finger's height (tone) runs the cutoff between these; 0..1 is
@@ -125,7 +126,12 @@ struct Recipe {
     float wobCut = 1, wobVowel = 0, wobFm = 0;
     // What morph (the twist, [ and ]) does.
     float mSquare = 0, mDetune = 0, mFm = 0, mVowel = 0, mDrive = 0;
+    float mRes = 0, mEnv = 0, mDecay = 0; // the squelch: resonance, envelope depth, its decay (× 1 + this)
     float level = 1;
+    // How far the kick ducks it, on top of the channel's light pump: the
+    // whole sound, and the sub a little more. A house bass breathes with the
+    // kick; an 808 plays with it.
+    float pump = 0.4f, subPump = 0.3f;
 };
 
 inline const Recipe &recipe(int sound) {
@@ -148,6 +154,7 @@ inline const Recipe &recipe(int sound) {
             s.accent = 0.4f;
             s.mDrive = 0.8f;
             s.level = 0.8f;
+            s.pump = 0.5f, s.subPump = 0.3f;
         }
         {
             // The workhorse: a saw with some square through the ladder, a
@@ -167,6 +174,7 @@ inline const Recipe &recipe(int sound) {
             s.accent = 0.8f;
             s.mSquare = 1;
             s.level = 1.25f;
+            s.pump = 0.45f;
         }
         {
             // Three saws a few cents apart beat against each other, so the
@@ -186,24 +194,28 @@ inline const Recipe &recipe(int sound) {
             s.accent = 0.4f;
             s.mDetune = 18;
             s.level = 1.0f;
+            s.pump = 0.4f;
         }
         {
             // One saw, a ladder near self-oscillation and an envelope that
             // snaps it shut: accents bite, slides glide, and a distortion
-            // after the filter, as the real thing went into a pedal.
+            // after the filter, as the real thing went into a pedal. Morph
+            // (the twist) is the squelch, the 303's resonance, env mod and
+            // decay knobs turned together; the key \ swaps saw for square.
             Recipe &s = r[Acid];
             s.name = "ACID";
-            s.what = "squelch, accents, slides";
+            s.what = "twist for squelch, \\ saw or square";
             s.saw = 1;
-            s.sub = 0.55f;
-            s.cutLo = 0.16f, s.cutHi = 0.6f, s.res = 0.8f;
-            s.envAmt = 0.75f, s.envDecay = 0.2f;
+            s.sub = 0.75f;
+            s.cutLo = 0.14f, s.cutHi = 0.6f, s.res = 0.6f;
+            s.envAmt = 0.45f, s.envDecay = 0.11f;
+            s.mRes = 0.36f, s.mEnv = 0.5f, s.mDecay = 2.6f;
             s.attack = 0.001f, s.decay = 0.35f, s.sustain = 0.7f, s.release = 0.03f;
             s.drive = 0.42f, s.character = 0.1f;
             s.glide = 0.065f;
             s.accent = 1;
-            s.mSquare = 1;
             s.level = 1.3f;
+            s.pump = 0.3f, s.subPump = 0.25f;
         }
         {
             // Saws and a square with a little FM grit, a resonant filter the
@@ -226,6 +238,7 @@ inline const Recipe &recipe(int sound) {
             s.wobble = 0.55f, s.wobCut = 1, s.wobVowel = 0.6f, s.wobFm = 1.6f;
             s.mFm = 3;
             s.level = 1.05f;
+            s.pump = 0.35f;
         }
         {
             // Phase modulation folded and pushed through a vowel filter: the
@@ -234,19 +247,22 @@ inline const Recipe &recipe(int sound) {
             Recipe &s = r[Growl];
             s.name = "GROWL";
             s.what = "FM and vowels that talk";
-            s.saw = 0.2f, s.fm = 1, s.fmIndex = 2.2f, s.foldPre = 0.35f;
+            s.saw = 0.2f, s.fm = 1, s.fmIndex = 1.0f, s.fmTone = 2.6f, s.foldPre = 0.35f;
             s.sub = 0.9f;
-            s.cutLo = 0.3f, s.cutHi = 0.8f, s.res = 0.25f;
+            s.cutLo = 0.15f, s.cutHi = 0.95f, s.res = 0.25f;
             s.envAmt = 0.1f, s.envDecay = 0.3f;
-            s.formant = 0.85f, s.vowel = 0.6f, s.vowelTone = 2.6f;
+            // Height opens the mouth from u to a, the brightest vowel; the
+            // twist and the wobble move it on through e and i.
+            s.formant = 0.85f, s.vowel = 0.2f, s.vowelTone = 1.75f;
             s.attack = 0.004f, s.decay = 0.5f, s.sustain = 1, s.release = 0.1f;
-            s.drive = 0.5f, s.character = 0.75f;
+            s.drive = 0.5f, s.character = 0.75f, s.driveFirst = true;
             s.glide = 0.06f;
             s.width = 0.55f;
             s.accent = 0.6f;
             s.wobCut = 0.3f, s.wobVowel = 1, s.wobFm = 2;
-            s.mVowel = 2.5f, s.mFm = 1.2f;
+            s.mVowel = 2.0f, s.mFm = 1.2f;
             s.level = 0.65f;
+            s.pump = 0.35f;
         }
         {
             // The trap 808: a sine that falls an octave onto its note in a
@@ -267,6 +283,7 @@ inline const Recipe &recipe(int sound) {
             s.accent = 0.5f;
             s.mDrive = 1.2f;
             s.level = 0.9f;
+            s.pump = 0, s.subPump = 0;
         }
         {
             // A square and a saw an octave up through a vowel filter that the
@@ -286,7 +303,8 @@ inline const Recipe &recipe(int sound) {
             s.width = 0.25f;
             s.accent = 0.6f;
             s.mVowel = 1.5f;
-            s.level = 1.5f;
+            s.level = 1.75f;
+            s.pump = 0.5f;
         }
         return r;
     }();
@@ -367,10 +385,12 @@ struct Shape {
     float wob = 0;   // wobble depth while a finger wobbles, 0 = none
     int rate = 3;
     float grit = 0, gritChar = 0.3f;
+    float bend = 0;  // semitones
 
     // The live shapers over a loop's own: the player's hand wins.
     static Shape over(const Shape &own, const Shape &live) {
         Shape s = own;
+        s.bend = own.bend + live.bend;
         s.oct = std::clamp(own.oct + live.oct, 0.0f, 2.0f);
         if (live.roll > 0) {
             s.roll = live.roll;
@@ -547,10 +567,15 @@ public:
         const float press = m_press.y += (m_cur.pressure - m_press.y) * blockSmooth;
 
         const float glideCoef = m_glideTau <= 0 ? 1.0f : 1.0f - std::exp(-1.0f / (m_glideTau * rate));
+        // A bend arrives sixty times a second; smoothed over 15 ms it is a
+        // continuous dive, not steps.
+        const float bendCoef = 1.0f - std::exp(-1.0f / (0.015f * rate));
+        const float bendTarget = sh.bend;
         const float decayCoef = std::exp(-1.0f / (std::max(0.01f, R.decay) * rate));
         const float releaseCoef = std::exp(-1.0f / (std::max(0.004f, R.release) * rate));
         const float attackInc = 1.0f / (std::max(0.0005f, R.attack) * rate);
-        const float fenvCoef = std::exp(-1.0f / (std::max(0.01f, R.envDecay * (1.0f - 0.35f * m_accent)) * rate));
+        const float envDecay = R.envDecay * (1.0f + m_morph.y * R.mDecay) * (1.0f - 0.35f * m_accent);
+        const float fenvCoef = std::exp(-1.0f / (std::max(0.01f, envDecay) * rate));
         const float dropCoef = std::exp(-1.0f / (std::max(0.005f, R.dropTime) * rate));
         const float sustain = R.sustain;
 
@@ -564,7 +589,7 @@ public:
         const float gateLen = std::clamp(sh.roll, 0.12f, 1.0f);
 
         // Morph: what it does depends on the sound.
-        const float sqMix = std::min(1.0f, morph * R.mSquare);
+        const float sqMix = (m_cur.flags & Square) ? 1.0f : std::min(1.0f, morph * R.mSquare);
         const float sawL = R.saw * (1.0f - 0.85f * sqMix);
         const float sqL = R.square + 0.8f * sqMix * (R.saw > 0 ? 1.0f : 0.0f);
         const float fmL = R.fm + grit * sh.gritChar * 0.5f;
@@ -615,7 +640,7 @@ public:
 
             // Every eight samples: the filter, the vowel, the drive.
             if ((i & 7) == 0) {
-                const float hz0 = midiToHz(m_midi);
+                const float hz0 = midiToHz(m_midi + double(m_bend));
                 if (wobDepth > 0.001f) {
                     const double ph = beat / kRateBeats[wobRate];
                     lfo = 0.5f - 0.5f * std::cos(kTwoPi * float(ph - std::floor(ph)));
@@ -626,11 +651,11 @@ public:
                 float cut = lerpf(R.cutLo, R.cutHi, tone) + keytrack + 0.1f * (press - 0.5f);
                 if (wobDepth > 0.001f)
                     cut = lerpf(cut, lerpf(R.cutLo * 0.6f, cut + 0.22f, lfo), wobDepth * R.wobCut);
-                envAmt = R.envAmt * (1.0f + 0.8f * m_accent * R.accent);
+                envAmt = (R.envAmt + morph * R.mEnv) * (1.0f + 0.8f * m_accent * R.accent);
                 cut += envAmt * m_fenv * 0.6f;
                 cutNow = clampf(cut, 0.0f, 1.0f);
                 const float fc = std::min(50.0f * std::exp2(cutNow * 8.3f), rate * (0.42f - 0.1f * R.res));
-                m_ladder.set(fc, std::min(0.97f, R.res + 0.12f * m_accent * R.accent), rate);
+                m_ladder.set(fc, std::min(0.97f, R.res + morph * R.mRes + 0.12f * m_accent * R.accent), rate);
                 if (R.formant > 0) {
                     const float v = clampf(R.vowel + tone * R.vowelTone + morph * R.mVowel + m_fenv * R.vowelEnv +
                                                wobDepth * lfo * R.wobVowel * 3.0f,
@@ -640,12 +665,12 @@ public:
                 // FM and folding run at the base rate, so they too thin out
                 // as the note climbs.
                 hiScale = clampf(320.0f / hz0, 0.2f, 1.0f);
-                fmIndex = (R.fmIndex + morph * R.mFm + wobDepth * lfo * R.wobFm + grit * sh.gritChar * 3.0f) * hiScale;
+                fmIndex = (R.fmIndex + tone * R.fmTone + morph * R.mFm + wobDepth * lfo * R.wobFm + grit * sh.gritChar * 3.0f) * hiScale;
                 const float drv = R.drive + tone * R.toneDrive + morph * R.mDrive + grit * 1.1f +
                                   m_accent * 0.15f * R.accent + std::max(0.0f, press - 0.55f) * 0.5f;
                 // High up the drive eases off: there its harmonics would
                 // reach past what even twice the rate can hold.
-                g = 1.0f + 14.0f * drv * drv * hiScale;
+                g = 1.0f + 14.0f * drv * drv * hiScale * hiScale;
                 comp = 1.0f / std::sqrt(1.0f + 0.5f * (g - 1.0f));
                 // The crossover follows the note: everything at the note's
                 // own pitch is the sub's, everything from its second harmonic
@@ -690,9 +715,10 @@ public:
             m_fenv *= fenvCoef;
             m_drop *= dropCoef;
             m_midi += (m_target - m_midi) * double(glideCoef);
+            m_bend += (bendTarget - m_bend) * bendCoef;
 
             // Oscillators.
-            const float hz = midiToHz(m_midi + double(R.drop * m_drop));
+            const float hz = midiToHz(m_midi + double(m_bend + R.drop * m_drop));
             const float inc = std::min(hz / rate, 0.45f);
             m_phase += inc;
             if (m_phase >= 1.0f) {
@@ -751,27 +777,32 @@ public:
             // Filters (the ladder, and the vowel bank beside it) and drive,
             // the drive at twice the rate so its harmonics don't fold back.
             float y;
-            if (R.driveFirst) {
-                y = m_ladder.step(m_os.process(osc * 0.7f * g, shapeFn) * comp);
-            } else {
-                y = m_ladder.step(osc * 0.7f);
-                if (R.formant > 0) {
-                    const float x = osc * 0.7f;
-                    const float v = m_vf[0].step(x).band * m_vk[0] + 0.7f * m_vf[1].step(x).band * m_vk[1] +
-                                    0.35f * m_vf[2].step(x).band * m_vk[2];
-                    y = lerpf(y, 1.6f * v, R.formant);
-                }
-                y = m_os.process(y * g, shapeFn) * comp;
+            // The vowel bank shapes the oscillators first: the mouth gives
+            // the character. Then the ladder and the drive, in the order the
+            // recipe asks; either way the finger's height opens the sound.
+            float x = osc * 0.7f;
+            if (R.formant > 0) {
+                const float v = m_vf[0].step(x).band * m_vk[0] + 0.7f * m_vf[1].step(x).band * m_vk[1] +
+                                0.45f * m_vf[2].step(x).band * m_vk[2];
+                // High up the mouth opens all the way: less vowel, more of
+                // the raw tone through an open filter.
+                x = lerpf(x, 1.8f * v, R.formant * (1.0f - 0.45f * tone * tone));
             }
+            if (R.driveFirst)
+                y = m_ladder.step(m_os.process(x * g, shapeFn) * comp);
+            else
+                y = m_os.process(m_ladder.step(x) * g, shapeFn) * comp;
             y = m_post.step(y).low;
             // The crossover: two 2-pole high-passes, a 24 dB slope.
             y = m_hp2.step(m_hp1.step(y).high).high;
 
             const float amp = m_amp;
             const float mute = m_mute.step(muteTarget);
-            const float top = y * amp * topGain * (1.0f + 0.5f * m_accent * R.accent);
+            const float dk = duck[std::min(off0 + i, kBlock - 1)];
+            const float pumped = 1.0f - R.pump * dk;
+            const float top = y * amp * topGain * (1.0f + 0.5f * m_accent * R.accent) * pumped;
             // The sub ducks under the kick harder than the top does.
-            const float sub = s1 * amp * subGain * (1.0f - 0.45f * duck[std::min(off0 + i, kBlock - 1)]);
+            const float sub = s1 * amp * subGain * pumped * (1.0f - R.subPump * dk);
             float mono = (top + sub) * mute;
             float side = 0;
             if (width > 0.01f) {
@@ -915,7 +946,7 @@ private:
     float m_amp = 0, m_fenv = 0, m_drop = 0, m_vel = 0.8f, m_accent = 0;
     double m_midi = 33, m_target = 33;
     float m_glideTau = 0;
-    float m_oct = 0;
+    float m_oct = 0, m_bend = 0;
     uint32_t m_chordSeq = 0;
     long m_step = 0;
     double m_gateEnd = 0;
@@ -1068,6 +1099,9 @@ private:
             case ShapeGrit:
                 own.grit = clampf(c.f[0], 0, 1);
                 own.gritChar = clampf(c.f[1], 0, 1);
+                break;
+            case ShapeBend:
+                own.bend = clampf(c.f[0], -24, 12);
                 break;
             case ResetSlot:
                 // The page is about to fill a slot: what an old loop there

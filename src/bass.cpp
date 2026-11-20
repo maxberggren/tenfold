@@ -49,8 +49,20 @@ constexpr int kColumns = 12;
 constexpr int kKeyIdBase = 0x200000; // ids for notes played on the keyboard
 constexpr float kLoopW = 0.12f; // the rail's LOOP button, at its left end
 constexpr float kZoneW = (1.0f - kLoopW) / 4.0f; // and its four shapers
+constexpr float kRailMid = 0.5f * (kField + 1.0f);  // a zone's two rows of stops meet here
+
+// The stops marked in the ROLL and WOB zones, four across and two rows
+// down: where a finger lands is what it plays, sliding along the row
+// reaches the rest. WOB's top row is the straight rates, the bottom the
+// triplets and 1/32; ROLL's top row leaves the downbeat to the kick.
+constexpr int kWobStops[2][4] = {{0, 1, 3, 5}, {2, 4, 6, 7}};
+constexpr int kRollStops[2][4] = {{0, 1, 2, 3}, {7, 4, 5, 6}};
+
 
 enum Role { NoRole, NoteRole, OctRole, RollRole, WobRole, GritRole, LoopRole };
+
+// A shaper zone's left edge on the pad.
+float zoneLeft(Role r) { return kLoopW + kZoneW * float(int(r) - int(OctRole)); }
 
 const char *roleName(Role r) {
     switch (r) {
@@ -127,20 +139,35 @@ public:
             m_closing = true;
             ctx.stopRecording();
         }
-        if (m_recSlot >= 0 && pv.recording < 0 && beat > m_recStart + 1) {
-            const ClipView &cv = pv.clips[m_recSlot];
+        // Any take, Space's or this page's own: watch it while it waits, and
+        // when it ends say what it caught (a take called off says nothing:
+        // the session already did).
+        if (pv.recording >= 0) {
+            m_taking = pv.recording;
+            return;
+        }
+        if (m_taking < 0 && m_recSlot >= 0 && beat > m_recStart + 1)
+            m_taking = m_recSlot; // a take of ours the view never showed
+        if (m_taking >= 0) {
+            const ClipView &cv = pv.clips[m_taking];
             if (cv.state != ClipView::Empty && cv.lengthBeats > 0)
                 ctx.notice(QStringLiteral("Bass loop in slot %1: %2 %3, %4 events, playing")
-                               .arg(m_recSlot + 1)
+                               .arg(m_taking + 1)
                                .arg(cv.lengthBeats >= 4 ? int(cv.lengthBeats / 4) : int(cv.lengthBeats))
                                .arg(cv.lengthBeats >= 4 ? (cv.lengthBeats >= 8 ? QStringLiteral("bars")
                                                                                : QStringLiteral("bar"))
                                                         : QStringLiteral("beats"))
                                .arg(cv.events));
-            else
-                ctx.notice(QStringLiteral("Nothing was played: slot %1 stays empty").arg(m_recSlot + 1));
+            m_taking = -1;
             m_recSlot = -1;
             m_closing = m_closeEarly = false;
+        }
+        // A slot that has emptied takes its loop's shaper settings with it.
+        for (int k = 0; k < kClipSlots; ++k) {
+            const bool full = pv.clips[k].state != ClipView::Empty;
+            if (m_slotFull[k] && !full)
+                resetSlot(k, ctx);
+            m_slotFull[k] = full;
         }
     }
 
@@ -231,6 +258,15 @@ public:
                 }
             ctx.notice(QStringLiteral("Shapers released"));
             return true;
+        case Qt::Key_Backslash:
+            if (recipe(m_sound).saw <= 0) {
+                ctx.notice(QStringLiteral("%1 has no saw to turn square").arg(QString::fromUtf8(recipe(m_sound).name)));
+                return true;
+            }
+            m_square[m_sound] = !m_square[m_sound];
+            ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(recipe(m_sound).name),
+                                               m_square[m_sound] ? QStringLiteral("square") : QStringLiteral("saw")));
+            return true;
         case Qt::Key_BracketLeft:
         case Qt::Key_BracketRight:
             m_morph[m_sound] = clampf(m_morph[m_sound] + (k.key == Qt::Key_BracketRight ? 0.1f : -0.1f), 0, 1);
@@ -265,17 +301,18 @@ public:
 
     QString help() const override {
         return QStringLiteral(
+            "play, then Space\tloops what you just played (Space again calls a waiting loop off)\n"
             "touch the lower field\ta note in the key: higher is brighter (clean sub to biting), harder accents\n"
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back\n"
             "twist / flatten the finger\tmorph the sound / fatten it\n"
-            "OCT\tup an octave while held, two fingers two: tap it to pump octaves\n"
-            "ROLL\tthe held note strikes in a rhythm on the bar; sideways the pattern, up/down the gate\n"
-            "WOB\ta wobble locked to the tempo; sideways the rate (1/2 to 1/32), up/down the depth\n"
+            "OCT: +12 row / BEND row\tup an octave while held (two fingers, two): tap to pump; any finger there bends with its height\n"
+            "ROLL\tland on a pattern: the held note strikes it on the bar; slide along the row, up/down the gate\n"
+            "WOB\tland on a rate (straight on top, triplets below): a wobble on the tempo; up/down the depth\n"
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
             "click\twith a note down, strike it again accented; with only shapers down, latch them (P frees)\n"
-            "LOOP (the rail, far left) or Enter\tarms a take from the next bar; tap again to close it at the bar: it loops\n"
+            "LOOP (rail, far left) or Enter\talso: record the coming bars from the next bar line; tap again to close\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
-            "Q W E R T Y U I\tsub, pluck, reese, acid, wobble, growl, 808, bounce\n"
+            "Q W E R T Y U I   \\\tsub, pluck, reese, acid, wobble, growl, 808, bounce   saw or square\n"
             "O   [ ]   - =   ↑ ↓   ← →\tfollow the chords   morph   slide time   pad octave   key tone\n"
             "F1–F8 (Shift clears)  F10  Backspace\tlaunch a slot   overdub   stop the loop");
     }
@@ -286,7 +323,7 @@ public:
         if (!take.isEmpty())
             parts << take.toUpper();
         else
-            parts << QStringLiteral("LOOP or Enter records a loop");
+            parts << QStringLiteral("Space loops what you just played");
         parts << QString::fromUtf8(recipe(m_sound).name);
         for (const auto &h : m_fingers) {
             if (h.id < 0)
@@ -329,6 +366,7 @@ private:
         float tone = 0, pressure = 0, morph = 0, fat = 0; // as last sent
         float amount = 0, second = 0;                     // a shaper's two axes
         int index = 0;                                    // a shaper's pattern or rate
+        int row = 0;                                      // the row of stops it landed on (col: the stop)
         float sentA = 0, sentB = 0;                       // what this shaper last asked for
     };
     struct KeyNote {
@@ -375,13 +413,14 @@ private:
             const Shaper s = shaperOf(h.role);
             // A finger on a latched zone takes it over, and lets it go on lift.
             m_latched[s] = false;
+            // Which stop it landed on: the cell under it, four across, two rows.
+            h.row = t.y >= kRailMid ? 0 : 1;
+            h.col = std::clamp(int((t.x - zoneLeft(h.role)) / (kZoneW / 4.0f)), 0, 3);
             switch (h.role) {
             case RollRole:
-                h.index = m_pattern;
                 h.amount = m_gate;
                 break;
             case WobRole:
-                h.index = m_rate;
                 h.amount = m_depth;
                 break;
             case GritRole:
@@ -410,7 +449,7 @@ private:
         on.t = time;
         on.i[0] = h.degree;
         on.i[1] = h.octave;
-        on.i[2] = (m_follow ? Follow : 0) | (t.pressure > 0.82f ? Accent : 0);
+        on.i[2] = (m_follow ? Follow : 0) | (t.pressure > 0.82f ? Accent : 0) | (m_square[m_sound] ? Square : 0);
         on.i[3] = h.sound;
         on.f[0] = velocityOf(t.pressure);
         on.f[1] = h.tone;
@@ -476,9 +515,10 @@ private:
             for (auto &f : m_fingers)
                 if (f.id >= 0 && f.role == h.role && (!other || f.t0 > other->t0))
                     other = &f;
-            if (s == ShapeOct)
+            if (s == ShapeOct) {
                 sendShaper(s, float(octFingers()), 0, time, ctx, true);
-            else if (other)
+                sendShaper(ShapeBend, other ? other->amount : 0.0f, 0, time, ctx, true);
+            } else if (other)
                 sendShaper(s, other->sentA, other->sentB, time, ctx, true);
             else if (!m_latched[s])
                 sendShaper(s, 0, m_sent[s][1], time, ctx, true);
@@ -491,17 +531,25 @@ private:
         const float press = t.pressure - 0.5f;
         float a = 0, b = 0;
         switch (h.role) {
-        case OctRole:
+        case OctRole: {
+            // The top row lifts an octave; any finger here bends with its
+            // height, down to two octaves under (a dive) or one over.
             a = float(octFingers());
-            break;
+            h.amount = clampf(dy * 40.0f, -24.0f, 12.0f);
+            sendShaper(ShapeOct, a, 0, time, ctx, first);
+            // With several fingers here, the newest bends.
+            if (newestIn(OctRole, h))
+                sendShaper(ShapeBend, h.amount, 0, time, ctx, first);
+            return;
+        }
         case RollRole:
-            h.index = std::clamp(m_pattern + int(std::lround(dx / 0.08f)), 0, kPatternCount - 1);
+            h.index = kRollStops[h.row][stopAlong(h, dx)];
             h.amount = clampf(m_gate + dy * 2.5f, 0.15f, 1.0f);
             a = h.amount;
             b = float(h.index);
             break;
         case WobRole:
-            h.index = std::clamp(m_rate + int(std::lround(dx / 0.08f)), 0, kRateCount - 1);
+            h.index = kWobStops[h.row][stopAlong(h, dx)];
             h.amount = clampf(m_depth + dy * 2.5f, 0.05f, 1.0f);
             a = clampf(h.amount + 0.4f * press, 0.05f, 1.0f);
             b = float(h.index);
@@ -520,7 +568,19 @@ private:
         sendShaper(shaperOf(h.role), a, b, time, ctx, first);
     }
 
-    // The shaper's last place is where the next one starts.
+    // Sliding along a row of stops: one cell per cell's width.
+    static int stopAlong(const Finger &h, float dx) {
+        return std::clamp(h.col + int(std::lround(dx / (kZoneW / 4.0f))), 0, 3);
+    }
+    bool newestIn(Role r, const Finger &h) const {
+        for (const auto &f : m_fingers)
+            if (f.id >= 0 && f.role == r && f.t0 > h.t0)
+                return false;
+        return true;
+    }
+
+    // Depth, gate and grit carry over to the next finger; the rate and the
+    // pattern are where the finger lands.
     void remember(const Finger &h) {
         switch (h.role) {
         case RollRole:
@@ -543,7 +603,7 @@ private:
     int octFingers() const {
         int n = m_latched[ShapeOct] ? int(m_sent[ShapeOct][0]) : 0;
         for (const auto &h : m_fingers)
-            n += h.id >= 0 && h.role == OctRole;
+            n += h.id >= 0 && h.role == OctRole && h.row == 0;
         return std::min(n, 2);
     }
 
@@ -609,7 +669,10 @@ private:
     void loop(ControlContext &ctx) {
         const PartView &pv = ctx.studio().parts[ctx.part()];
         const double beat = ctx.beatAt(ctx.now());
-        (void)pv;
+        if (m_recSlot < 0 && pv.recording >= 0) {
+            ctx.notice(QStringLiteral("A loop is already on its way: Space calls it off"));
+            return;
+        }
         if (m_recSlot >= 0) {
             if (m_closing || m_closeEarly)
                 return;
@@ -638,10 +701,11 @@ private:
 
     // Where the take is, for the rail and the status line.
     QString loopState(double beat) const {
+        if (m_taking >= 0 && m_taking != m_recSlot)
+            return QStringLiteral("loop into slot %1 at the bar: Space calls it off").arg(m_taking + 1);
         if (m_recSlot < 0)
             return {};
-        if (beat < m_recStart)
-        {
+        if (beat < m_recStart) {
             const int beats = int(std::ceil(m_recStart - beat));
             return QStringLiteral("armed: slot %1 records in %2 %3")
                 .arg(m_recSlot + 1)
@@ -720,7 +784,7 @@ private:
         on.t = now;
         on.i[0] = degree;
         on.i[1] = octave;
-        on.i[2] = (m_follow ? Follow : 0) | (accent ? Accent : 0);
+        on.i[2] = (m_follow ? Follow : 0) | (accent ? Accent : 0) | (m_square[m_sound] ? Square : 0);
         on.i[3] = m_sound;
         on.f[0] = accent ? 1.0f : 0.75f;
         on.f[1] = m_keyTone;
@@ -752,6 +816,8 @@ private:
     // The take LOOP armed: its slot (−1: none), the beat it starts, and
     // whether it is closing.
     int m_recSlot = -1;
+    int m_taking = -1;              // the slot any take is filling, as the studio shows it
+    bool m_slotFull[kClipSlots] = {};
     double m_recStart = 0;
     bool m_closing = false, m_closeEarly = false;
     double m_beat = 0; // as of the last paint, for status()
@@ -760,6 +826,7 @@ private:
 
     int m_sound = Pluck;
     float m_morph[SoundCount];
+    bool m_square[SoundCount] = {}; // the saw swapped for a square (the \ key)
     float m_glide = 0.5f, m_keyTone = 0.6f;
     int m_octave = 0;
     bool m_follow = false;
@@ -834,25 +901,8 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         if (h && h->role == NoteRole) {
             label = noteName(h->degree, h->octave);
         } else if (h) {
+            // A shaper's state is drawn in its zone; the finger just glows.
             col = c::amber();
-            switch (h->role) {
-            case OctRole:
-                label = octFingers() > 1 ? QStringLiteral("+2 OCT") : QStringLiteral("+1 OCT");
-                break;
-            case RollRole:
-                label = QString::fromUtf8(kPatterns[h->index].name);
-                break;
-            case WobRole:
-                label = QStringLiteral("WOB %1").arg(QString::fromUtf8(kRateNames[h->index]));
-                break;
-            case GritRole:
-                label = QStringLiteral("%1 %2")
-                            .arg(QString::fromUtf8(gritName(h->second)))
-                            .arg(int(std::lround(h->amount * 100)));
-                break;
-            default:
-                break;
-            }
         }
         c::finger(p, pc, t, col, label, h && h->role == NoteRole ? 0.6f : 0.3f);
     }
@@ -989,120 +1039,130 @@ void Control::paintScope(QPainter &p, const PaintContext &pc) {
 
 void Control::paintRail(QPainter &p, const PaintContext &pc) {
     const float *d = pc.view->data;
-    // LOOP: idle, armed (blinking, counting the beats in), recording (red,
-    // the bar it is on), closing.
+    const QColor amber = c::amber();
+    const bool blink = std::fmod(pc.time, 0.5) < 0.25;
+
+    // LOOP: the take of the moment, whoever started it (Space, this button
+    // or Enter), from the studio's own view of it.
     {
         const QRectF r = pc.rect(0, kField, kLoopW, 1.0f).adjusted(6, 14, -6, -6);
-        const bool blink = std::fmod(pc.time, 0.5) < 0.25;
-        QString title = QStringLiteral("LOOP"), body = QStringLiteral("TAP TO\nRECORD");
+        const int taking = pc.view->recording;
+        QString title = QStringLiteral("LOOP"), body = QStringLiteral("SPACE · TAP");
         QColor col = pc.color;
         bool lit = false;
-        if (m_recSlot >= 0) {
+        if (taking >= 0) {
             col = c::red();
-            if (pc.beat < m_recStart) {
+            const bool mine = taking == m_recSlot;
+            if (mine && pc.beat < m_recStart) {
                 title = QStringLiteral("ARMED");
-                body = QStringLiteral("SLOT %1\nIN %2").arg(m_recSlot + 1).arg(int(std::ceil(m_recStart - pc.beat)));
+                body = QStringLiteral("IN %1").arg(int(std::ceil(m_recStart - pc.beat)));
                 lit = blink;
-            } else {
-                const int bar = int((pc.beat - m_recStart) / kBeatsPerBar) + 1;
-                title = QStringLiteral("REC %1").arg(bar);
-                body = m_closing || m_closeEarly ? QStringLiteral("CLOSING\nAT BAR") : QStringLiteral("TAP TO\nCLOSE");
+            } else if (mine) {
+                title = QStringLiteral("REC %1").arg(int((pc.beat - m_recStart) / kBeatsPerBar) + 1);
+                body = m_closing || m_closeEarly ? QStringLiteral("AT BAR") : QStringLiteral("TAP: CLOSE");
                 lit = true;
+            } else {
+                title = QStringLiteral("SLOT %1").arg(taking + 1);
+                body = QStringLiteral("AT BAR");
+                lit = blink;
             }
         }
         c::button(p, r, title, col, lit);
-        const QStringList lines = body.split(QLatin1Char('\n'));
-        const QRectF inner = r.adjusted(4, 26, -4, -6);
-        for (int k = 0; k < lines.size(); ++k)
-            c::text(p, QRectF(inner.left(), inner.top() + inner.height() * k / lines.size(), inner.width(),
-                              inner.height() / lines.size()),
-                    lines[k], c::alpha(col, 0.85f), 10, true, Qt::AlignCenter);
+        c::text(p, r.adjusted(4, 24, -4, -2), body, c::alpha(col, 0.85f), 10, true, Qt::AlignCenter);
     }
-    const QColor amber = c::amber();
+
     bool held[ShaperCount] = {};
     for (const auto &h : m_fingers)
-        if (h.id >= 0 && h.role != NoteRole && h.role != NoRole)
+        if (h.id >= 0 && h.role >= OctRole && h.role <= GritRole)
             held[shaperOf(h.role)] = true;
-    for (int z = 0; z < ShaperCount; ++z) {
+    for (int z = 0; z < 4; ++z) {
         const Shaper s = Shaper(z);
-        const QRectF r =
-            pc.rect(kLoopW + kZoneW * float(z), kField, kLoopW + kZoneW * float(z + 1), 1.0f).adjusted(6, 14, -6, -6);
-        const bool on = s == ShapeOct    ? d[PubOct] > 0
+        const Role role = Role(OctRole + z);
+        const float x0 = zoneLeft(role);
+        const QRectF frame = pc.rect(x0, kField, x0 + kZoneW, 1.0f).adjusted(4, 4, -4, -4);
+        const bool on = s == ShapeOct    ? d[PubOct] > 0 || held[s]
                         : s == ShapeRoll ? d[PubRoll] > 0
                         : s == ShapeWob  ? held[s] || m_latched[s]
                                          : d[PubGrit] > 0;
-        const int pattern = on && s == ShapeRoll ? std::clamp(int(d[PubRoll]) - 1, 0, kPatternCount - 1) : m_pattern;
-        const int rate = on && s == ShapeWob ? std::clamp(int(d[PubWobRate]), 0, kRateCount - 1) : m_rate;
-        QString title;
-        switch (s) {
-        case ShapeOct:
-            title = d[PubOct] > 1.5f ? QStringLiteral("OCT +2") : QStringLiteral("OCT");
-            break;
-        case ShapeRoll:
-            title = QStringLiteral("ROLL %1").arg(QString::fromUtf8(kPatterns[pattern].name));
-            break;
-        case ShapeWob:
-            title = QStringLiteral("WOB %1").arg(QString::fromUtf8(kRateNames[rate]));
-            break;
-        default:
-            title = QStringLiteral("GRIT %1").arg(QString::fromUtf8(gritName(on ? d[PubGritChar] : m_gritChar)));
-            break;
-        }
-        c::button(p, r, title, amber, on || held[s]);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(amber, on ? 1.0f : 0.55f), on ? 2.0 : 1.2));
+        p.drawRect(frame);
+        static const char *names[] = {"OCT", "ROLL", "WOB", "GRIT"};
+        c::text(p, QRectF(frame.left() + 6, frame.top() + 1, frame.width() - 12, 14), QString::fromUtf8(names[z]),
+                c::alpha(amber, on ? 1.0f : 0.6f), 10, true);
         if (m_latched[s])
-            c::tag(p, QPointF(r.right() - 54, r.top() + 11), QStringLiteral("LATCH"), c::red(), 10);
-        const QRectF body = r.adjusted(8, 28, -8, -8);
-        switch (s) {
-        case ShapeOct: {
-            const int lit = int(std::lround(d[PubOct]));
-            for (int k = 0; k < 2; ++k) {
-                const QRectF b(body.left() + k * (body.width() / 2), body.top(), body.width() / 2 - 6, body.height());
-                p.fillRect(b, c::alpha(amber, k < lit ? 0.85f : 0.1f));
-                c::text(p, b, k == 0 ? QStringLiteral("+12") : QStringLiteral("+24"),
-                        k < lit ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.5f), 11, true, Qt::AlignCenter);
-            }
-            break;
-        }
-        case ShapeRoll: {
-            const int steps = patternSteps(pattern);
-            const qreal w = body.width() / steps;
-            const int now = int(d[PubRollStep]);
-            for (int k = 0; k < steps; ++k) {
-                const QRectF b(body.left() + k * w, body.top(), w - 3, body.height());
-                const bool x = kPatterns[pattern].steps[k] == 'x';
-                const bool cur = on && k == now;
-                p.fillRect(b, c::alpha(amber, x ? (cur ? 0.95f : 0.45f) : (cur ? 0.2f : 0.06f)));
-            }
-            break;
-        }
-        case ShapeWob: {
-            // The LFO's shape, with a dot where it is.
-            QPainterPath path;
-            for (int k = 0; k <= 32; ++k) {
-                const float ph = float(k) / 32.0f;
-                const float v = 0.5f - 0.5f * std::cos(kTwoPi * ph);
-                const QPointF pt(body.left() + body.width() * ph, body.bottom() - body.height() * v);
-                if (k == 0)
-                    path.moveTo(pt);
-                else
-                    path.lineTo(pt);
-            }
-            p.setPen(QPen(c::alpha(amber, 0.5f), 1.5));
-            p.setBrush(Qt::NoBrush);
-            p.drawPath(path);
-            if (d[PubLfo] >= 0 && d[PubWobDepth] > 0) {
+            c::tag(p, QPointF(frame.right() - 50, frame.top() + 9), QStringLiteral("LATCH"), c::red(), 9);
+
+        // A cell of the zone's stop grid, in pad units, as touched.
+        auto cell = [&](int row, int col) {
+            const float cw = kZoneW / 4.0f;
+            const float ya = row == 0 ? kRailMid : kField, yb = row == 0 ? 1.0f : kRailMid;
+            return pc.rect(x0 + cw * float(col), ya, x0 + cw * float(col + 1), yb).adjusted(3, row == 0 ? 15 : 2, -3, -3);
+        };
+        if (s == ShapeRoll || s == ShapeWob) {
+            const int current = s == ShapeRoll ? (on ? int(d[PubRoll]) - 1 : -1) : (on ? int(d[PubWobRate]) : -1);
+            for (int row = 0; row < 2; ++row)
+                for (int col = 0; col < 4; ++col) {
+                    const int stop = s == ShapeRoll ? kRollStops[row][col] : kWobStops[row][col];
+                    const QRectF b = cell(row, col);
+                    const bool lit = stop == current;
+                    p.fillRect(b, c::alpha(amber, lit ? 0.9f : 0.08f));
+                    if (s == ShapeRoll) {
+                        // The pattern itself, as steps.
+                        const char *steps = kPatterns[stop].steps;
+                        const int n = patternSteps(stop);
+                        const int now = lit ? int(d[PubRollStep]) : -1;
+                        const qreal w = (b.width() - 4) / n;
+                        for (int k = 0; k < n; ++k) {
+                            const QRectF st(b.left() + 2 + k * w, b.bottom() - 9, w - 1.5, 6);
+                            const bool x = steps[k] == 'x';
+                            p.fillRect(st, lit ? QColor::fromRgb(c::kInk)
+                                               : c::alpha(amber, x ? (k == now ? 1.0f : 0.55f) : 0.12f));
+                            if (lit && k == now)
+                                p.fillRect(st.adjusted(0, -3, 0, 0), QColor::fromRgb(c::kInk));
+                        }
+                        c::text(p, b.adjusted(0, 0, 0, -10), QString::fromUtf8(kPatterns[stop].name),
+                                lit ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 8, true, Qt::AlignCenter);
+                    } else {
+                        c::text(p, b, QString::fromUtf8(kRateNames[stop]),
+                                lit ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 11, true, Qt::AlignCenter);
+                    }
+                }
+            if (s == ShapeWob && d[PubLfo] >= 0 && d[PubWobDepth] > 0) {
+                // The LFO, a dot riding the zone's floor.
+                const QPointF a = pc.at(x0, kField), b = pc.at(x0 + kZoneW, kField);
                 const float v = d[PubLfo];
-                const float ph = std::acos(clampf(1.0f - 2.0f * v, -1, 1)) / kTwoPi;
-                p.setBrush(amber);
-                p.setPen(Qt::NoPen);
-                p.drawEllipse(QPointF(body.left() + body.width() * ph, body.bottom() - body.height() * v), 4, 4);
+                p.fillRect(QRectF(a.x() + 4, a.y() - 4 - 3, (b.x() - a.x() - 8) * v * d[PubWobDepth], 3), amber);
             }
-            break;
-        }
-        default:
-            c::gauge(p, QRectF(body.left(), body.top() + body.height() * 0.2, body.width(), body.height() * 0.6),
-                     on ? d[PubGrit] : 0, amber, 12);
-            break;
+        } else if (s == ShapeOct) {
+            const int lit = int(std::lround(d[PubOct]));
+            const QRectF up = pc.rect(x0, kRailMid, x0 + kZoneW, 1.0f).adjusted(6, 15, -6, -3);
+            const QRectF bend = pc.rect(x0, kField, x0 + kZoneW, kRailMid).adjusted(6, 2, -6, -3);
+            p.fillRect(up, c::alpha(amber, lit > 0 ? 0.9f : 0.08f));
+            c::text(p, up, lit > 1 ? QStringLiteral("+24") : QStringLiteral("+12"),
+                    lit > 0 ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 11, true, Qt::AlignCenter);
+            const bool bending = std::fabs(m_sent[ShapeBend][0]) > 0.05f;
+            p.fillRect(bend, c::alpha(amber, bending ? 0.9f : 0.08f));
+            c::text(p, bend,
+                    bending ? QStringLiteral("BEND %1").arg(double(m_sent[ShapeBend][0]), 0, 'f', 1)
+                            : QStringLiteral("BEND ↕"),
+                    bending ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 10, true, Qt::AlignCenter);
+        } else {
+            const QRectF body = pc.rect(x0, kField, x0 + kZoneW, 1.0f).adjusted(10, 20, -10, -10);
+            c::gauge(p, QRectF(body.left(), body.top(), body.width(), body.height() * 0.55), on ? d[PubGrit] : 0,
+                     amber, 12);
+            // Sideways goes warm, tube, fold: the one it is on is lit.
+            const float ch = on ? d[PubGritChar] : m_gritChar;
+            const int which = ch < 0.34f ? 0 : ch < 0.67f ? 1 : 2;
+            static const char *kinds[] = {"WARM", "TUBE", "FOLD"};
+            for (int k = 0; k < 3; ++k) {
+                const QRectF w(body.left() + body.width() * k / 3.0, body.top() + body.height() * 0.62, body.width() / 3.0 - 3,
+                               body.height() * 0.38);
+                if (k == which)
+                    p.fillRect(w, c::alpha(amber, on ? 0.9f : 0.25f));
+                c::text(p, w, QString::fromUtf8(kinds[k]),
+                        k == which && on ? QColor::fromRgb(c::kInk) : c::alpha(amber, 0.7f), 9, true, Qt::AlignCenter);
+            }
         }
     }
 }
@@ -1136,9 +1196,9 @@ PartSpec makeBass() {
     s.color = QColor("#FF4FD8");
     s.engine = std::make_unique<bass::Engine>();
     s.control = std::make_unique<Control>();
-    // Mono, centred and dry: the room would only blur the low end. The kick
-    // pumps it, and the sub a little more, inside the engine.
-    const float channel[ChannelCount] = {0.8f, 0.5f, 0.5f, 0.0f, 0.0f, 0.55f, 0.0f, 0.0f};
+    // Mono, centred and dry: the room would only blur the low end. The
+    // channel pumps lightly; each sound adds its own duck in the engine.
+    const float channel[ChannelCount] = {0.8f, 0.5f, 0.5f, 0.0f, 0.0f, 0.25f, 0.0f, 0.0f};
     std::copy(channel, channel + ChannelCount, s.channel);
     return s;
 }

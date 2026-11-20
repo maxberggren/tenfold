@@ -114,6 +114,28 @@ struct Rig {
         }
         return 10 * std::log10((side + 1e-20) / (mid + 1e-20));
     }
+    // Level in dB, relative to all of it, of lo..hi Hz between t0 and t1:
+    // a DFT every 25 Hz across the band against the whole signal's power.
+    double band(double t0, double t1, double lo, double hi) const {
+        const size_t a = size_t(t0 * 48000), n = size_t((t1 - t0) * 48000);
+        double inBand = 0, all = 0;
+        for (size_t i = 0; i < n; i += 2) {
+            const double v = 0.5 * (left[a + i] + right[a + i]);
+            all += v * v;
+        }
+        for (double f = lo; f < hi; f += 25) {
+            double re = 0, im = 0;
+            const double w = 2 * M_PI * f / 48000.0;
+            for (size_t i = 0; i < n; i += 2) {
+                const double v = 0.5 * (left[a + i] + right[a + i]) * (0.5 - 0.5 * std::cos(2 * M_PI * double(i) / double(n)));
+                re += v * std::cos(w * double(i));
+                im += v * std::sin(w * double(i));
+            }
+            inBand += re * re + im * im;
+        }
+        // Scaled so the sum of bins compares with the time-domain power.
+        return 10 * std::log10((inBand * 2.0 * 25.0 / 24000.0 * 8.0 / 3.0 / (double(n) / 2) + 1e-20) / (all / (double(n) / 2) + 1e-20));
+    }
     double peak() const {
         double p = 0;
         for (size_t i = 0; i < left.size(); ++i)
@@ -202,6 +224,56 @@ private slots:
                 QVERIFY2(rig.peak() < 0.95, qPrintable(what + QStringLiteral(" peaks at %1").arg(rig.peak())));
             }
         }
+    }
+
+    // Height opens every sound: more above a kilohertz the higher the finger.
+    void heightBrightensEverySound() {
+        for (int sound = 0; sound < bass::SoundCount; ++sound) {
+            double level[3];
+            const float tones[3] = {0.15f, 0.5f, 0.85f};
+            for (int k = 0; k < 3; ++k) {
+                Rig rig;
+                rig.send(noteOn(1, 0, sound, 0, 0.75f, tones[k]));
+                rig.run(0.5);
+                level[k] = rig.band(0.05, 0.45, 1000, 6000);
+            }
+            const QString what = QStringLiteral("%1: %2 %3 %4 dB").arg(bass::recipe(sound).name)
+                                     .arg(level[0], 0, 'f', 1).arg(level[1], 0, 'f', 1).arg(level[2], 0, 'f', 1);
+            QVERIFY2(level[1] > level[0] + 2 && level[2] > level[1] + 2, qPrintable(what));
+        }
+    }
+
+    // On ACID the twist is the squelch: resonance, envelope depth and decay
+    // together. Turned up, more bite between 1 and 4 kHz, and a longer tail.
+    void acidTwistIsTheSquelch() {
+        double body[2], tail[2];
+        for (int k = 0; k < 2; ++k) {
+            Rig rig;
+            Command on = noteOn(1, 0, bass::Acid, 0, 0.75f, 0.4f);
+            on.f[2] = k == 0 ? 0.0f : 1.0f;
+            rig.send(on);
+            rig.run(0.6);
+            body[k] = rig.band(0.0, 0.3, 1000, 4000);
+            tail[k] = rig.band(0.25, 0.55, 1000, 4000);
+        }
+        QVERIFY2(body[1] > body[0] + 3, qPrintable(QStringLiteral("%1 %2").arg(body[0]).arg(body[1])));
+        QVERIFY2(tail[1] > tail[0] + 6, qPrintable(QStringLiteral("%1 %2").arg(tail[0]).arg(tail[1])));
+    }
+
+    // The kick ducks each sound its own way: a house sub breathes with it,
+    // the 808 hardly moves (the channel's light pump comes on top of both).
+    void eachSoundPumpsItsOwnWay() {
+        auto drop = [](int sound) {
+            Rig open, ducked;
+            std::fill(std::begin(ducked.ctx.duckBuf), std::end(ducked.ctx.duckBuf), 1.0f);
+            for (Rig *r : {&open, &ducked}) {
+                r->send(noteOn(1, 0, sound));
+                r->run(0.5);
+            }
+            return open.topRms(0, 0.5) - ducked.topRms(0, 0.5);
+        };
+        QVERIFY(drop(bass::Sub) > 4);
+        QVERIFY(drop(bass::Boom) < 0.5);
     }
 
     // The bass sits where basses sit: the key's root between E1 and D#2.
@@ -455,6 +527,59 @@ private slots:
         QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
     }
 
+    // A Space take shows on the page while it waits, whoever started it,
+    // and says what it caught when it lands.
+    void spaceTakesShowAndReport() {
+        const std::string script = "page 0 2\ntempo 0 120\n"
+                                   "tap 0.2 0.05 0.9\n" // LOOP: the first loop, bar 2
+                                   "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.05 0.9\n"
+                                   "tap 4.5 0.29 0.4\ntap 5.0 0.46 0.4\n"
+                                   "key 5.5 Space\n"; // three beats into bar 6: it loops at 6.0
+        QString waiting, notice;
+        testkit::play(script + "end 5.8\n", [&](Session &s) { waiting = s.pageStatus(); });
+        QVERIFY2(waiting.contains(QStringLiteral("slot 2 at the bar"), Qt::CaseInsensitive), qPrintable(waiting));
+        const auto take = testkit::play(script + "end 7.0\n", [&](Session &s) {
+            uint32_t seq = 0;
+            notice = s.notice(&seq);
+        });
+        QCOMPARE(int(take.view.parts[1].clips[1].state), int(ClipView::Playing));
+        QVERIFY2(notice.contains(QStringLiteral("slot 2")), qPrintable(notice));
+    }
+
+    // A root landed just before the bar and held through it is the loop's
+    // downbeat on every repeat, and a shaper set when the take began (a
+    // latched GRIT) plays in the loop after the hand lets it go.
+    void heldRootAndShapersCarryIntoTheLoop() {
+        // 120 BPM: bars at 0, 2, 4, 6, 8 s.
+        const std::string take = "page 0 2\ntempo 0 120\n"
+                                 "down 0.6 9 0.95 0.83\nclick 0.8\nup 1.0 9\n" // GRIT latched
+                                 "tap 0.2 0.05 0.9\n"                              // LOOP: from the bar at 2 s
+                                 "down 1.93 1 0.21 0.4 p=0.6\nup 3.4 1\n"         // A1 from beat -0.15
+                                 "tap 3.0 0.05 0.9\n"                              // LOOP: closes at 4 s
+                                 "key 4.5 P\n";                                    // the hand lets GRIT go
+        const auto t = testkit::play(take + "end 8.5\n");
+        const PartView &bass = t.view.parts[1];
+        QCOMPARE(int(bass.clips[0].state), int(ClipView::Playing));
+        // Each repeat's downbeat sounds: A1, and gritty.
+        for (double bar : {4.0, 6.0, 8.0})
+            QVERIFY2(t.rms(bar + 0.02, bar + 0.3) > 0.03, qPrintable(QString::number(bar)));
+        QVERIFY(bass.data[bass::PubGrit] > 0.05f);
+        QVERIFY(bass.data[bass::PubLane + 8 + bass::PubOn] > 0); // the loop's lane sounds
+    }
+
+    // The same through Space over a playing loop, pressed before the bar.
+    void spaceCarriesTheHeldRootToo() {
+        const std::string take = "page 0 2\ntempo 0 120\n"
+                                 "tap 0.2 0.05 0.9\ntap 2.1 0.37 0.4\ntap 3.0 0.05 0.9\n" // a first loop
+                                 "down 7.93 1 0.21 0.4 p=0.6\nup 9.4 1\n" // A1 from just before bar 8 s
+                                 "key 9.0 Space\n";                        // loops 8-10 s at 10 s
+        const auto t = testkit::play(take + "end 14.4\n");
+        QCOMPARE(int(t.view.parts[1].clips[1].state), int(ClipView::Playing));
+        QCOMPARE(int(t.view.parts[1].clips[1].lengthBeats), 4);
+        for (double bar : {10.0, 12.0, 14.0})
+            QVERIFY2(t.rms(bar + 0.02, bar + 0.3) > 0.03, qPrintable(QString::number(bar)));
+    }
+
     // Playing never makes a loop by itself: taps and then a hold on the
     // first note, on the beat, are just a bass line.
     void playingNeverLoopsByItself() {
@@ -495,6 +620,31 @@ private slots:
                          "down 0.9 1 0.3 0.3\nend 1.5\n"));
         QVERIFY(!wobbling("page 0 2\nkey 0.1 W\ndown 0.2 2 0.6 0.9\nclick 0.4\nup 0.7 2\nkey 0.8 P\n"
                           "down 0.9 1 0.3 0.3\nend 1.5\n"));
+    }
+
+    // A finger lands on the stop it aims at: 1/16 is 1/16 and GALLOP is
+    // GALLOP, whatever the last finger left.
+    void shaperStopsAreWhereTheyLand() {
+        // WOB is 0.56..0.78 wide, four stops across; 1/16 is the top row's last.
+        auto wobRate = [](const std::string &land) {
+            const auto take = testkit::play("page 0 2\ndown 0.1 1 0.3 0.3\n" + land + "end 0.6\n");
+            return int(take.view.parts[1].data[bass::PubWobRate]);
+        };
+        QCOMPARE(wobRate("down 0.2 2 0.7525 0.95\n"), 5);                          // 1/16
+        QCOMPARE(wobRate("down 0.2 2 0.5875 0.80\n"), 2);                          // 1/4T
+        QCOMPARE(wobRate("down 0.2 2 0.7525 0.95\nup 0.3 2\ndown 0.4 3 0.6975 0.95\n"), 3); // then 1/8
+        QCOMPARE(wobRate("down 0.2 2 0.5875 0.95\nglide 0.3 0.4 2 0.6975 0.95\n"), 3); // slid two stops
+        const auto roll = testkit::play("page 0 2\ndown 0.1 1 0.3 0.3\ndown 0.2 2 0.4775 0.95\nend 0.6\n");
+        QCOMPARE(int(roll.view.parts[1].data[bass::PubRoll]) - 1, 2); // GALLOP
+    }
+
+    // An OCT-zone finger on the BEND row dives the pitch with its height.
+    void bendRowDives() {
+        Rig rig;
+        rig.send(noteOn(1, 7, bass::Sub)); // A2, 110 Hz
+        rig.send(shaper(bass::ShapeBend, -12, 0));
+        rig.run(0.6);
+        QVERIFY(std::fabs(cents(rig.pitch(), 33)) < 15);
     }
 
     // Leaving the page ends what the fingers hold.

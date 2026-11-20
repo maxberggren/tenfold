@@ -80,6 +80,51 @@ struct PulseOsc {
 constexpr float kVowels[5][3] = {
     {320, 800, 2300}, {450, 830, 2600}, {760, 1150, 2500}, {550, 1800, 2550}, {290, 2250, 3000}};
 
+// An attack, decay, sustain, release envelope with the same shape as the
+// shared Adsr, but with its coefficients worked out when it is struck rather
+// than an exp() every sample: a lead keeps two of these running per voice.
+struct Env {
+    enum Stage { Idle, Attack, Decay, Sustain, Release } stage = Idle;
+    float v = 0, s = 0.8f, ka = 1, kd = 1, kr = 1;
+    void set(float a, float d, float sustain, float r, float rate) {
+        ka = 1.0f - std::exp(-1.0f / (std::max(a, 0.0005f) * rate));
+        kd = 1.0f - std::exp(-1.0f / (std::max(d, 0.001f) * rate * 0.3f));
+        kr = 1.0f - std::exp(-1.0f / (std::max(r, 0.001f) * rate * 0.3f));
+        s = sustain;
+    }
+    void gate(bool on) { stage = on ? Attack : (stage == Idle ? Idle : Release); }
+    inline float step() {
+        switch (stage) {
+        case Attack:
+            // Toward a little over the top, so the attack ends on a slope, not a crawl.
+            v += (1.2f - v) * ka;
+            if (v >= 1.0f) {
+                v = 1.0f;
+                stage = Decay;
+            }
+            break;
+        case Decay:
+            v += (s - v) * kd;
+            if (std::fabs(v - s) < 1e-4f)
+                stage = Sustain;
+            break;
+        case Sustain:
+            v = s;
+            break;
+        case Release:
+            v -= v * kr;
+            if (v < 1e-5f) {
+                v = 0;
+                stage = Idle;
+            }
+            break;
+        case Idle:
+            break;
+        }
+        return v;
+    }
+};
+
 } // namespace
 
 // --- engine -------------------------------------------------------------------
@@ -124,7 +169,7 @@ struct Voice {
     int sound = 0;
     uint64_t born = 0;
     Bank banks[kBanks];
-    Adsr amp, filt;
+    Env amp, filt;
     float vel = 0.8f;
     float tau = 0.07f; // the glide toward the current note
     float y = 0.5f, press = 0.5f, fat = 0, motion = 0; // smoothed expression
@@ -466,9 +511,8 @@ private:
         for (auto &ch : v.form)
             for (auto &f : ch)
                 f.reset();
-        v.amp.rate = v.filt.rate = m_rate;
         v.amp.v = v.filt.v = 0;
-        v.amp.stage = v.filt.stage = Adsr::Idle;
+        v.amp.stage = v.filt.stage = Env::Idle;
         v.level = 0;
         // Every bank starts on its own pitch: no glide into a first note.
         const Line &line = m_lines[size_t(li)];
@@ -493,14 +537,8 @@ private:
     // or a portamento restart never clicks.
     void strike(Voice &v, float vel, bool scoop) {
         const Sound &s = sound(v.sound);
-        v.amp.a = s.a;
-        v.amp.d = s.d;
-        v.amp.s = s.s;
-        v.amp.r = s.r;
-        v.filt.a = 0.001f;
-        v.filt.d = s.envDecay;
-        v.filt.s = 0.0f;
-        v.filt.r = 0.3f;
+        v.amp.set(s.a, s.d, s.s, s.r, m_rate);
+        v.filt.set(0.001f, s.envDecay, 0.0f, 0.3f, m_rate);
         v.amp.gate(true);
         v.filt.gate(true);
         v.fmEnv = 1.0f;
@@ -883,7 +921,10 @@ private:
             peak = std::max(peak, std::fabs(sl) + std::fabs(sr));
         }
         v.level = std::max(peak * 2.0f, v.level * std::exp(-dt / 0.08f));
-        if (v.releasing && v.amp.stage == Adsr::Idle)
+        // A released voice is done once it's 70 dB down; the envelope's own
+        // idea of silence is far below anything audible, and every voice
+        // still ringing costs its full price.
+        if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f))
             v.active = false;
     }
 

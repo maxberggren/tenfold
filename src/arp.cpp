@@ -26,7 +26,6 @@
 
 #include "console.h"
 #include "parts.h"
-#include "phrase.h"
 
 namespace tf::arp {
 
@@ -276,6 +275,7 @@ struct Voice {
     float mph = 0, minc = 0;
     float blend = 0, pw = 0.5f, lfo = 0, lfoInc = 0, pwmDepth = 0;
     float gain = 0.3f, resBias = 0, cutBias = 0;
+    float midiNow = 60, midiTo = 60, glide = 0; // acid slides
     Ladder fl, fr;
     int coefIn = 0;
     float level = 0;
@@ -296,6 +296,8 @@ struct Voice {
         amp = 0;
         level = 0;
         gate = std::max(1, int(s.gateSec * s.rate));
+        midiNow = midiTo = s.midi;
+        glide = 1.0f - std::exp(-8.0f / (0.045f * s.rate)); // per eight samples
         const float hz = midiToHz(s.midi);
         Rng rng(s.seed | 1u);
         for (float &p : ph)
@@ -336,7 +338,7 @@ struct Voice {
             const float c[2] = {-7.0f, 7.0f}, p[2] = {-0.55f, 0.55f};
             setUnits(2, c, p);
             blend = s.color;
-            attack = 0.002f;
+            attack = 0.0025f;
             sustain = 0.22f;
             envOct = 3.6f;
             gain = 0.78f;
@@ -411,6 +413,13 @@ struct Voice {
         fenvMul = mulFor(fdecay * 0.45f);
     }
 
+    // A tied acid note: the voice glides to the next pitch without a new
+    // attack, the way a 303 slides.
+    void slide(float midi, float gateSec, float rate) {
+        midiTo = midi;
+        gate = std::max(1, int(gateSec * rate));
+    }
+
     void release() {
         if (stage != 2) {
             stage = 2;
@@ -448,6 +457,12 @@ struct Voice {
                 release();
             fenv *= fenvMul;
             if (--coefIn <= 0) {
+                if (midiNow != midiTo) {
+                    midiNow += (midiTo - midiNow) * glide;
+                    if (std::fabs(midiTo - midiNow) < 0.01f)
+                        midiNow = midiTo;
+                    inc[0] = std::min(0.45f, midiToHz(midiNow) / rate);
+                }
                 coefIn = 8;
                 const float fc = std::min(base * std::exp2(envOct * fenv), rate * (0.42f - 0.1f * resonance));
                 fl.set(fc, resonance, rate);
@@ -960,13 +975,37 @@ struct Engine::Impl {
                 erase(L, i);
     }
 
+    void logNote(int lane, double b, float midi, float vel, int degree, bool accent, Lane &L, int perOct) {
+        const int cell = degree - (L.plan.leap ? perOct : 0);
+        if (cell >= 0 && cell < kFlashCells)
+            L.flash[cell] = 1.0f;
+        Fired f;
+        f.sample = rendered + uint64_t(cursor);
+        f.beat = b;
+        f.midi = midi;
+        f.vel = vel;
+        f.degree = degree;
+        f.lane = lane;
+        f.accent = accent;
+        recent[recentHead] = f;
+        recentHead = (recentHead + 1) % kRecent;
+        if (log) {
+            (*log)[logCount % log->size()] = f;
+            ++logCount;
+        }
+    }
+
     void trigger(int lane, double b, const Transport &tr, const Harmony &h) {
         Lane &L = lanes[lane];
         const Settings &s = eff[lane];
         const int r = std::max(1, L.plan.ratchet);
         const float stepSec = float(stepBeats(s.rate) * tr.secondsPerBeat());
         const float subSec = stepSec / float(r);
-        const float gateSec = std::max(0.012f, (r > 1 ? std::min(s.gate, 0.7f) : s.gate) * subSec);
+        // A gate pushed all the way ties each note into the next: legato,
+        // and on the acid a slide.
+        const bool tie = s.gate > 0.97f && r == 1;
+        const float gateSec =
+            tie ? subSec * 1.08f : std::max(0.012f, (r > 1 ? std::min(s.gate, 0.7f) : s.gate) * subSec);
         const float rollGain = L.sub > 0 ? std::pow(0.8f, float(L.sub)) : 1.0f;
         const int cyc = accentCycle(s.accent);
         const float accentGain =
@@ -979,6 +1018,17 @@ struct Engine::Impl {
             double midi = h.midi(L.cur[k], s.reg);
             while (midi > 100.0)
                 midi -= 12.0;
+            if (tie && s.sound == Acid && L.curCount == 1) {
+                Voice *held = nullptr;
+                for (Voice &w : voices)
+                    if (w.on && !w.released && w.lane == lane && w.sound == Acid)
+                        held = &w;
+                if (held) {
+                    held->slide(float(midi), gateSec, rate);
+                    logNote(lane, b, float(midi), held->vel, L.cur[k], L.plan.accent, L, perOct);
+                    continue;
+                }
+            }
             Voice &v = alloc();
             Voice::Start st;
             st.sound = s.sound;
@@ -995,23 +1045,7 @@ struct Engine::Impl {
             v.start(st);
             v.lane = lane;
             v.born = ++age;
-            const int cell = L.cur[k] - (L.plan.leap ? perOct : 0);
-            if (cell >= 0 && cell < kFlashCells)
-                L.flash[cell] = 1.0f;
-            Fired f;
-            f.sample = rendered + uint64_t(cursor);
-            f.beat = b;
-            f.midi = float(midi);
-            f.degree = L.cur[k];
-            f.vel = st.vel;
-            f.lane = lane;
-            f.accent = L.plan.accent;
-            recent[recentHead] = f;
-            recentHead = (recentHead + 1) % kRecent;
-            if (log) {
-                (*log)[logCount % log->size()] = f;
-                ++logCount;
-            }
+            logNote(lane, b, float(midi), st.vel, L.cur[k], L.plan.accent, L, perOct);
         }
     }
 };
@@ -1139,7 +1173,10 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
                    0.8f + 0.12f * e.throwFb);
     float pk = 0;
     for (int i = 0; i < n; ++i) {
-        const float L = s.hpL.step(dryL[i]).high * kOutGain, R = s.hpR.step(dryR[i]).high * kOutGain;
+        // A soft ceiling: the attack of a stab, or a resonant peak thrown
+        // through the echo, rounds off instead of spiking the bus.
+        const float L = fastTanh(s.hpL.step(dryL[i]).high * kOutGain),
+                    R = fastTanh(s.hpR.step(dryR[i]).high * kOutGain);
         l[i] += L;
         r[i] += R;
         pk = std::max(pk, std::max(std::fabs(L), std::fabs(R)));
@@ -1314,7 +1351,6 @@ class ArpControl : public PartControl {
 public:
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
         m_perOct = perOctaveOf(ctx.studio());
         // Lifts.
         for (auto &n : m_notes)
@@ -1528,37 +1564,41 @@ public:
         paintPads(p, pc);
         paintFingers(p, pc);
         c::beats(p, pc, pc.color);
+        // An armed loop is announced on the pad's top edge until it lands.
+        if (m_loopBar > INT64_MIN) {
+            const double left = std::max(0.0, double(m_loopBar) * kBeatsPerBar - pc.beat);
+            c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
+                   QStringLiteral("LOOP ARMED · LAST %1 BAR%2 → SLOT %3 IN %4 BEATS")
+                       .arg(m_loopBars)
+                       .arg(m_loopBars > 1 ? "S" : "")
+                       .arg(m_loopSlot + 1)
+                       .arg(QString::number(left, 'f', 1)),
+                   std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.7f), 12, true);
+        }
         paintStrip(p, pc);
     }
 
     QString help() const override {
         return QStringLiteral(
-            "LEFT HAND\tthe notes\n"
-            "touch the grid\ta note of the scale; the upper row is an octave higher\n"
+            "touch the grid\ta note of the scale, the upper row an octave up; press harder for louder\n"
             "first finger\tgrows into a chord; twist it: single, fifth, triad, seventh, ninth\n"
-            "more fingers\tadd their notes; slide sideways to walk a note; press harder for louder\n"
+            "more fingers\tadd their notes; slide one sideways to walk it along the scale\n"
             "top chips\tpattern: up, down, up·down, converge, as played, random, chord stabs, pedal\n"
             "bottom chips\tsound: pluck, glass, supersaw, pulse, acid · FOLLOW the chords page · LATCH\n"
-            "RIGHT HAND\thow it runs\n"
             "RATE · GATE\tup: 1/8 to 1/32 with triplets · across: short to legato · twist: swing\n"
             "RHYTHM\tacross: euclidean hits per bar · up: turn the rhythm · press hard: rolls\n"
             "RANGE\tacross: register · up: one to four octaves\n"
             "TONE\tup: cutoff · across: the sound's colour · twist: resonance · press: bite\n"
             "GROOVE\tacross: accent every 2, 3, 4, 5 or 7 notes · up: chaos · press: harder accents\n"
             "ECHO\tacross: 1/16 to dotted 1/4 · up: amount · press: throw the feedback\n"
-            "no notes held\tthe right hand shapes the playing loop, and lets go when it lifts\n"
-            "LOOPS\tlatch and capture\n"
+            "right hand, no notes held\tshapes the playing loop, and lets go of it on lifting\n"
             "click\tlatch: the pattern keeps running when the fingers lift\n"
-            "hold the click\tloop the last bars at the next bar line (- and = choose 1, 2, 4 or 8)\n"
-            "tap a rhythm, hold the next beat\tloops the taps\n"
-            "F1–F8 · Shift+F1–F8\tlaunch a slot · loop into that slot\n"
-            "Backspace\tstop the loop at the next bar\n"
-            "KEYS\tfor the other hand\n"
+            "hold the click\tthe only way to loop: arms it, and at the next bar line the last bars become a clip\n"
+            "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · loop into that slot · stop at the bar\n"
             "A S D F G H J K L ; '\tnotes, held like fingers\n"
-            "Q W E R T Y U I\tthe eight patterns\n"
-            "Z X C V B\tpluck, glass, supersaw, pulse, acid\n"
+            "Q W E R T Y U I · Z X C V B\tthe eight patterns · the five sounds\n"
             "↑ ↓ · ← → · [ ]\trate · register · octaves\n"
-            "O P · , .\tfewer or more hits · what the first note grows into\n"
+            "O P · , . · - =\tfewer or more hits · the first note's chord · loop length 1, 2, 4, 8 bars\n"
             "Return · Shift+Return\tlatch · loop it\n"
             "M · N\tfollow the chords page · new dice for random and chaos");
     }
@@ -1578,7 +1618,9 @@ public:
         if (m_latch)
             s += QStringLiteral(" · latched");
         if (m_loopBar > INT64_MIN)
-            s += QStringLiteral(" · looping at the bar");
+            s += QStringLiteral(" · loop armed: %1 bar%2 at the next bar line").arg(m_loopBars).arg(m_loopBars > 1 ? "s" : "");
+        else if (held > 0)
+            s += QStringLiteral(" · hold the click to loop the last %1 bar%2").arg(m_loopBars).arg(m_loopBars > 1 ? "s" : "");
         return s;
     }
 
@@ -1593,7 +1635,6 @@ private:
         float vel = 0.8f;
         double t0 = 0;
         bool first = false;
-        bool long_ = false;
         float angle0 = 0;
         int stack0 = 0;
         double lastMove = 0;
@@ -1789,8 +1830,7 @@ private:
     }
 
     void liftNote(Note &n, double t, ControlContext &ctx, bool leaving = false) {
-        if (n.touch >= 0 && !n.long_ && !leaving)
-            m_phrase.tap(n.t0, t - n.t0, 0);
+        (void)leaving;
         if (m_latch) {
             n.touch = -1;
             n.key = false;
@@ -1911,20 +1951,6 @@ private:
         if (changed) {
             n.lastMove = time;
             sendNote(Command::Move, n, time, ctx);
-        }
-        // Tap a rhythm, then land and stay on the next beat: the taps loop.
-        if (!n.long_ && n.touch >= 0 && time - n.t0 >= 0.25) {
-            n.long_ = true;
-            double start = 0;
-            if (m_phrase.closes(n.t0, 0, &start)) {
-                const int slot = std::max(0, ctx.freeSlot());
-                ctx.capture(slot, start, n.t0);
-                ctx.notice(QStringLiteral("Loop in slot %1").arg(slot + 1));
-                m_phrase.clear();
-                // The loop plays from here; the closing finger steps aside.
-                sendNote(Command::Off, n, time, ctx);
-                spend(n, time, ctx);
-            }
         }
     }
 
@@ -2119,7 +2145,10 @@ private:
             }
         m_latch = false;
         m_loopBar = INT64_MIN;
-        m_phrase.clear();
+        ctx.notice(QStringLiteral("Looped the last %1 bar%2 into slot %3: it plays from this bar")
+                       .arg(m_loopBars)
+                       .arg(m_loopBars > 1 ? "s" : "")
+                       .arg(m_loopSlot + 1));
     }
 
     void paintGrid(QPainter &p, const PaintContext &pc);
@@ -2146,7 +2175,6 @@ private:
     int64_t m_handedBar = INT64_MIN;
     int m_id = 0;
     int m_perOct = 7;
-    Phrase m_phrase;
     Frame m_frame;
 };
 
@@ -2326,7 +2354,6 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
     namespace c = console;
     const QColor col = pc.color;
     const float *data = pc.view->data;
-    const bool overlay = data[kDataOverlay] > 0.5f;
     const Settings &s = m_s;
     Tuning tuning;
     tuning.set(pc.studio->root, pc.studio->family, pc.studio->brightness, pc.studio->just);
@@ -2373,16 +2400,20 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
             const int hits = hitsFor(s.density, n);
             const QPointF centre = in.center();
             const qreal rad = std::min(in.width(), in.height()) * 0.44;
-            const int now = int(data[kDataLiveStep]);
-            const bool running = data[kDataLiveRunning] > 0.5f;
+            // The live lane's step, or the loop's (in amber) when only it runs.
+            const bool live = data[kDataLiveRunning] > 0.5f;
+            const bool running = live || data[kDataClipRunning] > 0.5f;
+            const int now = int(data[live ? kDataLiveStep : kDataClipStep]);
+            const QColor stepInk = live ? tint : c::amber();
             for (int i = 0; i < n; ++i) {
                 const double ang = -kPi / 2 + 2 * kPi * i / n;
                 const QPointF pt = centre + QPointF(std::cos(ang) * rad, std::sin(ang) * rad);
                 const bool hit = euclid(i, hits, n, s.rotate);
                 const bool cur = running && i == now;
                 const qreal dot = (n > 16 ? 2.2 : 3.4) * (cur ? 1.7 : 1.0);
-                p.setPen(QPen(c::alpha(tint, hit ? 1.0f : 0.35f), 1.2));
-                p.setBrush(hit ? QBrush(c::alpha(tint, cur ? 1.0f : 0.7f)) : Qt::NoBrush);
+                const QColor ink = cur ? stepInk : tint;
+                p.setPen(QPen(c::alpha(ink, hit || cur ? 1.0f : 0.35f), 1.2));
+                p.setBrush(hit || cur ? QBrush(c::alpha(ink, cur ? 1.0f : 0.7f)) : Qt::NoBrush);
                 p.drawEllipse(pt, dot, dot);
                 if (cur && data[kDataLiveRatchet] > 1.5f) {
                     p.setBrush(Qt::NoBrush);
@@ -2524,8 +2555,6 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
             break;
         }
     }
-    if (overlay)
-        c::tag(p, pc.at(kSplit + 0.012f, 0.0f) + QPointF(0, -2), QStringLiteral("SHAPING THE LOOP"), c::amber(), 11);
 }
 
 void ArpControl::paintFingers(QPainter &p, const PaintContext &pc) {
@@ -2565,10 +2594,17 @@ void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
     }
     const QRectF info(strip.right() + 12, strip.top(), pc.pad.right() - strip.right() - 12, strip.height());
     QString line = QStringLiteral("LOOPS TAKE %1 BAR%2").arg(m_loopBars).arg(m_loopBars > 1 ? "S" : "");
-    if (m_loopBar > INT64_MIN)
-        line = QStringLiteral("LOOPING AT THE BAR");
-    c::text(p, QRectF(info.left(), info.top(), info.width(), 15), line,
-            m_loopBar > INT64_MIN ? c::red() : c::alpha(pc.color, 0.75f), 11, true);
+    QColor ink = c::alpha(pc.color, 0.75f);
+    if (m_loopBar > INT64_MIN) {
+        const double left = std::max(0.0, double(m_loopBar) * kBeatsPerBar - pc.beat);
+        line = QStringLiteral("LOOP ARMED · %1 BAR%2 IN %3").arg(m_loopBars).arg(m_loopBars > 1 ? "S" : "")
+                   .arg(QString::number(left, 'f', 1));
+        ink = c::red();
+    } else if (pc.view->data[kDataOverlay] > 0.5f) {
+        line = QStringLiteral("SHAPING THE LOOP");
+        ink = c::amber();
+    }
+    c::text(p, QRectF(info.left(), info.top(), info.width(), 15), line, ink, 11, true);
     QString second = QStringLiteral("%1 · %2").arg(QString::fromUtf8(soundName(m_s.sound)),
                                                     QString::fromUtf8(patternName(m_s.pattern)));
     if (m_latch)

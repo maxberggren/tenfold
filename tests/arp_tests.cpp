@@ -425,6 +425,24 @@ private slots:
         QCOMPARE(fast, 5); // 2.375 … 2.875
     }
 
+    void aTiedAcidLineSlidesOnOneVoice() {
+        Clock c(120);
+        std::unique_ptr<arp::Engine> owner;
+        arp::Engine &e = *fresh(owner);
+        arp::Settings s;
+        s.sound = arp::Acid;
+        s.gate = 1.0f;
+        state(e, c, s, 0.9);
+        note(e, c, Command::On, 1, 0, 0, 1.0, 2);
+        c.runTo(e, 3.1);
+        QCOMPARE(int(e.log().size()), 9);
+        QCOMPARE(e.voices(), 1); // every note slid into the one before
+        std::set<int> pitches;
+        for (const auto &f : e.log())
+            pitches.insert(int(std::lround(f.midi)));
+        QCOMPARE(int(pitches.size()), 6);
+    }
+
     void stopsWhenTheNotesGoAndFallsSilent() {
         Clock c(120);
         std::unique_ptr<arp::Engine> owner;
@@ -545,15 +563,18 @@ private slots:
                 QVERIFY(f.beat < 12.0);
     }
 
-    void tapsThenAHoldLoopTheTaps() {
+    void tapsAndHoldsNeverLoopByThemselves() {
+        // A rhythm tapped and then a held note is ordinary playing here: only
+        // the click makes a loop.
         StudioView view;
-        const auto take = testkit::play("page 0 5\n"
-                                        "tap 0.5 " + gridX(0) + " 0.32\ntap 1.0 " + gridX(2) + " 0.32\n"
-                                        "tap 1.5 " + gridX(4) + " 0.32\ntap 2.0 " + gridX(2) + " 0.32\n"
-                                        "down 2.5 1 " + gridX(0) + " 0.32\nup 2.9 1\nend 8\n",
-                                        [&](Session &s) { view = s.view(); });
-        QCOMPARE(view.parts[4].playing, 0);
-        QVERIFY(take.rms(5, 8) > 0.01);
+        testkit::play("page 0 5\n"
+                      "tap 0.5 " + gridX(0) + " 0.32\ntap 1.0 " + gridX(2) + " 0.32\n"
+                      "tap 1.5 " + gridX(4) + " 0.32\ntap 2.0 " + gridX(2) + " 0.32\n"
+                      "down 2.5 1 " + gridX(0) + " 0.32\nup 3.5 1\nend 5\n",
+                      [&](Session &s) { view = s.view(); });
+        QCOMPARE(view.parts[4].playing, -1);
+        for (const auto &c : view.parts[4].clips)
+            QVERIFY(c.state == ClipView::Empty);
     }
 
     void withNoNotesTheRightHandShapesTheLoop() {

@@ -125,6 +125,8 @@ struct Settings {
     void pack(Command &c) const;
     void unpack(const Command &c);
     bool operator==(const Settings &o) const;
+    // The same to the ear: every choice equal, every knob within 0.5%.
+    bool near(const Settings &o) const;
     bool operator!=(const Settings &o) const { return !(*this == o); }
 };
 
@@ -225,7 +227,9 @@ struct StepPlan {
     float gain = 1;  // the bar's own dynamics
 };
 
-inline StepPlan planStep(const Settings &s, int64_t step, uint64_t counter) {
+// dice is the step the dice are rolled for: the step itself, or for a loop
+// the step its take had at that place.
+inline StepPlan planStep(const Settings &s, int64_t step, uint64_t counter, int64_t dice) {
     StepPlan p;
     const int n = stepsPerBar(s.rate);
     const int perBeat = n / 4;
@@ -233,7 +237,7 @@ inline StepPlan planStep(const Settings &s, int64_t step, uint64_t counter) {
     p.fire = euclid(step, hitsFor(s.density, n), n, s.rotate);
     // Dice keyed to the step's place in a two-bar phrase: chaos repeats as
     // a phrase, so what you hear twice is what a loop will hold.
-    const uint32_t key = uint32_t(floorModI(step, 2 * n));
+    const uint32_t key = uint32_t(floorModI(dice, 2 * n));
     const bool onBeat = inBar % perBeat == 0;
     if (s.chaos > 0.001f) {
         const float c = s.chaos;
@@ -246,7 +250,7 @@ inline StepPlan planStep(const Settings &s, int64_t step, uint64_t counter) {
         if (unit(hash(s.seed, key * 8 + 4)) < c * 0.22f)
             p.skip = 1;
     }
-    if (s.ratchet > 0.001f && unit(hash(s.seed ^ 0x5A5A, key * 8 + 5)) < 0.25f + 0.75f * s.ratchet)
+    if (s.ratchet > 0.001f && unit(hash(s.seed ^ 0x5A5A, key * 8 + 5)) < s.ratchet)
         p.ratchet = std::max(p.ratchet, 2 + int(s.ratchet > 0.45f) + int(s.ratchet > 0.8f));
     const int cyc = accentCycle(s.accent);
     p.accent = cyc > 0 && counter % uint64_t(cyc) == 0;
@@ -304,6 +308,7 @@ public:
     void clearLog();
     const Settings &laneSettings(int lane) const;
     uint64_t laneCounter(int lane) const;
+    int statesReceived() const; // settings commands heard, for the tests
 
     struct Impl;
 

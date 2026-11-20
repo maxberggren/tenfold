@@ -1,21 +1,20 @@
 # Warehouse: house chord stabs on the off-beats (a held Am7, the chord
 # pattern, four euclidean hits turned onto the ands), looped for one bar
-# with a held click; then an acid line on top from the same pad: random
-# through A, E, G and C with accents every three, resonance twisted up,
-# the cutoff ridden, slides from a gate pushed all the way, new dice
-# mid-way, rolls pressed out of the rhythm pad and an echo thrown.
+# by Space on the next ONE; then an acid line on top from the same pad:
+# random through A, E, G and C with accents every three, resonance
+# twisted up, the cutoff ridden, slides from a gate pushed all the way,
+# new dice mid-way, rolls pressed out of the rhythm pad, an echo thrown.
 tempo 0 128
 page 0.05 5
 key 0.100 U
 key 0.150 .
-key 0.200 -
 tap 0.300 0.6308 0.8133
 tap 0.450 0.8589 0.0960
 tap 0.600 0.8589 0.4927
 tap 0.750 0.8408 0.7247
-down 1.855 1 0.0362 0.3200 p=0.55
-click 4.050 len=0.8
-up 6.125 1
+down 1.875 1 0.0362 0.3200 p=0.55
+key 3.750 Space
+up 3.760 1
 tap 6.225 0.9853 0.6867
 key 6.425 B
 key 6.475 Y

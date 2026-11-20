@@ -79,6 +79,24 @@ void Settings::unpack(const Command &c) {
     echo = clampf(c.f[7], 0, 1);
 }
 
+bool Settings::near(const Settings &o) const {
+    // Choices must match; knobs within half a percent count as unmoved.
+    Command a, b;
+    pack(a);
+    o.pack(b);
+    if (a.i[0] != b.i[0] || a.i[1] != b.i[1])
+        return false;
+    for (int k = 0; k < 3; ++k)
+        if (std::abs((a.i[2] >> (10 * k) & 1023) - (b.i[2] >> (10 * k) & 1023)) > 5)
+            return false;
+    if (std::abs((a.i[3] & 1023) - (b.i[3] & 1023)) > 5)
+        return false;
+    for (int i = 0; i < 8; ++i)
+        if (std::fabs(a.f[i] - b.f[i]) > 0.005f)
+            return false;
+    return true;
+}
+
 bool Settings::operator==(const Settings &o) const {
     Command a, b;
     pack(a);
@@ -370,6 +388,7 @@ struct Voice {
                                 0.78f * spread};
             const float p[7] = {0, -0.4f, 0.4f, -0.7f, 0.7f, -0.95f, 0.95f};
             setUnits(7, c, p);
+            cutBias = 0.5f;
             sustain = 0.6f;
             envOct = 2.6f;
             attack = 0.003f;
@@ -624,6 +643,8 @@ struct Engine::Impl {
         float flash[kFlashCells] = {};
         int lastInBar = -1, lastRatchet = 1;
         bool lastAccent = false;
+        int diceBars = 0; // a loop's bars against its take's, for chaos's two-bar phrase
+        double freshBeat = -1e9; // when the pool last filled from empty
     };
     struct Pending {
         uint64_t at;
@@ -648,6 +669,7 @@ struct Engine::Impl {
     float level = 0;
     std::vector<Fired> *log = nullptr; // a ring, sized at init
     uint64_t logCount = 0;
+    int states = 0;
     Fired recent[kRecent];
     int recentHead = 0;
     uint32_t noteSeed = 0x2545F491u;
@@ -746,6 +768,11 @@ struct Engine::Impl {
     void noteOn(int lane, const Command &c, double b) {
         Lane &L = lanes[lane];
         const int col = c.i[0], row = c.i[1] >> 4 & 15, stack = c.i[1] & 15, flags = c.i[1] >> 8;
+        if (lane == 1 && c.f[1] >= 1.0f) {
+            const int parity = int(c.f[1]) - 1;
+            const int bar = int(floorDiv(int64_t(std::floor((b + 0.1) / kBeatsPerBar)), 1));
+            L.diceBars = (parity - bar) & 1;
+        }
         const float vel = clampf(c.f[0] > 0 ? c.f[0] : 0.8f, 0.05f, 1.0f);
         auto fill = [&](PoolNote &n) {
             n.col = col;
@@ -761,6 +788,11 @@ struct Engine::Impl {
                 n.id = c.id;
                 fill(n);
                 n.released = false;
+                // A loop starting: the note it carries may have come in a
+                // moment ago (held into the take); the pattern still starts
+                // where this bar's hand-over says it was.
+                if (c.i[3] >= 0 && L.lastFired < L.step && std::fabs(b - L.freshBeat) < 1e-6)
+                    L.counter = uint64_t(c.i[3]);
                 return;
             }
         }
@@ -787,8 +819,10 @@ struct Engine::Impl {
         n = PoolNote{};
         n.id = c.id;
         fill(n);
-        if (fresh)
+        if (fresh) {
             L.counter = phase >= 0 ? uint64_t(phase) : 0;
+            L.freshBeat = b;
+        }
         if (!L.running) {
             L.running = true;
             schedule(L, eff[lane], b, true);
@@ -825,6 +859,7 @@ struct Engine::Impl {
         const int lane = clipId(c.id) ? 1 : 0;
         switch (c.type) {
         case kState: {
+            ++states;
             Settings s;
             s.unpack(c);
             setSettings(lane, s, b);
@@ -929,7 +964,7 @@ struct Engine::Impl {
         const Settings &s = eff[lane];
         const int perOct = h.tuning.degreesPerOctave();
         if (L.sub == 0) {
-            L.plan = planStep(s, L.step, L.counter);
+            L.plan = planStep(s, L.step, L.counter, L.step + int64_t(L.diceBars) * stepsPerBar(s.rate));
             L.curCount = 0;
             if (L.plan.fire && L.count > 0) {
                 int deg[16];
@@ -1256,6 +1291,7 @@ std::vector<Engine::Fired> Engine::log() const {
 void Engine::clearLog() { d->logCount = 0; }
 
 const Settings &Engine::laneSettings(int lane) const { return d->eff[std::clamp(lane, 0, 1)]; }
+int Engine::statesReceived() const { return d->states; }
 uint64_t Engine::laneCounter(int lane) const { return d->lanes[std::clamp(lane, 0, 1)].counter; }
 
 // --- the page -------------------------------------------------------------------
@@ -1373,21 +1409,21 @@ public:
             if (Note *n = noteFor(t.id))
                 moveNote(*n, t, f.t, ctx);
             else if (Knob *k = knobFor(t.id))
-                moveKnob(*k, t);
+                moveKnob(*k, t, f.t);
             else
                 land(t, f.t, ctx);
         }
-        // The click: a short press latches, a long one loops.
+        // The click latches. A hard press on a pad can register as a click
+        // on a force-sensing trackpad, so a click that comes while a pad is
+        // pressed, or just after, is not one.
         if (f.button && !m_button) {
             m_button = true;
-            m_buttonT0 = f.t;
-            m_buttonLong = false;
-        } else if (f.button && m_button && !m_buttonLong && f.t - m_buttonT0 >= 0.55) {
-            m_buttonLong = true;
-            loopIt(ctx);
+            m_buttonIgnored = pressing() || f.t - m_lastPress < 0.3;
+        } else if (f.button && pressing()) {
+            m_buttonIgnored = true;
         } else if (!f.button && m_button) {
             m_button = false;
-            if (!m_buttonLong)
+            if (!m_buttonIgnored)
                 setLatch(!m_latch, f.t, ctx);
         }
         flush(f.t, ctx, false);
@@ -1397,13 +1433,25 @@ public:
 
     void background(double t, ControlContext &ctx) override {
         const double beat = ctx.beatAt(t);
-        // A loop waiting for its bar line is cut a moment before it, so the
-        // clip starts on the line itself.
-        if (m_loopBar > INT64_MIN) {
-            const double at = double(m_loopBar) * kBeatsPerBar;
-            const double lead = 0.06 * ctx.studio().bpm / 60.0;
-            if (beat >= at - lead)
-                finishLoop(ctx);
+        // Space's take (the session's): shown while it waits; when it lands,
+        // a latched pattern hands over to the loop instead of doubling it.
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        if (pv.recording >= 0) {
+            m_take = pv.recording;
+        } else if (m_take >= 0) {
+            if (pv.playing == m_take) {
+                bool latched = false;
+                for (auto &n : m_notes)
+                    if (n.used && n.touch < 0 && !n.key) {
+                        release(n, t, ctx);
+                        latched = true;
+                    }
+                if (latched) {
+                    m_latch = false;
+                    ctx.notice(QStringLiteral("Loop in slot %1 carries on; the latch let go").arg(m_take + 1));
+                }
+            }
+            m_take = -1;
         }
         // At every bar line, the notes held hand over to fresh ids, so any
         // window that starts on a bar holds them from its first moment, and
@@ -1426,8 +1474,7 @@ public:
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const double t = ctx.now();
         m_perOct = perOctaveOf(ctx.studio());
-        const bool shift = k.modifiers & Qt::ShiftModifier;
-        // The piano row: notes, held like fingers.
+            // The piano row: notes, held like fingers.
         static const int piano[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G, Qt::Key_H,
                                     Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Semicolon, Qt::Key_Apostrophe};
         for (int i = 0; i < 11; ++i)
@@ -1463,10 +1510,7 @@ public:
             }
         if (k.key >= Qt::Key_F1 && k.key <= Qt::Key_F8) {
             const int slot = k.key - Qt::Key_F1;
-            if (shift)
-                loopIt(ctx, slot);
-            else
-                ctx.launch(slot);
+            ctx.launch(slot);
             return true;
         }
         switch (k.key) {
@@ -1475,13 +1519,7 @@ public:
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (shift)
-                loopIt(ctx);
-            else
-                setLatch(!m_latch, t, ctx);
-            return true;
-        case Qt::Key_Backslash:
-            loopIt(ctx);
+            setLatch(!m_latch, t, ctx);
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down:
@@ -1504,17 +1542,6 @@ public:
             restack(t, ctx);
             ctx.notice(QStringLiteral("First note: %1").arg(QString::fromUtf8(stackName(m_s.stack))));
             break;
-        case Qt::Key_Minus:
-        case Qt::Key_Equal: {
-            static const int bars[] = {1, 2, 4, 8};
-            int i = 0;
-            while (i < 3 && bars[i] < m_loopBars)
-                ++i;
-            i = std::clamp(i + (k.key == Qt::Key_Equal ? 1 : -1), 0, 3);
-            m_loopBars = bars[i];
-            ctx.notice(QStringLiteral("Loops take %1 bar%2").arg(m_loopBars).arg(m_loopBars > 1 ? "s" : ""));
-            return true;
-        }
         case Qt::Key_N:
             m_s.seed = (hash(m_s.seed, uint32_t(t * 1000.0)) & 0xFFFFFF) | 1u;
             ctx.notice(QStringLiteral("New dice"));
@@ -1564,17 +1591,12 @@ public:
         paintPads(p, pc);
         paintFingers(p, pc);
         c::beats(p, pc, pc.color);
-        // An armed loop is announced on the pad's top edge until it lands.
-        if (m_loopBar > INT64_MIN) {
-            const double left = std::max(0.0, double(m_loopBar) * kBeatsPerBar - pc.beat);
+        // Space's take, while it waits for its bar line, on the pad's top edge.
+        if (pc.view->recording >= 0)
             c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
-                   QStringLiteral("LOOP ARMED · LAST %1 BAR%2 INTO SLOT %3 IN %4 BEATS")
-                       .arg(m_loopBars)
-                       .arg(m_loopBars > 1 ? "S" : "")
-                       .arg(m_loopSlot + 1)
-                       .arg(QString::number(left, 'f', 1)),
+                   QStringLiteral("LOOP TAKE · SLOT %1 · FROM THE BAR LINE · SPACE CALLS IT OFF")
+                       .arg(pc.view->recording + 1),
                    std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.7f), 12, true);
-        }
         paintStrip(p, pc);
     }
 
@@ -1592,14 +1614,14 @@ public:
             "GROOVE\tacross: accent every 2, 3, 4, 5 or 7 notes · up: chaos · press: harder accents\n"
             "ECHO\tacross: 1/16 to dotted 1/4 · up: amount · press: throw the feedback\n"
             "right hand, no notes held\tshapes the playing loop, and lets go of it on lifting\n"
-            "click\tlatch: the pattern keeps running when the fingers lift\n"
-            "hold the click\tthe only way to loop: arms it, and at the next bar line the last bars become a clip\n"
-            "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · loop into that slot · stop at the bar\n"
+            "click\tlatch: the pattern keeps running when the fingers lift (not while a pad is pressed)\n"
+            "Space\tloops what you just played, from the bar line; Space again calls it off\n"
+            "F1–F8 · Backspace\tlaunch a slot · stop the loop at the bar\n"
             "A S D F G H J K L ; '\tnotes, held like fingers\n"
             "Q W E R T Y U I · Z X C V B\tthe eight patterns · the five sounds\n"
             "↑ ↓ · ← → · [ ]\trate · register · octaves\n"
-            "O P · , . · - =\tfewer or more hits · the first note's chord · loop length 1, 2, 4, 8 bars\n"
-            "Return · Shift+Return\tlatch · loop it\n"
+            "O P · , .\tfewer or more hits · what the first note grows into\n"
+            "Return\tlatch\n"
             "M · N\tfollow the chords page · new dice for random and chaos");
     }
 
@@ -1617,10 +1639,10 @@ public:
             s += QStringLiteral(" · following the chords");
         if (m_latch)
             s += QStringLiteral(" · latched");
-        if (m_loopBar > INT64_MIN)
-            s += QStringLiteral(" · loop armed: %1 bar%2 at the next bar line").arg(m_loopBars).arg(m_loopBars > 1 ? "s" : "");
+        if (m_take >= 0)
+            s += QStringLiteral(" · loop take for slot %1 waits for the bar (Space calls it off)").arg(m_take + 1);
         else if (held > 0)
-            s += QStringLiteral(" · hold the click to loop the last %1 bar%2").arg(m_loopBars).arg(m_loopBars > 1 ? "s" : "");
+            s += QStringLiteral(" · Space loops what you just played");
         return s;
     }
 
@@ -1645,6 +1667,7 @@ private:
         float angle0 = 0;
         float base = 0; // the twisted value when the finger landed
         bool overlay = false;
+        bool pressing = false;
     };
 
     static bool present(const Frame &f, int id) {
@@ -1704,6 +1727,14 @@ private:
         c.i[2] = renameFrom;
         c.i[3] = phase;
         c.f[0] = n.vel;
+        // A hand-over carries on a sound already heard: recorded, but not
+        // new playing for Space to find.
+        if (renameFrom)
+            c.flags = Command::Continue;
+        // Which of a two-bar phrase this bar was, so a loop rolls chaos's
+        // dice the way the take did, pass after pass.
+        if (type == Command::On)
+            c.f[1] = 1.0f + float(int(std::floor((ctx.beatAt(t) + 0.1) / kBeatsPerBar)) & 1);
         ctx.send(c);
     }
 
@@ -1711,10 +1742,12 @@ private:
         Command c;
         c.type = kState;
         c.id = kStateId;
+        // Settings are not onsets: Space looks for those.
+        // With a note's landing it is flagged to be pulled to the grid with
+        // the note (so a loop never starts the note with the settings from
+        // before) and as carrying on, not new playing, so Space ignores it.
         c.t = t;
-        // Sent with a note's onset, it is pulled to the grid with it, so a
-        // loop never starts a note with the settings from before.
-        c.flags = onset ? Command::Quantize : 0;
+        c.flags = onset ? Command::Quantize | Command::Continue : 0;
         m_s.pack(c);
         ctx.send(c);
         m_sent = m_s;
@@ -1724,10 +1757,10 @@ private:
     // The settings go to the engine whenever they change, at most sixty
     // times a second while a finger slides, at once when a choice is made.
     void flush(double t, ControlContext &ctx, bool now) {
-        if (m_s != m_sent && (now || t - m_sentAt >= 1.0 / 60.0))
+        if (!m_s.near(m_sent) && (now || t - m_sentAt >= 1.0 / 60.0))
             sendState(t, ctx, false);
         const bool maskChanged = m_overlayMask != m_overlaySentMask;
-        if (maskChanged || (m_overlayMask && m_ov != m_ovSent && (now || t - m_ovAt >= 1.0 / 60.0))) {
+        if (maskChanged || (m_overlayMask && !m_ov.near(m_ovSent) && (now || t - m_ovAt >= 1.0 / 60.0))) {
             Command c;
             c.type = kOverlay;
             c.id = kOverlayId;
@@ -1895,7 +1928,7 @@ private:
                 m_ov = m_s;
             m_overlayMask |= 1 << k->pad;
         }
-        moveKnob(*k, t);
+        moveKnob(*k, t, time);
     }
 
     void holdChip(int id) {
@@ -1965,11 +1998,27 @@ private:
         renumberFirst(t, ctx);
     }
 
-    void moveKnob(Knob &k, const Touch &t) {
+    bool pressing() const {
+        for (const auto &k : m_knobs)
+            if (k.touch >= 0 && k.pressing)
+                return true;
+        return false;
+    }
+
+    void moveKnob(Knob &k, const Touch &t, double time) {
         const QPointF uv = padLocal(k.pad, t.x, t.y);
         const float u = float(uv.x()), v = float(uv.y());
         const float turn = t.eccentricity > 0.2f ? wrapAngle(t.angle - k.angle0) : 0.0f;
-        const float press = clampf((t.pressure - 0.55f) / 0.35f, 0, 1);
+        // Pressing is well above a normal touch (about 0.5), and once in it
+        // stays until the finger eases clearly off: rolls, bite and throws
+        // are things you mean.
+        if (!k.pressing && t.pressure > 0.78f)
+            k.pressing = true;
+        else if (k.pressing && t.pressure < 0.7f)
+            k.pressing = false;
+        const float press = k.pressing ? clampf((t.pressure - 0.7f) / 0.25f, 0, 1) : 0.0f;
+        if (k.pressing)
+            m_lastPress = time;
         auto both = [&](auto &&fn) {
             fn(m_s);
             if (k.overlay)
@@ -2094,7 +2143,7 @@ private:
     // line, with the settings of the moment and where the pattern was.
     void handOver(int64_t bar, int phase, ControlContext &ctx) {
         const double t = ctx.timeAt(double(bar) * kBeatsPerBar);
-        sendState(t, ctx, true);
+        sendState(t, ctx, false);
         // In the order they were played, so a loop keeps that order.
         Note *order[24];
         int count = 0;
@@ -2107,48 +2156,15 @@ private:
             const int old = n.id;
             n.id = nextId();
             sendNote(Command::On, n, t, ctx, old, phase);
+            // The old id ends here, so the studio knows it is not held into
+            // a take beside its new one (the engine already moved it over).
+            Command off;
+            off.type = Command::Off;
+            off.flags = Command::Continue;
+            off.id = old;
+            off.t = t;
+            ctx.send(off);
         }
-    }
-
-    // Loops the last bars into a slot, from the next bar line on.
-    void loopIt(ControlContext &ctx, int slot = -1) {
-        const double beat = ctx.beatAt(ctx.now());
-        int64_t bar = int64_t(std::ceil(beat / kBeatsPerBar));
-        if (double(bar) * kBeatsPerBar - beat < 0.2)
-            ++bar;
-        if (!anyNotes()) {
-            ctx.notice(QStringLiteral("Nothing to loop: hold some notes first"));
-            return;
-        }
-        m_loopBar = bar;
-        m_loopSlot = slot >= 0 ? slot : ctx.freeSlot();
-        if (m_loopSlot < 0)
-            m_loopSlot = (ctx.studio().parts[ctx.part()].playing + 1 + kClipSlots) % kClipSlots;
-        ctx.notice(QStringLiteral("Looping %1 bar%2 into slot %3 at the next bar")
-                       .arg(m_loopBars)
-                       .arg(m_loopBars > 1 ? "s" : "")
-                       .arg(m_loopSlot + 1));
-    }
-
-    void finishLoop(ControlContext &ctx) {
-        const double end = double(m_loopBar) * kBeatsPerBar;
-        // (A time of zero means "now" to the studio: a loop from the very
-        // first moment starts a hair after it.)
-        const double t1 = ctx.timeAt(end), t0 = std::max(1e-9, ctx.timeAt(end - double(m_loopBars * kBeatsPerBar)));
-        ctx.capture(m_loopSlot, t0, t1, 1.0f);
-        // The loop takes over at the line: the live notes end there, and
-        // fingers still down step aside until they lift.
-        for (auto &n : m_notes)
-            if (n.used) {
-                sendNote(Command::Off, n, t1, ctx);
-                spend(n, t1, ctx);
-            }
-        m_latch = false;
-        m_loopBar = INT64_MIN;
-        ctx.notice(QStringLiteral("Looped the last %1 bar%2 into slot %3: it plays from this bar")
-                       .arg(m_loopBars)
-                       .arg(m_loopBars > 1 ? "s" : "")
-                       .arg(m_loopSlot + 1));
     }
 
     void paintGrid(QPainter &p, const PaintContext &pc);
@@ -2167,11 +2183,9 @@ private:
     std::array<Knob, 10> m_knobs{};
     std::array<int, 10> m_chipTouches{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool m_latch = false;
-    bool m_button = false, m_buttonLong = false;
-    double m_buttonT0 = 0;
-    int m_loopBars = 2;
-    int64_t m_loopBar = INT64_MIN;
-    int m_loopSlot = 0;
+    bool m_button = false, m_buttonIgnored = false;
+    double m_lastPress = -1;
+    int m_take = -1;
     int64_t m_handedBar = INT64_MIN;
     int m_id = 0;
     int m_perOct = 7;
@@ -2494,7 +2508,7 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
                 uint64_t counter = 0;
                 for (int i = 0; i < n; ++i) {
                     const int64_t step = bar * n + i;
-                    const StepPlan plan = planStep(s, step, counter);
+                    const StepPlan plan = planStep(s, step, counter, step);
                     const qreal x = lane.left() + w2 * i;
                     const bool now = int64_t(std::floor(pc.beat / stepBeats(s.rate))) == step;
                     if (!plan.fire) {
@@ -2586,20 +2600,12 @@ void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
     namespace c = console;
     const QRectF strip(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width() * 0.66, 30);
     c::clips(p, strip, *pc.view, pc.color, pc.time);
-    // The slot a loop is about to fill, blinking.
-    if (m_loopBar > INT64_MIN && std::fmod(pc.time, 0.4) < 0.2) {
-        const qreal w = strip.width() / kClipSlots;
-        p.fillRect(QRectF(strip.left() + m_loopSlot * w + 2, strip.top(), w - 4, strip.height()),
-                   c::alpha(c::red(), 0.6f));
-    }
     const QRectF info(strip.right() + 12, strip.top(), pc.pad.right() - strip.right() - 12, strip.height());
-    QString line = QStringLiteral("LOOPS TAKE %1 BAR%2").arg(m_loopBars).arg(m_loopBars > 1 ? "S" : "");
+    QString line = QStringLiteral("SPACE LOOPS WHAT YOU PLAYED");
     QColor ink = c::alpha(pc.color, 0.75f);
-    if (m_loopBar > INT64_MIN) {
-        const double left = std::max(0.0, double(m_loopBar) * kBeatsPerBar - pc.beat);
-        line = QStringLiteral("LOOP ARMED · %1 BAR%2 IN %3 BEATS").arg(m_loopBars).arg(m_loopBars > 1 ? "S" : "")
-                   .arg(QString::number(left, 'f', 1));
-        ink = c::red();
+    if (pc.view->recording >= 0) {
+        line = QStringLiteral("TAKE WAITING · SLOT %1").arg(pc.view->recording + 1);
+        ink = std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f);
     } else if (pc.view->data[kDataOverlay] > 0.5f) {
         line = QStringLiteral("SHAPING THE LOOP");
         ink = c::amber();

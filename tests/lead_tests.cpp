@@ -183,6 +183,27 @@ std::string riffInBarTwo() {
     return s;
 }
 
+// Over a playing one-bar loop (bar lines every 1.935 s from 3.871 s),
+// plays the given taps after a two-bar pause (beats counted from the
+// first bar line after it), presses Space, and returns what the page
+// said just after and the clip the studio made.
+struct Taken {
+    QString status;
+    float beats = 0;
+};
+Taken takeOverALoop(const std::vector<std::pair<double, int>> &taps, double space) {
+    const double spb = 60.0 / 124.0, from = 20 * spb;
+    std::string s = riffInBarTwo() + fmt("key %.4f Space\n", 8 * spb);
+    for (const auto &[beat, q] : taps)
+        s += fmt("tap %.4f %.4f 0.5 len=0.15\n", from + beat * spb, cellX(q));
+    s += fmt("key %.4f Space\n", from + space * spb);
+    Taken got;
+    const auto take = testkit::play(s + fmt("end %.4f\n", from + space * spb + 0.3),
+                                    [&](Session &ss) { got.status = ss.pageStatus(); });
+    got.beats = take.view.parts[kLead].clips[1].lengthBeats;
+    return got;
+}
+
 const char *soundName(int i) {
     static const char *n[8] = {"Anthem", "Pluck", "Bell", "Chip", "Vox", "Scream", "Hoover", "Big room"};
     return n[i];
@@ -463,46 +484,34 @@ private slots:
         QVERIFY(tr.take.rms(5.0, 7.0) > 0.01);
     }
 
-    void overALoopThePageCountsTheTakeDown() {
-        // A loop plays (its bar lines fall every 1.935 s from 3.871 s); a
-        // new phrase early in the next bar, then Space: the take waits for
-        // the bar line, and the page says so, with the slot and the bars
-        // (two: the phrase runs on from the riff before it, as Space sees it).
-        const double bar = 8 * 60.0 / 124.0, spb = 60.0 / 124.0;
-        std::string s = riffInBarTwo() + fmt("key %.4f Space\n", bar);
-        for (int i = 0; i < 3; ++i)
-            s += fmt("tap %.4f %.4f 0.5 len=0.15\n", bar + spb * (0.1 + i), cellX(7 + 2 * i));
-        s += fmt("key %.4f Space\n", bar + spb * 2.5);
-        QString waiting;
-        testkit::play(s + fmt("end %.4f\n", bar + spb * 3.0), [&](Session &ss) { waiting = ss.pageStatus(); });
-        QVERIFY2(waiting.contains(QStringLiteral("loop 2 bars · slot 2 · in 1 beat")), qPrintable(waiting));
-        const auto take = testkit::play(s + "end 8.0\n");
-        QCOMPARE(take.view.parts[kLead].playing, 1);
-        QCOMPARE(take.view.parts[kLead].recording, -1);
-        QCOMPARE(int(take.view.parts[kLead].clips[1].lengthBeats), 8);
+    void theLandedTakeSaysWhatItBecame() {
+        // Phrases of 1, 3, 5 and 6 bars, played once: the whole phrase in
+        // whole bars (1, 4, 8, 8), and the page names the clip the studio
+        // made.
+        const int phrases[4] = {1, 3, 5, 6}, expect[4] = {1, 4, 8, 8};
+        for (int i = 0; i < 4; ++i) {
+            std::vector<std::pair<double, int>> taps;
+            for (int b = 0; b < 4 * phrases[i]; ++b)
+                taps.push_back({b + 0.05, 7 + b % 5});
+            const Taken got = takeOverALoop(taps, 4.0 * phrases[i] - 0.4);
+            QCOMPARE(int(got.beats), 4 * expect[i]);
+            const QString want = expect[i] == 1 ? QStringLiteral("looping 1 bar in slot 2")
+                                                : QStringLiteral("looping %1 bars in slot 2").arg(expect[i]);
+            QVERIFY2(got.status.contains(want), qPrintable(got.status + " / want " + want));
+        }
     }
 
-    void theTakeCueMatchesTheLoopItLands() {
-        // Over a playing one-bar loop, phrases of 1, 3, 5 and 6 bars, then
-        // Space late in the last bar: the page names the length the studio
-        // will take (the nearest of 1, 2, 4, 8 bars) and the clip has it.
-        const double spb = 60.0 / 124.0, barLine = 8 * spb, bar = 4 * spb;
-        const int phrases[4] = {1, 3, 5, 6}, expect[4] = {1, 4, 4, 8};
-        for (int i = 0; i < 4; ++i) {
-            std::string s = riffInBarTwo() + fmt("key %.4f Space\n", barLine);
-            const double start = barLine + 3 * bar; // after a two-bar pause, so it's a new phrase
-            for (int b = 0; b < 4 * phrases[i]; ++b)
-                s += fmt("tap %.4f %.4f 0.5 len=0.15\n", start + spb * (b + 0.05), cellX(7 + b % 5));
-            const double space = start + bar * phrases[i] - spb * 0.4;
-            s += fmt("key %.4f Space\n", space);
-            QString cue;
-            testkit::play(s + fmt("end %.4f\n", space + 0.1), [&](Session &ss) { cue = ss.pageStatus(); });
-            const QString want = expect[i] == 1 ? QStringLiteral("loop 1 bar · slot 2")
-                                                : QStringLiteral("loop %1 bars · slot 2").arg(expect[i]);
-            QVERIFY2(cue.contains(want), qPrintable(cue + " / want " + want));
-            const auto take = testkit::play(s + fmt("end %.4f\n", space + 1.0));
-            QCOMPARE(int(take.view.parts[kLead].clips[1].lengthBeats), 4 * expect[i]);
-        }
+    void aRiffRepeatedFromMidBarLoopsOneBar() {
+        // A one-bar riff started on the third beat and played twice: one
+        // cycle of it, one bar, and the page says so.
+        std::vector<std::pair<double, int>> taps;
+        const int riff[4] = {7, 9, 11, 14};
+        for (int pass = 0; pass < 2; ++pass)
+            for (int k = 0; k < 4; ++k)
+                taps.push_back({2.0 + 4 * pass + k + 0.05, riff[k]});
+        const Taken got = takeOverALoop(taps, 10.0 - 0.3);
+        QCOMPARE(int(got.beats), 4);
+        QVERIFY2(got.status.contains(QStringLiteral("looping 1 bar in slot 2")), qPrintable(got.status));
     }
 
     void ordinaryPlayingNeverLoops() {

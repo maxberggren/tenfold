@@ -24,6 +24,7 @@
 // an octave up), the eight sounds on Q to I, O to follow the chords, and
 // the usual F1–F8, Backspace for the clips.
 
+#include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <algorithm>
@@ -131,7 +132,7 @@ public:
         // stay with the loop that plays on.
         for (int s = 0; s < ShaperCount; ++s)
             if (!m_latched[s])
-                sendShaper(Shaper(s), 0, 0, 0, ctx, true);
+                sendShaper(Shaper(s), 0, m_sent[s][1], ctx.now(), ctx, true);
         m_frame = Frame{};
         m_button = false;
     }
@@ -204,7 +205,7 @@ public:
             for (int s = 0; s < ShaperCount; ++s)
                 if (m_latched[s]) {
                     m_latched[s] = false;
-                    sendShaper(Shaper(s), 0, 0, ctx.now(), ctx, true);
+                    sendShaper(Shaper(s), 0, m_sent[s][1], ctx.now(), ctx, true);
                 }
             ctx.notice(QStringLiteral("Shapers released"));
             return true;
@@ -242,25 +243,19 @@ public:
 
     QString help() const override {
         return QStringLiteral(
-            "touch the lower field\ta note of the scale; higher is brighter, from clean sub to biting\n"
-            "press harder\taccent: louder, brighter, more drive\n"
-            "slide sideways\tglide to the next note\n"
+            "touch the lower field\ta note in the key: higher is brighter (clean sub to biting), harder accents\n"
+            "slide sideways, or land another note\tglide to it without a new attack; lift to slide back\n"
             "twist / flatten the finger\tmorph the sound / fatten it\n"
-            "second note while one is held\tslide to it without a new attack; lift to slide back\n"
-            "OCT (top left)\tup an octave while held, two fingers two; tap it to pump octaves\n"
-            "ROLL\tthe held note strikes in a rhythm on the bar; sideways picks it, up/down the gate\n"
-            "WOB\ttempo-synced wobble; sideways the rate (1/2 to 1/32), up/down the depth\n"
+            "OCT (the rail, top left)\tup an octave while held, two fingers two: tap it to pump octaves\n"
+            "ROLL\tthe held note strikes in a rhythm on the bar; sideways the pattern, up/down the gate\n"
+            "WOB\ta wobble locked to the tempo; sideways the rate (1/2 to 1/32), up/down the depth\n"
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
-            "click with a note down\tstrike it again, accented\n"
-            "click with only shapers down\tlatch them; P releases\n"
-            "tap a riff, then hold its first note on the next beat\tloops it into the next free slot\n"
-            "Z X C … /   A S D … '\tthe scale from the keyboard, low row and an octave up; Shift accents\n"
+            "click\twith a note down, strike it again accented; with only shapers down, latch them (P frees)\n"
+            "tap a riff, hold its first note on the beat\tloops it into the next free slot\n"
+            "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
             "Q W E R T Y U I\tsub, pluck, reese, acid, wobble, growl, 808, bounce\n"
-            "O\tfollow the chords: the line moves with the Chords page\n"
-            "[ ]   - =\tmorph the sound   shorter / longer slides\n"
-            "↑ ↓   ← →\tthe pad's octave   the keyboard's tone\n"
-            "F1–F8, Shift+F1–F8\tlaunch a slot at the next bar, clear it\n"
-            "F9   F10   Backspace\trecord from the next bar   overdub   stop the loop");
+            "O   [ ]   - =   ↑ ↓   ← →\tfollow the chords   morph   slide time   pad octave   key tone\n"
+            "F1–F8 (Shift clears)  F9  F10  Backspace\tlaunch a slot   record   overdub   stop the loop");
     }
 
     QString status() const override {
@@ -458,7 +453,7 @@ private:
             else if (other)
                 sendShaper(s, other->sentA, other->sentB, time, ctx, true);
             else if (!m_latched[s])
-                sendShaper(s, 0, 0, time, ctx, true);
+                sendShaper(s, 0, m_sent[s][1], time, ctx, true);
         }
     }
 
@@ -525,9 +520,11 @@ private:
     }
 
     void sendShaper(Shaper s, float a, float b, double time, ControlContext &ctx, bool force) {
+        // Only real changes, and a moving finger at most sixty times a
+        // second (a big jump goes at once): clips stay lean.
         float *last = m_sent[s];
         const bool changed = std::fabs(a - last[0]) > 0.005f || b != last[1];
-        if (!changed && !force)
+        if (!changed)
             return;
         if (!force && time - m_sentAt[s] < 1.0 / 60.0 && std::fabs(a - last[0]) < 0.1f && b == last[1])
             return;
@@ -847,6 +844,13 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
                     c::alpha(pc.color, chordTone[rel] ? 0.9f : 0.35f), 10, true, Qt::AlignCenter);
         }
     }
+    // The tone rises with the finger: the field brightens toward the rail.
+    {
+        QLinearGradient g(pc.at(0, 0), pc.at(0, kField));
+        g.setColorAt(0, c::alpha(pc.color, 0.0f));
+        g.setColorAt(1, c::alpha(pc.color, 0.07f));
+        p.fillRect(pc.rect(0, 0, 1, kField), g);
+    }
     c::grid(p, pc, kColumns, 1, pc.color, 0.12f);
     // Tone guides: the cutoff rises with the finger.
     p.setPen(QPen(c::alpha(pc.color, 0.08f), 1, Qt::DashLine));
@@ -897,8 +901,14 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
 
 void Control::paintScope(QPainter &p, const PaintContext &pc) {
     const float *d = pc.view->data;
-    if (d[PubScopeCycles] <= 0)
+    if (d[PubScopeCycles] <= 0) {
+        // Nothing sounding and no hand: say how to begin.
+        if (m_frame.count == 0)
+            c::text(p, pc.rect(0, 0.4f * kField, 1, 0.5f * kField),
+                    QStringLiteral("one finger plays · higher is brighter · the rail above bends it"),
+                    c::alpha(pc.color, 0.35f), 13, false, Qt::AlignCenter);
         return;
+    }
     float peak = 0;
     for (int k = 0; k < PubScopeSize; ++k)
         peak = std::max(peak, std::fabs(d[PubScope + k]));

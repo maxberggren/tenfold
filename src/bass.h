@@ -356,7 +356,6 @@ struct Halfband2x {
     }
 };
 
-
 // --- the engine -------------------------------------------------------------------
 
 // What the shaper fingers ask for. A lane plays its own (a loop keeps the
@@ -474,9 +473,8 @@ public:
             n.fat = c.f[3];
             if (k == m_count - 1) {
                 m_cur = n;
-                if (slide) {
+                if (slide)
                     m_glideTau = glideTime(n) / 3.0f;
-                        }
             }
         }
     }
@@ -523,7 +521,7 @@ public:
             m_chordSeq = h.chordSeq;
             if (m_count > 0 && (m_cur.flags & Follow)) {
                 m_glideTau = 0.003f;
-                    if (sh.roll <= 0)
+                if (sh.roll <= 0)
                     trigger(0.92f, false);
             }
         }
@@ -975,11 +973,10 @@ public:
         m_live.silence(hard);
         m_clip.silence(hard);
         m_pendingCount = 0;
-        if (hard) {
-            m_shapeLive = Shape{};
+        // The live shapers are the page's to set and clear; the loops' go.
+        if (hard)
             for (Shape &sh : m_shapeSlot)
                 sh = Shape{};
-        }
     }
 
     void publish(float *data) override {

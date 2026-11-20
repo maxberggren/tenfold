@@ -198,9 +198,11 @@ public:
         m_look = (m_tickDt * 1.25 + 0.003) * bps;
         const double beatE = beat + m_look;
 
+        m_anyClip = false;
         for (int p = 0; p < m_parts; ++p)
-            if (v.parts[p].playing >= 0)
-            {
+            m_anyClip = m_anyClip || hasClips(v, p);
+        for (int p = 0; p < m_parts; ++p)
+            if (v.parts[p].playing >= 0) {
                 m_lastSlot[p] = v.parts[p].playing;
                 m_lastPlayedBar[p] = int(std::floor(beat / kBeatsPerBar));
             }
@@ -692,13 +694,17 @@ private:
         inputs(beatE, in, tension);
         m_tensionShown = tension;
         Mods mods;
-        for (const auto &mv : m_moves)
+        m_flatShown = 0;
+        for (const auto &mv : m_moves) {
             applyMove(mv, beatE, mods);
+            if (mv.kind == MBuild && mv.flat >= 0 && beatE >= mv.b0 && beatE < mv.b1 - mv.gap)
+                m_flatShown = std::max(m_flatShown, mv.flat);
+        }
         const float tPos = std::max(tension, 0.0f);
         m_buildShown = std::max(tPos, mods.tBuild);
         applyTension(std::max(tPos, mods.tBuild), std::max(tPos, mods.tBuildFilter), std::max(-tension, 0.0f), tPos,
                      mods);
-        m_echoShown = mods.echoTime >= 0 && mods.echoTime < 0.58f ? mods.echoTime : -1.0f;
+        m_echoShown = mods.echoTime >= 0 && mods.echoTime < 0.58f && m_buildShown > 0 ? mods.echoTime : -1.0f;
 
         bool idle = !m_playing && m_moves.empty() && std::fabs(m_tensionLive) < 0.002f && !m_tensionHeld;
         for (int p = 0; p < m_parts; ++p) {
@@ -1653,7 +1659,8 @@ private:
             inputs(beat, in, tension);
             for (long s = std::max(m_recStep + 1, step - 64); s <= step; ++s) {
                 Step &st = m_song.steps[size_t(s)];
-                st.tension = q8(0.5f + 0.5f * tension);
+                // A fader let go high holds its tension to the drop: so does the take.
+                st.tension = q8(0.5f + 0.5f * (tension >= 0 ? std::max(tension, m_flatShown) : tension));
                 for (int p = 0; p < P; ++p)
                     for (int c = 0; c < ChannelCount; ++c)
                         st.ch[p][c] = p < m_parts ? q8(in[p][c]) : 0;
@@ -2051,7 +2058,7 @@ private:
     bool m_button = false;
     Ride m_ride[P];
     bool m_heldSolo[P] = {};
-    float m_tensionLive = 0, m_tensionShown = 0, m_buildShown = 0;
+    float m_tensionLive = 0, m_tensionShown = 0, m_buildShown = 0, m_flatShown = 0;
     bool m_tensionHeld = false;
 
     float m_home[P][ChannelCount] = {};
@@ -2081,6 +2088,7 @@ private:
         int8_t slot[P] = {};
     } m_scene[kClipSlots];
     int m_sceneQueued = -1, m_sceneQueuedBar = -1;
+    bool m_anyClip = false;
     int m_selPart = -1, m_selSlot = -1; // the clip last touched: Delete clears it
 
     Song m_song, m_prevSong;
@@ -2187,7 +2195,7 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
                     c::alpha(col, 0.4f), 9);
         }
         c::gauge(p, QRectF(name.left(), name.bottom() - 6, name.width(), 5),
-                 std::min(1.0f, pv.channel.rms * 4.0f), audible ? col : c::alpha(col, 0.4f), 12);
+                 std::min(1.0f, pv.channel.peak * 1.4f), audible ? col : c::alpha(col, 0.4f), 12);
 
         // The clips.
         for (int s = 0; s < kClipSlots; ++s) {
@@ -2259,9 +2267,23 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
             default: break;
             }
             const int small = std::max(8, px - 2);
-            c::text(p, cell.adjusted(4, 2, -2, -2), QString::number(s + 1), ink, px, true, Qt::AlignLeft | Qt::AlignTop);
-            c::text(p, cell.adjusted(4, 3, -4, -2), state, ink, small, true, Qt::AlignRight | Qt::AlignTop);
-            c::text(p, cell.adjusted(4, 2, -4, -3), len, ink, px, true, Qt::AlignRight | Qt::AlignBottom);
+            // Over a moving sweep, labels sit on black so they always read.
+            const bool boxed = cv.state == ClipView::Playing || cv.state == ClipView::Stopping;
+            if (boxed)
+                ink = col;
+            auto label = [&](const QString &t, int size, Qt::Alignment align, qreal dx, qreal dy) {
+                const QFont f = c::font(size, true);
+                const qreal w = QFontMetricsF(f).horizontalAdvance(t) + 6, h = size + 4;
+                const qreal x = (align & Qt::AlignRight) ? cell.right() - dx - w : cell.left() + dx;
+                const qreal y = (align & Qt::AlignBottom) ? cell.bottom() - dy - h : cell.top() + dy;
+                const QRectF r(x, y, w, h);
+                if (boxed)
+                    p.fillRect(r, QColor(0, 0, 0, 200));
+                c::text(p, r, t, ink, size, true, Qt::AlignCenter);
+            };
+            label(QString::number(s + 1), px, Qt::AlignLeft | Qt::AlignTop, 2, 2);
+            label(state, small, Qt::AlignRight | Qt::AlignTop, 2, 2);
+            label(len, px, Qt::AlignRight | Qt::AlignBottom, 2, 2);
             if (i == m_selPart && s == m_selSlot) {
                 p.setBrush(Qt::NoBrush);
                 p.setPen(QPen(QColor(255, 255, 255, 170), 1, Qt::DashLine));
@@ -2676,6 +2698,8 @@ QString ArrangeControl::status() const {
         parts << songText().toLower();
     else if (m_recording)
         parts << QStringLiteral("recording the song");
+    if (parts.isEmpty() && !m_anyClip)
+        return QStringLiteral("no loops yet: make them on pages 1–7 (Enter records from the next bar, or click while playing)");
     if (parts.isEmpty())
         return QStringLiteral("tap clips to launch them on the bar · F1–F8 scenes · I writes a track from your loops");
     return parts.join(QStringLiteral(" · "));

@@ -27,7 +27,6 @@ HEADERS += \
     src/parts.h \
     src/phrase.h \
     src/session.h \
-    src/starter.h \
     src/studio.h \
     src/surface.h \
     src/theme.h \

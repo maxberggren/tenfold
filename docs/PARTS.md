@@ -75,17 +75,17 @@ about 60 times a second and the page reads as `pc.view->data`.
   showing or not, with every frame and idle tick (about 60–125 Hz). Use it for
   anything that must keep going while another page is showing, such as an
   arrangement launching clips bar by bar.
-- **Starter code.** `src/starter.h` is the simplest working page, in two kinds,
-  notes and drums. Read it to see the framework in use, then replace it.
-  `src/electro.h` (supersaw, ladder filter, ADSR, drum voices) and `src/fx.h`
-  (reverb, tape echo, saturator, grain cloud) are there to reuse or outgrow.
+- **Examples.** Every page in `src/` is a full working part; `src/drums.cpp`
+  and `src/lead.cpp` show the framework in use. `src/electro.h` (supersaw,
+  ladder filter, ADSR, drum voices) and `src/fx.h` (reverb, tape echo,
+  saturator, grain cloud) are there to reuse or outgrow.
 
 ## Rules
 
 1. **Own only your files:** `src/<part>.cpp`, and if you need one, a header
    `src/<part>.h` included only by it. Your tests go in `tests/<part>_tests.cpp`.
    Don't edit anything else: `part.h`, `studio.*`, `session.*`, `console.*`,
-   `starter.h`, `phrase.h`, `electro.h`, `fx.h`, `dsp.h`, the QML, or the `.pro`
+   `phrase.h`, `electro.h`, `fx.h`, `dsp.h`, the QML, or the `.pro`
    files. Copy what you need into your own file. If the framework truly lacks
    something, work around it and say so in your report.
 2. **Ten fingers, all of them meaningful.** Design the page so one finger is

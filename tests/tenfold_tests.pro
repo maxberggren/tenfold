@@ -13,7 +13,7 @@ DEPENDPATH += ../src
 # offline player.
 HEADERS += testkit.h \
     ../src/console.h ../src/dsp.h ../src/electro.h ../src/fx.h ../src/offline.h ../src/part.h \
-    ../src/parts.h ../src/phrase.h ../src/session.h ../src/starter.h ../src/studio.h ../src/touch.h \
+    ../src/parts.h ../src/phrase.h ../src/session.h ../src/studio.h ../src/touch.h \
     ../src/tuning.h ../src/wav.h
 
 PARTS = ../src/drums.cpp ../src/bass.cpp ../src/chords.cpp ../src/lead.cpp ../src/arp.cpp \

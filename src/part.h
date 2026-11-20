@@ -185,7 +185,11 @@ struct PartView {
     int playing = -1;    // the slot playing, or -1
     int queued = -1;     // the slot about to start at the next boundary, or -1
     bool overdub = false;
-    int recording = -1;  // the slot being recorded, or -1
+    int recording = -1;  // the slot being recorded, or a take waiting for it, or -1
+    float takeBeats = 0; // a waiting take's length in beats (0 while open-ended)
+    double takeAt = 0;   // the beat it starts looping at
+    uint32_t takes = 0;  // counts up each time a take lands (Space, take(), record):
+                         // a take can land within one frame of being asked for
     ChannelView channel;
     int voices = 0;
     float data[kPartData] = {};
@@ -255,6 +259,10 @@ public:
     // and plays it at once, in time with what was just played (the
     // tap-then-hold gesture). quantize 0..1 pulls onsets to the 16th grid.
     virtual void capture(int slot, double t0, double t1, float quantize = 0.85f) = 0;
+    // What this part played between beats b0 and b1 (bar lines, b1 now or
+    // soon) becomes a loop at b1, exactly as Space makes one: held notes are
+    // carried in, and a take that lands part way in sounds what is held.
+    virtual void take(int slot, double b0, double b1) = 0;
     // Armed recording: starts at the next bar, stops (and loops) at the bar
     // after stopRecording(), or after maxBars.
     virtual void record(int slot, int maxBars = 8) = 0;
@@ -267,6 +275,8 @@ public:
     virtual void stop(bool now = false) = 0;
     virtual void clear(int slot) = 0;
     int freeSlot() const {
+        if (part() < 0)
+            return -1;
         for (int s = 0; s < kClipSlots; ++s)
             if (studio().parts[part()].clips[s].state == ClipView::Empty)
                 return s;

@@ -80,7 +80,8 @@ struct Studio::PartState {
     Clip clips[kClipSlots];
     int playing = -1;
     int queued = -1;
-    bool catchUp = false; // a new clip's first block also plays what it just passed
+    bool catchUp = false;     // a new clip's first block also plays what it just passed
+    bool catchUpHeld = false; // …only the sounds still held at that point, and settings
     double queuedAt = 0;
     bool stopQueued = false;
     double stopAt = 0;
@@ -345,7 +346,8 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             if (!found)
                 continue; // the end of something that started before the take
         }
-        clip.events.push_back({floorMod(pos, len), c, -1e18});
+        // A note reached early (before b0) starts the clip, not ends it.
+        clip.events.push_back({pos < 0 ? 0.0 : floorMod(pos, len), c, -1e18});
     }
     // Sounds still held when the take ended stop just before it comes round.
     for (int i = 0; i < openCount; ++i) {
@@ -369,6 +371,15 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     // A loop closed by a key rather than a note on its ONE (Space with nothing
     // playing) starts a moment after its downbeat: play what it just passed.
     p.catchUp = stretch && !playedOnTheOne;
+    // A take whose end already passed (Space pressed just after a bar line)
+    // starts part way in: the sounds held at that point, and the settings
+    // before it, play at once rather than a whole loop later.
+    if (!stretch && s.transportState.beat > b1 + 1e-6) {
+        p.catchUp = true;
+        p.catchUpHeld = true;
+    } else {
+        p.catchUpHeld = false;
+    }
 }
 
 void Studio::apply(const StudioMsg &m) {
@@ -679,8 +690,25 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         };
         if (p.catchUp) {
             p.catchUp = false;
-            if (pos0 > 0 && pos0 < 0.25)
-                fireRange(0, pos0, 0);
+            if (!p.catchUpHeld) {
+                if (pos0 > 0 && pos0 < 0.25)
+                    fireRange(0, pos0, 0);
+            } else if (pos0 > 0) {
+                for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
+                    const Command &c = it->c;
+                    if (c.type == Command::Param) {
+                        fire(*it, pos0);
+                        continue;
+                    }
+                    if (c.type != Command::On)
+                        continue;
+                    bool ended = false;
+                    for (auto jt = it + 1; jt != clip.events.end() && jt->pos < pos0; ++jt)
+                        ended |= jt->c.type == Command::Off && jt->c.id == c.id;
+                    if (!ended)
+                        fire(*it, pos0);
+                }
+            }
         }
         fireRange(pos0, std::min(pos0 + span, clip.length), 0);
         if (pos0 + span > clip.length)
@@ -946,6 +974,8 @@ void Studio::publish() {
         o.queued = p.queued;
         o.overdub = p.overdub;
         o.recording = p.recording;
+        o.takeBeats = p.recording >= 0 && p.recEnd >= 0 ? float(p.recEnd - p.recStart) : 0.0f;
+        o.takeAt = p.recording >= 0 && p.recEnd >= 0 ? p.recEnd : 0.0;
         for (int c = 0; c < ChannelCount; ++c)
             o.channel.value[c] = p.channelTarget[c];
         o.channel.peak = p.peak;

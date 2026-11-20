@@ -185,7 +185,9 @@ struct PartView {
     int playing = -1;    // the slot playing, or -1
     int queued = -1;     // the slot about to start at the next boundary, or -1
     bool overdub = false;
-    int recording = -1;  // the slot being recorded, or -1
+    int recording = -1;  // the slot being recorded, or a take waiting for it, or -1
+    float takeBeats = 0; // a waiting take's length in beats (0 while open-ended)
+    double takeAt = 0;   // the beat it starts looping at
     ChannelView channel;
     int voices = 0;
     float data[kPartData] = {};

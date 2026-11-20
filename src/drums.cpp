@@ -176,10 +176,13 @@ public:
                     h.rate = std::clamp(h.rate + step, 0, kRates - 1);
                     m_gens[size_t(h.gen)].setRoll(h.rate);
                 }
-            ctx.notice(m_keyRate == 0 ? QStringLiteral("Keys roll at each drum's own rate")
-                                      : QStringLiteral("Keys roll %1 %2 faster")
-                                            .arg(m_keyRate)
-                                            .arg(std::abs(m_keyRate) == 1 ? "step" : "steps"));
+            if (m_keyRate == 0)
+                ctx.notice(QStringLiteral("Held keys roll at each drum's own rate"));
+            else
+                ctx.notice(QStringLiteral("Held keys roll %1 %2 %3")
+                               .arg(std::abs(m_keyRate))
+                               .arg(std::abs(m_keyRate) == 1 ? "step" : "steps")
+                               .arg(m_keyRate > 0 ? "faster" : "slower"));
             return true;
         }
         case Qt::Key_BracketLeft:
@@ -256,7 +259,7 @@ public:
             "hold the 808\tsustains; slide sideways to glide through the scale\n"
             "tap a beat, hold its first pad on time\tloops it into the next free slot\n"
             "Z X C V · A S D F · Q W E R · U I O P\tthe pads, row by row from the bottom (M , . / and J K L ; too); "
-            "hold to roll, Shift for an accent\n"
+            "hold to roll, Shift for an accent, hold several together for a groove\n"
             "Up / Down\tfaster or slower key rolls\n"
             "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
             "[ / ]\tless or more swing\n"
@@ -803,13 +806,19 @@ private:
         double b = beat;
         if (s.tick % 12 == 6)
             b += double(m_swing - 0.5f) * 0.5;
+        // No two strokes alike: a few percent of velocity, the same for the
+        // same step of the same pad every bar, so a loop of it still loops.
+        uint32_t hash = uint32_t(g.pad) * 2654435761u ^ uint32_t(s.tick) * 40503u;
+        hash ^= hash >> 13;
+        hash *= 0x5bd1e995u;
+        const float human = 1.0f + 0.07f * (float(hash >> 8 & 0xFFFF) / 32768.0f - 1.0f);
         Command c;
         c.type = Hit;
         c.flags = g.preview ? Command::NoRecord : 0;
         c.t = ctx.timeAt(b);
         c.i[0] = g.pad;
         c.i[1] = g.degrees + s.degree;
-        c.f[0] = clampf(s.vel * g.dyn, 0.05f, 1.0f);
+        c.f[0] = clampf(s.vel * g.dyn * human, 0.05f, 1.0f);
         c.f[1] = g.sx;
         c.f[2] = g.sy;
         c.f[3] = g.semis;
@@ -966,7 +975,8 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
         // The drum's decay, as this kit and any shaping make it: over a
         // second, a hat is a spike and a crash a long tail.
-        if (!gen) {
+        const bool shaping = gen && gen->preview;
+        if (!gen || shaping) {
             const QRectF box(cell.right() - cell.width() * 0.42 - 8 * s, cell.bottom() - cell.height() * 0.42 - 6 * s,
                              cell.width() * 0.42, cell.height() * 0.32);
             const float tau = displayDecay(pad, m_kit) * std::exp2(m_edit[pad].decay);
@@ -984,9 +994,20 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
             p.drawPath(curve);
         }
 
-        // A drum that's been shaped shows how: tune, length, tone.
+        // A drum that's been shaped shows how: tune, length, tone; while
+        // it's being shaped, large and named.
         const Edit &e = m_edit[pad];
-        if (e.any()) {
+        if (shaping) {
+            const float span = tonal(pad) ? 7.0f : 12.0f;
+            const float values[3] = {0.5f + 0.5f * e.tune / span, 0.5f + 0.25f * e.decay, 0.5f + 0.5f * e.tone};
+            const char *names[3] = {"TUNE", "LENGTH", "TONE"};
+            for (int i = 0; i < 3; ++i) {
+                const QRectF row(cell.left() + 8 * s, cell.top() + label + 16 * s + i * 22 * s, cell.width() * 0.62, 18 * s);
+                c::text(p, QRectF(row.left(), row.top(), 64 * s, row.height()), QString::fromUtf8(names[i]), col, label, true);
+                c::gauge(p, QRectF(row.left() + 70 * s, row.top() + 3 * s, row.width() - 70 * s, row.height() - 6 * s),
+                         values[i], col, 12, true);
+            }
+        } else if (e.any()) {
             const QRectF g(cell.left() + 8 * s, cell.top() + label + 14 * s, std::min(cell.width() * 0.45, 90 * s), 4 * s);
             const float span = tonal(pad) ? 7.0f : 12.0f;
             c::gauge(p, g, 0.5f + 0.5f * e.tune / span, col, 10, true);
@@ -1013,13 +1034,14 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
             p.setPen(QPen(c::alpha(col, 0.8f), 1));
             const double hx = strip.left() + strip.width() * barPos;
             p.drawLine(QPointF(hx, strip.top() - 3 * s), QPointF(hx, strip.bottom() + 2 * s));
-            QString what = gen->preview ? QStringLiteral("SHAPING")
-                           : gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
-                                         : QString::fromUtf8(rateName(gen->rate));
-            if (gen->until >= 0 && !gen->preview)
-                what += QStringLiteral(" · KEPT");
-            c::text(p, QRectF(cell.left(), cell.center().y() - label * 1.4, cell.width(), 2 * label), what,
-                    c::alpha(col, 0.55f), int(label * 1.3), true, Qt::AlignCenter);
+            if (!shaping) {
+                QString what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
+                                           : QString::fromUtf8(rateName(gen->rate));
+                if (gen->until >= 0)
+                    what += QStringLiteral(" · KEPT");
+                c::text(p, QRectF(cell.left(), cell.center().y() - label * 1.4, cell.width(), 2 * label), what,
+                        c::alpha(col, 0.55f), int(label * 1.3), true, Qt::AlignCenter);
+            }
         }
     }
 

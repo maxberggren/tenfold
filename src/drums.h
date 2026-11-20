@@ -512,10 +512,10 @@ struct Voice {
             send = 0.02f;
             break;
         }
-        case Sub: {
-            // Played as a hit (a groove's 808): see Engine::Sub808 for the held one.
-            break;
-        }
+        case Sub:
+            // The 808 has a voice of its own (Sub808): it glides between notes.
+            active = false;
+            return;
         case Snare: {
             // k: 0 body level, 1 noise level, 2 click level
             static const float base[KitCount] = {190.0f, 200.0f, 225.0f, 172.0f, 212.0f};

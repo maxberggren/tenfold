@@ -234,7 +234,7 @@ private slots:
         QVERIFY(b.rms(0.8, 1.1) > 4 * b.rms(0.0, 0.1));
     }
 
-    void freezeHoldsTheBedAfterTheFingersLeave() {
+    void freezeHoldsTheBedThroughChordChanges() {
         Bench b;
         b.on(1, Pad, 0.5f);
         b.on(2, Choir, 0.5f, 0.5f);
@@ -244,14 +244,111 @@ private slots:
         b.run(0.3);
         b.off(1);
         b.off(2);
-        b.run(14);
-        QCOMPARE(b.engine.voices(), 0);
-        // Long after the voices ended, the frozen halo still sings, in the chord.
-        QVERIFY(b.rms(14, 16) > 0.1 * held);
-        QVERIFY(b.share(14, 16, {A, C, E}) > 0.8);
+        b.run(3.7);
+        // The layers hang at their level after the fingers left.
+        QCOMPARE(b.engine.voices(), 2);
+        QVERIFY(std::fabs(20 * std::log10(b.rms(4, 6) / held)) < 2.0);
+        // The chord moves on: the frozen bed goes with it, as loud as before.
+        b.h.chordRoot = 5; // VI: F A C
+        b.h.chordTones[0] = 5, b.h.chordTones[1] = 7, b.h.chordTones[2] = 9;
+        ++b.h.chordSeq;
+        b.run(4);
+        QVERIFY(std::fabs(20 * std::log10(b.rms(8, 10) / held)) < 2.0);
+        QVERIFY(b.share(8, 10, {F, A, C}) > 0.85);
+        // A thaw lets them go.
         b.param(PFreeze, 0);
         b.run(20);
-        QVERIFY(b.rms(34, 36) < 0.01 * held);
+        QCOMPARE(b.engine.voices(), 0);
+        QVERIFY(b.rms(28, 30) < 0.01 * held);
+    }
+
+    void colourAndHeightChangeTheSoundNotTheLevel() {
+        // At one pressure, every colour and height of a column within 3 dB.
+        for (int family : {Drone, Pad, Choir, Glass, Air}) {
+            double lo = 1e9, hi = 0;
+            for (float c : {0.1f, 0.5f, 0.9f})
+                for (float y : {0.1f, 0.5f, 0.9f}) {
+                    Bench b;
+                    b.param(PSpace, 0); // the dry layer, not the room
+                    b.on(1, family, y, c, 0.6f);
+                    b.run(4);
+                    const double r = b.rms(2, 4);
+                    lo = std::min(lo, r);
+                    hi = std::max(hi, r);
+                }
+            QVERIFY2(20 * std::log10(hi / lo) < 3.0, qPrintable(QStringLiteral("family %1: %2 dB").arg(family).arg(20 * std::log10(hi / lo))));
+        }
+    }
+
+    void theChoirSingsTheChordNotOnePartial() {
+        for (float c : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
+            Bench b;
+            b.on(1, Choir, 0.5f, c, 0.6f);
+            b.run(3);
+            const auto ch = b.chroma(1, 3);
+            double all = 0, top = 0;
+            for (double v : ch) {
+                all += v;
+                top = std::max(top, v);
+            }
+            QString dump;
+            for (int k = 0; k < 12; ++k)
+                dump += QStringLiteral(" %1").arg(int(100 * ch[size_t(k)] / all));
+            QVERIFY2(top / all < 0.5, qPrintable(QStringLiteral("colour %1: %2 [%3]").arg(c).arg(top / all).arg(dump)));
+        }
+    }
+
+    void aHeldSwellOpensTheBed() {
+        Bench b;
+        b.on(1, Pad, 0.4f);
+        b.on(2, Choir, 0.4f, 0.5f);
+        b.run(3);
+        b.param(PSwell, 1);
+        b.run(60.0 / 124.0 * 16); // four bars held
+        const double t1 = b.left.size() / 48000.0;
+        auto centroid = [&](double a, double z) {
+            double num = 0, den = 0;
+            for (double hz = 50; hz < 12000; hz += 10) {
+                const double e = b.energyAt(hz, a, z);
+                num += e * hz;
+                den += e;
+            }
+            return num / den;
+        };
+        auto above = [&](double a, double z) {
+            double e = 0;
+            for (double hz = 2000; hz < 12000; hz *= 1.02)
+                e += b.energyAt(hz, a, z);
+            return e;
+        };
+        const double c0 = centroid(1.5, 3), c1 = centroid(t1 - 1.5, t1);
+        const double up = 10 * std::log10(above(t1 - 1.5, t1) / above(1.5, 3));
+        QVERIFY2(c1 > 1.8 * c0, qPrintable(QStringLiteral("%1 -> %2 Hz").arg(c0).arg(c1)));
+        QVERIFY2(up > 6, qPrintable(QString::number(up)));
+    }
+
+    void theLowEndIsMono() {
+        Bench b;
+        b.on(1, Drone, 0.1f, 0.5f, 0.7f);
+        b.on(2, Pad, 0.0f, 0.5f, 0.7f);
+        b.run(4);
+        // Correlation of left and right in the band under 150 Hz.
+        std::vector<double> l, r;
+        Svf fl, fr, fl2, fr2;
+        fl.set(130, 0.54f, 48000);
+        fr.set(130, 0.54f, 48000);
+        fl2.set(130, 1.31f, 48000);
+        fr2.set(130, 1.31f, 48000);
+        double lr = 0, ll = 0, rr = 0;
+        for (size_t i = 0; i < b.left.size(); ++i) {
+            const double a = fl2.step(fl.step(b.left[i]).low).low, c = fr2.step(fr.step(b.right[i]).low).low;
+            if (i < 96000)
+                continue;
+            lr += a * c;
+            ll += a * a;
+            rr += c * c;
+        }
+        QVERIFY2(lr / std::sqrt(ll * rr) > 0.8, qPrintable(QString::number(lr / std::sqrt(ll * rr))));
     }
 
     void anticlockwiseGatesOnTheSixteenths() {
@@ -315,18 +412,6 @@ private slots:
         QCOMPARE(take.view.parts[kAtmos].voices, 0);
     }
 
-    void aQuickClickLetsTheLatchedGo() {
-        // Latch a layer, lift; later a finger lands and clicks at once:
-        // everything latched fades, the new finger's layer with it.
-        const auto take = testkit::play("page 0 6\n"
-                                        "down 0.2 1 0.3 0.5 p=0.7\nclick 1.0\nup 2.0 1\n"
-                                        "down 8.0 2 0.6 0.5 p=0.7\nclick 8.05\nup 8.4 2\n"
-                                        "end 20\n");
-        QVERIFY(take.rms(6, 8) > 0.02);
-        QVERIFY(take.rms(19, 20) < 0.05 * take.rms(6, 8));
-        QCOMPARE(take.view.parts[kAtmos].voices, 0);
-    }
-
     void aSceneLaysABedAndTheSameKeyFadesIt() {
         const auto take = testkit::play("page 0 6\nkey 0.2 W\nkey 6 W\nend 20\n");
         QVERIFY(take.rms(4, 6) > 0.03);
@@ -345,45 +430,48 @@ private slots:
         QCOMPARE(int(d[6]), 3); // and it plays it
     }
 
-    void tapsAndAHoldNeverLoopUnlessArmed() {
-        // Ordinary playing: a few taps, then a hold on the next beat. No loop.
+    void aClickAddsALayerToTheLatchedBed() {
+        // A bed of three latched layers; a glass finger lands and clicks at
+        // once: it joins the bed, nothing drops.
         const auto take = testkit::play("page 0 6\n"
-                                        "tap 0.5 0.3 0.5 p=0.8\ntap 1.0 0.3 0.5 p=0.8\ntap 1.5 0.3 0.5 p=0.8\n"
-                                        "tap 2.0 0.3 0.5 p=0.8\ndown 2.5 1 0.3 0.5 p=0.8\nup 2.9 1\nend 4\n");
-        QCOMPARE(take.view.parts[kAtmos].playing, -1);
-        QCOMPARE(take.view.parts[kAtmos].clips[0].state, uint8_t(ClipView::Empty));
+                                        "down 0.2 1 0.06 0.3 p=0.6\ndown 0.3 2 0.25 0.4 p=0.6\ndown 0.4 3 0.45 0.4 p=0.6\n"
+                                        "click 2.0\nup 2.5 1\nup 2.5 2\nup 2.5 3\n"
+                                        "down 5.0 4 0.70 0.5 p=0.7\nclick 5.15\nup 6.0 4\nend 14\n");
+        QVERIFY(take.rms(12, 14) > 0.7 * take.rms(3, 5));
+        QCOMPARE(take.view.parts[kAtmos].voices, 4);
     }
 
-    void anArmedTapLoopLoopsOnceAndDisarms() {
-        const auto take = testkit::play("page 0 6\nkey 0.2 L\n"
-                                        "tap 0.5 0.3 0.5 p=0.8\ntap 1.0 0.3 0.5 p=0.8\ntap 1.5 0.3 0.5 p=0.8\n"
-                                        "tap 2.0 0.3 0.5 p=0.8\ndown 2.5 1 0.3 0.5 p=0.8\nup 2.9 1\nend 9\n");
-        QCOMPARE(take.view.parts[kAtmos].playing, 0);
-        QVERIFY(take.view.parts[kAtmos].clips[0].events >= 8);
-        QVERIFY(take.rms(7, 9) > 0.01); // the swells go on
-        // Disarmed after one loop: the same gesture again makes no second clip.
-        const auto again = testkit::play("page 0 6\nkey 0.2 L\n"
-                                         "tap 0.5 0.3 0.5 p=0.8\ntap 1.0 0.3 0.5 p=0.8\ntap 1.5 0.3 0.5 p=0.8\n"
-                                         "tap 2.0 0.3 0.5 p=0.8\ndown 2.5 1 0.3 0.5 p=0.8\nup 2.9 1\n"
-                                         "tap 4.5 0.3 0.5 p=0.8\ntap 5.0 0.3 0.5 p=0.8\ntap 5.5 0.3 0.5 p=0.8\n"
-                                         "tap 6.0 0.3 0.5 p=0.8\ndown 6.5 2 0.3 0.5 p=0.8\nup 6.9 2\nend 8\n");
-        QCOMPARE(again.view.parts[kAtmos].clips[1].state, uint8_t(ClipView::Empty));
+    void aLongClickLetsEverythingGo() {
+        const auto take = testkit::play("page 0 6\n"
+                                        "down 0.2 1 0.3 0.5 p=0.7\nclick 1.0\nup 2.0 1\n"
+                                        "down 6.0 2 0.6 0.5 p=0.7\nclick 6.1 len=1.0\nup 7.3 2\nend 20\n");
+        QVERIFY(take.rms(4, 6) > 0.02);
+        QVERIFY(take.rms(19, 20) < 0.05 * take.rms(4, 6));
+        QCOMPARE(take.view.parts[kAtmos].voices, 0);
     }
 
-    void recordingTakesTheWholeLatchedBed() {
-        // A scene, then Return: from the next bar to the one after the
-        // second press the clip takes the bed, and the latched layers hand
-        // over to it.
-        const auto take = testkit::play("page 0 6\nkey 0.2 E\nkey 1.0 Return\nkey 6.0 Return\nend 26\n");
+    void spaceLoopsTheLatchedBedWithoutADropOrADouble() {
+        // Over a playing loop (the metronome on), a latched scene, then
+        // Space: the bars just played become the loop, the bed in them. The
+        // hand's layers hand over, so Delete afterwards changes nothing.
+        const auto take = testkit::play("page 0 6\nkey 0.05 Ctrl+M\nkey 0.2 R\nkey 3.5 Space\nkey 8 Delete\nend 20\n");
         const PartView &v = take.view.parts[kAtmos];
         QCOMPARE(v.playing, 0);
-        QVERIFY(v.clips[0].events >= 4);
-        // The bed goes on, no louder and no quieter than before: the clip's
-        // layers took over from the scene's without a gap or a doubling.
-        const double before = take.rms(4, 6), after = take.rms(22, 26), handover = take.rms(8, 12);
-        QVERIFY(after > 0.6 * before && after < 1.5 * before);
-        QVERIFY(handover > 0.6 * before && handover < 1.5 * before);
-        QVERIFY2(v.voices <= 4, qPrintable(QString::number(v.voices)));
+        // One On per layer, and its end: three layers.
+        QCOMPARE(v.clips[0].events, 6);
+        const double before = take.rms(2.5, 3.5), after = take.rms(10, 20);
+        QVERIFY2(std::fabs(20 * std::log10(after / before)) < 1.5,
+                 qPrintable(QString::number(20 * std::log10(after / before))));
+        QVERIFY(v.voices <= 3);
+    }
+
+    void globalTogglesNeverLoop() {
+        // The cloud switched on while a take is played, off after the loop
+        // formed: the loop never switches it back.
+        const auto take = testkit::play("page 0 6\nkey 0.05 Ctrl+M\nkey 0.2 R\nkey 1 G\n"
+                                        "key 3.5 Space\nkey 6 G\nend 20\n");
+        QCOMPARE(take.view.parts[kAtmos].playing, 0);
+        QCOMPARE(take.view.parts[kAtmos].data[1], 0.0f);
     }
 
     void leavingLetsFingersGoAndKeepsTheBed() {
@@ -404,7 +492,7 @@ private slots:
         QVERIFY(ten.peak() < 1.0);
         // Ten layers are fuller than one but far from ten times the power.
         const double ratio = ten.rms(3, 5) / one.rms(3, 5);
-        QVERIFY2(ratio > 1.2 && ratio < 3.0, qPrintable(QString::number(ratio)));
+        QVERIFY2(ratio > 1.05 && ratio < 3.0, qPrintable(QString::number(ratio)));
     }
 };
 

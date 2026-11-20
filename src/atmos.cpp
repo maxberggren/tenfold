@@ -72,11 +72,11 @@ struct FamilyShape {
 // The registers keep out of the bass's way: nothing below G2, the drone a
 // warm floor from there, the glass an octave and more above the pad.
 const FamilyShape kShape[kFamilies] = {
-    {"Drone", {"soft", "warm", "bowed"}, 43, 60, 20, 4.0f, 0.62f},
-    {"Pad", {"strings", "saw", "hollow"}, 48, 72, 17, 3.2f, 0.62f},
-    {"Choir", {"oo", "ah", "ee"}, 52, 74, 15, 3.6f, 0.75f},
-    {"Glass", {"pure", "twinkle", "stars"}, 67, 88, 14, 5.0f, 0.55f},
-    {"Air", {"wind", "rain", "vinyl"}, 62, 84, 12, 3.0f, 0.55f},
+    {"Drone", {"soft", "warm", "bowed"}, 43, 60, 20, 4.0f, 0.15f},
+    {"Pad", {"strings", "saw", "hollow"}, 48, 72, 17, 3.2f, 0.15f},
+    {"Choir", {"oo", "ah", "ee"}, 52, 74, 19, 3.6f, 0.15f},
+    {"Glass", {"pure", "twinkle", "stars"}, 67, 88, 14, 5.0f, 0.12f},
+    {"Air", {"wind", "rain", "vinyl"}, 62, 84, 12, 3.0f, 0.12f},
 };
 
 // Columns, and the colour inside one.
@@ -99,7 +99,7 @@ inline float widthOf(float size) { return clampf(0.75f + 0.5f * (size - 1.0f), 0
 
 enum Timbre : int { DroneSoft, DroneBowed, PadStrings, PadSaw, PadHollow, ChoirTone, GlassTone, WindTone, kTimbres };
 
-constexpr int kTableBits = 17;
+constexpr int kTableBits = 18; // 5.5 s: long enough that no repetition is heard
 constexpr int kTableLen = 1 << kTableBits;
 constexpr int kFracBits = 32 - kTableBits;
 constexpr float kFracScale = 1.0f / float(1u << kFracBits);
@@ -143,7 +143,7 @@ const TimbreDef kTimbreDef[kTimbres] = {
     {1, 4, 22.0f, 1.0f},  // PadStrings: an ensemble
     {1, 4, 34.0f, 0.9f},  // PadSaw: a wide supersaw
     {1, 4, 14.0f, 1.0f},  // PadHollow
-    {1, 4, 48.0f, 1.0f},  // ChoirTone: many voices, never quite together
+    {1, 4, 60.0f, 1.0f},  // ChoirTone: many voices, never quite together
     {3, 6, 3.0f, 0.6f},   // GlassTone: pure, glassy
     {2, 5, 140.0f, 0.7f}, // WindTone: so wide it is breath
 };
@@ -164,7 +164,7 @@ float harmonicAmp(int timbre, int h, float hz) {
     case PadHollow:
         return ((h & 1) ? 1.0f : 0.1f) / fh * std::exp(-hz / 6500.0f);
     case ChoirTone:
-        return std::pow(fh, -0.6f) * std::exp(-hz / 8000.0f);
+        return std::pow(fh, -0.5f) * std::exp(-hz / 9000.0f);
     case GlassTone: {
         static const float partial[17] = {0, 1.0f, 0.5f, 0.16f, 0.3f, 0.04f, 0.1f, 0, 0.12f, 0, 0.03f, 0, 0.04f, 0, 0, 0, 0.03f};
         return h < 17 ? partial[h] : 0.0f;
@@ -372,6 +372,9 @@ int bedPitches(const Bed &b, const Harmony &h, bool drone, float lo, float hi, f
 // --- the engine ---------------------------------------------------------------
 
 enum ParamId : int { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord };
+// The page marks the latched layers a loop is about to take, so the loop's
+// first round can take their voices over (never recorded).
+constexpr uint16_t kAdoptable = Command::User + 1;
 enum PumpMode : int { PumpOff = 0, PumpKick, PumpBeat };
 
 // Published numbers, read by the page.
@@ -389,12 +392,16 @@ enum Pub : int {
     PubPumpEnv,
     PubVoices,
     PubLevel,
-    PubVoice0 = 16,  // 8 per voice
-    PubGlint0 = 208, // 3 per glint
+    PubOwnLoop,     // the own chord came from a loop
+    PubOwnHand,     // the player's chord key holds it, whatever a loop says
+    PubFrozen,      // voices the freeze is holding
+    PubVoice0 = 20,  // 9 per voice
+    PubGlint0 = 200, // 3 per glint
 };
-constexpr int kPubVoices = 24, kPubGlints = 16;
+constexpr int kPubStride = 9;
+constexpr int kPubVoices = 20, kPubGlints = 16;
 
-constexpr int kVoices = 24;
+constexpr int kVoices = 20;
 constexpr int kSlots = 12;
 constexpr int kGlints = 32;
 
@@ -407,6 +414,9 @@ struct Slot {
 
 struct Voice {
     bool active = false, releasing = false;
+    bool frozen = false, holdEnv = false, pendingOff = false, adoptable = false;
+    float agcRms = 0.2f, agc = 1.0f;
+    float lfo3 = 0, rate3 = 0.02f;
     int id = 0, family = 0;
     float tgt[5] = {}, cur[5] = {}; // height, colour, pressure, motion, width
     float attack = 0.3f, ramp = 0, env = 0, relCoef = 0.9999f;
@@ -685,6 +695,10 @@ public:
         m_cloud.init(rate);
         m_hpL.set(55.0f, 0.7f, rate);
         m_hpR.set(55.0f, 0.7f, rate);
+        m_sideHp1.set(280.0f, 0.54f, rate);
+        m_sideHp2.set(280.0f, 1.31f, rate);
+        m_sheenL.set(2400.0f, 0.6f, rate);
+        m_sheenR.set(2400.0f, 0.6f, rate);
     }
 
     void command(const Command &c, AudioContext &ctx) override {
@@ -692,6 +706,21 @@ public:
         switch (c.type) {
         case Command::On: {
             Voice *v = find(c.id, true);
+            if (!v && (c.id & (1 << 30))) {
+                // A loop's first round reaching a latched layer it was made
+                // from: the live voice becomes the loop's, so the bed neither
+                // doubles nor drops when the hand lets it go.
+                for (Voice &w : m_voices)
+                    if (w.active && !w.releasing && w.adoptable && w.id == (c.id & 0xFFFFFF)) {
+                        w.id = c.id;
+                        w.adoptable = false;
+                        setTargets(w, c);
+                        v = &w;
+                        break;
+                    }
+                if (v)
+                    break;
+            }
             if (v) {
                 // Already sounding (a loop coming round, a recording taking
                 // over what is held): take the new shape, and if it was
@@ -713,22 +742,43 @@ public:
                 setTargets(*v, c);
             break;
         case Command::Off:
+            if (Voice *v = find(c.id, false)) {
+                // A frozen layer keeps sounding until the thaw.
+                if (v->frozen)
+                    v->pendingOff = true;
+                else
+                    v->releasing = true;
+            }
+            break;
+        case kAdoptable:
             if (Voice *v = find(c.id, false))
-                v->releasing = true;
+                v->adoptable = true;
             break;
         case Command::Param:
             switch (c.i[0]) {
             case PFreeze:
-                // A freeze right on a chord change waits for the new chord to
-                // fill the halo, so it never catches the old one under it.
-                m_freeze = c.f[0] > 0.5f;
-                m_melt = m_freeze ? std::max(0.0, 1.5 - m_sinceChange) : 0.0;
+                setFreeze(c.f[0] > 0.5f);
                 break;
             case PCloud: m_cloudOn = c.f[0] > 0.5f; break;
             case PPump: m_pump = std::clamp(int(std::lround(c.f[0])), 0, 2); break;
             case PSpace: m_space = clampf(c.f[0], 0.0f, 1.0f); break;
             case PSwell: m_swellOn = c.f[0] > 0.5f; break;
-            case PChord: m_own = std::clamp(int(std::lround(c.f[0])), -1, 15); break;
+            case PChord: {
+                // A loop can carry the bed's own progression; a chord key
+                // pressed by hand takes over from it until comma.
+                const int own = std::clamp(int(std::lround(c.f[0])), -1, 15);
+                if (c.id & (1 << 30)) {
+                    if (!m_ownHand) {
+                        m_own = own;
+                        m_ownLoop = own >= 0;
+                    }
+                } else {
+                    m_own = own;
+                    m_ownHand = own >= 0;
+                    m_ownLoop = false;
+                }
+                break;
+            }
             default: break;
             }
             break;
@@ -745,10 +795,13 @@ public:
 
         // Slow globals.
         const float spb = float(tr.secondsPerBeat());
+        // The swell rises for as long as S is held, up to eight bars, and
+        // falls back over a bar.
         if (m_swellOn)
-            m_swell = std::min(1.0f, m_swell + dt / (4.0f * spb));
+            m_swell = std::min(1.0f, m_swell + dt / (32.0f * spb));
         else
-            m_swell = std::max(0.0f, m_swell - dt / (2.0f * spb));
+            m_swell = std::max(0.0f, m_swell - dt / (4.0f * spb));
+        m_swellE = std::pow(m_swell, 0.6f);
         const float k = 1.0f - std::exp(-dt / 0.15f);
         // When the chord changes the halo lets go of the old one quickly, so
         // a long tail never sours the next chord; a freeze melts for a bar
@@ -786,23 +839,38 @@ public:
         const float normT = 0.6f / std::sqrt(1.0f + 0.5f * std::max(0.0f, weight - 1.0f));
         const float g0 = m_norm;
         m_norm += (normT - m_norm) * (1.0f - std::exp(-dt / 0.3f));
-        const float swellGain = 1.0f + 0.35f * m_swell;
+        const float swellGain = 1.0f + 0.4f * m_swellE;
         for (int i = 0; i < n; ++i) {
             const float g = lerpf(g0, m_norm, float(i + 1) / float(n)) * swellGain;
             dryL[i] *= g;
             dryR[i] *= g;
         }
         renderGlints(dryL, dryR, n);
+        // Sheen: the top of the bed lifted a touch always, and a lot as it
+        // swells.
+        const float sheen = 0.25f + 3.2f * m_swellE;
+        for (int i = 0; i < n; ++i) {
+            dryL[i] += sheen * m_sheenL.step(dryL[i]).high;
+            dryR[i] += sheen * m_sheenR.step(dryR[i]).high;
+        }
 
         // The room the bed lives in.
-        float t60 = (3.0f + 9.0f * m_spaceS + 4.0f * m_swell) * (1.0f - 0.85f * m_clear);
+        float t60 = (3.0f + 9.0f * m_spaceS + 6.0f * m_swellE) * (1.0f - 0.85f * m_clear);
         if (m_melt > 0)
             t60 = std::min(t60, 4.0f);
-        const float shimmer = 0.12f + 0.35f * m_spaceS + 0.4f * m_swell;
+        const float shimmer = 0.12f + 0.35f * m_spaceS + 0.65f * m_swellE;
         m_halo.set(t60, shimmer, m_freezeAmt, n);
         m_cloud.set(m_cloudAmt);
-        const float send = 0.45f + 0.35f * m_spaceS + 0.2f * m_swell;
+        const float send = 0.45f + 0.35f * m_spaceS + 0.35f * m_swellE;
         const float wet = (0.35f + 0.8f * m_spaceS) * (1.0f + 0.1f * m_freezeAmt);
+        // The swell thins the bottom as it rises, the way a build-up does: the
+        // bed's low cut climbs from 55 Hz to about 600.
+        const float lowCut = 55.0f * std::exp2(3.5f * m_swellE);
+        if (std::fabs(lowCut - m_lowCutSet) > 0.5f) {
+            m_lowCutSet = lowCut;
+            m_hpL.set(lowCut, 0.7f, m_rate);
+            copyCoefficients(m_hpR, m_hpL);
+        }
         const float *duck = ctx.duck();
         const float depth = m_pump == PumpKick ? 0.6f : m_pump == PumpBeat ? 0.65f : 0.0f;
         const float pumpAtt = 1.0f - std::exp(-1.0f / (0.004f * m_rate));
@@ -831,8 +899,12 @@ public:
             const float gd = 1.0f - depth * m_pumpEnv, gw = 1.0f - 0.55f * depth * m_pumpEnv;
             float oL = (dryL[i] + 0.7f * cL) * gd + hL * wet * gw;
             float oR = (dryR[i] + 0.7f * cR) * gd + hR * wet * gw;
-            oL = m_hpL.step(oL).high;
-            oR = m_hpR.step(oR).high;
+            // Mono under about 250 Hz: all the width stays above it, none
+            // of it fights the low end.
+            const float mid = 0.5f * (oL + oR);
+            const float side = m_sideHp2.step(m_sideHp1.step(0.5f * (oL - oR)).high).high;
+            oL = m_hpL.step(mid + side).high;
+            oR = m_hpR.step(mid - side).high;
             l[i] += oL;
             r[i] += oR;
             sq += oL * oL + oR * oR;
@@ -852,7 +924,7 @@ public:
         for (Glint &g : m_glints)
             if (hard)
                 g.on = false;
-        m_freeze = false;
+        setFreeze(false);
         m_swellOn = false;
         if (hard) {
             m_halo.clear();
@@ -875,22 +947,27 @@ public:
         d[PubPumpEnv] = m_pumpEnv * (m_pump ? 1.0f : 0.0f);
         d[PubVoices] = float(voices());
         d[PubLevel] = m_levelOut;
-        int k = 0;
+        d[PubOwnLoop] = m_ownLoop ? 1.0f : 0.0f;
+        d[PubOwnHand] = m_ownHand ? 1.0f : 0.0f;
+        int frozen = 0, k = 0;
         for (const Voice &v : m_voices) {
+            frozen += v.active && v.frozen;
             if (!v.active || k >= kPubVoices)
                 continue;
-            float *o = d + PubVoice0 + 8 * k++;
+            float *o = d + PubVoice0 + kPubStride * k++;
             o[0] = float(v.family + 1);
             o[1] = v.cur[0];
             o[2] = v.cur[1];
             o[3] = v.level;
-            o[4] = (v.id & (1 << 30)) ? 2.0f : 1.0f;
+            o[4] = ((v.id & (1 << 30)) ? 2.0f : 1.0f) + (v.frozen ? 4.0f : 0.0f) + (v.releasing ? 8.0f : 0.0f);
             o[5] = v.cur[3];
             o[6] = v.cur[4];
             o[7] = v.gate;
+            o[8] = float(v.id & 0xFFFFFF);
         }
         for (; k < kPubVoices; ++k)
-            d[PubVoice0 + 8 * k] = 0;
+            d[PubVoice0 + kPubStride * k] = 0;
+        d[PubFrozen] = float(frozen);
         int g = 0;
         for (const Glint &gl : m_glints) {
             if (!gl.on || gl.delay > 0 || g >= kPubGlints)
@@ -912,6 +989,37 @@ public:
     }
 
 private:
+    // Freeze holds the bed itself: every layer sounding now keeps sounding,
+    // at the level it has, after its finger lifts, and keeps following the
+    // chord; the halo turns lossless behind it. A thaw lets go of whatever
+    // was lifted meanwhile.
+    void setFreeze(bool on) {
+        if (on == m_freeze)
+            return;
+        m_freeze = on;
+        // Right on a chord change the halo waits for the new chord.
+        m_melt = on ? std::max(0.0, 1.5 - m_sinceChange) : 0.0;
+        for (Voice &v : m_voices) {
+            if (!v.active)
+                continue;
+            if (on) {
+                if (!v.releasing) {
+                    v.frozen = true;
+                } else if (v.env > 0.02f) {
+                    v.frozen = v.holdEnv = v.pendingOff = true;
+                    v.releasing = false;
+                }
+            } else if (v.frozen) {
+                v.frozen = v.holdEnv = false;
+                if (v.pendingOff) {
+                    v.pendingOff = false;
+                    v.releasing = true;
+                    v.ramp = 1;
+                }
+            }
+        }
+    }
+
     Voice *find(int id, bool evenReleasing) {
         for (Voice &v : m_voices)
             if (v.active && v.id == id && (evenReleasing || !v.releasing))
@@ -947,6 +1055,11 @@ private:
     void start(Voice &v, const Command &c) {
         v.active = true;
         v.releasing = false;
+        v.frozen = v.holdEnv = v.pendingOff = v.adoptable = false;
+        v.agcRms = 0.3f;
+        v.agc = 1.0f / 0.3f;
+        v.lfo3 = v.rng.unit();
+        v.rate3 = 0.015f + 0.02f * v.rng.unit();
         v.id = c.id;
         v.family = std::clamp(c.i[0], 0, kFamilies - 1);
         setTargets(v, c);
@@ -1053,7 +1166,13 @@ private:
         const float ks = 1.0f - std::exp(-dt / 0.08f);
         for (int j = 0; j < 5; ++j)
             v.cur[j] += (v.tgt[j] - v.cur[j]) * ks;
-        const float height = v.cur[0], colour = v.cur[1], press = v.cur[2], motion = v.cur[3], width = v.cur[4];
+        // A third, slower drift moves the colour and the filter over half a
+        // minute or so, so even one finger held still keeps evolving.
+        v.lfo3 += v.rate3 * dt;
+        v.lfo3 -= std::floor(v.lfo3);
+        const float drift = std::sin(kTwoPi * v.lfo3);
+        const float height = v.cur[0], press = v.cur[2], motion = v.cur[3], width = v.cur[4];
+        const float colour = clampf(v.cur[1] + 0.09f * drift, 0.0f, 1.0f);
         const float P = fs.low + height * (fs.high - fs.low);
 
         // The voicing window: every chord tone between P and P + span, the
@@ -1177,8 +1296,8 @@ private:
         const float evolve = std::max(0.0f, motion), pulse = std::max(0.0f, -motion);
         // Air breathes hardest: wind comes in gusts.
         const float gust = v.family == Air ? 2.5f : 1.0f;
-        const float breath = 1.0f + gust * ((0.07f + 0.08f * evolve) * b1 + 0.05f * b2);
-        float oct = 0.3f * gust * b2 + 1.3f * m_swell;
+        const float breath = 1.0f + std::sqrt(gust) * ((0.07f + 0.08f * evolve) * b1 + 0.05f * b2);
+        float oct = 0.3f * gust * b2 + 0.45f * drift + 3.5f * m_swellE;
         if (evolve > 0.04f) {
             // A slow filter sweep locked to the bars: four bars round at a
             // touch of twist, one bar at full.
@@ -1199,11 +1318,11 @@ private:
             q = 0.8f + 0.4f * evolve;
             break;
         case Choir:
-            cutoff = 3200.0f * std::exp2(1.0f * height + 0.8f * (press - 0.5f) + 0.4f * oct);
+            cutoff = 3400.0f * std::exp2(1.0f * height + 0.8f * (press - 0.5f) + 0.4f * oct + 1.2f * m_swellE);
             q = 0.6f;
             break;
         case Glass:
-            cutoff = 2400.0f * std::exp2(0.6f + 2.0f * height + 1.2f * (press - 0.5f) + 0.6f * oct);
+            cutoff = 2400.0f * std::exp2(0.6f + 2.0f * height + 1.2f * (press - 0.5f) + 0.6f * oct + 0.8f * m_swellE);
             q = 0.7f;
             break;
         case Air:
@@ -1230,14 +1349,12 @@ private:
             const float vv = clampf(colour * 4.0f + 0.25f * b1 * (0.4f + evolve), 0.0f, 4.0f);
             const int a = std::min(3, int(vv));
             const float f = vv - float(a);
-            static const float bw[3] = {90, 120, 180};
-            // Open vowels lose the strong low partials to a high first
-            // formant; level them so the colour changes, not the loudness.
-            static const float makeup[5] = {1.0f, 1.0f, 1.8f, 1.05f, 1.0f};
-            const float mk = lerpf(makeup[a], makeup[a + 1], f);
+            // Wide formants, so a vowel colours the whole voicing rather
+            // than singling out the one partial under it.
+            static const float bw[3] = {360, 300, 380};
             for (int i = 0; i < 3; ++i) {
                 const float hz = std::exp(lerpf(std::log(vowel[a][i][0]), std::log(vowel[a + 1][i][0]), f));
-                fg[i] = mk * lerpf(vowel[a][i][1], vowel[a + 1][i][1], f);
+                fg[i] = lerpf(vowel[a][i][1], vowel[a + 1][i][1], f);
                 v.fL[i].set(hz, hz / bw[i], m_rate);
                 copyCoefficients(v.fR[i], v.fL[i]);
             }
@@ -1299,14 +1416,19 @@ private:
         const double div = pulse > 0.55f ? 0.25 : 0.5;
         const float gk = 1.0f - std::exp(-1.0f / (0.004f * m_rate));
         const float attInc = 1.0f / (v.attack * m_rate);
-        const float level = fs.level * pressGain * breath * v.norm;
+        const float level = fs.level * pressGain * breath;
+        const float agc0 = v.agc;
+        float timbreSq = 0;
+        (void)w2;
         const float pan = 0.12f * b1 * v.side;
         const float panL = 1.0f - pan, panR = 1.0f + pan;
         for (int i = 0; i < n; ++i) {
             // Envelope: a smooth swell to full, then a long fade once let go.
             // A finger lifted mid-swell lets the swell finish first, so a
             // tap is a whole breath.
-            if (!v.releasing || v.ramp < 1.0f) {
+            if (v.holdEnv) {
+                // frozen mid-fade: held where it was
+            } else if (!v.releasing || v.ramp < 1.0f) {
                 v.ramp = std::min(1.0f, v.ramp + attInc);
                 v.env = v.ramp * v.ramp * (3.0f - 2.0f * v.ramp);
             } else {
@@ -1324,8 +1446,8 @@ private:
             if (v.family == Choir) {
                 // Breath noise through the same formants keeps it airy.
                 const float nl = 0.02f * v.rng.bipolar(), nr = 0.02f * v.rng.bipolar();
-                L = 0.1f * oL.low;
-                R = 0.1f * oR.low;
+                L = 1.1f * oL.low;
+                R = 1.1f * oR.low;
                 for (int f = 0; f < 3; ++f) {
                     L += fg[f] * v.fL[f].k * v.fL[f].step(sL[i] + nl).band;
                     R += fg[f] * v.fR[f].k * v.fR[f].step(sR[i] + nr).band;
@@ -1353,10 +1475,21 @@ private:
                     R += vinylAmt * (c * bal * 2.0f + 0.03f * v.hissR.step(v.rng.bipolar()));
                 }
             }
-            const float a = v.env * level * gate;
+            timbreSq += L * L + R * R;
+            const float a = v.env * level * gate * agc0;
             const float mid = 0.5f * (L + R) * a, side = 0.5f * (L - R) * a * width;
             outL[i] += (mid + side) * panL;
             outR[i] += (mid - side) * panR;
+        }
+        // Loudness follows pressure, not colour or height: the layer's own
+        // sound (before its envelope, pressure and gate) is held to one
+        // level, slowly, so sweeps and vowels change the colour only.
+        {
+            const float rms = std::sqrt(timbreSq / float(2 * n));
+            v.agcRms += (rms - v.agcRms) * (1.0f - std::exp(-dt / 0.3f));
+            const float want = clampf(1.0f / std::max(v.agcRms, 1e-3f), 0.15f, 12.0f);
+            // Down at once, up slowly: a layer fading in never overshoots.
+            v.agc += (want - v.agc) * (1.0f - std::exp(-dt / (want < v.agc ? 0.03f : 0.6f)));
         }
         v.gate = 1.0f - gateDepth * (1.0f - v.gateSmooth);
         v.level = v.env * pressGain * breath;
@@ -1378,7 +1511,10 @@ private:
     float m_clear = 0;
     int m_pump = PumpKick, m_own = -1;
     float m_space = 0.5f, m_spaceS = 0.5f, m_swell = 0, m_freezeAmt = 0, m_cloudAmt = 0;
-    float m_norm = 0.6f, m_pumpEnv = 0, m_levelOut = 0, m_haloOut = 0;
+    float m_norm = 0.6f, m_pumpEnv = 0, m_levelOut = 0, m_haloOut = 0, m_swellE = 0;
+    bool m_ownLoop = false, m_ownHand = false;
+    float m_lowCutSet = 55.0f;
+    Svf m_sideHp1, m_sideHp2, m_sheenL, m_sheenR;
 };
 
 // --- scenes -------------------------------------------------------------------
@@ -1423,43 +1559,35 @@ class AtmosControl : public PartControl {
 public:
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
 
-        // The click latches every layer held. A finger that lands and clicks
-        // at once (nothing else held a while) lets the latched layers go
-        // instead, and takes its own new layer with them.
+        // The click latches every layer held, a finger that has only just
+        // landed included. Holding the click down for most of a second lets
+        // every latched layer go (Delete does too).
         if (f.button && !m_button) {
-            int settled = 0, fresh = 0;
-            for (const Held &h : m_held) {
-                if (h.touch < 0 || h.cancelled)
-                    continue;
-                if (f.t - h.t0 < 0.35)
-                    ++fresh;
-                else if (!h.grabbed)
-                    ++settled;
-            }
-            if (settled == 0 && fresh > 0 && !m_latched.empty()) {
-                for (Held &h : m_held)
-                    if (h.touch >= 0 && !h.cancelled) {
-                        if (h.grabbed) {
-                            if (Latched *l = findLatched(h.layer.id))
-                                l->grabbed = false;
-                        } else {
-                            sendOff(h.layer.id, ctx, f.t);
-                        }
-                        h.cancelled = true;
+            m_buttonAt = f.t;
+            m_longDone = false;
+            int latched = 0;
+            for (Held &h : m_held)
+                if (h.touch >= 0 && !h.grabbed && !h.cancelled) {
+                    h.latch = true;
+                    ++latched;
+                }
+            if (latched)
+                ctx.notice(QStringLiteral("Latched: it stays when you lift. Hold the click to let everything go"));
+        }
+        if (f.button && m_button && !m_longDone && f.t - m_buttonAt >= 0.8) {
+            m_longDone = true;
+            for (Held &h : m_held)
+                if (h.touch >= 0 && !h.cancelled) {
+                    if (h.grabbed) {
+                        if (Latched *l = findLatched(h.layer.id))
+                            l->grabbed = false;
+                    } else {
+                        sendOff(h.layer.id, ctx, f.t);
                     }
-                releaseAll(ctx, QStringLiteral("Let go"));
-            } else {
-                int latched = 0;
-                for (Held &h : m_held)
-                    if (h.touch >= 0 && !h.grabbed && !h.cancelled) {
-                        h.latch = true;
-                        ++latched;
-                    }
-                if (latched)
-                    ctx.notice(QStringLiteral("Latched"));
-            }
+                    h.cancelled = true;
+                }
+            releaseAll(ctx, QStringLiteral("Let go: everything latched fades"));
         }
         m_button = f.button;
 
@@ -1482,67 +1610,77 @@ public:
     }
 
     void background(double t, ControlContext &ctx) override {
-        m_loopCue = loopCue(ctx.beatAt(t), ctx.studio().parts[ctx.part()]);
-        // A recording starts at the bar: everything already sounding is said
-        // again right on it, so the clip holds the whole bed.
-        if (m_reassertAt > 0 && t >= m_reassertAt - 0.004) {
-            m_handed.clear();
-            for (Held &h : m_held)
-                if (h.touch >= 0 && !h.grabbed)
-                    sendOn(h.layer, ctx, m_reassertAt, 0.3f);
-            for (Latched &l : m_latched) {
-                sendOn(l.layer, ctx, m_reassertAt, 0.3f);
-                if (!l.grabbed)
-                    m_handed.push_back(l.layer.id);
-            }
-            m_reassertAt = 0;
-        }
-        // When it closes, the clip plays on from wherever it is; at the top of
-        // its next round, where its layers start, the latched layers it took
-        // bow out, so the bed never plays twice nor drops out.
         const PartView &pv = ctx.studio().parts[ctx.part()];
-        if (m_recSlot >= 0 && m_reassertAt == 0 && m_handAt == 0 && pv.recording < 0) {
-            const float len = pv.clips[m_recSlot].lengthBeats;
-            const ClipView &cv = pv.clips[m_recSlot];
-            if (cv.state != ClipView::Empty)
-                ctx.notice(QStringLiteral("Loop in slot %1: %2 of the bed, %3 events, playing")
-                               .arg(m_recSlot + 1)
-                               .arg(len >= 4 ? QStringLiteral("%1 bars").arg(int(len / 4)) : QStringLiteral("%1 beats").arg(int(len)))
-                               .arg(cv.events));
-            else
-                ctx.notice(QStringLiteral("Nothing played: slot %1 stays empty").arg(m_recSlot + 1));
-            if (pv.playing == m_recSlot && len > 0 && !m_handed.empty()) {
-                const double beat = ctx.beatAt(t);
-                const double next = m_recBar + std::ceil((beat - m_recBar) / len - 1e-6) * len;
-                m_handAt = ctx.timeAt(next);
+        m_cue = loopCue(ctx.beatAt(t), pv);
+
+        // A Space take: while it waits, remember its slot; once it closes,
+        // the latched layers it took leave the page as soon as the loop has
+        // taken their voices over. Called off, they are the hand's again.
+        if (pv.recording >= 0) {
+            m_takeSlot = pv.recording;
+        } else if (m_takeSlot >= 0) {
+            if (pv.playing == m_takeSlot) {
+                const double len = std::max(1.0f, pv.clips[m_takeSlot].lengthBeats);
+                m_handUntil = t + (len + 4.0) * 60.0 / std::max(1.0, ctx.studio().bpm);
             } else {
-                m_handed.clear();
-                m_recSlot = -1;
+                for (Latched &l : m_latched)
+                    l.handed = false;
             }
+            m_takeSlot = -1;
         }
-        if (m_handAt > 0 && t >= m_handAt - 0.004) {
-            if (pv.playing == m_recSlot) {
-                for (int id : m_handed) {
-                    auto it = std::find_if(m_latched.begin(), m_latched.end(),
-                                           [&](const Latched &l) { return l.layer.id == id && !l.grabbed; });
-                    if (it != m_latched.end()) {
-                        sendOff(id, ctx, m_handAt);
-                        m_latched.erase(it);
-                    }
+        if (m_handUntil > 0) {
+            const float *d = pv.data;
+            for (auto it = m_latched.begin(); it != m_latched.end();) {
+                bool live = false;
+                for (int k = 0; k < kPubVoices; ++k) {
+                    const float *v = d + PubVoice0 + kPubStride * k;
+                    live |= v[0] > 0 && (int(v[4]) & 3) == 1 && int(v[8]) == it->layer.id;
                 }
-                if (m_scene >= 0 &&
-                    std::none_of(m_latched.begin(), m_latched.end(), [](const Latched &l) { return l.scene >= 0; }))
-                    m_scene = -1;
+                if (it->handed && !live)
+                    it = m_latched.erase(it);
+                else
+                    ++it;
             }
-            m_handed.clear();
-            m_recSlot = -1;
-            m_handAt = 0;
+            if (t > m_handUntil) {
+                // Whatever the loop didn't take is the hand's again.
+                for (Latched &l : m_latched)
+                    l.handed = false;
+                m_handUntil = 0;
+            }
+            if (m_scene >= 0 && std::none_of(m_latched.begin(), m_latched.end(), [](const Latched &l) { return l.scene >= 0; }))
+                m_scene = -1;
+        }
+
+        // What the freeze is holding, for the status line.
+        m_frozen.clear();
+        if (pv.data[PubFreeze] > 0.5f) {
+            QStringList names;
+            for (int k = 0; k < kPubVoices; ++k) {
+                const float *v = pv.data + PubVoice0 + kPubStride * k;
+                const int f = int(v[0]) - 1;
+                if (f < 0 || !(int(v[4]) & 4))
+                    continue;
+                const QString n = QStringLiteral("%1 %2").arg(QString::fromUtf8(kShape[f].name).toLower(),
+                                                             QString::fromUtf8(colourName(f, v[2])));
+                if (!names.contains(n))
+                    names << n;
+            }
+            m_frozen = names.isEmpty() ? QStringLiteral("frozen: the halo hangs, F thaws")
+                                       : QStringLiteral("frozen: %1 hanging, F thaws").arg(names.join(QStringLiteral(", ")));
         }
     }
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const PartView &pv = ctx.studio().parts[ctx.part()];
         const float *d = pv.data;
+        if (k.key == Qt::Key_Space) {
+            // Space is the session's: it loops what was just played. Seeing
+            // it first, the page says every layer still sounding again at the
+            // start of the take, so the loop holds the whole bed.
+            if (k.down && !k.repeat && pv.recording < 0)
+                prepareTake(ctx);
+            return false;
+        }
         if (k.key == Qt::Key_S) {
             if (k.repeat)
                 return true;
@@ -1569,23 +1707,16 @@ public:
             }
         for (int c = 0; c < 7; ++c)
             if (k.key == kChordKeys[c]) {
-                const int own = int(std::lround(d[PubOwn]));
-                const int next = own == c ? -1 : c;
-                param(PChord, float(next), ctx);
-                ctx.notice(next < 0 ? QStringLiteral("The bed follows the chords")
-                                    : QStringLiteral("The bed's own chord: %1").arg(roman(c)));
+                const bool loopHad = d[PubOwnLoop] > 0.5f;
+                chord(c, ctx);
+                ctx.notice(QStringLiteral("The bed's own chord %1: only Atmos plays it%2. Comma follows the Chords page")
+                               .arg(roman(c), loopHad ? QStringLiteral(", over the loop's chords") : QString()));
                 return true;
             }
         switch (k.key) {
         case Qt::Key_Comma:
-            param(PChord, -1, ctx);
+            chord(-1, ctx);
             ctx.notice(QStringLiteral("The bed follows the chords"));
-            return true;
-        case Qt::Key_L:
-            m_tapLoop = !m_tapLoop;
-            m_phrase.clear();
-            ctx.notice(m_tapLoop ? QStringLiteral("Tap loop armed: tap a rhythm in one column, then hold the next beat")
-                                 : QStringLiteral("Tap loop off"));
             return true;
         case Qt::Key_H:
             m_hold = !m_hold;
@@ -1594,7 +1725,8 @@ public:
         case Qt::Key_F: {
             const bool on = d[PubFreeze] < 0.5f;
             param(PFreeze, on ? 1.0f : 0.0f, ctx);
-            ctx.notice(on ? QStringLiteral("Frozen") : QStringLiteral("Thawed"));
+            ctx.notice(on ? QStringLiteral("Frozen: the bed holds, lifted or not, and follows the chords")
+                          : QStringLiteral("Thawed"));
             return true;
         }
         case Qt::Key_G: {
@@ -1617,16 +1749,12 @@ public:
             ctx.notice(QStringLiteral("Space %1").arg(int(std::lround(s * 4))));
             return true;
         }
-        case Qt::Key_Return:
-        case Qt::Key_Enter:
-            record(ctx);
-            return true;
         case Qt::Key_O:
             ctx.overdub(!pv.overdub);
             ctx.notice(pv.overdub ? QStringLiteral("Overdub off") : QStringLiteral("Overdub"));
             return true;
         case Qt::Key_Delete:
-            releaseAll(ctx, QStringLiteral("Let go"));
+            releaseAll(ctx, QStringLiteral("Let go: everything latched fades"));
             return true;
         default:
             return false;
@@ -1635,7 +1763,7 @@ public:
 
     void leave(ControlContext &ctx) override {
         // Fingers let go; what was latched (by hand, click or scene) stays,
-        // like a clip, until Delete or a click lets it go.
+        // like a clip, until Delete or a long click lets it go.
         for (Held &h : m_held) {
             if (h.touch < 0)
                 continue;
@@ -1649,7 +1777,7 @@ public:
                     l->layer = h.layer;
                 }
             } else if (h.latch) {
-                m_latched.push_back({h.layer, h.x, h.y, -1, false});
+                m_latched.push_back({h.layer, h.x, h.y, -1, false, false});
             } else {
                 sendOff(h.layer.id, ctx);
             }
@@ -1671,6 +1799,7 @@ private:
         int id = 0, family = 0;
         float colour = 0.5f, height = 0.5f, press = 0.5f, motion = 0, width = 0.75f;
         float attack = 0.4f;
+        double since = 0; // when its On went out
     };
     struct Held {
         int touch = -1;
@@ -1679,7 +1808,7 @@ private:
         float x0 = 0, y0 = 0, a0 = 0;
         float ox = 0, oy = 0, om = 0, op = 0; // offsets for a grabbed orb
         float x = 0, y = 0, travel = 0;
-        bool grabbed = false, latch = false, long_ = false, looped = false, cancelled = false;
+        bool grabbed = false, latch = false, cancelled = false;
         Layer sent;
     };
     struct Latched {
@@ -1687,29 +1816,26 @@ private:
         float x = 0, y = 0;
         int scene = -1;
         bool grabbed = false;
+        bool handed = false; // a loop is taking it over
     };
 
     static QString roman(int degree) {
         static const char *r[7] = {"I", "II", "III", "IV", "V", "VI", "VII"};
         return QString::fromUtf8(r[((degree % 7) + 7) % 7]);
     }
-    // What the loop is doing, said before it happens: armed and how long
-    // until the bar, recording and which bar, or a tap loop waiting for its
-    // hold. Empty when no loop is on its way.
-    QString loopCue(double beat, const PartView &pv) const {
-        if (pv.recording >= 0 || (m_recSlot >= 0 && m_reassertAt > 0)) {
-            if (beat < m_recBar - 1e-3)
-                return QStringLiteral("LOOP ARMED · SLOT %1 · IN %2").arg(m_recSlot + 1).arg(int(std::ceil(m_recBar - beat)));
-            const int bar = int(std::floor((beat - m_recBar) / kBeatsPerBar)) + 1;
-            return QStringLiteral("REC SLOT %1 · BAR %2 OF 8 · RETURN CLOSES").arg(m_recSlot + 1).arg(std::min(bar, 8));
-        }
-        if (m_tapLoop) {
-            const int taps = int(m_phrase.taps().size());
-            return taps < 2 ? QStringLiteral("TAP LOOP ARMED · TAP A RHYTHM")
-                            : QStringLiteral("TAP LOOP · %1 TAPS · HOLD THE NEXT BEAT").arg(taps);
-        }
-        return {};
+
+    // The loop on its way, from the studio's own view: a take waits for the
+    // bar, and Space again calls it off.
+    static QString loopCue(double beat, const PartView &pv) {
+        if (pv.recording < 0)
+            return {};
+        const double next = std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar;
+        const int beats = std::max(0, int(std::ceil(next - beat - 1e-3)));
+        const QString when = beats == 0 ? QStringLiteral("NOW")
+                                        : beats == 1 ? QStringLiteral("IN 1 BEAT") : QStringLiteral("IN %1 BEATS").arg(beats);
+        return QStringLiteral("LOOP INTO SLOT %1 · %2 · SPACE CALLS IT OFF").arg(pv.recording + 1).arg(when);
     }
+
     int nextId() {
         m_nextId = m_nextId >= 0xFFFFF ? 1 : m_nextId + 1;
         return m_nextId;
@@ -1727,17 +1853,29 @@ private:
         return nullptr;
     }
 
+    // Global settings are the hand's, never a loop's: they go unrecorded.
     void param(int which, float value, ControlContext &ctx) {
         Command c;
         c.type = Command::Param;
+        c.flags = Command::NoRecord;
         c.i[0] = which;
         c.f[0] = value;
         c.t = ctx.now();
         ctx.send(c);
     }
-    void sendOn(const Layer &l, ControlContext &ctx, double t, float attack = -1) {
+    // The bed's own chord is recorded, so a loop can carry a progression.
+    void chord(int degree, ControlContext &ctx) {
+        Command c;
+        c.type = Command::Param;
+        c.i[0] = PChord;
+        c.f[0] = float(degree);
+        c.t = ctx.now();
+        ctx.send(c);
+    }
+    void sendOn(Layer &l, ControlContext &ctx, double t, uint16_t flags = 0) {
         Command c;
         c.type = Command::On;
+        c.flags = flags;
         c.id = l.id;
         c.t = t;
         c.i[0] = l.family;
@@ -1746,8 +1884,12 @@ private:
         c.f[2] = l.press;
         c.f[3] = l.motion;
         c.f[4] = l.width;
-        c.f[5] = attack > 0 ? attack : l.attack;
+        c.f[5] = flags & Command::Continue ? 0.3f : l.attack;
         ctx.send(c);
+        if (!(flags & Command::Continue)) {
+            l.since = t;
+            m_onsets[m_onsetHead++ % m_onsets.size()] = t;
+        }
     }
     void sendMove(const Layer &l, ControlContext &ctx, double t) {
         Command c;
@@ -1769,12 +1911,72 @@ private:
         ctx.send(c);
     }
 
+    // Before the session takes a loop: the same reading of the phrase as
+    // the session's (the onsets back from the latest, until two bars of
+    // nothing), so every layer that began before the take's first moment is
+    // said again right at it, flagged Continue so it isn't mistaken for new
+    // playing. Latched layers are marked for the loop to take over.
+    void prepareTake(ControlContext &ctx) {
+        const StudioView &v = ctx.studio();
+        const double nowT = ctx.now();
+        const double spb = 60.0 / std::max(1.0, v.bpm);
+        std::vector<double> times;
+        const size_t n = std::min(m_onsetHead, m_onsets.size());
+        for (size_t i = 0; i < n; ++i)
+            times.push_back(m_onsets[(m_onsetHead - 1 - i) % m_onsets.size()]);
+        std::sort(times.begin(), times.end());
+        double first = -1;
+        for (size_t i = times.size(); i-- > 0;) {
+            if (times[i] > nowT + 0.05)
+                continue;
+            if (first >= 0 && first - times[i] > 8 * spb)
+                break;
+            if (first < 0 && nowT - times[i] > 8 * spb)
+                break;
+            first = times[i];
+        }
+        if (first < 0 || ctx.freeSlot() < 0)
+            return;
+        bool anyPlaying = false;
+        for (int p = 0; p < v.partCount; ++p)
+            anyPlaying |= v.parts[p].playing >= 0 || v.parts[p].queued >= 0;
+        double t0 = first;
+        if (anyPlaying || v.metronome) {
+            const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first);
+            const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
+            const double end = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
+            const double startBar = std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+            int bars = 1;
+            while (bars < 8 && end - bars * kBeatsPerBar > startBar + 1e-6)
+                bars *= 2;
+            t0 = ctx.timeAt(end - bars * kBeatsPerBar);
+        } else if (nowT - first < 0.3) {
+            return;
+        }
+        for (Held &h : m_held)
+            if (h.touch >= 0 && !h.cancelled && !h.grabbed && h.layer.since < t0 - 1e-4)
+                sendOn(h.layer, ctx, t0, Command::Continue);
+        for (Latched &l : m_latched) {
+            if (l.layer.since < t0 - 1e-4)
+                sendOn(l.layer, ctx, t0, Command::Continue);
+            if (!l.grabbed) {
+                Command c;
+                c.type = kAdoptable;
+                c.flags = Command::NoRecord;
+                c.id = l.layer.id;
+                ctx.send(c);
+                l.handed = true;
+                m_takeSlot = ctx.freeSlot();
+            }
+        }
+    }
+
     int hitOrb(float x, float y, float aspect) const {
         int best = -1;
         float bestD = 0.06f;
         for (size_t i = 0; i < m_latched.size(); ++i) {
             const Latched &l = m_latched[i];
-            if (l.grabbed)
+            if (l.grabbed || l.handed)
                 continue;
             const float dx = (x - l.x) * aspect, dy = y - l.y;
             const float d = std::sqrt(dx * dx + dy * dy);
@@ -1852,22 +2054,6 @@ private:
         L.motion = clampf(h.om + tw, -1, 1);
         L.width = widthOf(t.size);
         h.travel = std::max(h.travel, std::hypot(t.x - h.x0, t.y - h.y0));
-
-        if (!h.long_ && now - h.t0 >= 0.25) {
-            h.long_ = true;
-            double start = 0;
-            if (m_tapLoop && !h.grabbed && m_phrase.closes(h.t0, L.family, &start)) {
-                const int slot = ctx.freeSlot();
-                const int taps = int(m_phrase.taps().size());
-                if (slot >= 0) {
-                    ctx.capture(slot, start, h.t0);
-                    ctx.notice(QStringLiteral("Loop in slot %1: %2 tapped swells, playing").arg(slot + 1).arg(taps));
-                    h.looped = true;
-                }
-                m_phrase.clear();
-                m_tapLoop = false; // one loop per arming: never by accident
-            }
-        }
         if (m_hold && !h.grabbed && now - h.t0 >= 0.3)
             h.latch = true;
 
@@ -1905,20 +2091,20 @@ private:
                 l->y = h.y;
             }
         } else if (h.latch) {
-            m_latched.push_back({L, h.x, h.y, -1, false});
+            m_latched.push_back({L, h.x, h.y, -1, false, false});
         } else {
             sendOff(L.id, ctx, now);
-            if (!h.long_ && m_tapLoop)
-                m_phrase.tap(h.t0, now - h.t0, L.family);
         }
         h.touch = -1;
     }
 
+    // Lets every latched layer go, except what a loop is taking over.
     void releaseAll(ControlContext &ctx, const QString &message) {
         for (const Latched &l : m_latched)
-            if (!l.grabbed)
+            if (!l.grabbed && !l.handed)
                 sendOff(l.layer.id, ctx);
-        m_latched.erase(std::remove_if(m_latched.begin(), m_latched.end(), [](const Latched &l) { return !l.grabbed; }),
+        m_latched.erase(std::remove_if(m_latched.begin(), m_latched.end(),
+                                       [](const Latched &l) { return !l.grabbed && !l.handed; }),
                         m_latched.end());
         m_scene = -1;
         ctx.notice(message);
@@ -1927,10 +2113,10 @@ private:
     void toggleScene(int s, ControlContext &ctx) {
         const bool same = m_scene == s;
         for (const Latched &l : m_latched)
-            if (l.scene >= 0 && !l.grabbed)
+            if (l.scene >= 0 && !l.grabbed && !l.handed)
                 sendOff(l.layer.id, ctx);
         m_latched.erase(std::remove_if(m_latched.begin(), m_latched.end(),
-                                       [](const Latched &l) { return l.scene >= 0 && !l.grabbed; }),
+                                       [](const Latched &l) { return l.scene >= 0 && !l.grabbed && !l.handed; }),
                         m_latched.end());
         m_scene = -1;
         if (same) {
@@ -1950,44 +2136,21 @@ private:
             L.width = sl.width;
             L.attack = sc.attack;
             sendOn(L, ctx, ctx.now());
-            m_latched.push_back({L, xOf(L.family, L.colour), L.height, s, false});
+            m_latched.push_back({L, xOf(L.family, L.colour), L.height, s, false, false});
         }
         m_scene = s;
         ctx.notice(QString::fromUtf8(sc.name));
     }
 
-    void record(ControlContext &ctx) {
-        const PartView &pv = ctx.studio().parts[ctx.part()];
-        if (pv.recording >= 0 || (m_recSlot >= 0 && m_handAt == 0)) {
-            ctx.stopRecording();
-            ctx.notice(QStringLiteral("The loop closes at the bar"));
-            return;
-        }
-        const int slot = ctx.freeSlot();
-        if (slot < 0) {
-            ctx.notice(QStringLiteral("Every slot is full"));
-            return;
-        }
-        ctx.record(slot, 8);
-        m_recSlot = slot;
-        const double beat = ctx.beatAt(ctx.now());
-        const double bar = std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar;
-        m_reassertAt = ctx.timeAt(bar);
-        m_recBar = bar;
-        m_handAt = 0;
-        ctx.notice(QStringLiteral("Recording into slot %1 from the bar").arg(slot + 1));
-    }
-
     std::array<Held, 16> m_held{};
     std::vector<Latched> m_latched;
-    std::vector<int> m_handed;
-    Phrase m_phrase;
-    bool m_tapLoop = false;
-    QString m_loopCue;
+    std::array<double, 128> m_onsets{};
+    size_t m_onsetHead = 0;
     Frame m_frame;
-    double m_reassertAt = 0, m_recBar = 0, m_handAt = 0;
-    int m_nextId = 0, m_scene = -1, m_recSlot = -1;
-    bool m_button = false, m_hold = false, m_swellHeld = false;
+    QString m_cue, m_frozen;
+    double m_buttonAt = 0, m_handUntil = 0;
+    int m_nextId = 0, m_scene = -1, m_takeSlot = -1;
+    bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false;
 };
 
 QString AtmosControl::help() const {
@@ -1999,19 +2162,20 @@ QString AtmosControl::help() const {
         "twist\tclockwise, a slow filter sweep with the bars; anticlockwise, a gate in eighths, then sixteenths\n"
         "flat finger\twider\n"
         "tap\ta whole breath: the swell finishes, then fades\n"
-        "click\tlatch every layer held; a finger that lands and clicks at once lets them all go\n"
+        "click\tlatch every layer held, a new one too: it stays when lifted\n"
+        "hold the click down a second\tlet every latched layer go (so does Delete)\n"
         "touch an orb\tpick a latched layer up and reshape it; a quick tap lets it go\n"
-        "Return\tthe loop: record the bed from the next bar (armed, then bar by bar on the pad); again to close it at the bar\n"
-        "L, then tap a rhythm and hold the next beat\ta tap loop of swells into a free slot (L arms it for one loop)\n"
+        "Space\tloop what was just played, latched bed and all; the pad shows the loop waiting for its bar; Space again calls it off\n"
         "Q W E R T Y U I\tscenes: dawn, ocean, cathedral, stardust, nostalgia, euphoria, night rain, pulse\n"
-        "Z X C V B N M\tthe bed's own chord on degrees I to VII; again (or comma) to follow the chords page\n"
+        "Z X C V B N M\tthe bed's own chord on degrees I to VII (Atmos only; a loop records it)\n"
+        "comma\tfollow the Chords page again\n"
         "H\thold: layers held a moment stay when lifted\n"
-        "F\tfreeze the halo; again to thaw\n"
+        "F\tfreeze: every layer sounding holds, lifted or not, and follows the chords; again to thaw\n"
         "G\tgrain cloud of the bed, in octaves\n"
-        "S, held\tswell: louder, brighter, more shimmer, rising while held\n"
+        "S, held\tswell: louder, brighter, more shimmer, rising for as long as it is held (up to eight bars)\n"
         "P\tpump: with the kick, on every beat, off\n"
         "Up, Down\tspace: the halo's size and shimmer\n"
-                "O\toverdub\n"
+        "O\toverdub\n"
         "Delete\tlet every latched layer go\n"
         "F1–F8\tlaunch a slot at the next bar\n"
         "Backspace\tstop the clip at the next bar");
@@ -2024,16 +2188,19 @@ QString AtmosControl::status() const {
             parts << QStringLiteral("%1 %2").arg(QString::fromUtf8(kShape[h.layer.family].name),
                                                 QString::fromUtf8(colourName(h.layer.family, h.layer.colour)));
     QString s = parts.join(QStringLiteral(", "));
+    auto add = [&](const QString &t) { s += (s.isEmpty() ? QString() : QStringLiteral(" · ")) + t; };
     if (!m_latched.empty())
-        s += (s.isEmpty() ? QString() : QStringLiteral(" · ")) + QStringLiteral("%1 latched").arg(m_latched.size());
+        add(QStringLiteral("%1 latched").arg(m_latched.size()));
     if (m_scene >= 0)
-        s += QStringLiteral(" · ") + QString::fromUtf8(kScenes[m_scene].name);
+        add(QString::fromUtf8(kScenes[m_scene].name));
     if (m_hold)
-        s += QStringLiteral(" · hold");
-    if (!m_loopCue.isEmpty())
-        s += (s.isEmpty() ? QString() : QStringLiteral(" · ")) + m_loopCue.toLower();
+        add(QStringLiteral("hold"));
+    if (!m_frozen.isEmpty())
+        add(m_frozen);
+    if (!m_cue.isEmpty())
+        add(m_cue.toLower());
     if (s.isEmpty())
-        s = QStringLiteral("Lay a finger anywhere: the bed is always in the chord · Return records a loop");
+        s = QStringLiteral("Lay a finger anywhere: the bed is always in the chord · Space loops what you play");
     return s;
 }
 
@@ -2150,7 +2317,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
     // as it swells, cut by its gate when it pulses.
     p.setPen(Qt::NoPen);
     for (int k = 0; k < kPubVoices; ++k) {
-        const float *v = d + PubVoice0 + 8 * k;
+        const float *v = d + PubVoice0 + kPubStride * k;
         const int f = int(v[0]) - 1;
         if (f < 0 || f >= kFamilies)
             continue;
@@ -2232,10 +2399,13 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         p.drawEllipse(at, orbR, orbR);
         if (l.scene >= 0)
             p.drawEllipse(at, orbR * 0.45, orbR * 0.45);
-        const bool left = at.x() + orbR + 74 > pc.pad.right();
-        c::text(p, left ? QRectF(at.x() - orbR - 74, at.y() - 8, 70, 16) : QRectF(at.x() + orbR + 4, at.y() - 8, 70, 16),
-                QString::fromUtf8(colourName(l.layer.family, l.layer.colour)), c::alpha(fc, 0.8f),
-                std::max(9, int(10 * pc.scale)), true, (left ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
+        // A layer a loop is taking over wears the loop's square.
+        if (l.handed)
+            p.drawRect(QRectF(at.x() - orbR * 0.4, at.y() - orbR * 0.4, orbR * 0.8, orbR * 0.8));
+        // Its name above it, clear of the seam at its height.
+        c::text(p, QRectF(at.x() - 50, at.y() - orbR - 18, 100, 14),
+                QString::fromUtf8(colourName(l.layer.family, l.layer.colour)) + (l.handed ? QStringLiteral(" · loop") : QString()),
+                c::alpha(fc, 0.85f), std::max(9, int(10 * pc.scale)), true, Qt::AlignCenter);
     }
 
     // Fingers.
@@ -2314,7 +2484,11 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         if (!third)
             quality = QStringLiteral("sus");
         const QString chord = QString::fromUtf8(Tuning::noteName(rpc)) + quality;
-        lit(own >= 0 ? QStringLiteral("%1 · OWN %2").arg(chord, roman(own)) : QStringLiteral("%1 · FOLLOW").arg(chord), true, col);
+        // Whose chord it is: the Chords page's, the player's own, or a loop's.
+        const QString whose = own < 0 ? QStringLiteral("%1 · FOLLOW").arg(chord)
+                              : d[PubOwnLoop] > 0.5f ? QStringLiteral("%1 · LOOP %2").arg(chord, roman(own))
+                                                     : QStringLiteral("%1 · OWN %2 · ATMOS ONLY").arg(chord, roman(own));
+        lit(whose, true, col);
         x += 4;
         lit(QStringLiteral("HOLD"), m_hold, col);
         lit(QStringLiteral("FREEZE"), d[PubFreeze] > 0.5f, QColor("#BFE6FF"));
@@ -2326,11 +2500,33 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         if (m_scene >= 0)
             lit(QString::fromUtf8(kScenes[m_scene].name), true, familyColor(col, Choir));
         const QString cue = loopCue(pc.beat, *pc.view);
-        if (!cue.isEmpty()) {
-            const bool rec = cue.startsWith(QStringLiteral("REC"));
-            const bool blink = std::fmod(pc.time, 0.5) < 0.25;
-            lit(cue, rec || blink, rec ? c::red() : c::amber());
-        }
+        if (!cue.isEmpty())
+            lit(cue, true, c::red());
+
+        // The keys, as a row of chips: the scenes, then the chords, lit
+        // where they are.
+        x = pc.pad.left() + 12;
+        y += 24;
+        const int kpx = std::max(9, int(10 * pc.scale));
+        const QFont kf = c::font(kpx, true);
+        auto chip = [&](const QString &s, bool on, QColor cc) {
+            const qreal w = QFontMetricsF(kf).horizontalAdvance(s) + 10;
+            if (x + w > pc.pad.right() - 10)
+                return;
+            if (on)
+                c::tag(p, QPointF(x, y), s, cc, kpx);
+            else
+                c::text(p, QRectF(x, y - 8, w, 16), s, c::alpha(cc, 0.4f), kpx, true, Qt::AlignCenter);
+            x += w + 3;
+        };
+        static const char *sceneKeys = "QWERTYUI", *chordKeys = "ZXCVBNM";
+        for (int i = 0; i < 8; ++i)
+            chip(QStringLiteral("%1 %2").arg(QChar(sceneKeys[i])).arg(QString::fromUtf8(kScenes[i].name).toUpper()),
+                 m_scene == i, familyColor(col, Choir));
+        x += 8;
+        for (int i = 0; i < 7; ++i)
+            chip(QStringLiteral("%1 %2").arg(QChar(chordKeys[i])).arg(roman(i)), own == i, col);
+        chip(QStringLiteral(", FOLLOW"), own < 0, col);
     }
 
     c::beats(p, pc, col);

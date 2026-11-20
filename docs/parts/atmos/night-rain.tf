@@ -1,7 +1,7 @@
-# Night rain: a lo-fi bed, reshaped by hand, with a loop of glass swells and a key change.
+# Night rain: a lo-fi bed, reshaped by hand, looped with Space, and a key change.
 # 124 BPM. The Nostalgia scene lays vinyl, a hollow pad and a drone; a hand picks up the
-# pad's orb and moves it; rain joins; four taps and a hold in the glass column loop as
-# swells; the bed walks VI, VII, i on its own; then the key moves a fifth down and
+# pad's orb and moves it; rain joins and is latched; four taps in the glass column and
+# Space loop the swells with the bed; the bed walks VI, VII, i; then the key moves a fifth down and
 # everything, loop included, follows.
 page 0.05 6
 # the scene, on one key
@@ -16,15 +16,13 @@ down 7.742 2 0.86 0.45 p=0.4
 glide 9.677 15.484 2 0.86 0.5 p=0.75
 click 15.484
 up 15.884 2
-# bar 9: L arms a tap loop (the pad says so); four quick firm taps in the glass column
-# on the beat, then the fifth held: the swells loop in slot 1, and the loop disarms
-key 16.919 L
+# bar 9: four quick firm taps in the glass column on the beat, then Space where the
+# fifth would land: the swells loop, and the latched bed under them goes into the loop too
 tap 17.419 0.72 0.62 p=0.85
 tap 17.903 0.72 0.62 p=0.85
 tap 18.387 0.72 0.62 p=0.85
 tap 18.871 0.72 0.62 p=0.85
-down 19.354 3 0.72 0.62 p=0.85
-up 19.854 3
+key 19.354 Space
 # bar 11: the bed's own chords: VI, VII, then i, two bars each
 key 21.230 N
 key 25.101 M

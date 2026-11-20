@@ -663,24 +663,27 @@ private slots:
         QCOMPARE(shown, 0);
     }
 
-    // Return pressed just after the bar line: the loop starts from the top
-    // at the next bar line, so no bar of it goes by without its first chord.
-    void lateReturnStartsFromTheTop() {
+    // Return pressed just after the bar line: the loop has already begun,
+    // and its first chord sounds at once, so no bar goes by without it.
+    void lateReturnSoundsAtOnce() {
         std::string s = "page 0 3\n";
         for (int b = 1; b < 5; ++b)
-            s += "down " + num(b * kBar + 0.01) + " " + std::to_string(b) + " " + cell(std::array<int, 5>{0, 0, 5, 2, 6}[size_t(b)], Triad) +
-                 "\nup " + num((b + 1) * kBar - 0.15) + " " + std::to_string(b) + "\n";
-        s += "key " + num(5 * kBar + 0.5 * kBeat) + " Return\nend " + num(11 * kBar) + "\n";
-        std::vector<std::pair<double, int>> roots;
-        const auto take = playWatching(s, [&](double now, const StudioView &v) { roots.push_back({now, v.chordRoot}); });
-        // From the next bar line the loop plays from its first chord, I.
-        int at6 = -1;
-        for (auto &[t, r] : roots)
-            if (t > 6 * kBar + 0.1 && at6 < 0)
-                at6 = r;
-        QCOMPARE(at6, 0);
-        for (int b = 6; b < 11; ++b)
-            QVERIFY2(take.rms(b * kBar, (b + 1) * kBar) > 0.01, qPrintable(QString("bar %1 is silent").arg(b)));
+            s += "down " + num(b * kBar + 0.01) + " " + std::to_string(b) + " " +
+                 cell(std::array<int, 5>{0, 0, 5, 2, 6}[size_t(b)], Triad) + "\nup " + num((b + 1) * kBar - 0.15) + " " +
+                 std::to_string(b) + "\n";
+        const double press = 5 * kBar + 0.5 * kBeat;
+        s += "key " + num(press) + " Return\nend " + num(11 * kBar) + "\n";
+        int soon = -1, next = -1;
+        const auto take = playWatching(s, [&](double now, const StudioView &v) {
+            if (soon < 0 && now > press + 0.1)
+                soon = v.chordRoot;
+            if (next < 0 && now > 6 * kBar + 0.1)
+                next = v.chordRoot;
+        });
+        QCOMPARE(soon, 0); // the loop's first chord, the moment Return lands
+        QCOMPARE(next, 5); // and the loop carries on from there
+        for (int b = 5; b < 11; ++b)
+            QVERIFY2(take.rms(b * kBar, (b + 1) * kBar) > 0.02, qPrintable(QString("bar %1 is quiet").arg(b)));
     }
 
     // Clicking the pad holds, like L.

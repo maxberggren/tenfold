@@ -187,12 +187,13 @@ public:
     void background(double t, ControlContext &ctx) override {
         m_beatNow = ctx.beatAt(t);
         m_take = ctx.studio().parts[ctx.part()];
-        // A loop of the last bars is taken just before the bar line it ends
-        // on, so its first chord comes round on that downbeat.
+        // Return's wait ends just before the bar line: the take goes to the
+        // studio, which lands it on that line. Until then Return again can
+        // still call it off.
         if (m_retroEnd >= 0 && ctx.beatAt(t) >= m_retroEnd - 0.06) {
             const double end = m_retroEnd;
             m_retroEnd = -1;
-            retroCapture(end, false, ctx);
+            retroCapture(end, ctx);
         }
         // The progression as it goes by, live or from a loop.
         const StudioView &s = ctx.studio();
@@ -726,7 +727,7 @@ private:
         const double beat = ctx.beatAt(t);
         const double bar = std::floor(beat / kBeatsPerBar) * kBeatsPerBar;
         if (beat - bar < 1.0) {
-            retroCapture(bar, true, ctx);
+            retroCapture(bar, ctx);
             return;
         }
         const int bars = retroBars(bar + kBeatsPerBar);
@@ -764,10 +765,11 @@ private:
         return bars;
     }
 
-    // late: the bar line it ends on has passed, so the loop's first chord
-    // has too; it starts over from the top at the next bar line rather than
-    // play a bar without it.
-    void retroCapture(double endBeat, bool late, ControlContext &ctx) {
+    // The take goes through the studio exactly as Space's does: a chord a
+    // hair early for its bar belongs to it, chords held across the start
+    // are carried in, and a take whose bar line has just passed sounds
+    // what it holds at once.
+    void retroCapture(double endBeat, ControlContext &ctx) {
         const int bars = retroBars(endBeat);
         if (bars == 0) {
             ctx.notice(QStringLiteral("Play some chords first, then Return loops them"));
@@ -778,13 +780,7 @@ private:
             ctx.notice(QStringLiteral("Every slot is full: Shift+F1–F8 clears one"));
             return;
         }
-        // The window opens and closes a tenth of a beat early, as the studio's
-        // own takes do: a chord landed a hair before its bar belongs to that
-        // bar, and the quantiser pulls it onto the line.
-        constexpr double early = 0.1;
-        ctx.capture(slot, ctx.timeAt(endBeat - bars * kBeatsPerBar - early), ctx.timeAt(endBeat - early), 0.85f);
-        if (late)
-            ctx.launch(slot);
+        ctx.take(slot, endBeat - bars * kBeatsPerBar, endBeat);
         ctx.notice(QStringLiteral("The last %1 bar%2 loop in slot %3").arg(bars).arg(bars > 1 ? "s" : "").arg(slot + 1));
         m_onsetCount = 0;
     }

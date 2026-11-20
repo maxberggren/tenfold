@@ -12,8 +12,10 @@
 //   Ctrl+[ / Ctrl+]         mode darker / brighter
 //   Ctrl+M                  metronome
 //   Ctrl+Backspace          stop every clip at the next bar
-// Space, Escape, ?, Ctrl+R and Ctrl+Q are the window's (take the pad, give it
-// back, help, record, quit).
+//   Space                   record a loop on this page from the next bar; Space
+//                           again closes it (unless the page records its own way)
+// Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
+// record the mix, quit). The pad is taken with the window's Play button.
 
 #include <QString>
 #include <memory>
@@ -67,6 +69,8 @@ public:
     void shiftMode(int step);
     void toggleMetronome();
     void stopAll();
+    // Space: arm a loop on this part from the next bar, or close it.
+    void toggleRecording(ControlContext &ctx);
 
     // The clock the touch frames use (the same one live, script time
     // offline), so a page's ctx.now() is right between frames.

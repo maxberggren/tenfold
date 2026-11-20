@@ -66,4 +66,8 @@ SOURCES += \
     src/tuning.cpp \
     $$PARTS
 
+# Part headers are not all listed above; this makes edits to them rebuild.
+INCLUDEPATH += src
+DEPENDPATH += src
+
 RESOURCES += src/resources.qrc

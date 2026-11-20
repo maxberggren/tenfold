@@ -59,6 +59,9 @@ struct Command {
     enum Flags : uint16_t {
         Quantize = 1, // a User command that is an onset: recorded clips pull it to the grid
         NoRecord = 2, // never goes into a clip (a page's own preview, a metronome)
+        Continue = 4, // an On that carries on a sound already heard (a voice handed over at a
+                      // bar line, a latched layer re-asserted): recorded, but not an onset, so
+                      // Space's phrase finder doesn't mistake it for playing
     };
     uint16_t type = On;
     uint16_t flags = 0;

@@ -26,7 +26,8 @@ public:
         if (m_part < 0)
             return;
         // Onsets, for Space to know what was just played.
-        if (!(c.flags & Command::NoRecord) && (c.type == Command::On || (c.flags & Command::Quantize))) {
+        if (!(c.flags & (Command::NoRecord | Command::Continue)) &&
+            (c.type == Command::On || (c.flags & Command::Quantize))) {
             onsets[onsetHead % onsets.size()] = c.t > 0 ? c.t : now();
             ++onsetHead;
         }

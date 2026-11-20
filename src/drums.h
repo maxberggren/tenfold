@@ -78,7 +78,7 @@ inline float kitSwing(int kit) {
 inline float displayDecay(int pad, int kit) {
     kit = std::clamp(kit, 0, KitCount - 1);
     static const float table[PadCount][KitCount] = {
-        {0.15f, 0.21f, 0.5f, 0.09f, 0.11f},     // kick
+        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f},    // kick
         {0.085f, 0.06f, 0.07f, 0.13f, 0.07f},   // snare
         {0.11f, 0.08f, 0.09f, 0.14f, 0.1f},     // clap
         {0.034f, 0.028f, 0.018f, 0.045f, 0.03f}, // hat
@@ -484,12 +484,12 @@ struct Voice {
         switch (pad) {
         case Kick: {
             // k: 0 pitch amount, 1 fast pitch amount, 2 drive, 3 click, 4 drive norm
-            static const float amt[KitCount] = {5.5f, 7.0f, 2.2f, 4.5f, 5.0f};
-            static const float tauP[KitCount] = {0.030f, 0.034f, 0.045f, 0.022f, 0.025f};
-            static const float hold[KitCount] = {0.025f, 0.04f, 0.06f, 0.01f, 0.015f};
-            static const float tauA[KitCount] = {0.15f, 0.21f, 0.5f, 0.09f, 0.11f};
+            static const float amt[KitCount] = {5.5f, 7.0f, 4.0f, 4.5f, 5.0f};
+            static const float tauP[KitCount] = {0.030f, 0.034f, 0.028f, 0.022f, 0.025f};
+            static const float hold[KitCount] = {0.025f, 0.04f, 0.02f, 0.01f, 0.015f};
+            static const float tauA[KitCount] = {0.15f, 0.21f, 0.16f, 0.09f, 0.11f};
             static const float drive[KitCount] = {1.8f, 3.6f, 1.5f, 2.4f, 2.0f};
-            static const float click[KitCount] = {0.45f, 0.4f, 0.22f, 0.7f, 0.5f};
+            static const float click[KitCount] = {0.45f, 0.4f, 0.5f, 0.7f, 0.5f};
             static const float clickHz[KitCount] = {3500.0f, 2600.0f, 4200.0f, 2200.0f, 3200.0f};
             hz[0] = degreeHz(h, degrees, kit == Trap ? 47.0f : 52.0f);
             k[0] = amt[kit];
@@ -507,7 +507,7 @@ struct Voice {
             mul[3] = decayMul(0.0025f, rate);
             f1.set(clickHz[kit], 0.8f, rate);
             // Every kit's kick peaks alike, whatever its drive and sweep.
-            static const float level[KitCount] = {1.0f, 1.15f, 1.25f, 1.08f, 1.0f};
+            static const float level[KitCount] = {1.0f, 1.15f, 0.92f, 1.08f, 1.0f};
             gain = 0.48f * level[kit];
             send = 0.02f;
             break;
@@ -721,16 +721,20 @@ struct Voice {
             static const float taus[7] = {1.1f, 0.95f, 0.8f, 0.65f, 0.55f, 0.45f, 0.35f};
             const float bell = clampf(edge, 0.0f, 1.0f);
             const float base = (kit == Techno ? 1500.0f : 1250.0f) * ratio * std::exp2(0.25f * tone) * (1.0f - 0.5f * bell);
+            // No two strokes of a real ride ring quite alike: each hit's
+            // partials wander a little, so a run of eighths shimmers
+            // instead of droning on one chord.
             for (int i = 0; i < 7; ++i) {
                 const float shape = i < 3 ? 1.0f + 1.2f * bell : 1.0f - 0.5f * bell;
-                partial[i].set(base * ratios[i], rate, amps[i] * shape / 5.0f,
-                               taus[i] * (1.0f + 0.8f * bell) * decayScale * (kit == Trap ? 0.7f : 1.0f));
+                const float wander = 1.0f + 0.018f * rng.bipolar();
+                partial[i].set(base * ratios[i] * wander, rate, amps[i] * shape / 6.0f,
+                               taus[i] * (0.65f + 1.0f * bell) * decayScale * (kit == Trap ? 0.7f : 1.0f));
             }
             env[0] = 1; // wash
-            mul[0] = dm(0.45f);
+            mul[0] = dm(0.5f);
             env[1] = 1; // stick
             mul[1] = decayMul(0.0015f, rate);
-            k[0] = 0.32f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
+            k[0] = 0.42f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
             f1.set(6500.0f, 0.7f, rate);
             f2.set(5000.0f, 1.2f, rate);
             gain = 0.17f;
@@ -1091,7 +1095,7 @@ struct Sub808 {
             phase -= std::floor(phase);
             const float s = fastTanh(drive * std::sin(kTwoPi * phase) * env) * norm;
             const float c = clickBp.step(rng.bipolar()).band * click * 0.25f;
-            const float y = (s + c) * vel * 0.63f;
+            const float y = (s + c) * vel * 0.47f;
             l[i] += y;
             r[i] += y;
             peak = std::max(peak, std::fabs(y));

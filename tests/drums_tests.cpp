@@ -333,6 +333,18 @@ private slots:
         QVERIFY(take.rms(7, 9) > 0.02);
     }
 
+    void aThumbThatComesDownToClickOnlyClicks() {
+        // Two fingers groove; a thumb lands and clicks: the groove is kept,
+        // nothing is grabbed for shaping.
+        const auto take = testkit::play("page 0 1\n"
+                                        "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Hat) +
+                                        "\ndown 2.0 9 0.5 0.05 size=1.8\nclick 2.05 len=0.15\n"
+                                        "up 2.4 1\nup 2.4 2\nup 2.4 9\nend 8\n");
+        QCOMPARE(take.view.parts[0].playing, 0);
+        for (int p = 0; p < drums::PadCount; ++p)
+            QCOMPARE(take.view.parts[0].data[40 + 3 * p], 0.0f);
+    }
+
     void aClickWithALoopPlayingOverdubsOnePass() {
         const auto take = testkit::play("page 0 1\n"
                                         "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Clap) +

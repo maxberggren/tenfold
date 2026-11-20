@@ -644,7 +644,23 @@ private:
     // --- the click -------------------------------------------------------------
 
     void click(double now, ControlContext &ctx) {
-        // Fresh fingers: grab their drums' sounds.
+        // While anything rolls or grooves under a finger, a click keeps it,
+        // whichever finger pressed: a thumb that came down to click is only
+        // the click.
+        bool holding = false;
+        for (const auto &g : m_gens)
+            holding |= g.active && !g.preview && g.holder >= 0;
+        if (holding) {
+            for (auto &h : m_holders)
+                if (h.used && !h.key && h.mode == Mode::Pending) {
+                    if (h.pad == Sub)
+                        sendOff(h, now, ctx);
+                    h.mode = Mode::Kept;
+                }
+            keep(now, ctx);
+            return;
+        }
+        // Otherwise fresh fingers grab their drums' sounds.
         bool editing = false;
         for (auto &h : m_holders) {
             if (!h.used || h.key || h.mode != Mode::Pending)
@@ -661,11 +677,8 @@ private:
                 }
             editing = true;
         }
-        if (editing) {
+        if (editing)
             ctx.notice(QStringLiteral("Drag to shape: sideways tunes, up lengthens, twist for tone"));
-            return;
-        }
-        keep(now, ctx);
     }
 
     // Keeps every held roll and groove: they play on by themselves to the

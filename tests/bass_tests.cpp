@@ -159,6 +159,7 @@ Command noteOn(int id, int degree, int sound, int flags = 0, float vel = 0.8f, f
     c.f[1] = tone;
     c.f[2] = 0.3f;
     c.f[4] = 0.5f;
+    c.f[5] = 3; // eighths
     return c;
 }
 Command noteOff(int id) {

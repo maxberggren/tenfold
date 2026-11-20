@@ -31,7 +31,8 @@ enum Sound : int { Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, SoundCo
 
 // Commands, besides the studio's own:
 //   On     id; i[0] degree, i[1] octave, i[2] NoteFlags, i[3] Sound;
-//          f[0] velocity, f[1] tone 0..1, f[2] morph 0..1, f[3] fat 0..1, f[4] glide 0..1
+//          f[0] velocity, f[1] tone 0..1, f[2] morph 0..1, f[3] fat 0..1, f[4] glide 0..1,
+//          f[5] the wobble rate a sound that wobbles on its own uses (the WOB finger's last)
 //   Move   id; i[0] degree, i[1] octave; f[0] pressure, f[1] tone, f[2] morph, f[3] fat
 //   Off    id
 //   Param  i[0] Shaper; f[0] amount (0 = off), f[1] its second axis;
@@ -392,6 +393,7 @@ struct Note {
     int id = -1;
     int degree = 0, octave = 0, flags = 0, sound = Pluck;
     float vel = 0.8f, tone = 0.5f, morph = 0.3f, fat = 0, glide = 0.5f, pressure = 0.5f;
+    int rate = 3; // its own wobble's rate
 };
 
 // One mono synth with a note stack: a note that lands while another is held
@@ -555,7 +557,7 @@ public:
         const float sustain = R.sustain;
 
         const float wobDepth = sh.wob > 0 ? sh.wob : R.wobble;
-        const int wobRate = std::clamp(sh.wob > 0 ? sh.rate : 3, 0, kRateCount - 1);
+        const int wobRate = std::clamp(sh.wob > 0 ? sh.rate : m_cur.rate, 0, kRateCount - 1);
         const float grit = sh.grit;
         const float character =
             grit > 0 ? lerpf(R.character, sh.gritChar, std::min(1.0f, 2.0f * grit)) : R.character;
@@ -998,7 +1000,7 @@ public:
         const Shape sh = &shown == &m_live ? m_shapeLive : Shape::over(clipShape(), m_shapeLive);
         data[PubLfo] = shown.lfo();
         data[PubWobDepth] = shown.lfoDepth();
-        data[PubWobRate] = float(sh.wob > 0 ? sh.rate : 3);
+        data[PubWobRate] = float(sh.wob > 0 ? sh.rate : shown.current().rate);
         data[PubRoll] = sh.roll > 0 ? float(sh.pattern + 1) : 0.0f;
         {
             const int steps = patternSteps(std::clamp(sh.pattern, 0, kPatternCount - 1));
@@ -1043,6 +1045,7 @@ private:
             n.fat = clampf(c.f[3], 0, 1);
             n.glide = clampf(c.f[4], 0, 1);
             n.pressure = n.vel;
+            n.rate = std::clamp(int(c.f[5]), 0, kRateCount - 1);
             lane.noteOn(n, ctx.harmony(), eff, ctx.transport().beatAt(off));
             break;
         }

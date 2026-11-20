@@ -271,7 +271,7 @@ public:
                 continue;
             switch (h.role) {
             case NoteRole:
-                parts << QStringLiteral("%1 tone %2%").arg(noteName(h.degree)).arg(int(std::lround(h.tone * 100)));
+                parts << QStringLiteral("%1 tone %2%").arg(noteName(h.degree, h.octave)).arg(int(std::lround(h.tone * 100)));
                 break;
             case OctRole:
                 parts << QStringLiteral("octave up");
@@ -327,11 +327,17 @@ private:
 
     float glideSeconds() const { return recipe(m_sound).glide * std::exp2((m_glide - 0.5f) * 4.0f); }
 
-    QString noteName(int degree) const {
+    // A note's name and octave as it sounds, with the key (and chord) of
+    // the last screen frame.
+    QString noteName(int degree, int octave) const {
         Tuning t;
         t.set(m_root, m_family, m_brightness, false);
-        const int pc12 = int(std::lround(t.baseMidi() + t.degreeSemis(degree + (m_follow ? m_chordRoot : 0)))) % 12;
-        return QString::fromUtf8(Tuning::noteName((pc12 + 12) % 12));
+        Harmony h;
+        h.tuning = t;
+        h.chordRoot = m_chordRoot;
+        const int shift = m_follow ? chordShift(h) : 0;
+        const long m = std::lround(h.midi(degree + shift, octave) + rootShift(t));
+        return QString::fromUtf8(Tuning::noteName(int(((m % 12) + 12) % 12))) + QString::number(m / 12 - 1);
     }
 
     void land(Finger &h, const Touch &t, double time, ControlContext &ctx) {
@@ -388,6 +394,7 @@ private:
         on.f[2] = h.morph;
         on.f[3] = h.fat;
         on.f[4] = m_glide;
+        on.f[5] = float(m_rate);
         ctx.send(on);
     }
 
@@ -671,6 +678,7 @@ private:
         on.f[2] = m_morph[m_sound];
         on.f[3] = 0;
         on.f[4] = m_glide;
+        on.f[5] = float(m_rate);
         ctx.send(on);
     }
 
@@ -734,6 +742,34 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     paintScope(p, pc);
     paintRail(p, pc);
 
+    // Held notes chain in the order they landed: each slid to the next.
+    {
+        const Finger *chain[16];
+        int n = 0;
+        for (const auto &f : m_fingers)
+            if (f.id >= 0 && f.role == NoteRole)
+                chain[n++] = &f;
+        for (int a = 1; a < n; ++a)
+            for (int b = a; b > 0 && chain[b]->t0 < chain[b - 1]->t0; --b)
+                std::swap(chain[b], chain[b - 1]);
+        auto where = [&](const Finger *f) {
+            for (int i = 0; i < m_frame.count; ++i)
+                if (m_frame.touches[i].id == f->id)
+                    return pc.at(m_frame.touches[i].x, m_frame.touches[i].y);
+            return QPointF();
+        };
+        for (int k = 1; k < n; ++k) {
+            if (chain[k]->degree == chain[k - 1]->degree && chain[k]->octave == chain[k - 1]->octave)
+                continue;
+            const QPointF a = where(chain[k - 1]), b = where(chain[k]);
+            const bool newest = k == n - 1;
+            p.setPen(QPen(c::alpha(pc.color, newest ? 0.8f : 0.4f), 2, Qt::DashLine));
+            p.drawLine(a, b);
+            if (newest)
+                c::tag(p, (a + b) / 2, QStringLiteral("SLIDE"), c::alpha(pc.color, 0.85f), 10, true);
+        }
+    }
+
     // Fingers, each saying what it does.
     for (int i = 0; i < m_frame.count; ++i) {
         const Touch &t = m_frame.touches[i];
@@ -744,7 +780,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         QString label;
         QColor col = pc.color;
         if (h && h->role == NoteRole) {
-            label = noteName(h->degree);
+            label = noteName(h->degree, h->octave);
         } else if (h) {
             col = c::amber();
             switch (h->role) {

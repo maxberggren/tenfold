@@ -358,8 +358,8 @@ private slots:
         Clock c(120);
         std::unique_ptr<arp::Engine> owner;
         arp::Engine &e = *fresh(owner);
-        note(e, c, Command::On, (1 << 30) | 5, 0, 0, 1.0, 2, 4);
-        c.runTo(e, 1.2);
+        note(e, c, Command::On, (1 << 30) | 5, 0, 0, 4.0, 2, 4);
+        c.runTo(e, 4.2);
         QCOMPARE(int(e.log().size()), 1);
         QCOMPARE(int(std::lround(e.log()[0].midi)), 72);
         QCOMPARE(e.log()[0].lane, 1);
@@ -631,6 +631,57 @@ private slots:
         }
         QVERIFY(live >= 3); // the latch played up to the line
         QVERIFY(loop >= 20);
+    }
+
+    void spaceJustAfterTheBarLineHandsOverAtOnce() {
+        // Space half a beat after a bar line takes the bars that ended on it:
+        // the loop starts part way in, and the live notes give way at once,
+        // held or latched, so the level stays where it was.
+        for (const bool latched : {false, true}) {
+            std::vector<arp::Engine::Fired> log;
+            const std::string hand = latched ? "click " + at(5.0) + " len=0.1\nup " + at(6.0) + " 1\n"
+                                             : "up " + at(19.0) + " 1\n";
+            const auto take = testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ndown " + at(4.0) + " 1 " +
+                                                gridX(0) + " 0.32\n" + hand + "key " + at(12.5) + " Space\nend " +
+                                                at(20.0) + "\n",
+                                            [&](Session &s) { log = engineOf(s)->log(); });
+            auto rms = [&](double b0, double b1) { return 20 * std::log10(take.rms(b0 * 60 / 124, b1 * 60 / 124)); };
+            const double before = rms(6, 12), after = rms(13, 19);
+            QVERIFY2(std::fabs(after - before) < 1.0,
+                     qPrintable(QStringLiteral("%1: %2 then %3 dB").arg(latched).arg(before).arg(after)));
+            int liveAfter = 0, loop = 0;
+            for (const auto &f : log) {
+                liveAfter += f.lane == 0 && f.beat > 12.8;
+                loop += f.lane == 1;
+            }
+            QCOMPARE(liveAfter, 0);
+            QVERIFY(loop > 20);
+        }
+    }
+
+    void aLoopCaughtUpPartWayInPlaysTheTakesBar() {
+        // A one-bar chaos take closed by Space just after its bar line starts
+        // part way through; the rest of that first bar, and every bar after,
+        // is the take's.
+        std::vector<arp::Engine::Fired> log;
+        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ntap 0.4 0.61 0.2225\ndown " + at(8.0) + " 1 " +
+                          gridX(0) + " 0.32\nup " + at(12.3) + " 1\nkey " + at(12.5) + " Space\nend " + at(28.0) + "\n",
+                      [&](Session &s) { log = engineOf(s)->log(); });
+        std::map<int, int> taken;
+        for (const auto &f : log)
+            if (f.lane == 0 && f.beat >= 8.0 - 1e-6 && f.beat < 12.0 - 1e-6)
+                taken[int(std::lround((f.beat - 8.0) * 8))] = int(std::lround(f.midi));
+        QVERIFY(taken.size() >= 6);
+        int compared = 0;
+        for (const auto &f : log)
+            if (f.lane == 1) {
+                const double in = std::fmod(f.beat, 4.0);
+                const int key = int(std::lround(in * 8));
+                QVERIFY2(taken.count(key) && taken.at(key) == int(std::lround(f.midi)),
+                         qPrintable(QStringLiteral("beat %1").arg(f.beat)));
+                ++compared;
+            }
+        QVERIFY(compared >= 20);
     }
 
     void theWaitingTakeSaysHowLongAndWhen() {

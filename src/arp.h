@@ -135,6 +135,7 @@ enum : uint16_t {
     kState = Command::User,       // a lane's settings
     kOverlay = Command::User + 1, // the right hand shaping a playing loop (never recorded)
     kCut = Command::User + 2,     // the live lane's sounding notes fade at once (never recorded)
+    kSync = Command::User + 3,    // a loop that landed part way in: f[0] its length in beats (never recorded)
 };
 // On: i[0] column (degree within the octave row), i[1] stack | row << 4 |
 // flags << 8, i[2] the id this note takes over from (a bar's handover), i[3]

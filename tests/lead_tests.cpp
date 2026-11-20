@@ -340,6 +340,20 @@ private slots:
         QVERIFY(std::fabs(tr.at(1.9).data[1] - 9.0f) < 0.02f);
     }
 
+    void aTwistBendsAStepButASlideDoesNot() {
+        // Turn the finger in place by 60° clockwise: the note bends up one
+        // step of the scale. Slide another finger while its contact turns
+        // the same way: it just slides.
+        const std::string twist = "page 0 4\n" + fmt("down 0.3 1 %.4f 0.5 twist=0\n", cellX(4)) +
+                                  fmt("glide 0.6 0.9 1 %.4f 0.5 twist=-60\nup 1.6 1\nend 1.7\n", cellX(4));
+        const auto a = trace(twist);
+        QVERIFY(std::fabs(a.at(1.4).data[1] - 12.0f) < 0.02f);
+        const std::string slide = "page 0 4\n" + fmt("down 0.3 1 %.4f 0.5 twist=0\n", cellX(4)) +
+                                  fmt("glide 0.6 0.9 1 %.4f 0.5 twist=-60\nup 1.6 1\nend 1.7\n", cellX(6));
+        const auto b = trace(slide);
+        QVERIFY(std::fabs(b.at(1.4).data[1] - 13.0f) < 0.02f);
+    }
+
     void theBendWheelRestsOnWholeSteps() {
         // Push the BEND finger up about a step and a half and stop: the
         // bend settles on a whole number of steps; let go and it's gone.

@@ -1209,7 +1209,9 @@ public:
                               : QStringLiteral("Gate off"));
             return true;
         case Qt::Key_F9:
-            if (m_recording) {
+            // Ask the studio, not a flag of our own: a recording also ends
+            // by itself after eight bars.
+            if (ctx.studio().parts[ctx.part()].recording >= 0) {
                 ctx.stopRecording();
                 ctx.notice(QStringLiteral("Recording ends at the bar"));
             } else {
@@ -1217,7 +1219,6 @@ public:
                 ctx.record(slot, 8);
                 ctx.notice(QStringLiteral("Recording into slot %1 from the next bar").arg(slot + 1));
             }
-            m_recording = !m_recording;
             return true;
         case Qt::Key_F10:
             m_overdub = !m_overdub;
@@ -1439,8 +1440,12 @@ private:
             if (std::fabs(pos - float(h.q)) > 0.62f)
                 h.q = std::clamp(int(std::lround(pos)), 0, cells - 1);
             const float m = h.motion.update(pos, now);
-            // A twist is measured from how the finger landed; the contact's
+            // A twist is measured from how the finger sat when it last held
+            // still: a contact's angle drifts as a finger slides, so a slide
+            // takes the angle along with it rather than bending. And the
             // angle only means anything for a finger that isn't round.
+            if (m > 0.4f)
+                h.angle0 = t.angle;
             float twist = 0;
             if (t.eccentricity > 0.2f) {
                 float d = t.angle - h.angle0;
@@ -1448,7 +1453,8 @@ private:
                     d -= kPi;
                 while (d < -kPi / 2)
                     d += kPi;
-                const float mag = clampf((std::fabs(d) - 0.2f) / 0.45f, 0.0f, 1.0f);
+                // Nothing for the first 20°, a whole step by 50°.
+                const float mag = clampf((std::fabs(d) - 0.35f) / 0.5f, 0.0f, 1.0f);
                 // Steep in the middle, so a twist sits on the step or off it.
                 const float s = mag * mag * (3.0f - 2.0f * mag);
                 twist = d < 0 ? s : -s; // clockwise bends up
@@ -1627,7 +1633,7 @@ private:
     Phrase m_phrase;
     Frame m_frame;
     int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;
-    bool m_follow = false, m_latch = false, m_click = false, m_recording = false, m_overdub = false;
+    bool m_follow = false, m_latch = false, m_click = false, m_overdub = false;
     QString m_status;
     std::array<TrailPoint, kTrail> m_trail{};
     long m_trailHead = 0;

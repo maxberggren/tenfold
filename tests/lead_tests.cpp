@@ -434,6 +434,30 @@ private slots:
         QCOMPARE(most, 1);
     }
 
+    void theGateChopsInTimeWithTheStudio() {
+        // ` twice: a sixteenth-note gate. A held note pulses at four steps a
+        // beat (124 BPM: 8.27 Hz), with real gaps between the pulses.
+        const auto tr = trace("page 0 4\nkey 0.1 `\nkey 0.15 `\n" + fmt("down 0.3 1 %.4f 0.6\nup 2.3 1\nend 2.4\n", cellX(7)));
+        const auto &l = tr.take.left;
+        const int w = 240; // 5 ms
+        std::vector<double> env;
+        for (size_t i = size_t(0.6 * 48000); i + w < size_t(2.2 * 48000); i += w) {
+            double s = 0;
+            for (int k = 0; k < w; ++k)
+                s += double(l[i + k]) * l[i + k];
+            env.push_back(std::sqrt(s / w));
+        }
+        const double hi = *std::max_element(env.begin(), env.end());
+        const double lo = *std::min_element(env.begin(), env.end());
+        QVERIFY(lo < 0.1 * hi);
+        // Count the pulses: rises through half the peak.
+        int pulses = 0;
+        for (size_t i = 1; i < env.size(); ++i)
+            pulses += env[i - 1] < 0.5 * hi && env[i] >= 0.5 * hi;
+        const double expected = 1.6 * 124.0 / 60.0 * 4.0;
+        QVERIFY(std::abs(pulses - expected) <= 2.0);
+    }
+
     void stillFingersSendFewEvents() {
         // A finger held still through a recorded bar leaves hardly anything
         // in the clip besides its own on and off.

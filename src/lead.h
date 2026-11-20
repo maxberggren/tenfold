@@ -72,8 +72,21 @@ inline int neckOctave(int root) {
 //   PThrow    f[0] amount 0..1
 //   POctave   f[0] 0 or 1 (the click)
 //   PGlide    f[0] glide time scale
-enum ParamKind { PHarmony = 0, PBend, PThrow, POctave, PGlide };
+//   PGate     i[1] gate pattern (see kGates)
+enum ParamKind { PHarmony = 0, PBend, PThrow, POctave, PGlide, PGate };
 constexpr int kFollow = 1;
+// The trance gate: off, or chopping the line in time, so a held note
+// pulses. Steps per beat; the On flags carry it in bits 1–2.
+constexpr int kGates = 4;
+inline int gateSteps(int g) {
+    static const int steps[kGates] = {0, 2, 4, 3};
+    return steps[std::clamp(g, 0, kGates - 1)];
+}
+inline const char *gateName(int g) {
+    static const char *names[kGates] = {"off", "1/8", "1/16", "1/8T"};
+    return names[std::clamp(g, 0, kGates - 1)];
+}
+constexpr int kGateShift = 1;
 // The harmony rows a note landed with: three bits per slot from bit 8, row + 1.
 inline int packRows(const int rows[kHarmSlots]) {
     int v = 0;

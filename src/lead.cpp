@@ -101,6 +101,7 @@ struct Line {
     int sound = 0;
     float harmRow[kHarmSlots] = {}, harmLevel[kHarmSlots] = {};
     float bend = 0, throwAmt = 0, octave = 0, glideScale = 1;
+    int gate = 0;
     const NoteIn *top() const { return count > 0 ? &notes[count - 1] : nullptr; }
 };
 
@@ -130,6 +131,7 @@ struct Voice {
     float scoop = 0, fmEnv = 1;
     float vibPhase = 0, held = 0; // seconds since the note began, for the vibrato's delay
     float pwmPhase = 0;
+    float gateEnv = 1;
     float cut = 4;                // smoothed cutoff, in octaves above 60 Hz
     Ladder fL, fR;
     Svf form[2][3];
@@ -267,6 +269,7 @@ private:
             NoteIn n = noteFrom(c);
             n.vel = clampf(c.f[0], 0.1f, 1.0f);
             n.follow = (c.i[3] & kFollow) != 0;
+            line.gate = (c.i[3] >> kGateShift) & 3;
             // The harmony held when the note landed, so a clip taken in the
             // middle of a held harmony plays it too.
             for (int s = 0; s < kHarmSlots; ++s) {
@@ -311,6 +314,9 @@ private:
                 break;
             case POctave:
                 line.octave = c.f[0] > 0.5f ? 1.0f : 0.0f;
+                break;
+            case PGate:
+                line.gate = std::clamp(c.i[1], 0, kGates - 1);
                 break;
             case PGlide:
                 line.glideScale = clampf(c.f[0], 0.1f, 6.0f);
@@ -645,12 +651,19 @@ private:
         m_throw = 0;
         for (auto &line : m_lines)
             m_throw = std::max(m_throw, line.throwAmt);
+        const Transport &tr = ctx.transport();
         for (auto &v : m_voices)
-            if (v.active)
-                renderVoice(v, l + at, r + at, m_sendL + at, m_sendR + at, n, dt);
+            if (v.active) {
+                // The gate runs on the studio's beat, so it lands with the drums.
+                const int steps = v.owner >= 0 ? gateSteps(m_lines[size_t(v.owner)].gate) : 0;
+                const double phase = tr.beatAt(at) * steps;
+                renderVoice(v, l + at, r + at, m_sendL + at, m_sendR + at, n, dt, float(phase - std::floor(phase)),
+                            float(tr.beatsPerSample * steps), steps > 0);
+            }
     }
 
-    void renderVoice(Voice &v, float *outL, float *outR, float *sendL, float *sendR, int n, float dt) {
+    void renderVoice(Voice &v, float *outL, float *outR, float *sendL, float *sendR, int n, float dt, float gatePhase,
+                     float gateInc, bool gated) {
         const Sound &s = sound(v.sound);
         const float rate = m_rate;
         // Expression follows the finger closely but never steps.
@@ -770,6 +783,8 @@ private:
         const float outGain = s.gain * 0.3f * swell * (0.45f + 0.55f * v.vel);
         const float send = s.echo + 0.9f * (v.owner >= 0 ? m_lines[size_t(v.owner)].throwAmt : 0.0f);
         const float inv = 1.0f / float(n);
+        const float gateAttack = 1.0f - std::exp(-1.0f / (0.0015f * rate));
+        const float gateRelease = 1.0f - std::exp(-1.0f / (0.004f * rate));
 
         float peak = 0;
         for (int i = 0; i < n; ++i) {
@@ -831,8 +846,10 @@ private:
                     bl = fastTanh(bl * driveGain) * driveNorm;
                     br = fastTanh(br * driveGain) * driveNorm;
                 }
-                sl += bl * gb;
-                sr += br * gb;
+                // Harmony voices stand a little to either side of the melody.
+                static const float bankPan[Voice::kBanks][2] = {{1.0f, 1.0f}, {1.15f, 0.82f}, {0.82f, 1.15f}, {1.0f, 1.0f}};
+                sl += bl * gb * bankPan[b][0];
+                sr += br * gb * bankPan[b][1];
             }
             if (s.formant) {
                 float fl = 0, fr = 0;
@@ -847,7 +864,21 @@ private:
             // colour, not a distortion that would smear a bell's partials.
             sl = v.fL.step(sl * 0.5f) * 2.0f * resComp;
             sr = v.fR.step(sr * 0.5f) * 2.0f * resComp;
-            const float g2 = a * outGain;
+            // The gate: open for a little over half of each step, with
+            // edges a few milliseconds long so it pulses without clicking.
+            float gate = 1.0f;
+            if (gated) {
+                const float want = gatePhase < 0.56f ? 1.0f : 0.0f;
+                v.gateEnv += (want - v.gateEnv) * (want > v.gateEnv ? gateAttack : gateRelease);
+                gate = v.gateEnv;
+                gatePhase += gateInc;
+                if (gatePhase >= 1.0f)
+                    gatePhase -= 1.0f;
+            } else {
+                v.gateEnv += (1.0f - v.gateEnv) * gateRelease;
+                gate = v.gateEnv;
+            }
+            const float g2 = a * outGain * gate;
             sl *= g2;
             sr *= g2;
             outL[i] += sl;
@@ -1130,6 +1161,19 @@ public:
             ctx.notice(QStringLiteral("Glide ×%1").arg(double(std::exp2(float(m_glide)))));
             return true;
         }
+        case Qt::Key_QuoteLeft:
+            m_gate = (m_gate + 1) % kGates;
+            {
+                Command c;
+                c.type = Command::Param;
+                c.t = ctx.now();
+                c.i[0] = PGate;
+                c.i[1] = m_gate;
+                ctx.send(c);
+            }
+            ctx.notice(m_gate ? QStringLiteral("Gate %1").arg(QString::fromUtf8(gateName(m_gate)))
+                              : QStringLiteral("Gate off"));
+            return true;
         case Qt::Key_F9:
             if (m_recording) {
                 ctx.stopRecording();
@@ -1174,6 +1218,7 @@ public:
             "Enter\tfollow the chord: notes and harmony land on chord tones\n"
             "\\\tharmony holds after the fingers lift\n"
             "- =\tglide shorter, longer\n"
+            "`\ttrance gate: off, 1/8, 1/16, 1/8 triplets, in time with the studio\n"
             "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
             "F9 / F10\trecord from the next bar / overdub\n"
             "Backspace\tstop this part at the next bar");
@@ -1229,7 +1274,7 @@ private:
         int rows[kHarmSlots];
         for (int s = 0; s < kHarmSlots; ++s)
             rows[s] = m_slots[s].on ? int(std::lround(m_slots[s].row)) : -1;
-        return (m_follow ? kFollow : 0) | packRows(rows);
+        return (m_follow ? kFollow : 0) | (m_gate << kGateShift) | packRows(rows);
     }
 
     void param(ControlContext &ctx, int which, int slot, float a, float b, double t) {
@@ -1524,7 +1569,7 @@ private:
     } m_pendingTap;
     Phrase m_phrase;
     Frame m_frame;
-    int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0;
+    int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;
     bool m_follow = false, m_latch = false, m_click = false, m_recording = false, m_overdub = false;
     QString m_status;
     std::array<TrailPoint, kTrail> m_trail{};
@@ -1545,6 +1590,23 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     const qreal unit = pc.pad.height() / 600.0;
     auto midiOf = [&](double degree) { return tuning.baseMidi() + tuning.continuousSemis(degree); };
     auto xOf = [&](float absDegree) { return neckX(absDegree - float(neckBase), per); };
+    // A line sung above or below the neck (an octave leap, a high harmony)
+    // is drawn folded back onto it by octaves, fainter, so it never just
+    // disappears.
+    auto fold = [&](float absDegree, int *octaves) {
+        float q = absDegree - float(neckBase);
+        int o = 0;
+        while (q > float(cells) - 0.5f && o < 4) {
+            q -= float(per);
+            ++o;
+        }
+        while (q < -0.5f && o > -4) {
+            q += float(per);
+            --o;
+        }
+        *octaves = o;
+        return q + float(neckBase);
+    };
 
     c::pad(p, pc, QStringLiteral("Lead"));
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -1619,10 +1681,14 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                         continue;
                     if (std::fabs(a.pos[k][b] - z.pos[k][b]) > 3.0f)
                         continue;
-                    const float fade = float(1.0 - ageA / span);
-                    const QPointF pa(neck.left() + (xOf(a.pos[k][b]) - kColumn) / (1 - kColumn) * neck.width(),
+                    int oa = 0, oz = 0;
+                    const float fa = fold(a.pos[k][b], &oa), fz = fold(z.pos[k][b], &oz);
+                    if (oa != oz)
+                        continue;
+                    const float fade = float(1.0 - ageA / span) * (oa ? 0.45f : 1.0f);
+                    const QPointF pa(neck.left() + (xOf(fa) - kColumn) / (1 - kColumn) * neck.width(),
                                      neck.bottom() - 40 * unit - (neck.height() - 40 * unit) * ageA / span);
-                    const QPointF pz(neck.left() + (xOf(z.pos[k][b]) - kColumn) / (1 - kColumn) * neck.width(),
+                    const QPointF pz(neck.left() + (xOf(fz) - kColumn) / (1 - kColumn) * neck.width(),
                                      neck.bottom() - 40 * unit - (neck.height() - 40 * unit) * ageZ / span);
                     const float w = (b == 0 ? 2.0f : 1.2f) + (b == 0 ? 7.0f : 3.0f) * std::min(1.0f, la);
                     p.setPen(QPen(c::alpha(lc, fade * (b == 0 ? 0.85f : 0.5f) * std::min(1.0f, 0.4f + la)),
@@ -1643,15 +1709,18 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         if (d[0] <= 0 || d[2] < 0.005f)
             continue;
         auto string = [&](float pos, float level, float width) {
+            int octaves = 0;
+            pos = fold(pos, &octaves);
+            if (octaves)
+                level *= 0.5f;
             const qreal x = neck.left() + (xOf(pos) - kColumn) / (1 - kColumn) * neck.width();
-            if (x < neck.left() || x > neck.right())
-                return;
             QLinearGradient g(QPointF(x - 14 * unit, 0), QPointF(x + 14 * unit, 0));
             g.setColorAt(0, c::alpha(col, 0));
             g.setColorAt(0.5, c::alpha(col, (k == 0 ? 0.35f : 0.2f) * std::min(1.0f, level * 1.5f)));
             g.setColorAt(1, c::alpha(col, 0));
             p.fillRect(QRectF(x - 14 * unit, neck.top(), 28 * unit, neck.height()), g);
-            p.setPen(QPen(c::alpha(col, std::min(1.0f, 0.3f + level)), width * unit));
+            p.setPen(QPen(c::alpha(col, std::min(1.0f, 0.3f + level)), width * unit,
+                          octaves ? Qt::DashLine : Qt::SolidLine));
             p.drawLine(QPointF(x, neck.top()), QPointF(x, neck.bottom() - 40 * unit));
         };
         string(d[1], d[2], k == 0 ? 2.5f : 1.5f);
@@ -1672,25 +1741,22 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         const QRectF r = pc.rect(0, y0, kColumn, y1).adjusted(6 * unit, 4 * unit, -6 * unit, -4 * unit);
         bool lit = false;
         float level = 0;
-        QString note;
         for (int s = 0; s < kHarmSlots; ++s) {
             if (m_slots[s].on && int(std::lround(m_slots[s].row)) == row) {
                 lit = true;
                 level = std::max(level, live[7 + s]);
-                if (live[0] > 0)
-                    note = noteName(midiOf(live[4 + s]));
             }
         }
-        // A lit row is filled as brightly as its voice sounds, with dark ink.
-        const QColor ink = QColor::fromRgb(c::kInk);
+        // A lit row glows as brightly as its voice sounds, with a solid bar
+        // at its edge; the finger on it stays visible.
         p.setPen(QPen(c::alpha(col, lit ? 1.0f : 0.35f), 1.5, lit && m_latch ? Qt::DashLine : Qt::SolidLine));
-        p.setBrush(lit ? QBrush(c::alpha(col, 0.55f + 0.45f * std::min(1.0f, level * 1.5f))) : Qt::NoBrush);
+        p.setBrush(lit ? QBrush(c::alpha(col, 0.18f + 0.3f * std::min(1.0f, level * 1.5f))) : Qt::NoBrush);
         p.drawRect(r);
-        c::text(p, r.adjusted(8 * unit, 0, 0, 0), QString::fromUtf8(rowName(row)), lit ? ink : c::alpha(col, 0.7f),
+        if (lit)
+            p.fillRect(QRectF(r.left(), r.top(), 6 * unit, r.height()), col);
+        c::text(p, r.adjusted(14 * unit, 0, 0, 0), QString::fromUtf8(rowName(row)), lit ? col : c::alpha(col, 0.7f),
                 int(15 * unit + 1), true, Qt::AlignLeft | Qt::AlignVCenter);
-        if (!note.isEmpty())
-            c::text(p, r.adjusted(0, 0, -8 * unit, 0), note, ink, int(12 * unit + 1), true,
-                    Qt::AlignRight | Qt::AlignVCenter);
+
     }
     // BEND: a wheel's slot with the bend drawn from its centre.
     {
@@ -1746,6 +1812,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         mode(QStringLiteral("follow chord"), m_follow);
         mode(m_shift > 0 ? QStringLiteral("oct +1") : QStringLiteral("oct −1"), m_shift != 0);
         mode(QStringLiteral("glide ×%1").arg(double(std::exp2(float(m_glide)))), m_glide != 0);
+        mode(QStringLiteral("gate %1").arg(QString::fromUtf8(gateName(m_gate))), m_gate != 0);
         mode(QStringLiteral("8va"), m_click);
         mode(QStringLiteral("harmony held"), m_latch);
         if (live[14] > 0.02f)
@@ -1781,7 +1848,9 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                 }
                 break;
             case Role::Harmony:
-                label = QString::fromUtf8(rowName(int(std::lround(m_slots[h->slot].row))));
+                // The row says the interval; the finger says the note it makes.
+                label = live[0] > 0 && live[7 + h->slot] > 0.05f ? noteName(midiOf(live[4 + h->slot]))
+                                                                  : QString::fromUtf8(rowName(int(std::lround(m_slots[h->slot].row))));
                 break;
             case Role::Bend:
                 label = QStringLiteral("%1%2").arg(h->shown >= 0 ? "+" : "").arg(double(h->shown), 0, 'f', 1);
@@ -1855,6 +1924,8 @@ QString LeadControl::describe() const {
         parts << QStringLiteral("an octave up");
     if (m_follow)
         parts << QStringLiteral("on the chord");
+    if (m_gate)
+        parts << QStringLiteral("gated ") + QString::fromUtf8(gateName(m_gate));
     return parts.join(QStringLiteral(" · "));
 }
 

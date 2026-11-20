@@ -1597,10 +1597,6 @@ private:
             std::fill(std::begin(m_trim[p]), std::end(m_trim[p]), 0.0f);
             m_muteFlip[p] = false;
         }
-        // The moves' own offsets are not home: take them back out.
-        for (int p = 0; p < m_parts; ++p) {
-            m_home[p][Filter] = clampf01(m_home[p][Filter] - (m_shown[p].filt - m_home[p][Filter]) * 0.0f);
-        }
         m_playing = false;
         m_loop = false;
     }

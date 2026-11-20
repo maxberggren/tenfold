@@ -327,6 +327,7 @@ public:
         case Qt::Key_L: liftKey(shift ? -2 : 2, ctx); return true;
         case Qt::Key_V: variation(ctx); return true;
         case Qt::Key_I: autoArrange(shift, ctx); return true;
+        case Qt::Key_Space: // on the part pages Space records a loop; here, the song
         case Qt::Key_O: toggleRecord(ctx); return true;
         case Qt::Key_P: togglePlay(shift, ctx); return true;
         case Qt::Key_Delete: clearSlot(m_selPart, m_selSlot, ctx); return true;
@@ -371,7 +372,7 @@ public:
             "L\tlift the key a whole tone on the bar (Shift: down)\n"
             "V\tevery part to its next clip on the bar\n"
             "I\twrite a whole track from the loops and play it (Shift: a short one)\n"
-            "O\trecord the song from the next bar (punch in while it plays); again to stop\n"
+            "Space or O\trecord the song from the next bar (punch in while it plays); again to stop\n"
             "P\tplay the song from the top (Shift: loop it); again to stop\n"
             "Left, Right\tjump a section back or on, on the bar\n"
             "Backspace\tstop everything on the bar; Shift clears the song");
@@ -1726,7 +1727,7 @@ private:
             return;
         }
         if (m_song.empty()) {
-            ctx.notice(QStringLiteral("No song yet: O records one, I writes one from your loops"));
+            ctx.notice(QStringLiteral("No song yet: Space records one, I writes one from your loops"));
             return;
         }
         startSong(nextBar(), loop, ctx);
@@ -2152,7 +2153,21 @@ void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
         QColor col = pc.color;
         if (f && f->lane >= 0 && (f->kind == Finger::Lane || f->kind == Finger::Send || f->kind == Finger::Name))
             col = laneColor(f->lane, pc.color);
-        c::finger(p, pc, t, col, f ? fingerLabel(*f) : QString(), f && f->kind == Finger::Tension ? std::fabs(m_tensionShown) : 0.0f);
+        const QString label = f ? fingerLabel(*f) : QString();
+        const float glow = f && f->kind == Finger::Tension ? std::fabs(m_tensionShown) : 0.0f;
+        if (t.x < 0.72f) {
+            c::finger(p, pc, t, col, label, glow);
+        } else {
+            // Near the right edge the label goes to the finger's left, inside the pad.
+            c::finger(p, pc, t, col, QString(), glow);
+            if (!label.isEmpty()) {
+                const QFont fnt = c::font(12, true);
+                const qreal w = QFontMetricsF(fnt).horizontalAdvance(label) + 12;
+                const QPointF at = pc.at(t.x, t.y);
+                const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
+                c::tag(p, QPointF(at.x() - r - 6 - w, at.y() - r * 0.6), label, col, 12);
+            }
+        }
     }
     paintHeader(p, pc);
     c::beats(p, pc, pc.color);
@@ -2334,9 +2349,9 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
         p.setFont(f);
         p.setPen(c::alpha(pc.color, 0.85f));
         p.drawText(box.adjusted(16, box.height() * 0.38, -16, -10), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-                   QStringLiteral("Loops are made on the part pages, keys 1 to 7: press Enter to record from the "
-                                  "next bar, or click while playing. Each appears here in its page's row, in the "
-                                  "slot it went into, with its length and whether it plays."));
+                   QStringLiteral("Loops are made on the part pages, keys 1 to 7: play, press Space to record "
+                                  "from the next bar, and Space again to close the loop. Each appears here in its "
+                                  "page's row, in the slot it went into, with its length and whether it plays."));
     }
     p.setPen(QPen(c::alpha(pc.color, 0.18f), 1));
     for (int i = 1; i < parts; ++i) {
@@ -2545,11 +2560,15 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
     const int n = m_song.length();
     if (n == 0) {
         const QString s = m_recArmBar >= 0 ? QStringLiteral("● RECORDING FROM THE NEXT BAR")
-                                           : QStringLiteral("NO SONG YET   ·   O RECORDS ONE AS YOU PLAY   ·   I WRITES ONE FROM YOUR LOOPS");
+                                           : QStringLiteral("NO SONG YET   ·   SPACE RECORDS ONE AS YOU PLAY   ·   I WRITES ONE FROM YOUR LOOPS");
         c::text(p, band, s, m_recArmBar >= 0 ? c::red() : c::alpha(pc.color, 0.45f), 11, true, Qt::AlignCenter);
         return;
     }
-    auto xAt = [&](double bar) { return band.left() + band.width() * bar / std::max(1, n); };
+    // A take in progress has room ahead of it on the timeline.
+    const int span = m_recording && !m_playing ? std::max(32, (n + 8) / 8 * 8) : std::max(1, n);
+    auto xAt = [&](double bar) { return band.left() + band.width() * bar / span; };
+    if (m_recording && !m_playing)
+        p.fillRect(QRectF(xAt(0), band.top(), xAt(n) - xAt(0), band.height()), c::alpha(c::red(), 0.12f));
     // The shape of the track: how many parts play in each bar.
     {
         QPainterPath path;
@@ -2566,7 +2585,7 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
         path.lineTo(xAt(n), band.bottom());
         path.lineTo(xAt(0), band.bottom());
         path.closeSubpath();
-        p.fillPath(path, c::alpha(pc.color, 0.08f));
+        p.fillPath(path, c::alpha(m_recording ? c::red() : pc.color, m_recording ? 0.3f : 0.08f));
     }
     if (!m_sections.empty() && !m_recording) {
         for (const auto &s : m_sections) {
@@ -2587,10 +2606,10 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
     }
     // Four-bar phrase ticks.
     p.setPen(QPen(c::alpha(pc.color, 0.25f), 1));
-    for (int b = 4; b < n; b += 4)
+    for (int b = 4; b < span; b += 4)
         p.drawLine(QPointF(xAt(b), band.bottom()), QPointF(xAt(b), band.bottom() + 3));
     const double pos = pc.beat / kBeatsPerBar - m_origin;
-    if ((m_playing || m_recording) && pos >= 0 && pos <= n) {
+    if ((m_playing || m_recording) && pos >= 0 && pos <= span) {
         const qreal x = xAt(pos);
         const QColor col = m_recording ? c::red() : pc.color;
         p.setPen(QPen(col, 2));
@@ -2699,7 +2718,7 @@ QString ArrangeControl::status() const {
     else if (m_recording)
         parts << QStringLiteral("recording the song");
     if (parts.isEmpty() && !m_anyClip)
-        return QStringLiteral("no loops yet: make them on pages 1–7 (Enter records from the next bar, or click while playing)");
+        return QStringLiteral("no loops yet: on pages 1–7, Space records one from the next bar, Space again closes it");
     if (parts.isEmpty())
         return QStringLiteral("tap clips to launch them on the bar · F1–F8 scenes · I writes a track from your loops");
     return parts.join(QStringLiteral(" · "));

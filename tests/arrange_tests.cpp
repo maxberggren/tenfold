@@ -44,24 +44,23 @@ testkit::Take watch(const std::string &script, const std::function<void(double, 
     return take;
 }
 
-// Four one-bar loops at 120 BPM, each closed by a hold on a bar line: drums
-// (page 1), bass (2), chords (3), atmos (6). The drum loop's hold at 2.5 s
-// is the studio's first bar line; bars follow every 2 s (4.5, 6.5, …), and
-// everything is playing by 14.5 s, when the arrange page shows.
-const char *kLoops = "page 0 1\n"
-                     "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
-                     "down 2.5 1 0.05 0.5\nup 2.9 1\n"
-                     "page 3.0 2\n"
-                     "tap 4.5 0.03 0.5 len=0.15\ntap 5.0 0.03 0.5 len=0.15\ntap 5.5 0.36 0.5 len=0.15\n"
-                     "tap 6.0 0.3 0.5 len=0.15\ndown 6.5 2 0.03 0.5\nup 6.9 2\n"
-                     "page 7.0 3\n"
-                     "tap 8.5 0.03 0.6 len=0.15\ntap 9.0 0.03 0.6 len=0.15\ntap 9.5 0.36 0.6 len=0.15\n"
-                     "tap 10.0 0.36 0.6 len=0.15\ndown 10.5 3 0.03 0.6\nup 10.9 3\n"
-                     "page 11.0 6\n"
-                     "tap 12.5 0.03 0.4 len=0.2\ntap 13.0 0.17 0.4 len=0.2\ntap 13.5 0.03 0.4 len=0.2\n"
-                     "tap 14.0 0.17 0.4 len=0.2\ndown 14.5 6 0.03 0.4\nup 14.9 6\n"
-                     "page 15.0 0\n";
-constexpr double kBar0 = 2.5; // a bar line, in script seconds; bars are 2 s long
+// Four one-bar loops at 120 BPM, each recorded with Space from the next bar
+// and closed with Space again: drums (page 1), bass (2), chords (3), atmos
+// (6). Bars fall every 2 s from the start; everything plays by 16 s, and the
+// arrange page shows at 16.5.
+const char *kLoops = "tempo 0 120\n"
+                     "page 0 1\nkey 0.2 Space\n"
+                     "tap 2.0 0.05 0.5\ntap 2.5 0.25 0.5\ntap 3.0 0.05 0.5\ntap 3.5 0.25 0.5\nkey 3.6 Space\n"
+                     "page 4.1 2\nkey 4.2 Space\n"
+                     "tap 6.0 0.03 0.5 len=0.3\ntap 6.5 0.03 0.5 len=0.15\ntap 7.0 0.36 0.5 len=0.3\n"
+                     "tap 7.5 0.3 0.5 len=0.15\nkey 7.6 Space\n"
+                     "page 8.1 3\nkey 8.2 Space\n"
+                     "tap 10.0 0.03 0.6 len=0.15\ntap 10.5 0.03 0.6 len=0.15\ntap 11.0 0.36 0.6 len=0.15\n"
+                     "tap 11.5 0.36 0.6 len=0.15\nkey 11.6 Space\n"
+                     "page 12.1 6\nkey 12.2 Space\n"
+                     "tap 14.0 0.03 0.4 len=0.9\ntap 15.0 0.17 0.4 len=0.9\nkey 15.6 Space\n"
+                     "page 16.5 0\n";
+constexpr double kBar0 = 0; // the studio's first bar line, in script seconds; bars are 2 s long at 120
 double barAt(int n) { return kBar0 + 2.0 * n; }
 
 std::string loops(const std::string &rest) { return std::string(kLoops) + rest; }
@@ -91,7 +90,7 @@ private slots:
     }
 
     void theLoopsAreThere() {
-        const auto take = testkit::play(loops("end 16\n"));
+        const auto take = testkit::play(loops("end 17.5\n"));
         QCOMPARE(int(std::lround(take.view.bpm)), 120);
         for (int p : {0, 1, 2, 5})
             QVERIFY2(take.view.parts[p].playing == 0, qPrintable(QString("part %1").arg(p)));
@@ -102,11 +101,11 @@ private slots:
         // bar line, and every clip from the top of its loop on it.
         double startedBeat = -1, keyBeat = -1;
         int playingBefore = 0;
-        watch(loops("key 15.2 Backspace\nkey 17.3 F1\nend 21\n"), [&](double t, Session &s) {
+        watch(loops("key 16.7 Backspace\nkey 18.8 F1\nend 22.5\n"), [&](double t, Session &s) {
             const StudioView &v = s.view();
-            if (t > 17.29 && keyBeat < 0)
+            if (t > 18.79 && keyBeat < 0)
                 keyBeat = v.beat;
-            if (t > 17.0 && t < 17.3)
+            if (t > 18.5 && t < 18.8)
                 for (int p = 0; p < v.partCount; ++p)
                     playingBefore += v.parts[p].playing >= 0;
             if (keyBeat >= 0 && startedBeat < 0 && v.parts[0].playing == 0) {
@@ -124,12 +123,12 @@ private slots:
     void aTapStartsAClipAndATapStopsIt() {
         // Bass playing: a tap on its cell stops it on the bar; another starts it again.
         int afterStop = 99, afterStart = -9;
-        watch(loops("tap 15.3 " + std::to_string(cellX(0)) + " " + std::to_string(laneY(1)) + "\n" +
-                    "tap 17.3 " + std::to_string(cellX(0)) + " " + std::to_string(laneY(1)) + "\nend 19\n"),
+        watch(loops("tap 16.8 " + std::to_string(cellX(0)) + " " + std::to_string(laneY(1)) + "\n" +
+                    "tap 18.8 " + std::to_string(cellX(0)) + " " + std::to_string(laneY(1)) + "\nend 20.5\n"),
               [&](double t, Session &s) {
-                  if (at(t, 17.2))
+                  if (at(t, 18.7))
                       afterStop = s.view().parts[1].playing;
-                  if (at(t, 18.9))
+                  if (at(t, 20.4))
                       afterStart = s.view().parts[1].playing;
               });
         QCOMPARE(afterStop, -1);
@@ -149,15 +148,15 @@ private slots:
         // let go: the level stays, the filter comes home.
         float gainHeld = 0, filtHeld = 0, gainAfter = 0, filtAfter = 0;
         const float y = laneY(2);
-        watch(loops("down 15.5 9 0.8 " + std::to_string(y) +
-                    "\nglide 15.6 16.2 9 0.95 " + std::to_string(y + 0.12f) + "\nup 16.6 9\nend 17.5\n"),
+        watch(loops("down 17.0 9 0.8 " + std::to_string(y) +
+                    "\nglide 17.1 17.7 9 0.95 " + std::to_string(y + 0.12f) + "\nup 18.1 9\nend 19.0\n"),
               [&](double t, Session &s) {
                   const auto &ch = s.view().parts[2].channel;
-                  if (at(t, 16.4)) {
+                  if (at(t, 17.9)) {
                       gainHeld = ch.value[Gain];
                       filtHeld = ch.value[Filter];
                   }
-                  if (at(t, 17.4)) {
+                  if (at(t, 18.9)) {
                       gainAfter = ch.value[Gain];
                       filtAfter = ch.value[Filter];
                   }
@@ -170,9 +169,9 @@ private slots:
 
     void aClickLatchesTheRide() {
         const float y = laneY(1);
-        const auto take = testkit::play(loops("down 15.5 9 0.5 " + std::to_string(y) +
-                                              "\nglide 15.6 16.0 9 0.3 " + std::to_string(y) +
-                                              "\nclick 16.2\nup 16.6 9\nend 17.5\n"));
+        const auto take = testkit::play(loops("down 17.0 9 0.5 " + std::to_string(y) +
+                                              "\nglide 17.1 17.5 9 0.3 " + std::to_string(y) +
+                                              "\nclick 17.7\nup 18.1 9\nend 19.0\n"));
         QVERIFY2(take.view.parts[1].channel.value[Filter] < 0.3f,
                  qPrintable(QString::number(take.view.parts[1].channel.value[Filter])));
     }
@@ -180,10 +179,10 @@ private slots:
     void pressureThrowsALaneIntoTheEcho() {
         float echo = 0;
         const float y = laneY(2);
-        watch(loops("down 15.5 9 0.5 " + std::to_string(y) + " p=0.5\nglide 15.6 15.9 9 0.5 " + std::to_string(y) +
-                    " p=0.95\nup 16.4 9\nend 16.6\n"),
+        watch(loops("down 17.0 9 0.5 " + std::to_string(y) + " p=0.5\nglide 17.1 17.4 9 0.5 " + std::to_string(y) +
+                    " p=0.95\nup 17.9 9\nend 18.1\n"),
               [&](double t, Session &s) {
-                  if (at(t, 16.2))
+                  if (at(t, 17.7))
                       echo = s.view().parts[2].channel.value[EchoSend];
               });
         QVERIFY2(echo > 0.6f, qPrintable(QString::number(echo)));
@@ -191,13 +190,13 @@ private slots:
 
     void muteKeysAndHeldSolos() {
         float drumsMuted = 0, bassSolo = 0, bassSoloAfter = 1;
-        watch(loops("key 15.5 Q\nkey 16.0 S down\nkey 17.0 S up\nend 17.5\n"), [&](double t, Session &s) {
+        watch(loops("key 17.0 Q\nkey 17.5 S down\nkey 18.5 S up\nend 19.0\n"), [&](double t, Session &s) {
             const StudioView &v = s.view();
-            if (at(t, 15.8))
+            if (at(t, 17.3))
                 drumsMuted = v.parts[0].channel.value[Mute];
-            if (at(t, 16.5))
+            if (at(t, 18.0))
                 bassSolo = v.parts[1].channel.value[Solo];
-            if (at(t, 17.4))
+            if (at(t, 18.9))
                 bassSoloAfter = v.parts[1].channel.value[Solo];
         });
         QCOMPARE(drumsMuted, 1.0f);
@@ -211,7 +210,7 @@ private slots:
         float topFilter = 0.5f, topReverb = 0;
         bool silentGap = true;
         int dropAt = -1;
-        const auto take = watch(loops("key 15.3 B\nend 32\n"), [&](double, Session &s) {
+        const auto take = watch(loops("key 16.8 B\nend 33.5\n"), [&](double, Session &s) {
             const StudioView &v = s.view();
             topFilter = std::max(topFilter, v.master[MasterFilter]);
             topReverb = std::max(topReverb, v.parts[2].channel.value[ReverbSend]);
@@ -244,9 +243,9 @@ private slots:
         // Stop everything, then Return: on the next bar every part with a clip
         // starts from the top of its loop together.
         double anchors[4] = {-1, -1, -1, -1};
-        watch(loops("key 15.2 Backspace\nkey 17.3 Return\nend 20\n"), [&](double t, Session &s) {
+        watch(loops("key 16.7 Backspace\nkey 18.8 Return\nend 21.5\n"), [&](double t, Session &s) {
             const StudioView &v = s.view();
-            if (t < 17.3)
+            if (t < 18.8)
                 return;
             const int parts[4] = {0, 1, 2, 5};
             for (int k = 0; k < 4; ++k) {
@@ -265,14 +264,14 @@ private slots:
     void aBreakdownStripsToChordsAndAtmosAndComesBack() {
         float during[7] = {}, after[7] = {};
         float pumpDuring = 1;
-        watch(loops("key 15.3 N\nkey 18.6 N\nend 21.5\n"), [&](double t, Session &s) {
+        watch(loops("key 16.8 N\nkey 20.1 N\nend 23.0\n"), [&](double t, Session &s) {
             const StudioView &v = s.view();
-            if (at(t, 18.0)) {
+            if (at(t, 19.5)) {
                 for (int p = 0; p < 7; ++p)
                     during[p] = v.parts[p].channel.value[Mute];
                 pumpDuring = v.parts[2].channel.value[PumpDepth];
             }
-            if (at(t, 21.0))
+            if (at(t, 22.5))
                 for (int p = 0; p < 7; ++p)
                     after[p] = v.parts[p].channel.value[Mute];
         });
@@ -288,29 +287,29 @@ private slots:
     void anEchoOutStopsEverythingAndLeavesATail() {
         // X just after a bar: one bar into the echo, then everything stops on
         // the next line and only the echo is left, fading.
-        const auto take = watch(loops("key 16.6 X\nend 27\n"), {});
+        const auto take = watch(loops("key 18.1 X\nend 28.5\n"), {});
         for (int p = 0; p < take.view.partCount; ++p)
             QCOMPARE(take.view.parts[p].playing, -1);
         // The bar after the echo-out bar: the echo still rings.
-        const double stop = barAt(9); // 16.6 → the out bar is bar 8 (18.5), the stop at bar 9 (20.5)
+        const double stop = barAt(9); // 18.1 → the out bar is bar 8 (20.0), the stop at bar 9 (22.0)
         QVERIFY2(take.rms(stop + 0.3, stop + 1.5) > 0.004, qPrintable(QString::number(take.rms(stop + 0.3, stop + 1.5))));
         QVERIFY(take.rms(stop + 0.3, stop + 1.5) < take.rms(stop - 2, stop));
         QVERIFY(take.rms(26, 27) < take.rms(stop + 0.3, stop + 1.5));
     }
 
     void aCutSilencesTheLastBeat() {
-        const auto take = watch(loops("key 15.3 C\nend 19\n"), {});
-        // The bar after 15.3 begins at 16.5: the cut is 16.0..16.5.
-        QVERIFY(take.rms(16.05, 16.45) < 0.25 * take.rms(15.5, 15.95));
-        QVERIFY(take.rms(16.55, 17.0) > 0.5 * take.rms(15.5, 15.95));
+        const auto take = watch(loops("key 16.8 C\nend 20.5\n"), {});
+        // The bar after 16.8 begins at 18.0: the cut is 16.0..16.5.
+        QVERIFY(take.rms(17.55, 17.95) < 0.25 * take.rms(17.0, 17.45));
+        QVERIFY(take.rms(18.05, 18.5) > 0.5 * take.rms(17.0, 17.45));
     }
 
     void aLiftChangesKeyOnTheBar() {
         int before = -1, after = -1;
-        watch(loops("key 15.3 L\nend 17\n"), [&](double t, Session &s) {
-            if (at(t, 16.3))
+        watch(loops("key 16.8 L\nend 18.5\n"), [&](double t, Session &s) {
+            if (at(t, 17.8))
                 before = s.view().root;
-            if (at(t, 16.7))
+            if (at(t, 18.2))
                 after = s.view().root;
         });
         QCOMPARE(before, 9);
@@ -322,7 +321,7 @@ private slots:
         // ONE the bus is open and every part sounds.
         float top = 0.5f;
         double gapBeat = -1;
-        const auto take = watch(loops("down 15.05 9 0.94 0.4\nglide 15.1 15.5 9 0.94 0.85\nup 15.6 9\nend 19.5\n"),
+        const auto take = watch(loops("down 16.55 9 0.94 0.4\nglide 16.6 17.0 9 0.94 0.85\nup 17.1 9\nend 21.0\n"),
                                 [&](double, Session &s) {
                                     const StudioView &v = s.view();
                                     top = std::max(top, v.master[MasterFilter]);
@@ -338,20 +337,20 @@ private slots:
     }
 
     void theTensionFaderLetGoLowSpringsBack() {
-        const auto take = watch(loops("down 15.3 9 0.94 0.4\nglide 15.4 15.8 9 0.94 0.55\nup 15.9 9\nend 18\n"), {});
+        const auto take = watch(loops("down 16.8 9 0.94 0.4\nglide 16.9 17.3 9 0.94 0.55\nup 17.4 9\nend 19.5\n"), {});
         QVERIFY(std::fabs(take.view.master[MasterFilter] - 0.5f) < 0.01f);
         for (int p : {0, 1, 2, 5})
             QCOMPARE(take.view.parts[p].channel.value[Mute], 0.0f);
     }
 
     void aWrittenTrackHasItsShape() {
-        // I writes a long track and plays it from the next bar (16.5): intro
+        // I writes a long track and plays it from the next bar (18.0): intro
         // with drums and atmos, no bass; then the groove brings the bass; the
         // drop has everything; the breakdown has no drums.
         std::vector<std::array<int, 7>> bars;
         std::vector<std::array<int, 7>> muted;
-        const auto take = watch(loops("key 15.3 I\nend 175\n"), [&](double t, Session &s) {
-            const double bar = (t - 16.5) / 2.0 - 0.25;
+        const auto take = watch(loops("key 16.8 I\nend 176.5\n"), [&](double t, Session &s) {
+            const double bar = (t - 18.0) / 2.0 - 0.25;
             if (bar >= 0 && std::fabs(bar - std::round(bar)) < 0.003 && int(bars.size()) <= int(std::round(bar))) {
                 std::array<int, 7> b{}, m{};
                 for (int p = 0; p < 7; ++p) {
@@ -379,7 +378,7 @@ private slots:
         // After the echo-out, everything has stopped; the track ends in its echo.
         for (int p = 0; p < 7; ++p)
             QCOMPARE(bars[73][size_t(p)], -1);
-        QVERIFY(take.rms(16.5 + 2 * 21, 16.5 + 2 * 23) > 1.4 * take.rms(16.5 + 2 * 37, 16.5 + 2 * 39));
+        QVERIFY(take.rms(18.0 + 2 * 21, 18.0 + 2 * 23) > 1.4 * take.rms(18.0 + 2 * 37, 18.0 + 2 * 39));
         QVERIFY(take.finite());
         QVERIFY(take.peak() < 1.0);
     }
@@ -388,35 +387,35 @@ private slots:
         // Record: four bars of everything, F1-less: mute the drums for two
         // bars with the keys, then stop recording. Play it back from another
         // page: the mutes come back on the same bars.
-        //   15.3 O → recording from 16.5 (bar 7)
-        //   18.6 Q → drums muted from 18.6; 22.6 Q → back
-        //   23.3 O → recording ends on 24.5: four bars (16.5–24.5)
-        //   24.7 P → the song plays from 26.5; 25.0 page 2: the arrange page is hidden
+        //   16.8 O → recording from 18.0 (bar 7)
+        //   20.1 Q → drums muted from 20.1; 24.1 Q → back
+        //   24.8 O → recording ends on 26.0: four bars (18.0–26.0)
+        //   26.2 P → the song plays from 28.0; 26.5 page 2: the arrange page is hidden
         std::vector<std::pair<double, float>> mutes;
-        const auto take = watch(loops("key 15.3 O\nkey 18.6 Q\nkey 22.6 Q\nkey 23.3 O\nkey 24.7 P\npage 25.0 2\nend 35.5\n"),
+        const auto take = watch(loops("key 16.8 O\nkey 20.1 Q\nkey 24.1 Q\nkey 24.8 O\nkey 26.2 P\npage 26.5 2\nend 37.0\n"),
                                 [&](double t, Session &s) {
                                     const float m = s.view().parts[0].channel.value[Mute];
                                     if (mutes.empty() || mutes.back().second != m)
                                         mutes.push_back({t, m});
                                 });
-        // Muted live at 18.6, back at 22.6; replayed at 28.6 (±1/16) and 32.6.
+        // Muted live at 20.1, back at 24.1; replayed at 30.1 (±1/16) and 32.6.
         QVERIFY2(mutes.size() >= 5, qPrintable(QString::number(mutes.size())));
-        QVERIFY(std::fabs(mutes[1].first - 18.6) < 0.02);
-        QVERIFY(std::fabs(mutes[2].first - 22.6) < 0.02);
-        QVERIFY2(std::fabs(mutes[3].first - 28.6) < 0.15, qPrintable(QString::number(mutes[3].first)));
-        QVERIFY2(std::fabs(mutes[4].first - 32.6) < 0.15, qPrintable(QString::number(mutes[4].first)));
+        QVERIFY(std::fabs(mutes[1].first - 20.1) < 0.02);
+        QVERIFY(std::fabs(mutes[2].first - 24.1) < 0.02);
+        QVERIFY2(std::fabs(mutes[3].first - 30.1) < 0.15, qPrintable(QString::number(mutes[3].first)));
+        QVERIFY2(std::fabs(mutes[4].first - 34.1) < 0.15, qPrintable(QString::number(mutes[4].first)));
         QCOMPARE(take.view.parts[0].channel.value[Mute], 0.0f);
     }
 
     void aRecordedBuildReplays() {
         // A build recorded into the song comes back with its drop on the same bar.
-        //   15.3 O → take from 16.5; 16.7 B → a build from 18.5 to the end of
-        //   the next 4-bar phrase (the studio's bar 16, at 28.5), where it drops;
-        //   29.3 O → the take ends at 30.5 (seven bars); 30.7 P → plays from
-        //   32.5: its drop at 44.5
+        //   16.8 O → take from 18; 18.2 B → a build from 20 to the end of the
+        //   4-bar phrase (the studio's bar 12, at 24), where it drops;
+        //   25.3 O → the take ends at 26 (four bars); 26.2 P → plays from 28:
+        //   its build from 30, its drop at 34
         std::vector<double> drops;
         bool wasGap = false;
-        watch(loops("key 15.3 O\nkey 16.7 B\nkey 29.3 O\nkey 30.7 P\nend 46\n"), [&](double t, Session &s) {
+        watch(loops("key 16.8 O\nkey 18.2 B\nkey 25.3 O\nkey 26.2 P\nend 36\n"), [&](double t, Session &s) {
             const StudioView &v = s.view();
             bool all = true;
             for (int p = 0; p < v.partCount; ++p)
@@ -426,15 +425,15 @@ private slots:
             wasGap = all;
         });
         QCOMPARE(int(drops.size()), 2);
-        QVERIFY2(std::fabs(drops[0] - 28.5) < 0.02, qPrintable(QString::number(drops[0])));
-        QVERIFY2(std::fabs(drops[1] - 44.5) < 0.02, qPrintable(QString::number(drops[1])));
+        QVERIFY2(std::fabs(drops[0] - 24.0) < 0.02, qPrintable(QString::number(drops[0])));
+        QVERIFY2(std::fabs(drops[1] - 34.0) < 0.02, qPrintable(QString::number(drops[1])));
     }
 
     void theDropLaunchesNothingThePlayerHasNotPlayed() {
         // The bass is stopped (a tap on its clip) and stays stopped for more
         // than sixteen bars; the drop brings back the others, not the bass.
         const std::string tapBass = std::to_string(cellX(0)) + " " + std::to_string(laneY(1));
-        const auto take = testkit::play(loops("tap 15.3 " + tapBass + "\nkey 51.3 Return\nend 55\n"));
+        const auto take = testkit::play(loops("tap 16.8 " + tapBass + "\nkey 52.8 Return\nend 56.5\n"));
         QCOMPARE(take.view.parts[1].playing, -1);
         for (int p : {0, 2, 5})
             QCOMPARE(take.view.parts[p].playing, 0);
@@ -448,8 +447,8 @@ private slots:
         // bass clip, press Delete: that one too.
         const std::string chords = std::to_string(cellX(0)) + " " + std::to_string(laneY(2));
         const std::string bass = std::to_string(cellX(0)) + " " + std::to_string(laneY(1));
-        const auto take = testkit::play(loops("down 15.3 9 " + chords + "\nclick 15.7\nup 16.0 9\n" +
-                                              "down 16.5 10 " + bass + "\nup 16.9 10\nkey 17.0 Delete\nend 18\n"));
+        const auto take = testkit::play(loops("down 16.8 9 " + chords + "\nclick 17.2\nup 17.5 9\n" +
+                                              "down 18.0 10 " + bass + "\nup 18.4 10\nkey 18.5 Delete\nend 19.5\n"));
         QVERIFY(take.view.parts[2].clips[0].state == ClipView::Empty);
         QVERIFY(take.view.parts[1].clips[0].state == ClipView::Empty);
         QVERIFY(take.view.parts[0].clips[0].state != ClipView::Empty);
@@ -459,7 +458,7 @@ private slots:
 
     void storedScenesRecallTheMix() {
         // Shift+F3 stores what plays; Backspace stops it all; F3 brings it back.
-        const auto take = testkit::play(loops("key 15.3 Shift+F3\nkey 15.5 Backspace\nkey 17.0 F3\nend 19\n"));
+        const auto take = testkit::play(loops("key 16.8 Shift+F3\nkey 17.0 Backspace\nkey 18.5 F3\nend 20.5\n"));
         for (int p : {0, 1, 2, 5})
             QCOMPARE(take.view.parts[p].playing, 0);
     }
@@ -469,7 +468,7 @@ private slots:
         // real changes, never every tick.
         int changes = 0;
         float last[8][ChannelCount] = {};
-        watch(loops("key 15.3 Shift+I\nend 60\n"), [&](double, Session &s) {
+        watch(loops("key 16.8 Shift+I\nend 61.5\n"), [&](double, Session &s) {
             for (int p = 0; p < 7; ++p)
                 for (int c = 0; c < ChannelCount; ++c) {
                     const float v = s.view().parts[p].channel.value[c];

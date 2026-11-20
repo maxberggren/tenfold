@@ -345,7 +345,8 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             if (!found)
                 continue; // the end of something that started before the take
         }
-        clip.events.push_back({floorMod(pos, len), c, -1e18});
+        // A note reached early (before b0) starts the clip, not ends it.
+        clip.events.push_back({pos < 0 ? 0.0 : floorMod(pos, len), c, -1e18});
     }
     // Sounds still held when the take ended stop just before it comes round.
     for (int i = 0; i < openCount; ++i) {
@@ -946,6 +947,8 @@ void Studio::publish() {
         o.queued = p.queued;
         o.overdub = p.overdub;
         o.recording = p.recording;
+        o.takeBeats = p.recording >= 0 && p.recEnd >= 0 ? float(p.recEnd - p.recStart) : 0.0f;
+        o.takeAt = p.recording >= 0 && p.recEnd >= 0 ? p.recEnd : 0.0;
         for (int c = 0; c < ChannelCount; ++c)
             o.channel.value[c] = p.channelTarget[c];
         o.channel.peak = p.peak;

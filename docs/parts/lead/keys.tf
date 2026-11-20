@@ -3,43 +3,43 @@
 # Render: build/tenfold render docs/parts/lead/keys.tf keys.wav
 page 0 4
 tempo 0.01 128
-key 0.2656 Right
-key 0.3125 Right
-key 0.5 A down
-key 0.9453 A up
-key 0.9688 D down
-key 1.1797 D up
-key 1.2031 G down
-key 1.4141 G up
-key 1.4375 F down
-key 1.8828 F up
-key 1.9062 D down
-key 2.1172 D up
-key 2.1406 S down
-key 2.3516 S up
-key 2.375 D down
-key 3.0547 D up
-key 3.0781 A down
-key 3.2891 A up
-key 3.3125 S down
-key 4.2031 Right
-key 4.2266 S up
-key 4.25 A down
-key 4.7188 D down
-key 4.7422 A up
-key 4.9531 G down
-key 4.9766 D up
-key 5.1875 F down
-key 5.2109 G up
-key 5.6562 D down
-key 5.6797 F up
-key 5.8906 S down
-key 5.9141 D up
-key 6.125 D down
-key 6.1484 S up
-key 6.8281 A down
-key 6.8516 D up
-key 7.0625 S down
-key 7.0859 A up
-key 8.0234 S up
-end 8.9375
+key 0.7656 Right
+key 0.8125 Right
+key 1.0 A down
+key 1.4453 A up
+key 1.4688 D down
+key 1.6797 D up
+key 1.7031 G down
+key 1.9141 G up
+key 1.9375 F down
+key 2.3828 F up
+key 2.4062 D down
+key 2.6172 D up
+key 2.6406 S down
+key 2.8516 S up
+key 2.875 D down
+key 3.5547 D up
+key 3.5781 A down
+key 3.7891 A up
+key 3.8125 S down
+key 4.7031 Right
+key 4.7266 S up
+key 4.75 A down
+key 5.2188 D down
+key 5.2422 A up
+key 5.4531 G down
+key 5.4766 D up
+key 5.6875 F down
+key 5.7109 G up
+key 6.1562 D down
+key 6.1797 F up
+key 6.3906 S down
+key 6.4141 D up
+key 6.625 D down
+key 6.6484 S up
+key 7.3281 A down
+key 7.3516 D up
+key 7.5625 S down
+key 7.5859 A up
+key 8.5234 S up
+end 9.4375

@@ -1,5 +1,5 @@
-# Loop and scream: play a pluck riff through one bar and press Enter before the bar
-# ends: at the bar line that bar loops. Then switch to Scream and play over it:
+# Loop and scream: play a pluck riff through one bar and press Space on the next
+# ONE: that bar loops and keeps its tempo. Then switch to Scream and play over it:
 # a trill with two fingers, slides, a bend, harmony sliding from a third to a fifth,
 # the octave click, and a throw at the end.
 # Render: build/tenfold render docs/parts/lead/loop-and-scream.tf loop.wav
@@ -22,9 +22,9 @@ up 3.2303 6
 down 3.3871 7 0.8700 0.550 p=0.55
 up 3.4723 7
 down 3.629 8 0.8180 0.550 p=0.55
-# ...and Enter: at the bar line, that bar loops.
-key 3.6774 Return
 up 3.7142 8
+# ...and Space on the next ONE: the bar loops.
+key 3.871 Space
 key 4.3548 Right
 key 4.4032 Right
 key 4.4516 Right

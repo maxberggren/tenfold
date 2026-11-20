@@ -391,19 +391,15 @@ private slots:
         QVERIFY(wet.rms(1.5, 2.5) > 0.003);
     }
 
-    void enterLoopsTheBarsJustPlayed() {
-        // At 124 BPM, A C E G on the beats of the second bar, then Enter
-        // late in the bar: the page shows a loop counting down to the bar
-        // line, and at the bar line that bar loops on its own line.
-        const std::string riff = riffInBarTwo() + "key 3.68 Return\n";
-        QString waiting;
-        testkit::play(riff + "end 3.78\n", [&](Session &s) { waiting = s.pageStatus(); });
-        QVERIFY2(waiting.contains(QStringLiteral("loop 1 bar in")), qPrintable(waiting));
-        const auto tr = trace(riff + "end 7.0\n");
+    void spaceOnTheNextOneLoopsThePhrase() {
+        // Nothing else playing: A C E G on the beats of the second bar,
+        // Space on the next ONE. The bar loops on its own line and keeps
+        // the tempo it was played in.
+        const auto tr = trace(riffInBarTwo() + fmt("key %.4f Space\nend 7.0\n", 8 * 60.0 / 124.0));
         const PartView &v = tr.take.view.parts[kLead];
         QCOMPARE(v.playing, 0);
         QCOMPARE(int(v.clips[0].lengthBeats), 4);
-        QCOMPARE(v.clips[0].events, 8);
+        QCOMPARE(int(std::lround(tr.take.view.bpm)), 124);
         bool sang = false;
         for (const auto &k : tr.ticks)
             sang |= k.t > 4.5 && k.data[16 * 1] > 0;
@@ -411,10 +407,23 @@ private slots:
         QVERIFY(tr.take.rms(5.0, 7.0) > 0.01);
     }
 
-    void enterAgainCallsTheLoopOff() {
-        const auto take = testkit::play(riffInBarTwo() + "key 3.6 Return\nkey 3.7 Return\nend 5.0\n");
-        QCOMPARE(take.view.parts[kLead].playing, -1);
-        QCOMPARE(int(take.view.parts[kLead].clips[0].state), int(ClipView::Empty));
+    void overALoopThePageCountsTheTakeDown() {
+        // A loop plays (its bar lines fall every 1.935 s from 3.871 s); a
+        // new phrase early in the next bar, then Space: the take waits for
+        // the bar line, and the page says so, with the slot and the bars
+        // (two: the phrase runs on from the riff before it, as Space sees it).
+        const double bar = 8 * 60.0 / 124.0, spb = 60.0 / 124.0;
+        std::string s = riffInBarTwo() + fmt("key %.4f Space\n", bar);
+        for (int i = 0; i < 3; ++i)
+            s += fmt("tap %.4f %.4f 0.5 len=0.15\n", bar + spb * (0.1 + i), cellX(7 + 2 * i));
+        s += fmt("key %.4f Space\n", bar + spb * 2.5);
+        QString waiting;
+        testkit::play(s + fmt("end %.4f\n", bar + spb * 3.0), [&](Session &ss) { waiting = ss.pageStatus(); });
+        QVERIFY2(waiting.contains(QStringLiteral("loop 2 bars · slot 2 at the bar · 1 beat")), qPrintable(waiting));
+        const auto take = testkit::play(s + "end 8.0\n");
+        QCOMPARE(take.view.parts[kLead].playing, 1);
+        QCOMPARE(take.view.parts[kLead].recording, -1);
+        QCOMPARE(int(take.view.parts[kLead].clips[1].lengthBeats), 8);
     }
 
     void ordinaryPlayingNeverLoops() {
@@ -436,23 +445,10 @@ private slots:
             QCOMPARE(int(c.state), int(ClipView::Empty));
     }
 
-    void shiftEnterRecordsFromTheNextBar() {
-        // Shift+Enter arms a recording for the next bar; the page says so;
-        // a second press ends it at the bar, and it loops.
-        const std::string s = "page 0 4\nkey 0.5 Shift+Return\n" + fmt("down 2.1 1 %.4f 0.5\nup 3.6 1\n", cellX(3));
-        QString armed;
-        testkit::play(s + "end 1.0\n", [&](Session &ss) { armed = ss.pageStatus(); });
-        QVERIFY2(armed.contains(QStringLiteral("rec in")), qPrintable(armed));
-        const auto take = testkit::play(s + "key 4.0 Shift+Return\nend 6.0\n");
-        const PartView &v = take.view.parts[kLead];
-        QCOMPARE(v.playing, 0);
-        QCOMPARE(int(v.clips[0].lengthBeats), 4);
-    }
-
     void aLiveLineAndALoopNeverStealEachOthersLegato() {
         // A loop plays while a live finger holds a note: both sound, each on
         // its own line.
-        const std::string s = riffInBarTwo() + "key 3.68 Return\n" +
+        const std::string s = riffInBarTwo() + fmt("key %.4f Space\n", 8 * 60.0 / 124.0) +
                               fmt("down 4.2 2 %.4f 0.5\nup 6.2 2\nend 6.5\n", cellX(11));
         const auto tr = trace(s);
         int both = 0;
@@ -503,10 +499,10 @@ private slots:
     }
 
     void stillFingersSendFewEvents() {
-        // A finger held still through a recorded bar leaves hardly anything
-        // in the clip besides its own on and off.
-        const std::string s = "page 0 4\nkey 0.1 F9\n" + fmt("down 2.0 1 %.4f 0.5\nup 3.8 1\n", cellX(3)) +
-                              "key 4.1 F9\nend 6.5\n";
+        // A finger held still through a looped phrase leaves hardly
+        // anything in the clip besides its own on and off.
+        const std::string s = "page 0 4\n" + fmt("down 2.0 1 %.4f 0.5\nup 3.8 1\n", cellX(3)) +
+                              "key 3.9 Space\nend 6.5\n";
         const auto take = testkit::play(s);
         const PartView &v = take.view.parts[kLead];
         int events = -1;

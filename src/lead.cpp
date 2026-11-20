@@ -14,9 +14,9 @@
 // finger on BEND is a pitch wheel that rests on whole steps, and a finger on
 // THROW throws the line into its echo.
 //
-// Loops are only ever asked for: Enter keeps the bars just played (from the
-// next bar line, counting down on the pad), Shift+Enter records from the
-// next bar. Playing alone never makes a loop.
+// Loops are only ever asked for, with the studio's Space: the page shows
+// what Space would take, then the take counting down to its bar line.
+// Playing alone never makes a loop.
 //
 // The engine plays one mono line per source (the live player and each clip),
 // so a looped melody and a live one never steal each other's legato.
@@ -1064,21 +1064,18 @@ public:
     }
 
     void background(double t, ControlContext &ctx) override {
-        tryCapture(ctx);
-        const int rec = ctx.studio().parts[ctx.part()].recording;
-        if (m_wasRecording >= 0 && rec < 0) {
-            const ClipView &c = ctx.studio().parts[ctx.part()].clips[m_wasRecording];
-            if (c.state != ClipView::Empty)
-                ctx.notice(QStringLiteral("Recorded %1 bar%2 into slot %3")
-                               .arg(int(c.lengthBeats / kBeatsPerBar))
-                               .arg(c.lengthBeats > kBeatsPerBar ? "s" : "")
-                               .arg(m_wasRecording + 1));
-        }
-        m_wasRecording = rec;
-        const double beat = ctx.beatAt(t);
-        m_loopText = loopState(beat, ctx.studio().parts[ctx.part()]);
-        const LoopPlan pl = m_loopText.isEmpty() ? plan(ctx) : LoopPlan{};
-        m_loopHint = pl.ok ? QStringLiteral("enter: loop %1 bar%2").arg(pl.bars).arg(pl.bars > 1 ? "s" : "") : QString();
+        // A take appearing: note how many bars Space will have taken (it
+        // was planned on the same notes a moment ago).
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        if (pv.recording >= 0 && m_wasRecording < 0)
+            m_takeBars = m_lastPlan.sets ? 0 : m_lastPlan.bars;
+        m_wasRecording = pv.recording;
+        m_loopText = loopState(ctx.beatAt(t), pv);
+        if (m_loopText.isEmpty())
+            m_lastPlan = spacePlan(ctx);
+        m_loopHint = !m_lastPlan.any ? QString()
+                     : m_lastPlan.sets ? QStringLiteral("space on the next one: loop it, set the tempo")
+                                       : QStringLiteral("space: loop %1 bar%2").arg(m_lastPlan.bars).arg(m_lastPlan.bars > 1 ? "s" : "");
         m_status = describe();
         // The trail: what the lines sang, sampled for the page to draw as
         // it rises away from the note names.
@@ -1205,10 +1202,8 @@ public:
         case Qt::Key_Return:
         case Qt::Key_Enter:
             if (k.modifiers & Qt::ShiftModifier)
-                toggleRecord(ctx);
-            else
-                keepPhrase(ctx);
-            return true;
+                return toggleLatch(ctx);
+            [[fallthrough]];
         case Qt::Key_F11:
         case Qt::Key_AsciiTilde: // Shift+` on a US keyboard
         case Qt::Key_onehalf:    // Shift+§ on a Nordic one
@@ -1231,9 +1226,6 @@ public:
             }
             ctx.notice(m_gate ? QStringLiteral("Gate %1").arg(QString::fromUtf8(gateName(m_gate)))
                               : QStringLiteral("Gate off"));
-            return true;
-        case Qt::Key_F9:
-            toggleRecord(ctx);
             return true;
         case Qt::Key_F10: {
             const bool on = !ctx.studio().parts[ctx.part()].overdub;
@@ -1274,14 +1266,14 @@ public:
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"
             "BEND\ta pitch wheel: slide up or down, rests on whole steps\n"
             "THROW\tinto the echo; higher throws harder; lift and the repeats ring out\n"
-            "Enter\tloop what you just played: the whole bars since its first note, from the bar line (the pad shows which bars and counts down)\n"
-            "Shift+Enter (or F9)\trecord into the next free slot from the next bar; again to end it at the bar\n"
+            "Space, after playing\tloops it (the studio's key): alone, press it on the phrase's next ONE and it sets the tempo; over a loop, its bars loop from the bar line. The pad shows what Space would take and counts the take down\n"
+            "Space again\tcalls a waiting take off\n"
             "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents\n"
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream\n"
             "↑ ↓\toctave of the neck and the keys\n"
             "Shift+↑ ↓\tglide longer, shorter\n"
-            "F11 (or Shift+§, ~)\tfollow the chord: notes and harmony land on chord tones\n"
-            "\\ (or F12)\tharmony holds after the fingers lift\n"
+            "Enter (or F11, Shift+§)\tfollow the chord: notes and harmony land on chord tones\n"
+            "Shift+Enter (or \\, F12)\tharmony holds after the fingers lift\n"
             "§ (or `)\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
             "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
             "F10\toverdub onto the playing loop\n"
@@ -1361,115 +1353,71 @@ private:
 
     // --- loops ---
     //
-    // A loop is always something the player asks for, and the page shows it
-    // coming. Enter keeps the phrase just played: it waits for the bar line
-    // (or takes the one just passed, within half a beat), and loops the
-    // whole bars from the phrase's first note, one, two or four of them.
-    // Shift+Enter (or F9) records from the next bar instead, until it's
-    // pressed again. Playing never makes a loop by itself.
+    // Space is the studio's: on every page it loops what was just played.
+    // With nothing else playing, Space on the phrase's next ONE closes the
+    // loop and sets the tempo; over a playing loop, the bars holding the
+    // phrase loop from the bar line. This page only shows it coming: what
+    // Space would take, and then the take counting down to its bar line.
+    // Playing alone never makes a loop.
 
     void logOnset(double t) {
         m_onsets[size_t(m_onsetHead++ % m_onsets.size())] = t;
     }
 
-    // The bars Enter would loop now: the bar line it ends on and how many.
-    struct LoopPlan {
-        bool ok = false;
-        double end = 0; // beat of the bar line
+    // What Space would do now, by the session's own rule: the phrase runs
+    // back from the latest note to a pause of two bars; over a playing loop
+    // it ends on the bar line just passed (within a beat) or the next one,
+    // in one, two, four or eight bars.
+    struct SpacePlan {
+        bool any = false;   // there is a phrase to loop
+        bool sets = false;  // nothing else plays: the loop will set the tempo
         int bars = 0;
-        int notes = 0;
     };
-    LoopPlan plan(ControlContext &ctx) const {
-        LoopPlan pl;
-        const double now = ctx.beatAt(ctx.now());
-        const double into = now - std::floor(now / kBeatsPerBar) * kBeatsPerBar;
-        pl.end = into < 0.5 ? now - into : now - into + kBeatsPerBar;
-        // The phrase: the notes back from now until a whole bar of silence,
-        // at most four bars before the end.
-        double start = 1e18, last = pl.end;
+    SpacePlan spacePlan(ControlContext &ctx) const {
+        SpacePlan pl;
+        const StudioView &sv = ctx.studio();
+        const double now = ctx.now(), spb = 60.0 / std::max(1.0, sv.bpm);
+        double first = -1;
         const long n = std::min<long>(m_onsetHead, long(m_onsets.size()));
         for (long i = 1; i <= n; ++i) {
-            const double b = ctx.beatAt(m_onsets[size_t((m_onsetHead - i) % long(m_onsets.size()))]);
-            if (b > pl.end - 0.05)
+            const double t = m_onsets[size_t((m_onsetHead - i) % long(m_onsets.size()))];
+            if (t > now + 0.05)
                 continue;
-            if (last - b > kBeatsPerBar || pl.end - b > 4 * kBeatsPerBar + 0.5)
+            if ((first >= 0 && first - t > 8 * spb) || (first < 0 && now - t > 8 * spb))
                 break;
-            start = b;
-            last = b;
-            ++pl.notes;
+            first = t;
         }
-        if (pl.notes == 0)
+        if (first < 0)
             return pl;
-        // A pickup just before a bar line belongs to that bar.
-        const double firstBar = std::floor((start + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-        const double span = (pl.end - firstBar) / kBeatsPerBar;
-        pl.bars = span <= 1.01 ? 1 : span <= 2.01 ? 2 : 4;
-        pl.ok = true;
+        pl.any = true;
+        bool playing = false;
+        for (int p = 0; p < sv.partCount; ++p)
+            playing |= sv.parts[p].playing >= 0 || sv.parts[p].queued >= 0;
+        if (!playing && !sv.metronome) {
+            pl.sets = true;
+            return pl;
+        }
+        const double beat = ctx.beatAt(now), firstBeat = ctx.beatAt(first);
+        const double bar = std::floor(beat / kBeatsPerBar) * kBeatsPerBar;
+        const double end = beat - bar < 1.0 ? bar : bar + kBeatsPerBar;
+        const double startBar = std::floor((firstBeat + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+        pl.bars = 1;
+        while (pl.bars < 8 && end - pl.bars * kBeatsPerBar > startBar + 1e-6)
+            pl.bars *= 2;
         return pl;
     }
 
-    void keepPhrase(ControlContext &ctx) {
-        if (m_capture.armed) {
-            m_capture.armed = false;
-            ctx.notice(QStringLiteral("Loop called off"));
-            return;
-        }
-        const LoopPlan pl = plan(ctx);
-        if (!pl.ok) {
-            ctx.notice(QStringLiteral("Nothing to loop yet: play a phrase, then Enter"));
-            return;
-        }
-        m_capture = {true, pl.end, pl.bars, pl.notes};
-        tryCapture(ctx);
-    }
-
-    // Runs with every tick: a loop waiting for its bar line takes it.
-    void tryCapture(ControlContext &ctx) {
-        if (!m_capture.armed || ctx.beatAt(ctx.now()) < m_capture.end)
-            return;
-        m_capture.armed = false;
-        const int slot = std::max(0, ctx.freeSlot());
-        const double b0 = m_capture.end - kBeatsPerBar * m_capture.bars;
-        // Lightly pulled to the grid: a lead's timing is part of its feel.
-        ctx.capture(slot, ctx.timeAt(b0), ctx.timeAt(m_capture.end), 0.5f);
-        ctx.notice(QStringLiteral("Looping %1 bar%2 (%3 notes) in slot %4")
-                       .arg(m_capture.bars)
-                       .arg(m_capture.bars > 1 ? "s" : "")
-                       .arg(m_capture.notes)
-                       .arg(slot + 1));
-    }
-
-    void toggleRecord(ControlContext &ctx) {
-        // Ask the studio, not a flag of our own: a recording also ends by
-        // itself after eight bars.
-        if (ctx.studio().parts[ctx.part()].recording >= 0) {
-            ctx.stopRecording();
-            ctx.notice(QStringLiteral("Recording ends at the bar"));
-            return;
-        }
-        const int slot = std::max(0, ctx.freeSlot());
-        const double now = ctx.beatAt(ctx.now());
-        m_recStart = std::ceil(now / kBeatsPerBar - 1e-9) * kBeatsPerBar;
-        m_recSlot = slot;
-        ctx.record(slot, 8);
-        ctx.notice(QStringLiteral("Recording into slot %1 from the next bar").arg(slot + 1));
-    }
-
-    // What the loop machinery is doing, for the page and the status line.
+    // The take as the studio shows it: waiting for its bar line in a slot.
     QString loopState(double beat, const PartView &v) const {
-        if (m_capture.armed) {
-            const double left = m_capture.end - beat;
-            return QStringLiteral("loop %1 bar%2 in %3")
-                .arg(m_capture.bars)
-                .arg(m_capture.bars > 1 ? "s" : "")
-                .arg(left > 1 ? QStringLiteral("%1 beats").arg(int(std::ceil(left))) : QStringLiteral("1 beat"));
-        }
-        if (v.recording >= 0) {
-            if (beat < m_recStart)
-                return QStringLiteral("rec in %1").arg(int(std::ceil(m_recStart - beat)));
-            return QStringLiteral("rec bar %1 of 8").arg(int((beat - m_recStart) / kBeatsPerBar) + 1);
-        }
-        return {};
+        if (v.recording < 0)
+            return {};
+        const double left = std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar - beat;
+        const QString bars = m_takeBars > 0 ? QStringLiteral("%1 bar%2 · ").arg(m_takeBars).arg(m_takeBars > 1 ? "s" : "")
+                                            : QString();
+        return QStringLiteral("loop %1slot %2 at the bar · %3")
+            .arg(bars)
+            .arg(v.recording + 1)
+            .arg(left > 1.0 ? QStringLiteral("%1 beats").arg(int(std::ceil(left))) : QStringLiteral("1 beat"));
     }
 
     void land(Held &h, const Touch &t, double now, ControlContext &ctx) {
@@ -1705,15 +1653,10 @@ private:
     Slot m_slots[kHarmSlots];
     std::array<double, 256> m_onsets{}; // when the last notes landed, touch clock
     long m_onsetHead = 0;
-    struct {
-        bool armed = false;
-        double end = 0;
-        int bars = 0, notes = 0;
-    } m_capture;
-    double m_recStart = 0;
-    QString m_loopText, m_loopHint; // what the loop machinery is doing; what Enter would do
-    int m_recSlot = 0;
+    SpacePlan m_lastPlan;
+    int m_takeBars = 0;             // how many bars the waiting take holds, as Space planned it
     int m_wasRecording = -1;
+    QString m_loopText, m_loopHint; // the take on its way; what Space would do now
     Frame m_frame;
     int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;
     bool m_follow = false, m_latch = false, m_click = false;
@@ -1982,13 +1925,15 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                 c::alpha(col, 0.8f), int(12 * unit + 1), true, Qt::AlignCenter);
     }
 
+    // The take, straight from the studio's view of this part.
+    m_loopText = loopState(pc.beat, pv);
     // The loop machinery, at the top of the neck where it can't be missed:
     // a loop counting down to its bar line, a recording armed or running,
     // or, quietly, what Enter would loop right now.
     {
         const QPointF at(neck.center().x(), neck.top() + 16 * unit);
         if (!m_loopText.isEmpty()) {
-            const bool rec = m_loopText.startsWith(QStringLiteral("rec"));
+            const bool rec = true;
             const bool blink = std::fmod(pc.beat, 1.0) < 0.5;
             c::tag(p, at, QStringLiteral("● ") + m_loopText, rec ? (blink ? c::red() : c::alpha(c::red(), 0.6f)) : col,
                    int(13 * unit + 1), true);

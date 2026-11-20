@@ -1059,7 +1059,7 @@ private:
         v.agcRms = 0.3f;
         v.agc = 1.0f / 0.3f;
         v.lfo3 = v.rng.unit();
-        v.rate3 = 0.015f + 0.02f * v.rng.unit();
+        v.rate3 = 0.025f + 0.02f * v.rng.unit();
         v.id = c.id;
         v.family = std::clamp(c.i[0], 0, kFamilies - 1);
         setTargets(v, c);
@@ -1172,7 +1172,7 @@ private:
         v.lfo3 -= std::floor(v.lfo3);
         const float drift = std::sin(kTwoPi * v.lfo3);
         const float height = v.cur[0], press = v.cur[2], motion = v.cur[3], width = v.cur[4];
-        const float colour = clampf(v.cur[1] + 0.09f * drift, 0.0f, 1.0f);
+        const float colour = clampf(v.cur[1] + 0.15f * drift, 0.0f, 1.0f);
         const float P = fs.low + height * (fs.high - fs.low);
 
         // The voicing window: every chord tone between P and P + span, the
@@ -1297,7 +1297,7 @@ private:
         // Air breathes hardest: wind comes in gusts.
         const float gust = v.family == Air ? 2.5f : 1.0f;
         const float breath = 1.0f + std::sqrt(gust) * ((0.07f + 0.08f * evolve) * b1 + 0.05f * b2);
-        float oct = 0.3f * gust * b2 + 0.45f * drift + 3.5f * m_swellE;
+        float oct = 0.3f * gust * b2 + 0.9f * drift + 3.5f * m_swellE;
         if (evolve > 0.04f) {
             // A slow filter sweep locked to the bars: four bars round at a
             // touch of twist, one bar at full.

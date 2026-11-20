@@ -59,6 +59,9 @@ struct Command {
     enum Flags : uint16_t {
         Quantize = 1, // a User command that is an onset: recorded clips pull it to the grid
         NoRecord = 2, // never goes into a clip (a page's own preview, a metronome)
+        Continue = 4, // an On that carries on a sound already heard (a voice handed over at a
+                      // bar line, a latched layer re-asserted): recorded, but not an onset, so
+                      // Space's phrase finder doesn't mistake it for playing
     };
     uint16_t type = On;
     uint16_t flags = 0;
@@ -182,7 +185,9 @@ struct PartView {
     int playing = -1;    // the slot playing, or -1
     int queued = -1;     // the slot about to start at the next boundary, or -1
     bool overdub = false;
-    int recording = -1;  // the slot being recorded, or -1
+    int recording = -1;  // the slot being recorded, or a take waiting for it, or -1
+    float takeBeats = 0; // a waiting take's length in beats (0 while open-ended)
+    double takeAt = 0;   // the beat it starts looping at
     ChannelView channel;
     int voices = 0;
     float data[kPartData] = {};
@@ -264,6 +269,8 @@ public:
     virtual void stop(bool now = false) = 0;
     virtual void clear(int slot) = 0;
     int freeSlot() const {
+        if (part() < 0)
+            return -1;
         for (int s = 0; s < kClipSlots; ++s)
             if (studio().parts[part()].clips[s].state == ClipView::Empty)
                 return s;

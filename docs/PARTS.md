@@ -45,9 +45,12 @@ about 60 times a second and the page reads as `pc.view->data`.
 - **Clips: eight slots per part.** Everything a part sends is remembered for a
   few bars:
   - `ctx.capture(slot, t0, t1)` turns what was played between t0 and t1 into a
-    loop and plays it at once. This is the tap-then-hold gesture; `src/phrase.h`
-    has the timing rules, tuned on a real trackpad, so reuse it. If nothing else
-    is playing, that first loop sets the studio's tempo.
+    loop and plays it at once. If nothing else is playing, that first loop sets
+    the studio's tempo. Loops must be deliberate and visible: the player asked
+    "what is triggering the loop in slot?" when timing alone (the tap-then-hold
+    rule in `src/phrase.h`) made them. Make a loop only from an explicit act
+    (Space, the click, a marked zone), show a cue before it happens, and say
+    what was captured.
   - `ctx.record(slot, maxBars)` / `ctx.stopRecording()` record armed from the
     next bar.
   - `ctx.overdub(on)` adds to the playing clip.
@@ -93,9 +96,12 @@ about 60 times a second and the page reads as `pc.view->data`.
 3. **Musical and pleasant first.** Everything must sit in the key and in time
    by default. Electronic, big, modern, polished: a producer should want to
    use it in a real track.
-4. **The keyboard is yours,** except the digits, Space, Escape, Tab, `?` and
-   every Ctrl combination (the session's). Convention across pages: F1–F8
-   launch your slots, Backspace stops your clip. Use letter keys where they
+4. **The keyboard is yours,** except the digits, Escape, Tab, `?` and every
+   Ctrl combination (the session's). Convention across pages, at the user's
+   request: **Space records a loop** (from the next bar; Space again closes it).
+   If your page doesn't handle Space, the session does exactly that for you;
+   handle it yourself to add your own cues. F1–F8 launch your slots, Backspace
+   stops your clip. Use letter keys where they
    make the instrument better (a piano row, chord buttons, pads).
 5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about
    0.5%) and at most about 60 Hz per finger. A clip holds 2048 events.

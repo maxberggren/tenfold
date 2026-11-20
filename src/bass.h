@@ -756,15 +756,10 @@ public:
 
             const float amp = m_amp;
             const float mute = m_mute.step(muteTarget);
-            const float top = y * amp * topGain * (1.0f + 0.35f * m_accent * R.accent);
+            const float top = y * amp * topGain * (1.0f + 0.5f * m_accent * R.accent);
             // The sub ducks under the kick harder than the top does.
             const float sub = s1 * amp * subGain * (1.0f - 0.45f * duck[std::min(off0 + i, kBlock - 1)]);
-            // A soft knee near the top, so an accented, fat, resonant attack
-            // rounds off instead of hitting the bus limiter.
             float mono = (top + sub) * mute;
-            const float mag = std::fabs(mono);
-            if (mag > 0.6f)
-                mono = std::copysign(0.6f + 0.3f * fastTanh((mag - 0.6f) / 0.3f), mono);
             float side = 0;
             if (width > 0.01f) {
                 m_chorus.push(m_sideHp.step(top * mute).high);
@@ -775,6 +770,15 @@ public:
                 const float a = m_chorus.read((0.0075f + 0.0016f * lfoC) * rate);
                 const float b = m_chorus.read((0.0113f - 0.0021f * lfoC) * rate);
                 side = (a - b) * 0.55f * width;
+            }
+            // A soft knee near the top, the same for both sides, so an
+            // accented, fat, resonant attack rounds off instead of hitting
+            // the bus limiter, and the low end stays one signal.
+            const float mag = std::fabs(mono) + std::fabs(side);
+            if (mag > 0.6f) {
+                const float k = (0.6f + 0.3f * fastTanh((mag - 0.6f) / 0.3f)) / mag;
+                mono *= k;
+                side *= k;
             }
             l[i] += mono + side;
             r[i] += mono - side;

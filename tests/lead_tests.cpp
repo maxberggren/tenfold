@@ -475,11 +475,34 @@ private slots:
         s += fmt("key %.4f Space\n", bar + spb * 2.5);
         QString waiting;
         testkit::play(s + fmt("end %.4f\n", bar + spb * 3.0), [&](Session &ss) { waiting = ss.pageStatus(); });
-        QVERIFY2(waiting.contains(QStringLiteral("loop 2 bars · slot 2 at the bar · 1 beat")), qPrintable(waiting));
+        QVERIFY2(waiting.contains(QStringLiteral("loop 2 bars · slot 2 · in 1 beat")), qPrintable(waiting));
         const auto take = testkit::play(s + "end 8.0\n");
         QCOMPARE(take.view.parts[kLead].playing, 1);
         QCOMPARE(take.view.parts[kLead].recording, -1);
         QCOMPARE(int(take.view.parts[kLead].clips[1].lengthBeats), 8);
+    }
+
+    void theTakeCueMatchesTheLoopItLands() {
+        // Over a playing one-bar loop, phrases of 1, 3, 5 and 6 bars, then
+        // Space late in the last bar: the page names the length the studio
+        // will take (the nearest of 1, 2, 4, 8 bars) and the clip has it.
+        const double spb = 60.0 / 124.0, barLine = 8 * spb, bar = 4 * spb;
+        const int phrases[4] = {1, 3, 5, 6}, expect[4] = {1, 4, 4, 8};
+        for (int i = 0; i < 4; ++i) {
+            std::string s = riffInBarTwo() + fmt("key %.4f Space\n", barLine);
+            const double start = barLine + 3 * bar; // after a two-bar pause, so it's a new phrase
+            for (int b = 0; b < 4 * phrases[i]; ++b)
+                s += fmt("tap %.4f %.4f 0.5 len=0.15\n", start + spb * (b + 0.05), cellX(7 + b % 5));
+            const double space = start + bar * phrases[i] - spb * 0.4;
+            s += fmt("key %.4f Space\n", space);
+            QString cue;
+            testkit::play(s + fmt("end %.4f\n", space + 0.1), [&](Session &ss) { cue = ss.pageStatus(); });
+            const QString want = expect[i] == 1 ? QStringLiteral("loop 1 bar · slot 2")
+                                                : QStringLiteral("loop %1 bars · slot 2").arg(expect[i]);
+            QVERIFY2(cue.contains(want), qPrintable(cue + " / want " + want));
+            const auto take = testkit::play(s + fmt("end %.4f\n", space + 1.0));
+            QCOMPARE(int(take.view.parts[kLead].clips[1].lengthBeats), 4 * expect[i]);
+        }
     }
 
     void ordinaryPlayingNeverLoops() {

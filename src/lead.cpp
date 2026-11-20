@@ -1112,18 +1112,20 @@ public:
     }
 
     void background(double t, ControlContext &ctx) override {
-        // A take appearing: note how many bars Space will have taken (it
-        // was planned on the same notes a moment ago).
+        // The take is the studio's to describe; the hint only says whether
+        // Space has something to loop and how it would land. How many bars
+        // it takes is the session's decision, shown once it has made it.
         const PartView &pv = ctx.studio().parts[ctx.part()];
-        if (pv.recording >= 0 && m_wasRecording < 0)
-            m_takeBars = m_lastPlan.sets ? 0 : m_lastPlan.bars;
-        m_wasRecording = pv.recording;
+        // Once Space has taken a phrase (a take waiting, or a new loop
+        // playing), those notes are spoken for: the hint waits for new ones.
+        if (pv.recording >= 0 || (pv.playing >= 0 && pv.playing != m_seenPlaying))
+            m_takenAt = t;
+        m_seenPlaying = pv.playing;
         m_loopText = loopState(ctx.beatAt(t), pv);
-        if (m_loopText.isEmpty())
-            m_lastPlan = spacePlan(ctx);
-        m_loopHint = !m_lastPlan.any ? QString()
-                     : m_lastPlan.sets ? QStringLiteral("space on the next one loops it")
-                                       : QStringLiteral("space: loop %1 bar%2").arg(m_lastPlan.bars).arg(m_lastPlan.bars > 1 ? "s" : "");
+        const SpacePlan pl = m_loopText.isEmpty() ? spacePlan(ctx) : SpacePlan{};
+        m_loopHint = !pl.any ? QString()
+                     : pl.sets ? QStringLiteral("space on the next one loops it")
+                               : QStringLiteral("space loops it from the bar line");
         m_status = describe();
         // The trail: what the lines sang, sampled for the page to draw as
         // it rises away from the note names.
@@ -1412,46 +1414,26 @@ private:
         m_onsets[size_t(m_onsetHead++ % m_onsets.size())] = t;
     }
 
-    // What Space would do now, by the session's own rule: the phrase runs
-    // back from the latest note to a pause of two bars; over a playing loop
-    // it ends on the bar line just passed (within a beat) or the next one,
-    // in one, two, four or eight bars.
+    // Whether Space has a phrase to loop now (notes since a pause of two
+    // bars, as the session looks for them), and whether that loop would
+    // set the tempo (nothing else playing).
     struct SpacePlan {
-        bool any = false;   // there is a phrase to loop
-        bool sets = false;  // nothing else plays: the loop will set the tempo
-        int bars = 0;
+        bool any = false;
+        bool sets = false;
     };
     SpacePlan spacePlan(ControlContext &ctx) const {
         SpacePlan pl;
         const StudioView &sv = ctx.studio();
         const double now = ctx.now(), spb = 60.0 / std::max(1.0, sv.bpm);
-        double first = -1;
         const long n = std::min<long>(m_onsetHead, long(m_onsets.size()));
-        for (long i = 1; i <= n; ++i) {
-            const double t = m_onsets[size_t((m_onsetHead - i) % long(m_onsets.size()))];
-            if (t > now + 0.05)
-                continue;
-            if ((first >= 0 && first - t > 8 * spb) || (first < 0 && now - t > 8 * spb))
-                break;
-            first = t;
-        }
-        if (first < 0)
+        const double latest = n > 0 ? m_onsets[size_t((m_onsetHead - 1) % long(m_onsets.size()))] : -1e9;
+        if (latest <= m_takenAt || now - latest > 8 * spb)
             return pl;
         pl.any = true;
         bool playing = false;
         for (int p = 0; p < sv.partCount; ++p)
             playing |= sv.parts[p].playing >= 0 || sv.parts[p].queued >= 0;
-        if (!playing && !sv.metronome) {
-            pl.sets = true;
-            return pl;
-        }
-        const double beat = ctx.beatAt(now), firstBeat = ctx.beatAt(first);
-        const double bar = std::floor(beat / kBeatsPerBar) * kBeatsPerBar;
-        const double end = beat - bar < 1.0 ? bar : bar + kBeatsPerBar;
-        const double startBar = std::floor((firstBeat + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-        pl.bars = 1;
-        while (pl.bars < 8 && end - pl.bars * kBeatsPerBar > startBar + 1e-6)
-            pl.bars *= 2;
+        pl.sets = !playing && !sv.metronome;
         return pl;
     }
 
@@ -1459,13 +1441,23 @@ private:
     QString loopState(double beat, const PartView &v) const {
         if (v.recording < 0)
             return {};
-        const double left = std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar - beat;
-        const QString bars = m_takeBars > 0 ? QStringLiteral("%1 bar%2 · ").arg(m_takeBars).arg(m_takeBars > 1 ? "s" : "")
-                                            : QString();
-        return QStringLiteral("loop %1slot %2 at the bar · %3")
-            .arg(bars)
+        // The studio publishes the take's real length and the beat it lands
+        // on; an open-ended one (a recording) has neither yet.
+        QString length;
+        if (v.takeBeats >= kBeatsPerBar - 0.01f) {
+            const int bars = int(std::lround(v.takeBeats / kBeatsPerBar));
+            length = QStringLiteral("%1 bar%2 · ").arg(bars).arg(bars > 1 ? "s" : "");
+        } else if (v.takeBeats > 0) {
+            const int beats = int(std::lround(v.takeBeats));
+            length = QStringLiteral("%1 beat%2 · ").arg(beats).arg(beats > 1 ? "s" : "");
+        }
+        const double left = v.takeBeats > 0 ? v.takeAt - beat : std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar - beat;
+        return QStringLiteral("loop %1slot %2 · %3")
+            .arg(length)
             .arg(v.recording + 1)
-            .arg(left > 1.0 ? QStringLiteral("%1 beats").arg(int(std::ceil(left))) : QStringLiteral("1 beat"));
+            .arg(left > 1.0   ? QStringLiteral("in %1 beats").arg(int(std::ceil(left)))
+                 : left > 0.0 ? QStringLiteral("in 1 beat")
+                              : QStringLiteral("now"));
     }
 
     void land(Held &h, const Touch &t, double now, ControlContext &ctx) {
@@ -1699,11 +1691,10 @@ private:
     std::array<Held, 16> m_held{};
     std::array<KeyHeld, 36> m_keys{};
     Slot m_slots[kHarmSlots];
+    double m_takenAt = -1e9; // when Space last took a phrase
+    int m_seenPlaying = -1;
     std::array<double, 256> m_onsets{}; // when the last notes landed, touch clock
     long m_onsetHead = 0;
-    SpacePlan m_lastPlan;
-    int m_takeBars = 0;             // how many bars the waiting take holds, as Space planned it
-    int m_wasRecording = -1;
     QString m_loopText, m_loopHint; // the take on its way; what Space would do now
     Frame m_frame;
     int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;

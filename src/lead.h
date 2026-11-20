@@ -96,6 +96,19 @@ inline int packRows(const int rows[kHarmSlots]) {
 }
 inline int unpackRow(int flags, int slot) { return ((flags >> (8 + 3 * slot)) & 7) - 1; }
 
+// What the engine publishes for the page: sixteen numbers per line (0 live,
+// 1 + slot for a clip), then the echo.
+//   [0] 1 sounding and held, 0.5 ringing out, 0 silent
+//   [1] where it sings, in absolute scale degrees (octave·degreesPerOctave + degree)
+//   [2] its level, [3] its brightness (the finger's height)
+//   [4..6] the harmony voices' degrees, [7..9] their levels
+//   [10] the bend in degrees, [11] the throw, [12] the sound, [13] following the chord
+//   [14] the vibrato's depth now, [15] 1 while an octave up
+// kEchoLevel: how loud the echo's repeats are; kVoiceCount: voices sounding.
+constexpr int kLineData = 16;
+constexpr int kEchoLevel = 160;
+constexpr int kVoiceCount = 161;
+
 // Which line of play a command belongs to: 0 live, 1 + slot for a clip.
 inline int lineOf(int id) { return (id & (1 << 30)) ? 1 + ((id >> 24) & 7) : 0; }
 

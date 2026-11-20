@@ -254,9 +254,9 @@ public:
     }
 
     void publish(float *data) override {
-        // Sixteen numbers per line (the page's paint reads them), then the echo.
+        // See lead.h for what each number is.
         for (int li = 0; li < kLines; ++li) {
-            float *d = data + 16 * li;
+            float *d = data + kLineData * li;
             const Line &line = m_lines[size_t(li)];
             const Voice *v = line.voice >= 0 ? &m_voices[size_t(line.voice)] : nullptr;
             const bool on = v && v->active && v->owner == li;
@@ -275,8 +275,8 @@ public:
             d[14] = on ? m_pubVib[li] : 0.0f;
             d[15] = line.octave;
         }
-        data[160] = m_echoLevel;
-        data[161] = float(voices());
+        data[kEchoLevel] = m_echoLevel;
+        data[kVoiceCount] = float(voices());
     }
 
     int voices() const override {
@@ -1076,7 +1076,7 @@ public:
                 p.level[k][0] = 0;
                 continue;
             }
-            const float *d = v.data + 16 * line;
+            const float *d = v.data + kLineData * line;
             p.pos[k][0] = d[1];
             p.level[k][0] = d[0] > 0 ? d[2] : 0.0f;
             for (int s = 0; s < kHarmSlots; ++s) {
@@ -1220,11 +1220,12 @@ public:
                 ctx.notice(QStringLiteral("Recording into slot %1 from the next bar").arg(slot + 1));
             }
             return true;
-        case Qt::Key_F10:
-            m_overdub = !m_overdub;
-            ctx.overdub(m_overdub);
-            ctx.notice(m_overdub ? QStringLiteral("Overdub on") : QStringLiteral("Overdub off"));
+        case Qt::Key_F10: {
+            const bool on = !ctx.studio().parts[ctx.part()].overdub;
+            ctx.overdub(on);
+            ctx.notice(on ? QStringLiteral("Overdub on") : QStringLiteral("Overdub off"));
             return true;
+        }
         default:
             return false;
         }
@@ -1633,7 +1634,7 @@ private:
     Phrase m_phrase;
     Frame m_frame;
     int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;
-    bool m_follow = false, m_latch = false, m_click = false, m_overdub = false;
+    bool m_follow = false, m_latch = false, m_click = false;
     QString m_status;
     std::array<TrailPoint, kTrail> m_trail{};
     long m_trailHead = 0;
@@ -1801,7 +1802,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         const int line = k == 0 ? 0 : (pv.playing >= 0 ? 1 + pv.playing : -1);
         if (line < 0)
             continue;
-        const float *d = pv.data + 16 * line;
+        const float *d = pv.data + kLineData * line;
         if (d[0] <= 0 || d[2] < 0.005f)
             continue;
         auto string = [&](float pos, float level, float width) {
@@ -1884,7 +1885,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     {
         const QRectF r = pc.rect(kBendSplit, 0, kColumn, kHarmBottom).adjusted(3 * unit, 6 * unit, -6 * unit, -6 * unit);
         const float amt = live[11];
-        const float echo = std::min(1.0f, pv.data[160] * 2.0f);
+        const float echo = std::min(1.0f, pv.data[kEchoLevel] * 2.0f);
         p.setPen(QPen(c::alpha(col, amt > 0 ? 1.0f : 0.6f), 1.5));
         p.setBrush(amt > 0 ? QBrush(c::alpha(col, 0.15f + 0.4f * amt)) : Qt::NoBrush);
         p.drawRect(r);

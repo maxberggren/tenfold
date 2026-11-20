@@ -104,7 +104,8 @@ about 60 times a second and the page reads as `pc.view->data`.
    Over a playing loop, the bars that hold the phrase become a loop from the
    bar line. Space again while a take waits calls it off. The session finds
    the phrase from your onsets, so send every onset as `On` or flagged
-   `Command::Quantize`. Show it on your page from `pc.view->recording` (a take
+   `Command::Quantize`, and flag an `On` that only carries on a sound already
+   heard (a bar-line handover, a re-asserted latched layer) `Command::Continue`. Show it on your page from `pc.view->recording` (a take
    waiting) and the clip strip. F1–F8 launch your slots, Backspace stops your
    clip.
 5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about

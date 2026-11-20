@@ -138,6 +138,11 @@ public:
     const Tuning &tuning() const { return m_tuning; }
 
     static constexpr double kHoldTime = 0.19;
+    // A drum tapped in time is often left down a little longer than a note
+    // (a deliberate tap on the beat lasts 0.2-0.3 s), and on the drum row a
+    // hold means a roll: wait longer before deciding, or taps turn into
+    // stuttering rolls that never become part of a phrase.
+    static constexpr double kDrumHoldTime = 0.3;
     static constexpr double kLiftGrace = 0.035;
     static constexpr int kOctaves = 3;
 

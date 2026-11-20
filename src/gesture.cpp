@@ -197,7 +197,7 @@ void Gesture::frame(const Frame &f) {
                     strike(c);
             }
         }
-        if (c.state == TouchState::Landing && age >= kHoldTime)
+        if (c.state == TouchState::Landing && age >= (c.row == DrumRow ? kDrumHoldTime : kHoldTime))
             hold(c, f.t);
     }
 
@@ -211,7 +211,7 @@ void Gesture::frame(const Frame &f) {
         float maxGap = 1.3f;
         for (size_t i = 1; i < m_phrase.size(); ++i)
             maxGap = std::max(maxGap, float(m_phrase[i].t - m_phrase[i - 1].t) * 2.3f);
-        if (f.t - m_phrase.back().t > std::min(maxGap, 2.4f) + kHoldTime)
+        if (f.t - m_phrase.back().t > std::min(maxGap, 2.4f) + kDrumHoldTime)
             m_phrase.clear();
     }
 
@@ -565,6 +565,9 @@ void Gesture::hold(Contact &c, double now) {
         }
     }
 
+    if (m_phrase.empty() && std::getenv("TENFOLD_DEBUG"))
+        std::fprintf(stderr, "tenfold: hold on row %d with no taps before it -> %s\n", c.row,
+                     c.row == DrumRow ? "roll" : "note");
     if (!m_phrase.empty()) {
         const Tap &last = m_phrase.back();
         const Tap &first = m_phrase.front();
@@ -781,6 +784,9 @@ void Gesture::lift(Contact &c, double now) {
             ++m_overdubs;
         } else {
             m_phrase.push_back({c.t0, c.x0, c.y0, c.row, c.value, c.vel, length});
+            if (std::getenv("TENFOLD_DEBUG"))
+                std::fprintf(stderr, "tenfold: tap on row %d, %.3f s long, %zu in the phrase\n", c.row, length,
+                             m_phrase.size());
             while (m_phrase.size() > 64 || (m_phrase.size() > 1 && c.t0 - m_phrase.front().t > 8.0))
                 m_phrase.erase(m_phrase.begin());
         }

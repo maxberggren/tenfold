@@ -352,12 +352,31 @@ private slots:
         }
         pad.run(0.11);
         pad.land({20, 0.05f, kDrums, 0.3f, 1.0f});
-        for (int i = 0; i < 30; ++i) {
+        for (int i = 0; i < 45; ++i) {
             pad.finger(20)->size = std::min(2.0f, pad.finger(20)->size + 0.08f);
             pad.run(0.008);
         }
         QCOMPARE(sink.count(Cmd::LoopBegin), 1);
         QCOMPARE(sink.count(Cmd::RollOn), 0);
+    }
+
+    void longKickTapsAreTapsNotRolls() {
+        // Deliberate taps on the click, each left down a quarter of a second,
+        // then the ONE held: four kicks and a loop, no rolls.
+        RecordingSink sink;
+        Gesture g(&sink);
+        sink.clear();
+        Pad pad(g);
+        for (int i = 0; i < 4; ++i) {
+            pad.land({10 + i, 0.05f, kDrums});
+            pad.run(0.26);
+            pad.lift(10 + i);
+            pad.run(0.5 - 0.26);
+        }
+        pad.land({20, 0.05f, kDrums});
+        pad.run(0.4);
+        QCOMPARE(sink.count(Cmd::RollOn), 0);
+        QCOMPARE(sink.count(Cmd::LoopBegin), 1);
     }
 
     void aKickAndClapTogetherStillMakeALoop() {

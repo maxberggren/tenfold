@@ -285,6 +285,11 @@ public:
 
     // The same, for any part: the arrange page's tools.
     virtual void launchPart(int part, int slot, bool now = false) = 0;
+    // Clip edits, each undone by Ctrl+Z like a take. Copy keeps the clip's
+    // place against the bars. Merge puts `other` into `into`: layered (both
+    // at once, the shorter repeated) or chained (into, then other).
+    virtual void copyClip(int part, int from, int to) = 0;
+    virtual void mergeClips(int part, int into, int other, bool chain) = 0;
     virtual void stopPart(int part, bool now = false) = 0;
     virtual void clearPart(int part, int slot) = 0;
     // A time t (the touch clock, as ctx.timeAt(beat) gives it) schedules the

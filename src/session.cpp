@@ -82,6 +82,16 @@ public:
     void clear(int slot) override { clearPart(m_part, slot); }
 
     void launchPart(int part, int slot, bool now) override { simple(StudioMsg::Launch, part, slot, now); }
+    void copyClip(int part, int from, int to) override { simple(StudioMsg::CopyClip, part, from, to); }
+    void mergeClips(int part, int into, int other, bool chain) override {
+        StudioMsg m;
+        m.kind = StudioMsg::MergeClips;
+        m.part = int8_t(part);
+        m.slot = int8_t(into);
+        m.value = other;
+        m.f = chain ? 1.0f : 0.0f;
+        post(m);
+    }
     void stopPart(int part, bool now) override { simple(StudioMsg::Stop, part, 0, now); }
     void clearPart(int part, int slot) override { simple(StudioMsg::Clear, part, slot, 0); }
     void setChannel(int part, int channel, float value, double t) override {

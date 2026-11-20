@@ -246,6 +246,24 @@ static void releaseHeld(Studio::PartState &p, Studio::Impl &s) {
     p.heldCount = 0;
 }
 
+// Keeps a slot as it is, so the change about to be made (a take, an edit)
+// can be taken back. The vectors' room is reserved, so this never allocates.
+static Studio::PartState::Before &keepForUndo(Studio::PartState &p, int slot) {
+    if (p.undoCount == Studio::PartState::kUndo) {
+        for (int i = 1; i < Studio::PartState::kUndo; ++i)
+            std::swap(p.undo[i - 1], p.undo[i]);
+        --p.undoCount;
+    }
+    auto &before = p.undo[p.undoCount++];
+    const auto &clip = p.clips[slot];
+    before.events.assign(clip.events.begin(), clip.events.end());
+    before.length = clip.length;
+    before.anchor = clip.anchor;
+    before.slot = slot;
+    before.playing = p.playing;
+    return before;
+}
+
 static void stopClip(Studio::PartState &p, Studio::Impl &s) {
     releaseHeld(p, s);
     p.playing = -1;
@@ -273,19 +291,7 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     const double len = snapLength(raw);
     const double k = stretch ? len / raw : 1.0;
     auto &clip = p.clips[slot];
-    // Keep the slot as it was, to take the take back. The vectors' room is
-    // reserved, so the copies don't allocate.
-    if (p.undoCount == Studio::PartState::kUndo) {
-        for (int i = 1; i < Studio::PartState::kUndo; ++i)
-            std::swap(p.undo[i - 1], p.undo[i]);
-        --p.undoCount;
-    }
-    auto &before = p.undo[p.undoCount++];
-    before.events.assign(clip.events.begin(), clip.events.end());
-    before.length = clip.length;
-    before.anchor = clip.anchor;
-    before.slot = slot;
-    before.playing = p.playing;
+    keepForUndo(p, slot);
     if (p.playing == slot)
         stopClip(p, s);
     clip.events.clear();
@@ -623,6 +629,79 @@ void Studio::apply(const StudioMsg &m) {
     case StudioMsg::Metronome:
         s.metronome = m.value != 0;
         break;
+    case StudioMsg::CopyClip: {
+        // slot → value: the copy keeps the clip's place against the bars.
+        const int to = m.value;
+        if (!p || m.slot < 0 || m.slot >= kClipSlots || to < 0 || to >= kClipSlots || to == m.slot ||
+            p->clips[m.slot].length <= 0)
+            return;
+        keepForUndo(*p, to);
+        const bool was = p->playing == to;
+        if (was)
+            stopClip(*p, s);
+        auto &dst = p->clips[to];
+        const auto &src = p->clips[m.slot];
+        dst.events.assign(src.events.begin(), src.events.end());
+        dst.length = src.length;
+        dst.anchor = src.anchor;
+        if (was)
+            startClip(*p, s, to, dst.anchor);
+        ++p->takes;
+        break;
+    }
+    case StudioMsg::MergeClips: {
+        // slot ← slot + value. f < 0.5 layers them (both at once, the shorter
+        // repeated to the longer's length); otherwise chains them (slot, then
+        // value, one after the other). The other clip stays as it is.
+        const int a = m.slot, b = m.value;
+        if (!p || a < 0 || a >= kClipSlots || b < 0 || b >= kClipSlots || a == b || p->clips[a].length <= 0 ||
+            p->clips[b].length <= 0)
+            return;
+        const bool chain = m.f >= 0.5f;
+        auto &before = keepForUndo(*p, a); // also the source for a's own events
+        const bool was = p->playing == a;
+        if (was)
+            stopClip(*p, s);
+        auto &dst = p->clips[a];
+        const auto &other = p->clips[b];
+        const double lenA = before.length, lenB = other.length;
+        const double len = chain ? lenA + lenB : std::max(lenA, lenB);
+        dst.events.clear();
+        dst.length = len;
+        dst.anchor = before.anchor;
+        // The other clip's sounds get ids of their own, so a note in one
+        // never ends a note in the other.
+        auto otherId = [](Command c) {
+            c.id ^= 0x800000;
+            return c;
+        };
+        auto room = [&] { return int(dst.events.size()) < kClipEvents; };
+        if (chain) {
+            for (const auto &e : before.events)
+                if (room())
+                    dst.events.push_back(e);
+            for (const auto &e : other.events)
+                if (room())
+                    dst.events.push_back({lenA + e.pos, otherId(e.c), -1e18});
+        } else {
+            for (double k = 0; k < len - 1e-9; k += lenA)
+                for (const auto &e : before.events)
+                    if (room())
+                        dst.events.push_back({k + e.pos, e.c, -1e18});
+            // The other clip's positions, moved into this clip's frame: the
+            // same place against the bars.
+            const double shift = floorMod(other.anchor - before.anchor, lenB);
+            for (double k = 0; k < len - 1e-9; k += lenB)
+                for (const auto &e : other.events)
+                    if (room())
+                        dst.events.push_back({floorMod(k + e.pos + shift, len), otherId(e.c), -1e18});
+        }
+        sortClip(dst.events);
+        if (was)
+            startClip(*p, s, a, dst.anchor);
+        ++p->takes;
+        break;
+    }
     case StudioMsg::UndoTake: {
         if (!p || p->undoCount == 0)
             return;

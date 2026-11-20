@@ -309,9 +309,21 @@ private slots:
                                         "down 0.2 1 0.3 0.5 p=0.7\nclick 1.0\nup 2.0 1\n"
                                         "tap 8.0 0.31 0.5\n"
                                         "end 18\n");
-        // Still sounding long after the lift, until the orb is tapped.
+        // Still sounding long after the lift, until its orb is tapped.
         QVERIFY(take.rms(6, 8) > 0.02);
         QVERIFY(take.rms(17, 18) < 0.05 * take.rms(6, 8));
+        QCOMPARE(take.view.parts[kAtmos].voices, 0);
+    }
+
+    void aQuickClickLetsTheLatchedGo() {
+        // Latch a layer, lift; later a finger lands and clicks at once:
+        // everything latched fades, the new finger's layer with it.
+        const auto take = testkit::play("page 0 6\n"
+                                        "down 0.2 1 0.3 0.5 p=0.7\nclick 1.0\nup 2.0 1\n"
+                                        "down 8.0 2 0.6 0.5 p=0.7\nclick 8.05\nup 8.4 2\n"
+                                        "end 20\n");
+        QVERIFY(take.rms(6, 8) > 0.02);
+        QVERIFY(take.rms(19, 20) < 0.05 * take.rms(6, 8));
         QCOMPARE(take.view.parts[kAtmos].voices, 0);
     }
 
@@ -333,13 +345,29 @@ private slots:
         QCOMPARE(int(d[6]), 3); // and it plays it
     }
 
-    void tappedSwellsLoop() {
+    void tapsAndAHoldNeverLoopUnlessArmed() {
+        // Ordinary playing: a few taps, then a hold on the next beat. No loop.
         const auto take = testkit::play("page 0 6\n"
+                                        "tap 0.5 0.3 0.5 p=0.8\ntap 1.0 0.3 0.5 p=0.8\ntap 1.5 0.3 0.5 p=0.8\n"
+                                        "tap 2.0 0.3 0.5 p=0.8\ndown 2.5 1 0.3 0.5 p=0.8\nup 2.9 1\nend 4\n");
+        QCOMPARE(take.view.parts[kAtmos].playing, -1);
+        QCOMPARE(take.view.parts[kAtmos].clips[0].state, uint8_t(ClipView::Empty));
+    }
+
+    void anArmedTapLoopLoopsOnceAndDisarms() {
+        const auto take = testkit::play("page 0 6\nkey 0.2 L\n"
                                         "tap 0.5 0.3 0.5 p=0.8\ntap 1.0 0.3 0.5 p=0.8\ntap 1.5 0.3 0.5 p=0.8\n"
                                         "tap 2.0 0.3 0.5 p=0.8\ndown 2.5 1 0.3 0.5 p=0.8\nup 2.9 1\nend 9\n");
         QCOMPARE(take.view.parts[kAtmos].playing, 0);
         QVERIFY(take.view.parts[kAtmos].clips[0].events >= 8);
         QVERIFY(take.rms(7, 9) > 0.01); // the swells go on
+        // Disarmed after one loop: the same gesture again makes no second clip.
+        const auto again = testkit::play("page 0 6\nkey 0.2 L\n"
+                                         "tap 0.5 0.3 0.5 p=0.8\ntap 1.0 0.3 0.5 p=0.8\ntap 1.5 0.3 0.5 p=0.8\n"
+                                         "tap 2.0 0.3 0.5 p=0.8\ndown 2.5 1 0.3 0.5 p=0.8\nup 2.9 1\n"
+                                         "tap 4.5 0.3 0.5 p=0.8\ntap 5.0 0.3 0.5 p=0.8\ntap 5.5 0.3 0.5 p=0.8\n"
+                                         "tap 6.0 0.3 0.5 p=0.8\ndown 6.5 2 0.3 0.5 p=0.8\nup 6.9 2\nend 8\n");
+        QCOMPARE(again.view.parts[kAtmos].clips[1].state, uint8_t(ClipView::Empty));
     }
 
     void recordingTakesTheWholeLatchedBed() {

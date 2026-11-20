@@ -1425,19 +1425,41 @@ public:
         m_frame = f;
         m_phrase.expire(f.t);
 
-        // The click latches every layer held; on an empty hand it lets the
-        // latched ones go.
+        // The click latches every layer held. A finger that lands and clicks
+        // at once (nothing else held a while) lets the latched layers go
+        // instead, and takes its own new layer with them.
         if (f.button && !m_button) {
-            int held = 0;
-            for (Held &h : m_held)
-                if (h.touch >= 0 && !h.grabbed) {
-                    h.latch = true;
-                    ++held;
-                }
-            if (held)
-                ctx.notice(QStringLiteral("Latched"));
-            else if (f.count == 0 && !m_latched.empty())
+            int settled = 0, fresh = 0;
+            for (const Held &h : m_held) {
+                if (h.touch < 0 || h.cancelled)
+                    continue;
+                if (f.t - h.t0 < 0.35)
+                    ++fresh;
+                else if (!h.grabbed)
+                    ++settled;
+            }
+            if (settled == 0 && fresh > 0 && !m_latched.empty()) {
+                for (Held &h : m_held)
+                    if (h.touch >= 0 && !h.cancelled) {
+                        if (h.grabbed) {
+                            if (Latched *l = findLatched(h.layer.id))
+                                l->grabbed = false;
+                        } else {
+                            sendOff(h.layer.id, ctx, f.t);
+                        }
+                        h.cancelled = true;
+                    }
                 releaseAll(ctx, QStringLiteral("Let go"));
+            } else {
+                int latched = 0;
+                for (Held &h : m_held)
+                    if (h.touch >= 0 && !h.grabbed && !h.cancelled) {
+                        h.latch = true;
+                        ++latched;
+                    }
+                if (latched)
+                    ctx.notice(QStringLiteral("Latched"));
+            }
         }
         m_button = f.button;
 
@@ -1460,6 +1482,7 @@ public:
     }
 
     void background(double t, ControlContext &ctx) override {
+        m_loopCue = loopCue(ctx.beatAt(t), ctx.studio().parts[ctx.part()]);
         // A recording starts at the bar: everything already sounding is said
         // again right on it, so the clip holds the whole bed.
         if (m_reassertAt > 0 && t >= m_reassertAt - 0.004) {
@@ -1480,6 +1503,14 @@ public:
         const PartView &pv = ctx.studio().parts[ctx.part()];
         if (m_recSlot >= 0 && m_reassertAt == 0 && m_handAt == 0 && pv.recording < 0) {
             const float len = pv.clips[m_recSlot].lengthBeats;
+            const ClipView &cv = pv.clips[m_recSlot];
+            if (cv.state != ClipView::Empty)
+                ctx.notice(QStringLiteral("Loop in slot %1: %2 of the bed, %3 events, playing")
+                               .arg(m_recSlot + 1)
+                               .arg(len >= 4 ? QStringLiteral("%1 bars").arg(int(len / 4)) : QStringLiteral("%1 beats").arg(int(len)))
+                               .arg(cv.events));
+            else
+                ctx.notice(QStringLiteral("Nothing played: slot %1 stays empty").arg(m_recSlot + 1));
             if (pv.playing == m_recSlot && len > 0 && !m_handed.empty()) {
                 const double beat = ctx.beatAt(t);
                 const double next = m_recBar + std::ceil((beat - m_recBar) / len - 1e-6) * len;
@@ -1502,7 +1533,6 @@ public:
                 if (m_scene >= 0 &&
                     std::none_of(m_latched.begin(), m_latched.end(), [](const Latched &l) { return l.scene >= 0; }))
                     m_scene = -1;
-                ctx.notice(QStringLiteral("The bed plays from slot %1").arg(m_recSlot + 1));
             }
             m_handed.clear();
             m_recSlot = -1;
@@ -1550,6 +1580,12 @@ public:
         case Qt::Key_Comma:
             param(PChord, -1, ctx);
             ctx.notice(QStringLiteral("The bed follows the chords"));
+            return true;
+        case Qt::Key_L:
+            m_tapLoop = !m_tapLoop;
+            m_phrase.clear();
+            ctx.notice(m_tapLoop ? QStringLiteral("Tap loop armed: tap a rhythm in one column, then hold the next beat")
+                                 : QStringLiteral("Tap loop off"));
             return true;
         case Qt::Key_H:
             m_hold = !m_hold;
@@ -1603,6 +1639,10 @@ public:
         for (Held &h : m_held) {
             if (h.touch < 0)
                 continue;
+            if (h.cancelled) {
+                h.touch = -1;
+                continue;
+            }
             if (h.grabbed) {
                 if (Latched *l = findLatched(h.layer.id)) {
                     l->grabbed = false;
@@ -1639,7 +1679,7 @@ private:
         float x0 = 0, y0 = 0, a0 = 0;
         float ox = 0, oy = 0, om = 0, op = 0; // offsets for a grabbed orb
         float x = 0, y = 0, travel = 0;
-        bool grabbed = false, latch = false, long_ = false, looped = false;
+        bool grabbed = false, latch = false, long_ = false, looped = false, cancelled = false;
         Layer sent;
     };
     struct Latched {
@@ -1652,6 +1692,23 @@ private:
     static QString roman(int degree) {
         static const char *r[7] = {"I", "II", "III", "IV", "V", "VI", "VII"};
         return QString::fromUtf8(r[((degree % 7) + 7) % 7]);
+    }
+    // What the loop is doing, said before it happens: armed and how long
+    // until the bar, recording and which bar, or a tap loop waiting for its
+    // hold. Empty when no loop is on its way.
+    QString loopCue(double beat, const PartView &pv) const {
+        if (pv.recording >= 0 || (m_recSlot >= 0 && m_reassertAt > 0)) {
+            if (beat < m_recBar - 1e-3)
+                return QStringLiteral("LOOP ARMED · SLOT %1 · IN %2").arg(m_recSlot + 1).arg(int(std::ceil(m_recBar - beat)));
+            const int bar = int(std::floor((beat - m_recBar) / kBeatsPerBar)) + 1;
+            return QStringLiteral("REC SLOT %1 · BAR %2 OF 8 · RETURN CLOSES").arg(m_recSlot + 1).arg(std::min(bar, 8));
+        }
+        if (m_tapLoop) {
+            const int taps = int(m_phrase.taps().size());
+            return taps < 2 ? QStringLiteral("TAP LOOP ARMED · TAP A RHYTHM")
+                            : QStringLiteral("TAP LOOP · %1 TAPS · HOLD THE NEXT BEAT").arg(taps);
+        }
+        return {};
     }
     int nextId() {
         m_nextId = m_nextId >= 0xFFFFF ? 1 : m_nextId + 1;
@@ -1771,6 +1828,8 @@ private:
     }
 
     void follow(Held &h, const Touch &t, double now, ControlContext &ctx) {
+        if (h.cancelled)
+            return;
         Layer &L = h.layer;
         const float colLo = float(L.family) / kFamilies, colHi = float(L.family + 1) / kFamilies;
         h.x = clampf(t.x + h.ox, colLo, colHi);
@@ -1797,14 +1856,16 @@ private:
         if (!h.long_ && now - h.t0 >= 0.25) {
             h.long_ = true;
             double start = 0;
-            if (!h.grabbed && m_phrase.closes(h.t0, L.family, &start)) {
+            if (m_tapLoop && !h.grabbed && m_phrase.closes(h.t0, L.family, &start)) {
                 const int slot = ctx.freeSlot();
+                const int taps = int(m_phrase.taps().size());
                 if (slot >= 0) {
                     ctx.capture(slot, start, h.t0);
-                    ctx.notice(QStringLiteral("Swells loop in slot %1").arg(slot + 1));
+                    ctx.notice(QStringLiteral("Loop in slot %1: %2 tapped swells, playing").arg(slot + 1).arg(taps));
                     h.looped = true;
                 }
                 m_phrase.clear();
+                m_tapLoop = false; // one loop per arming: never by accident
             }
         }
         if (m_hold && !h.grabbed && now - h.t0 >= 0.3)
@@ -1822,6 +1883,10 @@ private:
     }
 
     void lift(Held &h, double now, ControlContext &ctx) {
+        if (h.cancelled) {
+            h.touch = -1;
+            return;
+        }
         const Layer &L = h.layer;
         const Layer &s = h.sent;
         if (s.height != L.height || s.colour != L.colour || s.press != L.press || s.motion != L.motion || s.width != L.width)
@@ -1843,7 +1908,7 @@ private:
             m_latched.push_back({L, h.x, h.y, -1, false});
         } else {
             sendOff(L.id, ctx, now);
-            if (!h.long_)
+            if (!h.long_ && m_tapLoop)
                 m_phrase.tap(h.t0, now - h.t0, L.family);
         }
         h.touch = -1;
@@ -1917,6 +1982,8 @@ private:
     std::vector<Latched> m_latched;
     std::vector<int> m_handed;
     Phrase m_phrase;
+    bool m_tapLoop = false;
+    QString m_loopCue;
     Frame m_frame;
     double m_reassertAt = 0, m_recBar = 0, m_handAt = 0;
     int m_nextId = 0, m_scene = -1, m_recSlot = -1;
@@ -1932,9 +1999,10 @@ QString AtmosControl::help() const {
         "twist\tclockwise, a slow filter sweep with the bars; anticlockwise, a gate in eighths, then sixteenths\n"
         "flat finger\twider\n"
         "tap\ta whole breath: the swell finishes, then fades\n"
-        "click\tlatch every layer held; click on an empty pad lets them all go\n"
+        "click\tlatch every layer held; a finger that lands and clicks at once lets them all go\n"
         "touch an orb\tpick a latched layer up and reshape it; a quick tap lets it go\n"
-        "tap a rhythm, hold the next beat\tloops the swells into a free slot\n"
+        "Return\tthe loop: record the bed from the next bar (armed, then bar by bar on the pad); again to close it at the bar\n"
+        "L, then tap a rhythm and hold the next beat\ta tap loop of swells into a free slot (L arms it for one loop)\n"
         "Q W E R T Y U I\tscenes: dawn, ocean, cathedral, stardust, nostalgia, euphoria, night rain, pulse\n"
         "Z X C V B N M\tthe bed's own chord on degrees I to VII; again (or comma) to follow the chords page\n"
         "H\thold: layers held a moment stay when lifted\n"
@@ -1943,8 +2011,7 @@ QString AtmosControl::help() const {
         "S, held\tswell: louder, brighter, more shimmer, rising while held\n"
         "P\tpump: with the kick, on every beat, off\n"
         "Up, Down\tspace: the halo's size and shimmer\n"
-        "Return\trecord the bed from the next bar; again to close the loop\n"
-        "O\toverdub\n"
+                "O\toverdub\n"
         "Delete\tlet every latched layer go\n"
         "F1–F8\tlaunch a slot at the next bar\n"
         "Backspace\tstop the clip at the next bar");
@@ -1953,7 +2020,7 @@ QString AtmosControl::help() const {
 QString AtmosControl::status() const {
     QStringList parts;
     for (const Held &h : m_held)
-        if (h.touch >= 0)
+        if (h.touch >= 0 && !h.cancelled)
             parts << QStringLiteral("%1 %2").arg(QString::fromUtf8(kShape[h.layer.family].name),
                                                 QString::fromUtf8(colourName(h.layer.family, h.layer.colour)));
     QString s = parts.join(QStringLiteral(", "));
@@ -1963,8 +2030,10 @@ QString AtmosControl::status() const {
         s += QStringLiteral(" · ") + QString::fromUtf8(kScenes[m_scene].name);
     if (m_hold)
         s += QStringLiteral(" · hold");
+    if (!m_loopCue.isEmpty())
+        s += (s.isEmpty() ? QString() : QStringLiteral(" · ")) + m_loopCue.toLower();
     if (s.isEmpty())
-        s = QStringLiteral("Lay a finger anywhere: the bed is always in the chord");
+        s = QStringLiteral("Lay a finger anywhere: the bed is always in the chord · Return records a loop");
     return s;
 }
 
@@ -2171,7 +2240,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
 
     // Fingers.
     for (const Held &h : m_held) {
-        if (h.touch < 0)
+        if (h.touch < 0 || h.cancelled)
             continue;
         const Touch *t = nullptr;
         for (int i = 0; i < m_frame.count; ++i)
@@ -2256,6 +2325,12 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         meter(QStringLiteral("SWELL"), d[PubSwell], 6);
         if (m_scene >= 0)
             lit(QString::fromUtf8(kScenes[m_scene].name), true, familyColor(col, Choir));
+        const QString cue = loopCue(pc.beat, *pc.view);
+        if (!cue.isEmpty()) {
+            const bool rec = cue.startsWith(QStringLiteral("REC"));
+            const bool blink = std::fmod(pc.time, 0.5) < 0.25;
+            lit(cue, rec || blink, rec ? c::red() : c::amber());
+        }
     }
 
     c::beats(p, pc, col);

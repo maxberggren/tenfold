@@ -16,8 +16,9 @@ down 7.742 2 0.86 0.45 p=0.4
 glide 9.677 15.484 2 0.86 0.5 p=0.75
 click 15.484
 up 15.884 2
-# bar 9: four quick firm taps in the glass column on the beat, then the fifth held:
-# the swells loop in slot 1
+# bar 9: L arms a tap loop (the pad says so); four quick firm taps in the glass column
+# on the beat, then the fifth held: the swells loop in slot 1, and the loop disarms
+key 16.919 L
 tap 17.419 0.72 0.62 p=0.85
 tap 17.903 0.72 0.62 p=0.85
 tap 18.387 0.72 0.62 p=0.85

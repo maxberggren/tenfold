@@ -29,6 +29,18 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
             m_device = pads.first().path;
     }
 
+    if (live) {
+        m_tickerRun = true;
+        m_ticker = std::thread([this] {
+            while (m_tickerRun.load()) {
+                timespec ts{};
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                m_session->idle(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
+                std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            }
+        });
+    }
+
     m_timer.setInterval(16);
     m_timer.setTimerType(Qt::PreciseTimer);
     connect(&m_timer, &QTimer::timeout, this, &Backend::tick);
@@ -38,6 +50,9 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
 Backend::~Backend() { shutdown(); }
 
 void Backend::shutdown() {
+    m_tickerRun = false;
+    if (m_ticker.joinable())
+        m_ticker.join();
     stopRecording();
     if (m_touch)
         m_touch->stop();

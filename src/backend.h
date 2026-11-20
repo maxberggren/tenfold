@@ -135,6 +135,12 @@ private:
     bool m_recording = false;
     QString m_recordPath, m_lastRecording;
     std::thread m_recorder;
+    // Every page's background() and idle() at 250 Hz on a thread of its own,
+    // so a page scheduling steps a few milliseconds ahead (a held key's roll,
+    // an arrangement's launches) never waits on the screen's 60 Hz timer or
+    // on touch frames that stop while a finger rests still.
+    std::thread m_ticker;
+    std::atomic<bool> m_tickerRun{false};
     std::atomic<bool> m_recorderRun{false};
     QElapsedTimer m_recordClock;
 };

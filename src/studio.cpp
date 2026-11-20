@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 
 #include "fx.h"
@@ -12,7 +14,10 @@ namespace {
 
 double floorMod(double a, double m) {
     const double r = std::fmod(a, m);
-    return r < 0 ? r + m : r;
+    const double w = r < 0 ? r + m : r;
+    // A hair below zero wraps to m itself in floating point; that position
+    // would never play, so it is the start.
+    return w >= m - 1e-9 ? 0.0 : w;
 }
 
 constexpr int kHistory = 4096;     // live commands remembered per part, for captures
@@ -65,6 +70,7 @@ struct Studio::PartState {
     struct Event {
         double pos;
         Command c;
+        double after = -1e18; // an overdub: not replayed before this beat (it was just heard live)
     };
     struct Clip {
         std::vector<Event> events;
@@ -74,6 +80,7 @@ struct Studio::PartState {
     Clip clips[kClipSlots];
     int playing = -1;
     int queued = -1;
+    bool catchUp = false; // a new clip's first block also plays what it just passed
     double queuedAt = 0;
     bool stopQueued = false;
     double stopAt = 0;
@@ -128,6 +135,13 @@ struct Studio::Impl : AudioContext {
     int pumpCount = 0;
     float duckEnv[kBlock] = {};
     float duckTarget = 0, duckLevel = 0;
+
+    // Messages timed later than the coming block (a part scheduling ahead, a
+    // mixer move set for the bar line), held until their block.
+    static constexpr int kPending = 1024;
+    StudioMsg pending[kPending];
+    int pendingCount = 0;
+    bool dispatching = false;
 
     float masterTarget[MasterCount] = {};
     float master[MasterCount] = {};
@@ -229,6 +243,7 @@ static void startClip(Studio::PartState &p, Studio::Impl &s, int slot, double an
     p.clips[slot].anchor = anchor;
     p.queued = -1;
     p.stopQueued = false;
+    p.catchUp = false;
 }
 
 // Makes a clip from what the part played between beats b0 and b1. With
@@ -257,9 +272,56 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     const size_t from = head > size_t(kHistory) ? head - size_t(kHistory) : 0;
     constexpr double eps = 1e-6;
     constexpr double grid = 0.25;
+    // A take in the studio's time reaches an eighth of a beat early at both
+    // ends: a note landed a hair before the bar line belongs to that bar,
+    // not to the one before.
+    const double early = stretch ? 0.0 : 0.125;
+    bool playedOnTheOne = false;
+    // What was already going on when a take in the studio's time began: a
+    // note still held (a bass root landed before the bar and held through
+    // it) and the last setting of each knob. Both go in at the clip's start,
+    // so the loop sounds the way the take did.
+    if (!stretch) {
+        Command held[32];
+        int heldCount = 0;
+        Command knobs[32];
+        int knobCount = 0;
+        for (size_t h = from; h < head; ++h) {
+            const auto &lg = p.history[h % size_t(kHistory)];
+            if (lg.beat >= b0 - early - eps)
+                break;
+            const Command &c = lg.c;
+            if (c.type == Command::On && !(c.flags & Command::Quantize)) {
+                if (heldCount < 32)
+                    held[heldCount++] = c;
+            } else if (c.type == Command::Off) {
+                for (int i = 0; i < heldCount; ++i)
+                    if (held[i].id == c.id) {
+                        held[i] = held[--heldCount];
+                        break;
+                    }
+            } else if (c.type == Command::Param) {
+                int i = 0;
+                while (i < knobCount && knobs[i].i[0] != c.i[0])
+                    ++i;
+                if (i < 32) {
+                    knobs[i] = c;
+                    knobCount = std::max(knobCount, i + 1);
+                }
+            }
+        }
+        for (int i = 0; i < knobCount; ++i)
+            clip.events.push_back({0.0, knobs[i], -1e18});
+        for (int i = 0; i < heldCount && openCount < 64; ++i) {
+            clip.events.push_back({0.0, held[i], -1e18});
+            open[openCount++] = {held[i].id, 0.0, 0.0};
+        }
+    }
     for (size_t h = from; h < head; ++h) {
         const auto &lg = p.history[h % size_t(kHistory)];
-        if (lg.beat < b0 - eps || lg.beat >= b1 - eps)
+        if (lg.beat >= b1 - 0.12 && (lg.c.type == Command::On || (lg.c.flags & Command::Quantize)))
+            playedOnTheOne = true;
+        if (lg.beat < b0 - early - eps || lg.beat >= b1 - early - eps)
             continue;
         if (int(clip.events.size()) >= kClipEvents - 64)
             break;
@@ -283,21 +345,30 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             if (!found)
                 continue; // the end of something that started before the take
         }
-        clip.events.push_back({floorMod(pos, len), c});
+        clip.events.push_back({floorMod(pos, len), c, -1e18});
     }
     // Sounds still held when the take ended stop just before it comes round.
     for (int i = 0; i < openCount; ++i) {
         Command off;
         off.type = Command::Off;
         off.id = open[i].id;
-        clip.events.push_back({std::max(0.0, len - 1.0 / 32), off});
+        clip.events.push_back({std::max(0.0, len - 1.0 / 32), off, -1e18});
     }
     sortClip(clip.events);
     if (clip.events.empty()) {
         clip.length = 0;
         return;
     }
+    if (std::getenv("TENFOLD_DEBUG")) {
+        std::fprintf(stderr, "tenfold: clip slot %d len %.3f anchor %.4f now %.4f:", slot, len, anchor, s.transportState.beat);
+        for (auto &e : clip.events)
+            std::fprintf(stderr, " %d@%.4f", int(e.c.type), e.pos);
+        std::fprintf(stderr, "\n");
+    }
     startClip(p, s, slot, anchor);
+    // A loop closed by a key rather than a note on its ONE (Space with nothing
+    // playing) starts a moment after its downbeat: play what it just passed.
+    p.catchUp = stretch && !playedOnTheOne;
 }
 
 void Studio::apply(const StudioMsg &m) {
@@ -333,9 +404,14 @@ void Studio::apply(const StudioMsg &m) {
                     // Kept sorted; the capacity is reserved, so this never allocates.
                     auto at = std::upper_bound(clip.events.begin(), clip.events.end(), pos,
                                                [](double v, const PartState::Event &e) { return v < e.pos; });
-                    clip.events.insert(at, {pos, c});
+                    clip.events.insert(at, {pos, c, b + 0.3});
                 }
             }
+        }
+        if (!s.dispatching && c.t > s.blockTime + double(kBlock) / double(s.rate) &&
+            s.pendingCount < Impl::kPending) {
+            s.pending[s.pendingCount++] = m;
+            break;
         }
         p->engine->command(c, s);
         break;
@@ -391,6 +467,21 @@ void Studio::apply(const StudioMsg &m) {
             p->recEnd = std::max(end, p->recStart + 1.0);
         }
         break;
+    case StudioMsg::TakeBars:
+        if (!p || m.slot < 0 || m.slot >= kClipSlots || m.d1 <= m.d0)
+            return;
+        // The same path as a recording that closes at d1: when the clock
+        // reaches it, the history between d0 and d1 becomes the clip, its
+        // start on d0's bar, so it carries on from d1 without a seam.
+        p->recording = m.slot;
+        p->recStart = m.d0;
+        p->recEnd = m.d1;
+        p->recMaxBars = 8;
+        break;
+    case StudioMsg::CancelRecord:
+        if (p)
+            p->recording = -1;
+        break;
     case StudioMsg::Overdub:
         if (p)
             p->overdub = m.value != 0;
@@ -428,12 +519,19 @@ void Studio::apply(const StudioMsg &m) {
         p->clips[m.slot].length = 0;
         break;
     case StudioMsg::SetChannel:
+    case StudioMsg::SetMaster:
+        if (!s.dispatching && m.d0 > s.blockTime + double(kBlock) / double(s.rate) &&
+            s.pendingCount < Impl::kPending) {
+            s.pending[s.pendingCount++] = m;
+            break;
+        }
+        if (m.kind == StudioMsg::SetMaster) {
+            if (m.slot >= 0 && m.slot < MasterCount)
+                s.masterTarget[m.slot] = clampf(m.f, 0, 1);
+            break;
+        }
         if (p && m.slot >= 0 && m.slot < ChannelCount)
             p->channelTarget[m.slot] = clampf(m.f, 0, 1);
-        break;
-    case StudioMsg::SetMaster:
-        if (m.slot >= 0 && m.slot < MasterCount)
-            s.masterTarget[m.slot] = clampf(m.f, 0, 1);
         break;
     case StudioMsg::Tempo:
         tr.bpm = std::clamp(m.d0, 40.0, 240.0);
@@ -447,6 +545,11 @@ void Studio::apply(const StudioMsg &m) {
         s.metronome = m.value != 0;
         break;
     case StudioMsg::Silence:
+        for (int i = 0; i < s.pendingCount;)
+            if (s.pending[i].kind == StudioMsg::ToPart && (m.part < 0 || s.pending[i].part == m.part))
+                s.pending[i] = s.pending[--s.pendingCount];
+            else
+                ++i;
         for (int i = 0; i < int(m_parts.size()); ++i)
             if (m.part < 0 || m.part == i) {
                 m_parts[size_t(i)]->heldCount = 0;
@@ -494,6 +597,29 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
     const double b0 = tr.beat, b1 = tr.beat + double(n) * tr.beatsPerSample;
     const double spb = tr.secondsPerBeat();
 
+    // Messages that were waiting for this block.
+    if (s.pendingCount > 0) {
+        const double end = s.blockTime + double(n) / double(m_rate);
+        s.dispatching = true;
+        for (int i = 0; i < s.pendingCount;) {
+            const StudioMsg &m = s.pending[i];
+            const double when = m.kind == StudioMsg::ToPart ? m.cmd.t : m.d0;
+            if (when < end) {
+                const StudioMsg due = m;
+                s.pending[i] = s.pending[--s.pendingCount];
+                if (due.kind == StudioMsg::ToPart) {
+                    if (due.part >= 0 && due.part < int(m_parts.size()))
+                        m_parts[size_t(due.part)]->engine->command(due.cmd, s);
+                } else {
+                    apply(due);
+                }
+            } else {
+                ++i;
+            }
+        }
+        s.dispatching = false;
+    }
+
     // Clips: what starts, stops and records on a boundary in this block, then
     // the events that fall in it.
     for (auto &pp : m_parts) {
@@ -505,7 +631,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         if (p.recording >= 0) {
             const double maxEnd = p.recStart + kBeatsPerBar * p.recMaxBars;
             const double end = p.recEnd >= 0 ? std::min(p.recEnd, maxEnd) : maxEnd;
-            if (b0 >= end) {
+            if (end < b1) {
                 const int slot = p.recording;
                 p.recording = -1;
                 makeClip(p, s, slot, p.recStart, end, 0.6f, p.recStart, false);
@@ -519,6 +645,8 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         const double pos0 = floorMod(b0 - clip.anchor, clip.length);
         const double span = b1 - b0;
         auto fire = [&](const PartState::Event &e, double pos) {
+            if (b0 + (pos - pos0) <= e.after)
+                return;
             Command c = e.c;
             c.id = replayId(c.id, p.playing);
             c.t = s.blockTime + (pos - pos0) * spb;
@@ -549,6 +677,11 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             for (; it != clip.events.end() && it->pos < to; ++it)
                 fire(*it, it->pos + base);
         };
+        if (p.catchUp) {
+            p.catchUp = false;
+            if (pos0 > 0 && pos0 < 0.25)
+                fireRange(0, pos0, 0);
+        }
         fireRange(pos0, std::min(pos0 + span, clip.length), 0);
         if (pos0 + span > clip.length)
             fireRange(0, pos0 + span - clip.length, clip.length);
@@ -607,7 +740,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
     for (auto &pp : m_parts) {
         PartState &p = *pp;
         const float *ch = p.channel;
-        const bool audible = ch[Mute] < 0.5f && (!anySolo || p.channelTarget[Solo] > 0.5f);
+        const bool audible = p.channelTarget[Mute] < 0.5f && (!anySolo || p.channelTarget[Solo] > 0.5f);
         const float muteTarget = audible ? 1.0f : 0.0f;
         const float g = (ch[Gain] / 0.8f) * (ch[Gain] / 0.8f);
         const float panL = std::min(1.0f, 2.0f * (1.0f - ch[Pan])), panR = std::min(1.0f, 2.0f * ch[Pan]);

@@ -49,7 +49,6 @@ ApplicationWindow {
     // The number a page answers to: 1–7 for the parts, 0 for arrange.
     function pageKey(i) { return i === backend.pageCount - 1 ? "0" : String(i + 1) }
 
-    Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: backend.togglePlay() }
     Shortcut {
         sequence: "Esc"; context: Qt.ApplicationShortcut
         onActivated: win.helpVisible ? win.helpVisible = false : backend.giveBack()
@@ -72,10 +71,10 @@ ApplicationWindow {
         // Every other key goes to the session: page numbers, tempo and key on
         // Ctrl, and whatever the showing page plays from the keyboard.
         Keys.onPressed: event => {
-            event.accepted = backend.key(event.key, event.modifiers, true, event.isAutoRepeat, event.text)
+            event.accepted = backend.sendKey(event.key, event.modifiers, true, event.isAutoRepeat, event.text)
         }
         Keys.onReleased: event => {
-            event.accepted = backend.key(event.key, event.modifiers, false, event.isAutoRepeat, event.text)
+            event.accepted = backend.sendKey(event.key, event.modifiers, false, event.isAutoRepeat, event.text)
         }
 
         ColumnLayout {
@@ -268,8 +267,8 @@ ApplicationWindow {
                         property int bh: 46
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            label: win.playing ? qsTr("Release") : qsTr("Play")
-                            key: "Space"; color: win.green; active: win.playing
+                            label: win.playing ? qsTr("Release pad") : qsTr("Take pad")
+                            key: win.playing ? "Esc" : ""; color: win.green; active: win.playing
                             onClicked: backend.togglePlay()
                         }
                         PanelButton {
@@ -329,7 +328,7 @@ ApplicationWindow {
                           : backend.padState === Backend.Starting ? qsTr("Waiting for the trackpad")
                           : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
                           : backend.padState === Backend.Ready ? qsTr("Paused, pointer released")
-                          : qsTr("Standby, press Space"))
+                          : qsTr("Standby: Take pad to play"))
                           + (backend.pageStatus !== "" ? "     " + backend.pageStatus : "")
                           + (backend.audioOk || backend.audioError === "" ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
                           + (backend.lastRecording !== "" ? "     " + qsTr("Saved %1").arg(backend.lastRecording) : "")
@@ -343,7 +342,7 @@ ApplicationWindow {
             }
         }
 
-        // Not playing yet: a console dialog that says what Space will do.
+        // Not playing yet: a console dialog with the button that takes the pad.
         Rectangle {
             anchors.centerIn: parent
             visible: !win.playing && !win.helpVisible
@@ -383,7 +382,7 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     visible: backend.padState === Backend.Failed
-                    text: backend.error + " " + qsTr("Press Space to try again.")
+                    text: backend.error + " " + qsTr("Take the pad again to retry.")
                     color: win.red
                     font.family: win.mono
                     font.pixelSize: 15
@@ -392,16 +391,24 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     text: backend.padState === Backend.Ready
-                          ? qsTr("The trackpad is yours again and the sound keeps playing. Space takes it back.")
-                          : qsTr("Space hands the trackpad to tenfold: the pointer stops and every finger plays. Reading the pad needs your password once. Esc gives it back at any time.")
+                          ? qsTr("The trackpad is yours again and the sound keeps playing. Take it back with the button below.")
+                          : qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Reading the pad needs your password once. Esc gives it back at any time.")
                     color: win.amber
                     font.family: win.mono
                     font.pixelSize: 15
                     wrapMode: Text.Wrap
                 }
+                PanelButton {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 56
+                    label: qsTr("Take the trackpad")
+                    color: win.green
+                    labelSize: 20
+                    onClicked: backend.play()
+                }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects. Make loops on each, then put them together on 0, the arrange page. ? shows what the fingers do on the page you're on.")
+                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects. Play, then Space loops what you just played on any page; put the loops together on 0, the arrange page. ? shows what the fingers do on the page you're on.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14

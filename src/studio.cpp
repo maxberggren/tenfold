@@ -94,12 +94,13 @@ struct Studio::PartState {
     uint32_t takes = 0;       // clips made from what was played, ever
     bool catchUp = false;     // a new clip's first block also plays what it just passed
     bool catchUpHeld = false; // …only the sounds still held at that point, and settings
+    double catchFrom = 0;     // where in the clip it joins (its window's start)
     double queuedAt = 0;
     bool stopQueued = false;
     double stopAt = 0;
     bool overdub = false;
     int recording = -1;
-    double recStart = 0, recEnd = -1;
+    double recStart = 0, recEnd = -1, recOrigin = 0;
     int recMaxBars = 8;
     int held[kReplayHeld] = {};
     int heldCount = 0;
@@ -305,6 +306,13 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     // not to the one before.
     const double early = stretch ? 0.0 : 0.125;
     bool playedOnTheOne = false;
+    // Positions in the clip count from the anchor. A take in the studio's
+    // time may start anywhere (the last cycle of a pattern played across a
+    // bar line); its anchor is on the bar grid, so the clip keeps its place
+    // against the bars when it is launched again. The window's start is at
+    // `start` in the clip, and the loop joins there.
+    const double origin = stretch ? b0 : anchor;
+    const double start = stretch ? 0.0 : b0 - origin;
     // What was already going on when a take in the studio's time began: a
     // note still held (a bass root landed before the bar and held through
     // it) and the last setting of each knob. Both go in at the clip's start,
@@ -352,12 +360,12 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             }
         }
         for (int i = 0; i < knobCount; ++i)
-            clip.events.push_back({0.0, knobs[i], -1e18});
+            clip.events.push_back({floorMod(start, len), knobs[i], -1e18});
         for (int i = 0; i < heldCount && openCount < 64; ++i) {
-            clip.events.push_back({0.0, held[i], -1e18});
+            clip.events.push_back({floorMod(start, len), held[i], -1e18});
             if (heldMoved[i])
-                clip.events.push_back({0.0, heldMove[i], -1e18});
-            open[openCount++] = {held[i].id, 0.0, 0.0};
+                clip.events.push_back({floorMod(start, len), heldMove[i], -1e18});
+            open[openCount++] = {held[i].id, start, start};
         }
     }
     for (size_t h = from; h < head; ++h) {
@@ -368,7 +376,10 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             continue;
         if (int(clip.events.size()) >= kClipEvents - 64)
             break;
-        double pos = (lg.beat - b0) * k;
+        double pos = (lg.beat - origin) * k;
+        // A note reached early (a hair before the window) starts it.
+        if (!stretch && pos < start)
+            pos = start;
         Command c = lg.c;
         if (c.type == Command::On || (c.flags & Command::Quantize)) {
             const double target = std::round(pos / grid) * grid;
@@ -388,7 +399,6 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             if (!found)
                 continue; // the end of something that started before the take
         }
-        // A note reached early (before b0) starts the clip, not ends it.
         clip.events.push_back({pos < 0 ? 0.0 : floorMod(pos, len), c, -1e18});
     }
     // Sounds still held when the take ended stop just before it comes round.
@@ -396,7 +406,7 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         Command off;
         off.type = Command::Off;
         off.id = open[i].id;
-        clip.events.push_back({std::max(0.0, len - 1.0 / 32), off, -1e18});
+        clip.events.push_back({floorMod(start + len - 1.0 / 32, len), off, -1e18});
     }
     sortClip(clip.events);
     if (clip.events.empty()) {
@@ -416,6 +426,7 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         std::fprintf(stderr, "\n");
     }
     startClip(p, s, slot, anchor);
+    p.catchFrom = floorMod(start, len);
     ++p.takes;
     // A loop closed by a key rather than a note on its ONE (Space with nothing
     // playing) starts a moment after its downbeat: play what it just passed.
@@ -514,6 +525,7 @@ void Studio::apply(const StudioMsg &m) {
             return;
         p->recording = m.slot;
         p->recStart = nextBar();
+        p->recOrigin = p->recStart;
         p->recEnd = -1;
         p->recMaxBars = std::clamp(m.value, 1, 8);
         break;
@@ -536,6 +548,13 @@ void Studio::apply(const StudioMsg &m) {
         p->recording = m.slot;
         p->recStart = m.d0;
         p->recEnd = m.d1;
+        {
+            // The clip's anchor: the window's start rounded down to the grid
+            // its length lives on (the bar, or the beat for shorter loops).
+            const double len = snapLength(m.d1 - m.d0);
+            const double g = std::min(len, double(kBeatsPerBar));
+            p->recOrigin = std::floor(m.d0 / g + 1e-9) * g;
+        }
         p->recMaxBars = 8;
         break;
     case StudioMsg::CancelRecord:
@@ -727,7 +746,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             if (end < b1) {
                 const int slot = p.recording;
                 p.recording = -1;
-                makeClip(p, s, slot, p.recStart, end, 0.6f, p.recStart, false);
+                makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false);
             }
         }
         if (p.playing < 0)
@@ -772,10 +791,16 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         };
         if (p.catchUp) {
             p.catchUp = false;
+            // How far the clip has run since its join, and each event's
+            // place in that run, counted round from the join.
+            const double run = floorMod(pos0 - p.catchFrom, clip.length);
+            auto since = [&](const PartState::Event &e) { return floorMod(e.pos - p.catchFrom, clip.length); };
             if (!p.catchUpHeld) {
-                if (pos0 > 0 && pos0 < 0.25)
-                    fireRange(0, pos0, 0);
-            } else if (pos0 > 0) {
+                if (run > 0 && run < 0.25)
+                    for (auto &e : clip.events)
+                        if (since(e) < run)
+                            fire(e, pos0);
+            } else if (run > 0) {
                 // Settings first: the latest of each Param and of each
                 // non-onset command a part uses for its state, so the bar
                 // plays the way the take sounded.
@@ -783,25 +808,26 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                     return c.type == Command::Param ||
                            (c.type >= Command::User && (!(c.flags & Command::Quantize) || (c.flags & Command::Continue)));
                 };
-                for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
-                    if (!isSetting(it->c))
+                for (auto &e : clip.events) {
+                    if (!isSetting(e.c) || since(e) >= run)
                         continue;
                     bool later = false;
-                    for (auto jt = it + 1; jt != clip.events.end() && jt->pos < pos0; ++jt)
-                        later |= isSetting(jt->c) && jt->c.type == it->c.type &&
-                                 (it->c.type != Command::Param || jt->c.i[0] == it->c.i[0]);
+                    for (auto &f : clip.events)
+                        later |= &f != &e && isSetting(f.c) && f.c.type == e.c.type &&
+                                 (e.c.type != Command::Param || f.c.i[0] == e.c.i[0]) && since(f) < run &&
+                                 since(f) > since(e);
                     if (!later)
-                        fire(*it, pos0);
+                        fire(e, pos0);
                 }
-                for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
-                    const Command &c = it->c;
-                    if (c.type != Command::On)
+                // Then the sounds still held at this point.
+                for (auto &e : clip.events) {
+                    if (e.c.type != Command::On || since(e) >= run)
                         continue;
                     bool ended = false;
-                    for (auto jt = it + 1; jt != clip.events.end() && jt->pos < pos0; ++jt)
-                        ended |= jt->c.type == Command::Off && jt->c.id == c.id;
+                    for (auto &f : clip.events)
+                        ended |= f.c.type == Command::Off && f.c.id == e.c.id && since(f) >= since(e) && since(f) < run;
                     if (!ended)
-                        fire(*it, pos0);
+                        fire(e, pos0);
                 }
             }
         }

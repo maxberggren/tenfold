@@ -97,7 +97,7 @@ private slots:
     void overABeatSpaceLoopsTheBarsThatRepeat() {
         // Over the beat (bars at 4.5, 6.5, 8.5 s): a bar of trying things,
         // then the same bass bar twice, then Space after the bar line. The
-        // loop is the two repeated bars, without the bar before them.
+        // loop is the bar that repeated, without the bar before it.
         const auto take = testkit::play(std::string(kBeat) +
                                         "page 3.0 2\n"
                                         "tap 4.6 0.7 0.5\ntap 5.3 0.9 0.5\ntap 6.1 0.5 0.5\n"
@@ -105,8 +105,8 @@ private slots:
                                         "tap 8.55 0.1 0.5\ntap 9.05 0.3 0.5\ntap 9.55 0.2 0.5\ntap 10.05 0.1 0.5\n"
                                         "key 10.7 Space\nend 13\n");
         QCOMPARE(take.view.parts[1].playing, 0);
-        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 8);
-        QCOMPARE(take.view.parts[1].clips[0].events, 16);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
+        QCOMPARE(take.view.parts[1].clips[0].events, 8);
     }
 
     void ctrlZTakesBackTheNewestLoopAndBringsBackTheOneBefore() {
@@ -147,6 +147,39 @@ private slots:
         QCOMPARE(take.view.parts[0].clips[0].events, 4);
         QCOMPARE(int(std::lround(take.view.bpm)), 150);
         QVERIFY(take.rms(5.0, 5.9) < 0.002); // silence between clearing and the new loop
+    }
+
+    void aMelodyThatStartsMidBarLoopsWithoutAGap() {
+        // Over the beat (bars every 2 s from 2.5 s), some noodling, then a
+        // four-note riff that starts on beat 3 of a bar, played twice, then
+        // Space. The loop is that riff, one bar long, cut where it repeats:
+        // no empty beats in front, none of the noodling.
+        std::string script = std::string(kBeat) + "page 3.0 2\n"
+                             "tap 3.3 0.8 0.5\ntap 3.9 0.6 0.5\ntap 4.7 0.9 0.5\n";
+        for (double cycle : {5.5, 7.5})
+            for (double o : {0.0, 0.5, 1.0, 1.25})
+                script += "tap " + std::to_string(cycle + o) + " " + (o == 0.0 ? "0.1" : o == 0.5 ? "0.3" : o == 1.0 ? "0.2" : "0.4") + " 0.5\n";
+        script += "key 9.6 Space\nend 12\n";
+        const auto take = testkit::play(script);
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
+        QCOMPARE(take.view.parts[1].clips[0].events, 8);
+        QCOMPARE(take.view.parts[0].playing, 0);
+    }
+
+    void aTwoBarMelodyPlayedTwiceStaysTwoBars() {
+        // Two bars alike in rhythm but not in their last note, played twice
+        // over the beat: the loop is both bars, not the first one alone.
+        std::string script = std::string(kBeat) + "page 3.0 2\n";
+        const double offs[8] = {0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5};
+        const char *xs[8] = {"0.1", "0.3", "0.2", "0.4", "0.1", "0.3", "0.2", "0.6"};
+        for (double cycle : {4.5, 8.5})
+            for (int i = 0; i < 8; ++i)
+                script += "tap " + std::to_string(cycle + offs[i]) + " " + xs[i] + " 0.5\n";
+        script += "key 12.6 Space\nend 15\n";
+        const auto take = testkit::play(script);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 8);
+        QCOMPARE(take.view.parts[1].clips[0].events, 16);
     }
 
     void spaceWithNothingPlayedMakesNoLoop() {

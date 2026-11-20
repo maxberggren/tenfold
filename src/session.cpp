@@ -6,6 +6,8 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #include "parts.h"
 
@@ -539,49 +541,55 @@ void Session::toggleRecording(ControlContext &base) {
         return;
     }
     const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
-    const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
-    // The loop ends at the bar line after the last thing played (a note a
-    // hair before a bar line belongs to the bar it leads into), but never
-    // later than the next bar line: a pause before Space adds no empty bars.
-    double end = std::ceil((beatLast + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-    end = std::min(end, beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar);
-    end = std::max(end, std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar + kBeatsPerBar);
-    // A first note a little early for its bar belongs to that bar; the
-    // length goes to the nearest of 1, 2, 4 or 8 bars.
-    const double startBar = std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-    const double played = std::max(1.0, (end - startBar) / kBeatsPerBar);
-    int bars = int(std::lround(std::exp2(std::round(std::log2(played)))));
-    bars = std::clamp(bars, 1, 8);
-    // If the last bars repeat the ones before them, the loop is the pattern
-    // the player settled into, over as many bars as it held, and whatever
-    // came before it (finding the groove) stays out.
-    bool settled = false;
-    {
-        std::vector<Hit> hits;
-        for (const auto &o : times)
-            if (o.real && o.t >= first - 0.01 && o.t <= nowT + 0.05)
-                hits.push_back({ctx.beatAt(o.t) + 0.125, o.key}); // reach an eighth early, as takes do
-        const double length = settledLoop(hits, end, startBar, {4.0, 8.0, 16.0, 32.0}, 32.0, 0.2, 0.75, 0.0);
-        if (length > 0) {
-            settled = int(std::lround(length / kBeatsPerBar)) != bars || length < end - startBar - 0.5;
-            bars = std::clamp(int(std::lround(length / kBeatsPerBar)), 1, 8);
+    // The loop ends where the playing did: now, or a beat after the last
+    // note if there was a pause before Space, on the sixteenth grid. It
+    // doesn't wait for a bar line: whatever repeats, repeats from any point,
+    // and the studio stores the loop in step with the bars.
+    const double end = std::round(std::min(beatNow, beatLast + 1.0) * 4.0) / 4.0;
+    // Did the player settle into a pattern? The shortest whole number of
+    // bars that what was just played repeats with, stretched back over
+    // every repeat, leaving out what came before it.
+    std::vector<Hit> hits;
+    for (const auto &o : times)
+        if (o.real && o.t >= first - 0.01 && o.t <= nowT + 0.05)
+            hits.push_back({ctx.beatAt(o.t), o.key});
+    // One cycle of it: the shortest period that repeats cleanly, or, if no
+    // period repeats cleanly, the one that repeats best. A two-bar melody
+    // whose bars are alike but not the same stays two bars once it has been
+    // played twice.
+    double length = 0, bestScore = 0.75;
+    for (double p : {4.0, 8.0, 16.0, 32.0}) {
+        if (end - 2 * p < beatFirst - 0.125 - 0.2)
+            break;
+        const double score = repeats(hits, end - p, end, p, 0.2, 0.125);
+        if (score >= 0.9) {
+            length = p;
+            break;
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            length = p;
         }
     }
+    const bool settled = length > 0;
+    if (!settled) {
+        // Played once: the whole phrase, in whole bars (1, 2, 4 or 8).
+        const double played = std::max(1.0, std::ceil((end - beatFirst - 0.25) / kBeatsPerBar));
+        length = kBeatsPerBar * std::clamp(std::exp2(std::ceil(std::log2(played))), 1.0, 8.0);
+    }
+    const int bars = int(std::lround(length / kBeatsPerBar));
     StudioMsg m;
     m.kind = StudioMsg::TakeBars;
     m.part = int8_t(part);
     m.slot = int8_t(slot);
-    m.d0 = end - bars * kBeatsPerBar;
+    m.d0 = end - length;
     m.d1 = end;
     ctx.post(m);
     m_view.parts[part].recording = slot;
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
-    if (end <= beatNow)
-        ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
-    else
-        ctx.notice(QStringLiteral("Looping %1 in slot %2 at the bar").arg(what).arg(slot + 1));
+    ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
 }
 
 void Session::undoTake() {

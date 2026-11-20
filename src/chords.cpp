@@ -224,7 +224,8 @@ public:
         int degree = -1, colour = Triad;
         chordKey(k.key, shift, &degree, &colour);
         if (degree >= 0) {
-            if (k.repeat)
+            // As many chord keys as the pad has columns.
+            if (k.repeat || degree >= columnsOf(tuningOf(ctx.studio())))
                 return true;
             if (k.down) {
                 if (byKey(k.key))
@@ -451,13 +452,17 @@ private:
     static float velocityOf(const Touch &t) { return std::clamp(0.5f + 0.6f * t.pressure, 0.35f, 1.0f); }
     static float bigOf(const Touch &t) { return std::clamp((t.size - 1.15f) / 0.6f, 0.0f, 1.0f); }
 
+    // How far a finger has turned since it landed, −1..1 for a quarter turn
+    // either way. The first few degrees count for nothing, so a finger that
+    // only rests never wobbles what it turns.
     static float twist(const Touch &tc, float from) {
         float d = tc.angle - from;
         while (d > float(M_PI_2))
             d -= float(M_PI);
         while (d < -float(M_PI_2))
             d += float(M_PI);
-        return d / float(M_PI_2);
+        const float u = d / float(M_PI_2), dead = 0.08f;
+        return std::fabs(u) < dead ? 0.0f : (u - std::copysign(dead, u)) / (1.0f - dead);
     }
 
     void land(const Touch &tc, double t, const Tuning &tuning, ControlContext &ctx) {

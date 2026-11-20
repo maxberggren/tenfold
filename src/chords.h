@@ -42,32 +42,59 @@ struct StyleDef {
     const char *name;
     const char *blurb;
     enum Osc : uint8_t { Saw, OrganOsc, PianoOsc } osc;
-    int unison;       // saws per note
+    int unison;       // saws per note (the organ and the piano: two copies, one each side)
     float detune;     // cents to the outermost saw
     float a, d, s, r; // amplitude envelope, seconds (decay and release are time constants)
     float cutoff;     // 0..1, octaves above 60 Hz over 8.1
     float envAmt, envDecay, res;
-    bool legato;      // a new chord while one is held glides into it instead of striking again
-    bool retrig;      // gate hits strike the envelope (stabs) rather than chop the sound
-    bool spread;      // open (drop-2) voicings, with the root doubled underneath
+    bool legato = false; // a new chord while one is held glides into it instead of striking again
+    bool retrig = false; // gate hits strike the envelope (stabs) rather than chop the sound
+    bool spread = false; // open (drop-2) voicings, with the root doubled underneath
     float glide;      // seconds for the voices to move to a new chord
     float centre;     // MIDI pitch the voicing gravitates to
     float gain;
-    float pump;       // depth of its own tempo-locked sidechain, 0 for none
-    float strum;      // seconds between notes of a fresh chord, low to high
+    float pump = 0;   // depth of its own tempo-locked sidechain, 0 for none
+    float strum = 0;  // seconds between notes of a fresh chord, low to high
     float width;      // stereo spread of the unison, 0..1
     int pattern;      // the rhythm it comes with
 };
 
+// The six sounds. Levels are matched by ear-proxy (RMS of a held
+// progression through the studio), stabs a little lower for their peaks.
 inline const StyleDef &styleDef(int s) {
     static const StyleDef defs[StyleCount] = {
-        // name     blurb                          osc            uni det   a      d     s     r     cut   env   envD  res   leg   retr  sprd  glide  ctr    gain   pump strum   width pattern
-        {"PAD", "big supersaw pad", StyleDef::Saw, 7, 26.0f, 0.28f, 1.2f, 0.85f, 0.45f, 0.70f, 0.10f, 0.6f, 0.12f, true, false, true, 0.045f, 62.0f, 0.36f, 0.0f, 0.0f, 1.0f, Hold},
-        {"TRANCE", "gated supersaw", StyleDef::Saw, 7, 20.0f, 0.004f, 0.4f, 0.9f, 0.09f, 0.76f, 0.14f, 0.25f, 0.18f, true, false, false, 0.018f, 66.0f, 0.42f, 0.0f, 0.0f, 0.85f, TranceGate},
-        {"ORGAN", "house organ stabs", StyleDef::OrganOsc, 1, 5.0f, 0.003f, 0.5f, 0.42f, 0.05f, 0.80f, 0.12f, 0.15f, 0.05f, false, true, false, 0.02f, 64.0f, 0.31f, 0.0f, 0.0f, 0.5f, Offbeat},
-        {"PIANO", "house piano", StyleDef::PianoOsc, 1, 4.0f, 0.0015f, 2.4f, 0.0f, 0.22f, 0.88f, 0.10f, 0.45f, 0.05f, false, true, false, 0.02f, 63.0f, 0.22f, 0.0f, 0.007f, 0.6f, Charleston},
-        {"PLUCK", "supersaw pluck", StyleDef::Saw, 5, 16.0f, 0.001f, 0.55f, 0.0f, 0.25f, 0.36f, 0.62f, 0.2f, 0.22f, false, true, false, 0.02f, 67.0f, 0.4f, 0.0f, 0.004f, 0.8f, Tresillo},
-        {"PUMP", "filtered, sidechained", StyleDef::Saw, 4, 13.0f, 0.012f, 0.5f, 0.92f, 0.22f, 0.56f, 0.12f, 0.4f, 0.42f, true, false, false, 0.025f, 60.0f, 0.44f, 0.82f, 0.0f, 0.7f, Hold},
+        // Seven saws a note, slow to swell and slow to fade, open voicings
+        // with the root underneath, gliding from chord to chord.
+        {.name = "PAD", .blurb = "big supersaw pad", .osc = StyleDef::Saw, .unison = 7, .detune = 26.0f,
+         .a = 0.28f, .d = 1.2f, .s = 0.85f, .r = 0.45f, .cutoff = 0.70f, .envAmt = 0.10f, .envDecay = 0.6f,
+         .res = 0.12f, .legato = true, .spread = true, .glide = 0.045f, .centre = 62.0f, .gain = 0.36f,
+         .width = 1.0f, .pattern = Hold},
+        // Brighter and instant, voiced higher, made for its sixteenth gate.
+        {.name = "TRANCE", .blurb = "gated supersaw", .osc = StyleDef::Saw, .unison = 7, .detune = 20.0f,
+         .a = 0.004f, .d = 0.4f, .s = 0.9f, .r = 0.09f, .cutoff = 0.76f, .envAmt = 0.14f, .envDecay = 0.25f,
+         .res = 0.18f, .legato = true, .glide = 0.018f, .centre = 66.0f, .gain = 0.42f, .width = 0.85f,
+         .pattern = TranceGate},
+        // Drawbars, percussion and click, a quick decay: struck on every hit.
+        {.name = "ORGAN", .blurb = "house organ stabs", .osc = StyleDef::OrganOsc, .unison = 2, .detune = 5.0f,
+         .a = 0.003f, .d = 0.5f, .s = 0.42f, .r = 0.05f, .cutoff = 0.80f, .envAmt = 0.12f, .envDecay = 0.15f,
+         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 64.0f, .gain = 0.31f, .width = 0.5f,
+         .pattern = Offbeat},
+        // Hammered FM that rings down, a little strum from the bottom up.
+        {.name = "PIANO", .blurb = "house piano", .osc = StyleDef::PianoOsc, .unison = 2, .detune = 4.0f,
+         .a = 0.0015f, .d = 2.4f, .s = 0.0f, .r = 0.22f, .cutoff = 0.88f, .envAmt = 0.10f, .envDecay = 0.45f,
+         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 63.0f, .gain = 0.22f, .strum = 0.007f,
+         .width = 0.6f, .pattern = Charleston},
+        // Five saws with a snapping filter and no sustain.
+        {.name = "PLUCK", .blurb = "supersaw pluck", .osc = StyleDef::Saw, .unison = 5, .detune = 16.0f,
+         .a = 0.001f, .d = 0.55f, .s = 0.0f, .r = 0.25f, .cutoff = 0.36f, .envAmt = 0.62f, .envDecay = 0.2f,
+         .res = 0.22f, .retrig = true, .glide = 0.02f, .centre = 67.0f, .gain = 0.4f, .strum = 0.004f,
+         .width = 0.8f, .pattern = Tresillo},
+        // Four saws through a resonant ladder held low (the twist opens it),
+        // ducking itself on every beat.
+        {.name = "PUMP", .blurb = "filtered, sidechained", .osc = StyleDef::Saw, .unison = 4, .detune = 13.0f,
+         .a = 0.012f, .d = 0.5f, .s = 0.92f, .r = 0.22f, .cutoff = 0.56f, .envAmt = 0.12f, .envDecay = 0.4f,
+         .res = 0.42f, .legato = true, .glide = 0.025f, .centre = 60.0f, .gain = 0.44f, .pump = 0.82f,
+         .width = 0.7f, .pattern = Hold},
     };
     return defs[std::clamp(s, 0, StyleCount - 1)];
 }
@@ -336,8 +363,9 @@ struct Tables {
     float sine[kTable + 1];
     float organ[kTable + 1];
     Tables() {
-        // Drawbars 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1': the bright,
-        // slightly hollow mix of the house organ.
+        // Harmonics one to eight as drawbars 8', 4', 2 2/3', 2', 1 3/5',
+        // 1 1/3' and 1' (there is none for the seventh): the bright, slightly
+        // hollow mix of the house organ.
         static const float bars[] = {1.0f, 0.75f, 0.55f, 0.45f, 0.18f, 0.22f, 0.0f, 0.3f};
         float peak = 0;
         for (int i = 0; i <= kTable; ++i) {
@@ -409,8 +437,8 @@ struct Env {
     }
 };
 
-// A lane's rhythm for one block: the gate's level per sample, and where hits
-// start and end (for the styles whose gate strikes).
+// A style's rhythm for one block: the gate's level per sample, and where
+// hits start and end (for the styles whose gate strikes).
 struct GateBlock {
     bool active = false;
     bool smooth = false;
@@ -439,13 +467,11 @@ struct ChordVoice {
     int id = -1, lane = 0, style = 0, degree = 0, colour = 0, reg = 0;
     uint64_t born = 0;
     int delay = 0;      // samples before the chord starts (a replayed onset inside the block)
-    int grace = 0;      // samples a chopping gate stays open for a fresh chord
     float vel = 0.8f;
     float pressure = 0.5f, pressureSm = 0.5f, big = 0, bigSm = 0, filter = 0.5f, filterSm = 0.5f;
     float level = 0;
     float glideCoef = 0.1f;
     Note notes[kNotes];
-    int noteCount = 0;
     Env amp, filt;
     float strike = 0;   // the piano's hammer and FM brightness, the organ's percussion and click
     float clickEnv = 0;
@@ -461,8 +487,6 @@ struct ChordVoice {
 
     void init(uint32_t seed) { rng = Rng(seed); }
 };
-
-
 
 // --- the engine -------------------------------------------------------------
 
@@ -940,7 +964,6 @@ private:
                 nt.midi = nt.target = vc.notes[0];
             }
         }
-        v.noteCount = ChordVoice::kNotes;
     }
 
     static float lowAmp(const StyleDef &sd, float big, bool has) {

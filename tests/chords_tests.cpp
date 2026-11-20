@@ -123,6 +123,27 @@ std::string tappedLoop(std::initializer_list<int> degrees, int row = Triad) {
     return s;
 }
 
+// Where a finger lands on the rhythm rail for pattern cell k.
+std::string rail(int k, float y = 0.9f) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.4f %.3f", (k + 0.5) / 8.0, y);
+    return buf;
+}
+enum { Hold = 0, Offbeat, Eighths, Tresillo, Charleston, TranceGate, Sixteenths, Wub };
+
+// How unevenly a stretch's level moves from one sixteenth to the next: near
+// zero for a held chord, large for a gated one.
+double choppiness(const testkit::Take &take, double from, double to, double bpm) {
+    const double step = 60.0 / bpm / 8.0; // half a sixteenth
+    double lo = 1e9, hi = 0;
+    for (double t = from; t + step < to; t += step) {
+        const double r = take.rms(t, t + step);
+        lo = std::min(lo, r);
+        hi = std::max(hi, r);
+    }
+    return hi / std::max(lo, 1e-6);
+}
+
 // Pitch classes of A natural minor, the studio's default key.
 const std::set<int> kAMinor = {9, 11, 0, 2, 4, 5, 7};
 
@@ -374,6 +395,107 @@ private slots:
         for (float n : after)
             pcs.insert(int(std::lround(n)) % 12);
         QVERIFY(pcs.count(4) && pcs.count(7) && pcs.count(11)); // A minor became E minor: E G B
+    }
+
+    // Holding a cell of the rail plays its rhythm over everything, a loop
+    // included, for as long as the finger stays; lifting gives the loop
+    // back its own (here none: a sustained pad).
+    void holdingTheRailGatesTheLoop() {
+        const std::string s = tappedLoop({0, 5, 2, 6}, Seventh) + "down 5.0 30 " + rail(Offbeat) +
+                              "\nup 7.0 30\nend 9.5\n";
+        const auto take = testkit::play(s);
+        QCOMPARE(take.view.parts[kChords].playing, 0);
+        const double gated = choppiness(take, 5.3, 6.9, 120), free = choppiness(take, 7.4, 8.4, 120);
+        QVERIFY2(gated > 3.0 * free, qPrintable(QString("gated %1 free %2").arg(gated).arg(free)));
+    }
+
+    // Tapping a cell keeps it as this sound's rhythm; a second finger on the
+    // rail doubles the gate's speed, a third quadruples it.
+    void theRailLatchesAndBuilds() {
+        int latched = -1, rate2 = 0, rate3 = 0, rateAfter = 0;
+        playWatching("page 0 3\ntap 0.2 " + rail(Offbeat) + "\ndown 1.0 1 " + rail(Sixteenths) + "\ndown 1.2 2 " +
+                         rail(Sixteenths) + "\ndown 1.6 3 " + rail(Sixteenths) + "\nup 2.0 1\nup 2.0 2\nup 2.0 3\nend 2.3\n",
+                     [&](double now, const StudioView &v) {
+                         const float *d = v.parts[kChords].data;
+                         if (now > 0.6 && now < 0.9)
+                             latched = int(d[40 + 0]); // the pad's pattern
+                         if (now > 1.4 && now < 1.5)
+                             rate2 = int(d[46]);
+                         if (now > 1.8 && now < 1.9)
+                             rate3 = int(d[46]);
+                         if (now > 2.2)
+                             rateAfter = int(d[46]);
+                     });
+        QCOMPARE(latched, int(Offbeat));
+        QCOMPARE(rate2, 2);
+        QCOMPARE(rate3, 4);
+        QCOMPARE(rateAfter, 1);
+    }
+
+    // A loop keeps the sound it was played with: an organ loop stays an
+    // organ while the pad is played over it.
+    void aLoopKeepsItsSound() {
+        std::string s = "page 0 3\nkey 0.1 Right\nkey 0.15 Right\n" + tappedLoop({0, 5, 2, 6}).substr(9) +
+                        "key 3.5 Left\nkey 3.55 Left\ndown 4.0 40 " + cell(3, Triad) + "\nend 5\n";
+        int loopStyle = -1, liveStyle = -1;
+        playWatching(s, [&](double now, const StudioView &v) {
+            const float *d = v.parts[kChords].data;
+            if (now > 4.5 && d[16] >= 0)
+                loopStyle = int(d[16 + 2]);
+            if (now > 4.5 && d[0] >= 0)
+                liveStyle = int(d[2]);
+        });
+        QCOMPARE(loopStyle, 2); // the organ
+        QCOMPARE(liveStyle, 0); // the pad
+    }
+
+    // Up raises the voicing: the same chord, its notes higher.
+    void upRaisesTheVoicing() {
+        std::vector<float> low, high;
+        playWatching("page 0 3\ndown 0.2 1 " + cell(0, Triad) + "\nkey 0.6 Up\nkey 0.7 Up\nend 1.2\n",
+                     [&](double now, const StudioView &v) {
+                         if (now > 0.4 && now < 0.55)
+                             low = voicing(v);
+                         if (now > 1.0)
+                             high = voicing(v);
+                     });
+        QVERIFY(!low.empty() && !high.empty());
+        double a = 0, b = 0;
+        for (float n : low)
+            a += n / low.size();
+        for (float n : high)
+            b += n / high.size();
+        QVERIFY2(b > a + 3.0, qPrintable(QString("%1 → %2").arg(a).arg(b)));
+    }
+
+    // A flat finger makes the chord bigger: the root an octave under and the
+    // top an octave over join it.
+    void aFlatFingerDoublesTheChord() {
+        size_t tip = 0, flat = 0;
+        playWatching("page 0 3\nkey 0.05 Right\ndown 0.2 1 " + cell(0, Triad) + " size=1\nglide 0.6 0.8 1 " +
+                         cell(0, Triad) + " size=2\nend 1.4\n",
+                     [&](double now, const StudioView &v) {
+                         if (now > 0.4 && now < 0.55)
+                             tip = voicing(v).size();
+                         if (now > 1.2)
+                             flat = voicing(v).size();
+                     });
+        QCOMPARE(int(tip), 3);
+        QVERIFY2(flat >= 4, qPrintable(QString::number(flat)));
+    }
+
+    // The chords follow the mode: in A Dorian the IV chord is D major.
+    void chordsFollowTheMode() {
+        std::vector<float> notes;
+        playWatching("page 0 3\nkey 0.1 Ctrl+]\ndown 0.3 1 " + cell(3, Triad) + "\nend 0.8\n",
+                     [&](double now, const StudioView &v) {
+                         if (now > 0.6)
+                             notes = voicing(v);
+                     });
+        std::set<int> pcs;
+        for (float n : notes)
+            pcs.insert(int(std::lround(n)) % 12);
+        QVERIFY(pcs.count(2) && pcs.count(6) && pcs.count(9)); // D F♯ A
     }
 
     // Ten fingers at once, all over the pad and the rail, stay within bounds.

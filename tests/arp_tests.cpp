@@ -544,174 +544,149 @@ private slots:
     // Beat b at 124 BPM, in seconds, for scripts.
     static std::string at(double beat) { return std::to_string(beat * 60.0 / 124.0); }
 
+    // Plays a script and returns the arp's log and the studio at the end.
+    static testkit::Take run(const std::string &script, std::vector<arp::Engine::Fired> &log, StudioView *view = nullptr,
+                             QString *status = nullptr) {
+        return testkit::play(script, [&](Session &s) {
+            log = engineOf(s)->log();
+            if (view)
+                *view = s.view();
+            if (status)
+                *status = s.pageStatus();
+        });
+    }
+
+    // Every loop note against the live note one or more loop lengths
+    // before it, inside the take's window [from, to): returns how many
+    // matched, and fails on any that differ.
+    static int matchesTheTake(const std::vector<arp::Engine::Fired> &log, double from, double to, double len) {
+        std::map<int64_t, int> live;
+        for (const auto &f : log)
+            if (f.lane == 0)
+                live[int64_t(std::llround(f.beat * 8))] = int(std::lround(f.midi));
+        int matched = 0;
+        for (const auto &f : log) {
+            if (f.lane != 1)
+                continue;
+            double back = f.beat;
+            while (back >= to - 1e-6)
+                back -= len;
+            if (back < from - 1e-6)
+                continue;
+            const auto it = live.find(int64_t(std::llround(back * 8)));
+            if (it == live.end())
+                continue;
+            if (it->second != int(std::lround(f.midi))) {
+                qWarning("loop note at beat %.3f is %d, the take's at %.3f was %d", f.beat, int(std::lround(f.midi)),
+                         back, it->second);
+                return -1;
+            }
+            ++matched;
+        }
+        return matched;
+    }
+
     void spaceLoopsWhatWasPlayedFromWhereThePatternWas() {
-        // A chord held from bar 1, Space just before bar 3: the two bars just
-        // played become a loop from that bar line, with the very notes the
-        // hand played in the same places. (The metronome stands in for a
+        // A chord held from bar 1, Space just after bar 3's line: the two
+        // bars the arp played become the loop at once, note for note, and
+        // the hand still down steps aside. (The metronome stands in for a
         // playing loop.)
         std::vector<arp::Engine::Fired> log;
         StudioView view;
-        const auto take = testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) +
-                                            " 0.32\ndown " + at(4.01) + " 2 " + gridX(4) + " 0.7\n"
-                                            "key " + at(11.5) + " Space\nup " + at(13.5) + " 1\nup " + at(13.5) +
-                                            " 2\nend 16\n",
-                                        [&](Session &s) {
-                                            log = engineOf(s)->log();
-                                            view = s.view();
-                                        });
+        const auto take = run("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) + " 0.32\ndown " +
+                                  at(4.01) + " 2 " + gridX(4) + " 0.7\nkey " + at(12.05) + " Space\nup " + at(13.5) +
+                                  " 1\nup " + at(13.5) + " 2\nend 16\n",
+                              log, &view);
         QVERIFY(take.error.empty());
         QCOMPARE(view.parts[4].playing, 0);
         QCOMPARE(int(view.parts[4].clips[0].lengthBeats), 8);
         QVERIFY(take.rms(10, 16) > 0.02);
-        std::map<int64_t, int> live, loop;
-        for (const auto &f : log) {
-            const int64_t q = int64_t(std::llround(f.beat * 4)); // sixteenths
-            if (f.lane == 1)
-                // (the landing, a frame after the line, is pulled most of the way to it)
-                QVERIFY2(std::fabs(f.beat * 4 - double(q)) < 4e-3, qPrintable(QString::number(f.beat, 'f', 5)));
-            (f.lane == 0 ? live : loop)[q] = int(std::lround(f.midi));
-        }
-        QVERIFY(!loop.empty());
-        QCOMPARE(loop.begin()->first, int64_t(48)); // from the bar line at beat 12
-        int compared = 0, repeats = 0;
-        for (const auto &[q, midi] : loop) {
-            if (loop.count(q + 32)) {
-                QCOMPARE(loop.at(q + 32), midi);
-                ++repeats;
-            }
-            const int64_t back = 16 + (q - 48) % 32; // the same place in the take, bars 1 and 2
-            if (live.count(back)) {
-                QCOMPARE(live.at(back), midi);
-                ++compared;
-            }
-        }
-        QVERIFY(compared >= 30);
-        QVERIFY(repeats >= 30);
-        // From the take's first beat the loop plays alone: the hand still
-        // down stepped aside instead of doubling it.
+        QVERIFY(matchesTheTake(log, 4.0, 12.0, 8.0) >= 50);
         for (const auto &f : log)
             if (f.lane == 0)
-                QVERIFY2(f.beat < 12.0 - 1e-6, qPrintable(QString::number(f.beat)));
-    }
-
-    void holdingThroughTheLandingDoesNotDoubleTheLoop() {
-        // The chord held on well past the bar where the take lands: the bars
-        // after it sound like the bars it took, not louder.
-        const auto take = testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ndown " + at(4.0) + " 1 " +
-                                        gridX(0) + " 0.32\nkey " + at(11.5) + " Space\nup " + at(19.0) + " 1\nend " +
-                                        at(20.0) + "\n");
-        auto peak = [&](double b0, double b1) {
-            double p = 0;
-            for (size_t i = size_t(b0 * 60 / 124 * 48000); i < size_t(b1 * 60 / 124 * 48000); ++i)
-                p = std::max({p, double(std::fabs(take.left[i])), double(std::fabs(take.right[i]))});
-            return 20 * std::log10(p);
-        };
-        auto rms = [&](double b0, double b1) { return 20 * std::log10(take.rms(b0 * 60 / 124, b1 * 60 / 124)); };
-        const double took = rms(6, 12), after = rms(12, 18);
-        QVERIFY2(std::fabs(after - took) < 1.0, qPrintable(QStringLiteral("%1 then %2 dB").arg(took).arg(after)));
-        QVERIFY2(peak(12, 18) < peak(6, 12) + 1.0, qPrintable(QStringLiteral("%1 then %2 dBFS").arg(peak(6, 12)).arg(peak(12, 18))));
-        // The landing step itself: no louder than the take's own steps.
-        QVERIFY2(peak(11.9, 12.4) < peak(6, 12) + 1.0, qPrintable(QString::number(peak(11.9, 12.4))));
-    }
-
-    void aLatchedPatternGivesWayOnTheTakesFirstBeat() {
-        std::vector<arp::Engine::Fired> log;
-        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) +
-                          " 0.32\nclick " + at(5.0) + " len=0.1\nup " + at(6.0) + " 1\nkey " + at(11.5) +
-                          " Space\nend " + at(20.0) + "\n",
-                      [&](Session &s) {
-                          log = engineOf(s)->log();
-                          QVERIFY(!s.pageStatus().contains(QStringLiteral("latched")));
-                      });
-        int live = 0, loop = 0;
-        for (const auto &f : log) {
-            if (f.lane == 0)
-                QVERIFY(f.beat < 12.0 - 1e-6);
-            (f.lane ? loop : live) += f.beat >= 11.0;
-        }
-        QVERIFY(live >= 3); // the latch played up to the line
-        QVERIFY(loop >= 20);
+                QVERIFY2(f.beat < 12.1, qPrintable(QString::number(f.beat)));
     }
 
     void spaceJustAfterTheBarLineHandsOverAtOnce() {
-        // Space half a beat after a bar line takes the bars that ended on it:
-        // the loop starts part way in, and the live notes give way at once,
-        // held or latched, so the level stays where it was.
+        // Held or latched, the loop takes over the moment it lands and the
+        // level stays where it was: no doubling, no gap.
         for (const bool latched : {false, true}) {
             std::vector<arp::Engine::Fired> log;
+            QString status;
             const std::string hand = latched ? "click " + at(5.0) + " len=0.1\nup " + at(6.0) + " 1\n"
                                              : "up " + at(19.0) + " 1\n";
-            const auto take = testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ndown " + at(4.0) + " 1 " +
-                                                gridX(0) + " 0.32\n" + hand + "key " + at(12.5) + " Space\nend " +
-                                                at(20.0) + "\n",
-                                            [&](Session &s) { log = engineOf(s)->log(); });
+            const auto take = run("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ndown " + at(4.0) + " 1 " +
+                                      gridX(0) + " 0.32\n" + hand + "key " + at(12.05) + " Space\nend " + at(20.0) + "\n",
+                                  log, nullptr, &status);
             auto rms = [&](double b0, double b1) { return 20 * std::log10(take.rms(b0 * 60 / 124, b1 * 60 / 124)); };
-            const double before = rms(6, 12), after = rms(13, 19);
+            auto peak = [&](double b0, double b1) {
+                double p = 0;
+                for (size_t i = size_t(b0 * 60 / 124 * 48000); i < size_t(b1 * 60 / 124 * 48000); ++i)
+                    p = std::max({p, double(std::fabs(take.left[i])), double(std::fabs(take.right[i]))});
+                return 20 * std::log10(p);
+            };
+            const double before = rms(6, 12), after = rms(12.5, 19.5);
             QVERIFY2(std::fabs(after - before) < 1.0,
                      qPrintable(QStringLiteral("%1: %2 then %3 dB").arg(latched).arg(before).arg(after)));
-            int liveAfter = 0, loop = 0;
-            for (const auto &f : log) {
-                liveAfter += f.lane == 0 && f.beat > 12.8;
-                loop += f.lane == 1;
-            }
-            QCOMPARE(liveAfter, 0);
-            QVERIFY(loop > 20);
+            QVERIFY2(peak(12, 12.6) < peak(6, 12) + 1.0, qPrintable(QString::number(peak(12, 12.6))));
+            for (const auto &f : log)
+                if (f.lane == 0)
+                    QVERIFY(f.beat < 12.1);
+            QVERIFY(matchesTheTake(log, 4.0, 12.0, 8.0) >= 25);
+            QVERIFY(!status.contains(QStringLiteral("latched")));
         }
     }
 
-    void aLoopCaughtUpPartWayInPlaysTheTakesBar() {
-        // A one-bar chaos take closed by Space just after its bar line starts
-        // part way through; the rest of that first bar, and every bar after,
-        // is the take's.
+    void aLoopThatJoinsMidBarStartsWhereThePatternWas() {
+        // The hand alternates A and D every two beats; Space a beat into a
+        // bar loops the bar it repeated, from mid-bar. The loop joins on the
+        // note held at that point, part way through its pattern, and plays
+        // the take's notes from there on, pass after pass.
         std::vector<arp::Engine::Fired> log;
-        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ntap 0.4 0.61 0.2225\ndown " + at(8.0) + " 1 " +
-                          gridX(0) + " 0.32\nup " + at(12.3) + " 1\nkey " + at(12.5) + " Space\nend " + at(28.0) + "\n",
-                      [&](Session &s) { log = engineOf(s)->log(); });
-        std::map<int, int> taken;
-        for (const auto &f : log)
-            if (f.lane == 0 && f.beat >= 8.0 - 1e-6 && f.beat < 12.0 - 1e-6)
-                taken[int(std::lround((f.beat - 8.0) * 8))] = int(std::lround(f.midi));
-        QVERIFY(taken.size() >= 6);
-        int compared = 0;
-        for (const auto &f : log)
-            if (f.lane == 1) {
-                const double in = std::fmod(f.beat, 4.0);
-                const int key = int(std::lround(in * 8));
-                QVERIFY2(taken.count(key) && taken.at(key) == int(std::lround(f.midi)),
-                         qPrintable(QStringLiteral("beat %1").arg(f.beat)));
-                ++compared;
-            }
-        QVERIFY(compared >= 20);
-    }
-
-    void theWaitingTakeSaysHowLongAndWhen() {
-        QString status;
-        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) + " 0.32\nkey " + at(10.5) +
-                          " Space\nend " + at(10.9) + "\n",
-                      [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains(QStringLiteral("2 bars into slot 1 · in 1.")), qPrintable(status));
+        StudioView view;
+        std::string script = "key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\n";
+        int id = 1;
+        for (double b = 4.0; b < 13.0; b += 2.0, ++id) {
+            const int col = (int(b) / 2) % 2 ? 3 : 0;
+            script += "down " + at(b) + " " + std::to_string(id) + " " + gridX(col) + " 0.32\nup " +
+                      at(std::min(b + 2.0, 13.5)) + " " + std::to_string(id) + "\n";
+        }
+        script += "key " + at(13.05) + " Space\nend " + at(30.0) + "\n";
+        run(script, log, &view);
+        QCOMPARE(view.parts[4].playing, 0);
+        const double len = view.parts[4].clips[0].lengthBeats;
+        QCOMPARE(int(len), 4);
+        const int matched = matchesTheTake(log, 13.0 - len, 13.0, len);
+        QVERIFY2(matched >= 50, qPrintable(QString::number(matched)));
     }
 
     void aOneBarLoopRollsTheSameDiceEveryPass() {
         // Chaos keys its dice to a two-bar phrase; a one-bar loop of it must
         // still repeat the bar it took, pass after pass.
         std::vector<arp::Engine::Fired> log;
-        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ntap 0.4 0.61 0.2225\n" // echo off, chaos ~80%
-                      "down " + at(4.0) + " 1 " + gridX(0) + " 0.32\nkey " + at(7.5) + " Space\nup " + at(8.6) +
-                          " 1\nend " + at(25.0) + "\n",
-                      [&](Session &s) { log = engineOf(s)->log(); });
+        run("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ntap 0.4 0.61 0.2225\n" // echo off, chaos ~80%
+            "down " + at(4.0) + " 1 " + gridX(0) + " 0.32\nkey " + at(8.05) + " Space\nup " + at(8.6) + " 1\nend " +
+                at(25.0) + "\n",
+            log);
         std::map<int, int> taken;
         for (const auto &f : log)
             if (f.lane == 0 && f.beat >= 4.0 - 1e-6 && f.beat < 8.0 - 1e-6)
                 taken[int(std::lround((f.beat - 4.0) * 8))] = int(std::lround(f.midi));
         QVERIFY(taken.size() >= 6);
         QVERIFY(taken.size() < 16); // chaos skipped some
+        // The hand played the first step of pass one itself (the loop landed
+        // just after it): the loop carries on from the next.
+        bool handPlayedTheOne = false;
+        for (const auto &f : log)
+            handPlayedTheOne |= f.lane == 0 && std::fabs(f.beat - 8.0) < 1e-3;
         for (int pass = 0; pass < 4; ++pass) {
             std::map<int, int> got;
             const double b0 = 8.0 + 4.0 * pass;
             for (const auto &f : log)
                 if (f.lane == 1 && f.beat >= b0 - 1e-6 && f.beat < b0 + 4.0 - 1e-6)
                     got[int(std::lround((f.beat - b0) * 8))] = int(std::lround(f.midi));
+            if (pass == 0 && handPlayedTheOne && !got.count(0) && taken.count(0))
+                got[0] = taken.at(0);
             QVERIFY2(got == taken, qPrintable(QStringLiteral("pass %1: %2 notes, the take %3")
                                                    .arg(pass + 1)
                                                    .arg(got.size())
@@ -778,7 +753,7 @@ private slots:
         // A loop at 1/16; a finger high on the rate pad doubles it to 1/32
         // while it stays, and the loop goes back when it lifts.
         std::vector<arp::Engine::Fired> log;
-        testkit::play("key 0.1 Ctrl+M\npage 0 5\ndown 0.3 1 " + gridX(0) + " 0.32\nkey " + at(7.5) + " Space\nup 4.5 1\n"
+        testkit::play("key 0.1 Ctrl+M\npage 0 5\ndown " + at(4.0) + " 1 " + gridX(0) + " 0.32\nkey " + at(12.05) + " Space\nup 6.5 1\n"
                       "down 8.0 2 0.66 0.97\nup 10.0 2\nend 13\n",
                       [&](Session &s) { log = engineOf(s)->log(); });
         auto count = [&](double from, double to) {

@@ -1,5 +1,5 @@
 # Night drive: a synthwave pulse arp up and down a Cmaj7, legato and
-# swung a touch, a D and an A added on top as it goes; Space on the next
+# swung a touch, a D and an A added on top as it goes; Space just after the
 # ONE loops the four bars. Then a glass arp on top in triplets, its
 # euclidean rhythm turning under the right hand while chaos leaps it into
 # the octave above: two lanes, two meters, one key.
@@ -24,7 +24,7 @@ down 3.333 21 0.9040 0.4673
 glide 3.333 6.667 21 0.9131 0.5104
 glide 6.667 10.556 21 0.9040 0.4597
 up 10.833 21
-key 11.111 Space
+key 11.150 Space
 up 11.121 1
 key 12.222 X
 key 12.278 Y

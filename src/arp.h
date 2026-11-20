@@ -141,7 +141,7 @@ enum : uint16_t {
 // flags << 8, i[2] the id this note takes over from (a bar's handover), i[3]
 // the pattern position at that bar or −1; f[0] velocity.
 // Move: the same i[0], i[1] and f[0].
-enum : int { kRename = 1, kKey = 2 };
+enum : int { kRename = 1, kKey = 2, kFresh = 4 }; // kFresh: landed on an empty hand, the pattern starts over
 // Overlay masks: which of the right hand's pads are shaping the loop.
 enum : int { kPadRate = 1, kPadRhythm = 2, kPadRange = 4, kPadTone = 8, kPadGroove = 16, kPadEcho = 32 };
 constexpr int kStateId = 0xFFFF00;

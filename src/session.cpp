@@ -38,6 +38,17 @@ public:
             onsets[onsetHead % onsets.size()] = {c.t > 0 ? c.t : now(), !(c.flags & Command::Continue), key};
             ++onsetHead;
         }
+        if (!(c.flags & Command::NoRecord)) {
+            if (c.type == Command::On && heldCount < int(held.size())) {
+                held[size_t(heldCount++)] = c.id;
+            } else if (c.type == Command::Off) {
+                for (int i = 0; i < heldCount; ++i)
+                    if (held[size_t(i)] == c.id) {
+                        held[size_t(i)] = held[size_t(--heldCount)];
+                        break;
+                    }
+            }
+        }
         StudioMsg m;
         m.kind = StudioMsg::ToPart;
         m.part = int8_t(m_part);
@@ -148,6 +159,10 @@ public:
     };
     std::array<Onset, 256> onsets{};
     size_t onsetHead = 0;
+    // Sounds started and not yet ended: a chord or a pad held down is still
+    // playing, so the phrase hasn't paused.
+    std::array<int32_t, 64> held{};
+    int heldCount = 0;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
 
 private:
@@ -240,8 +255,41 @@ QString Session::pageStatus() const {
 
 void Session::frame(const Frame &f) {
     std::lock_guard lock(m_lock);
-    m_lastFrame = f.t;
     m_last = f;
+    deliver(withMouse(f));
+}
+
+Frame Session::withMouse(Frame f) const {
+    if (m_mouseDown && f.count < int(f.touches.size())) {
+        Touch &t = f.touches[f.count++];
+        t.id = kMouseId;
+        t.x = std::clamp(m_mouseX, 0.0f, 1.0f);
+        t.y = std::clamp(m_mouseY, 0.0f, 1.0f);
+        t.size = 1.0f;
+        t.pressure = 0.5f;
+    }
+    return f;
+}
+
+void Session::pointer(float x, float y, bool down, bool inside) {
+    std::lock_guard lock(m_lock);
+    const bool was = m_mouseDown;
+    m_mouseX = x;
+    m_mouseY = y;
+    m_mouseIn = inside;
+    m_mouseDown = down;
+    if (!down && !was)
+        return;
+    // A frame of its own: the pad's fingers as they last were, plus the
+    // mouse (or without it, on release).
+    Frame f = m_last;
+    f.t = now();
+    f.button = false;
+    deliver(withMouse(f));
+}
+
+void Session::deliver(const Frame &f) {
+    m_lastFrame = f.t;
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
@@ -353,6 +401,9 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     pc.time = time;
     pc.beat = context(m_page).beatAt(time);
     pc.scale = float(pad.height() / 600.0);
+    pc.hover = m_mouseIn;
+    pc.hoverX = m_mouseX;
+    pc.hoverY = m_mouseY;
     painter.save();
     p.spec.control->paint(painter, pc);
     painter.restore();
@@ -550,6 +601,9 @@ void Session::toggleRecording(ControlContext &base) {
                            : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
         return;
     }
+    // Something still held down counts as playing until now.
+    if (ctx.heldCount > 0)
+        last = nowT;
     const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
     // The loop ends where the playing did: now, or a beat after the last
     // note if there was a pause before Space, on the sixteenth grid. It
@@ -583,9 +637,10 @@ void Session::toggleRecording(ControlContext &base) {
     }
     const bool settled = length > 0;
     if (!settled) {
-        // Played once: the whole phrase, in whole bars (1, 2, 4 or 8).
-        const double played = std::max(1.0, std::ceil((end - beatFirst - 0.25) / kBeatsPerBar));
-        length = kBeatsPerBar * std::clamp(std::exp2(std::ceil(std::log2(played))), 1.0, 8.0);
+        // Played once: the whole phrase, in whole bars, with no bars of
+        // silence added to round it.
+        const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
+        length = kBeatsPerBar * std::clamp(played, 1.0, 8.0);
     }
     const int bars = int(std::lround(length / kBeatsPerBar));
     StudioMsg m;

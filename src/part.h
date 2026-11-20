@@ -44,6 +44,10 @@ constexpr int kClipSlots = 8;
 constexpr int kPartData = 256;
 constexpr int kBlock = 32; // the studio renders in blocks of at most this many frames
 constexpr int kBeatsPerBar = 4;
+// The mouse, held down on the pad, arrives in frames as one more touch with
+// this id (pressure 0.5, a normal fingertip), whether or not the trackpad is
+// taken. A page can treat it as a finger, or as a pointer that clicks.
+constexpr int kMouseId = 0x7FFF;
 
 // A message to a part's engine.
 struct Command {
@@ -313,6 +317,8 @@ struct PaintContext {
     double time = 0;      // the touch clock, for animation
     double beat = 0;      // the beat at that moment
     float scale = 1;      // device pixels per pad unit hint: pad.height() / 600
+    bool hover = false;   // the mouse is over the pad (not pressed or pressed)
+    float hoverX = 0, hoverY = 0; // where, in pad coordinates
     // Pad coordinates (0..1, y up) to item pixels and back.
     QPointF at(float x, float y) const {
         return {pad.left() + double(x) * pad.width(), pad.bottom() - double(y) * pad.height()};

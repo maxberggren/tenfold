@@ -28,8 +28,13 @@ constexpr int kReplayBit = 1 << 30;
 int replayId(int id, int slot) { return kReplayBit | (slot << 24) | (id & 0xFFFFFF); }
 
 // The lengths a clip snaps to, in beats.
+// A take of a bar or more keeps its whole bars (a three-bar phrase stays
+// three bars: rounding it to four would play a bar of silence every round);
+// shorter ones snap to 1, 2 or 4 beats.
 double snapLength(double beats) {
-    static const double lengths[] = {1, 2, 4, 8, 16, 32};
+    if (beats >= 3.0)
+        return std::clamp(std::round(beats / kBeatsPerBar), 1.0, 8.0) * kBeatsPerBar;
+    static const double lengths[] = {1, 2, 4};
     double best = 4, bestErr = 1e9;
     for (double l : lengths) {
         const double err = std::fabs(std::log2(beats / l));

@@ -174,6 +174,15 @@ void run(PartEngine &e, Fake &ctx, double seconds, float *data = nullptr, std::v
         e.publish(data);
 }
 
+// A, C, E, G on the four beats of the second bar at the studio's 124 BPM.
+std::string riffInBarTwo() {
+    std::string s = "page 0 4\n";
+    const int qs[4] = {0, 2, 4, 6};
+    for (int i = 0; i < 4; ++i)
+        s += fmt("tap %.4f %.4f 0.5 len=0.2\n", (4 + i) * 60.0 / 124.0, cellX(qs[i]));
+    return s;
+}
+
 const char *soundName(int i) {
     static const char *n[6] = {"Anthem", "Pluck", "Bell", "Chip", "Vox", "Scream"};
     return n[i];
@@ -382,55 +391,76 @@ private slots:
         QVERIFY(wet.rms(1.5, 2.5) > 0.003);
     }
 
-    void tapAPhraseAndHoldItsFirstNoteToLoopIt() {
-        // A, C, E, G at 120 BPM, then A again on the beat, held: a loop.
-        std::string s = "page 0 4\n";
-        const int qs[4] = {0, 2, 4, 6};
-        for (int i = 0; i < 4; ++i)
-            s += fmt("tap %.2f %.4f 0.5 len=0.3\n", 0.5 + 0.5 * i, cellX(qs[i]));
-        s += fmt("down 2.5 1 %.4f 0.5\nup 3.0 1\nend 6.0\n", cellX(0));
-        const auto tr = trace(s);
+    void enterLoopsTheBarsJustPlayed() {
+        // At 124 BPM, A C E G on the beats of the second bar, then Enter
+        // late in the bar: the page shows a loop counting down to the bar
+        // line, and at the bar line that bar loops on its own line.
+        const std::string riff = riffInBarTwo() + "key 3.68 Return\n";
+        QString waiting;
+        testkit::play(riff + "end 3.78\n", [&](Session &s) { waiting = s.pageStatus(); });
+        QVERIFY2(waiting.contains(QStringLiteral("loop 1 bar in")), qPrintable(waiting));
+        const auto tr = trace(riff + "end 7.0\n");
         const PartView &v = tr.take.view.parts[kLead];
         QCOMPARE(v.playing, 0);
-        QCOMPARE(int(std::lround(tr.take.view.bpm)), 120);
-        QVERIFY(v.clips[0].lengthBeats >= 4);
-        // Long after the fingers left, the loop sings on its own line.
+        QCOMPARE(int(v.clips[0].lengthBeats), 4);
+        QCOMPARE(v.clips[0].events, 8);
         bool sang = false;
         for (const auto &k : tr.ticks)
-            sang |= k.t > 4.0 && k.data[16 * 1] > 0;
+            sang |= k.t > 4.5 && k.data[16 * 1] > 0;
         QVERIFY(sang);
-        QVERIFY(tr.take.rms(4.0, 6.0) > 0.01);
+        QVERIFY(tr.take.rms(5.0, 7.0) > 0.01);
     }
 
-    void aPhraseEndingElsewhereDoesNotLoop() {
-        // The same taps, but the held note isn't where the phrase began:
-        // it's just a long last note, as melodies often have.
+    void enterAgainCallsTheLoopOff() {
+        const auto take = testkit::play(riffInBarTwo() + "key 3.6 Return\nkey 3.7 Return\nend 5.0\n");
+        QCOMPARE(take.view.parts[kLead].playing, -1);
+        QCOMPARE(int(take.view.parts[kLead].clips[0].state), int(ClipView::Empty));
+    }
+
+    void ordinaryPlayingNeverLoops() {
+        // A riff tapped in time and its first note held on the next beat,
+        // then a melody that comes back to its first note and stays: with
+        // no Enter, nothing loops.
         std::string s = "page 0 4\n";
         const int qs[4] = {0, 2, 4, 6};
         for (int i = 0; i < 4; ++i)
-            s += fmt("tap %.2f %.4f 0.5 len=0.3\n", 0.5 + 0.5 * i, cellX(qs[i]));
-        s += fmt("down 2.5 1 %.4f 0.5\nup 3.5 1\nend 4.0\n", cellX(7));
+            s += fmt("tap %.2f %.4f 0.5 len=0.2\n", 0.5 + 0.5 * i, cellX(qs[i]));
+        s += fmt("down 2.5 1 %.4f 0.5\nup 3.5 1\n", cellX(0));
+        const int mel[6] = {7, 9, 11, 9, 8, 7};
+        for (int i = 0; i < 6; ++i)
+            s += fmt("down %.2f %.0f %.4f 0.6\n", 4.0 + 0.4 * i, 10 + i, cellX(mel[i])) +
+                 fmt("up %.2f %.0f\n", 4.0 + 0.4 * i + (i == 5 ? 1.5 : 0.35), 10 + i);
+        s += "end 7.0\n";
         const auto take = testkit::play(s);
-        QCOMPARE(take.view.parts[kLead].playing, -1);
-        QCOMPARE(int(take.view.parts[kLead].clips[0].state), int(ClipView::Empty));
+        for (const auto &c : take.view.parts[kLead].clips)
+            QCOMPARE(int(c.state), int(ClipView::Empty));
+    }
+
+    void shiftEnterRecordsFromTheNextBar() {
+        // Shift+Enter arms a recording for the next bar; the page says so;
+        // a second press ends it at the bar, and it loops.
+        const std::string s = "page 0 4\nkey 0.5 Shift+Return\n" + fmt("down 2.1 1 %.4f 0.5\nup 3.6 1\n", cellX(3));
+        QString armed;
+        testkit::play(s + "end 1.0\n", [&](Session &ss) { armed = ss.pageStatus(); });
+        QVERIFY2(armed.contains(QStringLiteral("rec in")), qPrintable(armed));
+        const auto take = testkit::play(s + "key 4.0 Shift+Return\nend 6.0\n");
+        const PartView &v = take.view.parts[kLead];
+        QCOMPARE(v.playing, 0);
+        QCOMPARE(int(v.clips[0].lengthBeats), 4);
     }
 
     void aLiveLineAndALoopNeverStealEachOthersLegato() {
         // A loop plays while a live finger holds a note: both sound, each on
         // its own line.
-        std::string s = "page 0 4\n";
-        const int qs[4] = {0, 2, 4, 6};
-        for (int i = 0; i < 4; ++i)
-            s += fmt("tap %.2f %.4f 0.5 len=0.3\n", 0.5 + 0.5 * i, cellX(qs[i]));
-        s += fmt("down 2.5 1 %.4f 0.5\nup 3.0 1\n", cellX(0));
-        s += fmt("down 3.2 2 %.4f 0.5\nup 5.2 2\nend 5.5\n", cellX(11));
+        const std::string s = riffInBarTwo() + "key 3.68 Return\n" +
+                              fmt("down 4.2 2 %.4f 0.5\nup 6.2 2\nend 6.5\n", cellX(11));
         const auto tr = trace(s);
         int both = 0;
         for (const auto &k : tr.ticks)
-            if (k.t > 3.5 && k.t < 5.0)
+            if (k.t > 4.5 && k.t < 6.0)
                 both += k.data[0] > 0 && k.data[16] > 0;
         QVERIFY(both > 20);
-        QVERIFY(std::fabs(tr.at(4.5).data[1] - 18.0f) < 0.02f);
+        QVERIFY(std::fabs(tr.at(5.5).data[1] - 18.0f) < 0.02f);
     }
 
     void theKeyboardIsAPianoInTheScale() {

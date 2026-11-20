@@ -9,10 +9,11 @@
 //     it, press to swell it;
 //   * fingers that land together and stay become a groove: each pad plays
 //     its part in the kit's style, up for busier, sideways to shift it;
-//   * a click while rolling or grooving keeps it: at the bar line it
-//     becomes a loop (or is overdubbed into the loop that plays);
-//   * a click on a fresh finger grabs that drum's sound: drag to tune it,
-//     up for longer, twist for its tone, while it plays on every beat;
+//   * a click while anything rolls or grooves keeps it: at the bar line
+//     it becomes a loop (or is overdubbed into the loop that plays);
+//   * with nothing held, a click on a fresh finger grabs that drum's
+//     sound: drag to tune it, up for longer, twist for its tone, while it
+//     plays on every beat;
 //   * a finger run fast across pads plays every pad it crosses, a fill;
 //   * and the tap-then-hold loop of every page: tap a beat, come back to
 //     its first pad on time and stay.
@@ -254,7 +255,8 @@ public:
             "slide one up for busier, sideways to shift it\n"
             "hold another pad while grooving\tadds its drum to the groove\n"
             "click while rolling or grooving\tkeep it: at the bar it loops (or overdubs into the loop playing)\n"
-            "click a pad you just touched, drag\tshape that drum: sideways tunes, up lengthens, twist changes its tone\n"
+            "click a pad you just touched, drag\twith nothing rolling, shape that drum: sideways tunes, up lengthens, "
+            "twist changes its tone\n"
             "run a finger fast across pads\tplays each one it crosses: a fill\n"
             "hold the 808\tsustains; slide sideways to glide through the scale\n"
             "tap a beat, hold its first pad on time\tloops it into the next free slot\n"

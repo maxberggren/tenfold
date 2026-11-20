@@ -507,10 +507,12 @@ private slots:
     }
 
     void aLoopCarriesTheBedsOwnProgression() {
-        // Z, then N a bar later, then Space: the loop alternates i and VI.
+        // Z, then N a bar later, then Space on the next one: the loop
+        // alternates i and VI. (Space a quarter bar late takes three bars,
+        // i VI VI, since the held bed counts as playing until Space.)
         const auto take = testkit::play("page 0.05 6\nkey 0.1 Ctrl+M\ndown 7.942 1 0.25 0.4 p=0.6\n"
                                         "down 8.042 2 0.45 0.4 p=0.5\nclick 8.542\nup 8.942 1\nup 8.942 2\n"
-                                        "key 7.742 Z\nkey 9.677 N\nkey 12.0 Space\nend 31\n");
+                                        "key 7.742 Z\nkey 9.677 N\nkey 11.62 Space\nend 31\n");
         QCOMPARE(take.view.parts[kAtmos].playing, 0);
         QCOMPARE(take.view.parts[kAtmos].data[16], 1.0f); // the loop drives the chord
         // Pitched energy, bar by bar: E (in i, not VI) against F (in VI, not i).

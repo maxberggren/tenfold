@@ -498,6 +498,14 @@ private slots:
         }
     }
 
+    void spaceLoopsABedLatchedLongAgo() {
+        // Nothing played for bars, the bed still sounding: Space loops the
+        // bar going by, and the bed carries on at its level after Delete.
+        const auto take = testkit::play("page 0.05 6\nkey 0.1 Ctrl+M\nkey 0.3 W\nkey 12 Space\nkey 16 Delete\nend 36\n");
+        QCOMPARE(take.view.parts[kAtmos].playing, 0);
+        QVERIFY(std::fabs(20 * std::log10(take.rms(24, 36) / take.rms(8, 12))) < 1.5);
+    }
+
     void aLoopCarriesTheBedsOwnProgression() {
         // Z, then N a bar later, then Space: the loop alternates i and VI.
         const auto take = testkit::play("page 0.05 6\nkey 0.1 Ctrl+M\ndown 7.942 1 0.25 0.4 p=0.6\n"

@@ -49,7 +49,7 @@ about 60 times a second and the page reads as `pc.view->data`.
     the studio's tempo. Loops must be deliberate and visible: the player asked
     "what is triggering the loop in slot?" when timing alone (the tap-then-hold
     rule in `src/phrase.h`) made them. Make a loop only from an explicit act
-    (the click, Enter, a marked zone), show a cue before it happens, and say
+    (Space, the click, a marked zone), show a cue before it happens, and say
     what was captured.
   - `ctx.record(slot, maxBars)` / `ctx.stopRecording()` record armed from the
     next bar.
@@ -96,9 +96,12 @@ about 60 times a second and the page reads as `pc.view->data`.
 3. **Musical and pleasant first.** Everything must sit in the key and in time
    by default. Electronic, big, modern, polished: a producer should want to
    use it in a real track.
-4. **The keyboard is yours,** except the digits, Space, Escape, Tab, `?` and
-   every Ctrl combination (the session's). Convention across pages: F1–F8
-   launch your slots, Backspace stops your clip. Use letter keys where they
+4. **The keyboard is yours,** except the digits, Escape, Tab, `?` and every
+   Ctrl combination (the session's). Convention across pages, at the user's
+   request: **Space records a loop** (from the next bar; Space again closes it).
+   If your page doesn't handle Space, the session does exactly that for you;
+   handle it yourself to add your own cues. F1–F8 launch your slots, Backspace
+   stops your clip. Use letter keys where they
    make the instrument better (a piano row, chord buttons, pads).
 5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about
    0.5%) and at most about 60 Hz per finger. A clip holds 2048 events.

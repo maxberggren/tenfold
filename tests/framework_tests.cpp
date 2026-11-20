@@ -9,19 +9,19 @@ using namespace tf;
 
 namespace {
 
-// Enter arms recording on the drums page; the next bar (beat 4, 1.935 s at
-// 124 BPM) starts it, four hits go in, and Enter again closes the loop at the
+// Space arms recording on the drums page; the next bar (beat 4, 1.935 s at
+// 124 BPM) starts it, four hits go in, and Space again closes the loop at the
 // bar after (3.871 s).
-const char *kBeat = "page 0 1\nkey 0.2 Return\n"
+const char *kBeat = "page 0 1\nkey 0.2 Space\n"
                     "tap 2.0 0.05 0.5\ntap 2.45 0.25 0.5\ntap 2.95 0.05 0.5\ntap 3.4 0.25 0.5\n"
-                    "key 3.6 Return\n";
+                    "key 3.6 Space\n";
 
 }
 
 class FrameworkTests : public QObject {
     Q_OBJECT
 private slots:
-    void enterRecordsABarAndItKeepsPlaying() {
+    void spaceRecordsABarAndItKeepsPlaying() {
         const auto take = testkit::play(std::string(kBeat) + "end 9\n");
         QVERIFY(take.error.empty());
         QCOMPARE(int(std::lround(take.view.bpm)), 124);

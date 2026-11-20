@@ -3,10 +3,10 @@
 // Starter parts: the simplest thing each page can be, built on the shared
 // synth voices, so the studio plays end to end before a part has its own
 // design. They also show the framework in use: commands in scale degrees,
-// recording a loop with Enter, console drawing.
+// recording a loop with Space, console drawing.
 //
 //   notes  columns are the notes of the scale over two octaves; a finger is a
-//          note, sliding up opens its filter; Enter records a loop.
+//          note, sliding up opens its filter; Space records a loop.
 //   drums  six zones across the pad: kick, snare, clap, hat, open hat, perc.
 
 #include <QPainter>
@@ -21,20 +21,6 @@
 namespace tf::starter {
 
 // --- notes ------------------------------------------------------------------
-
-// Enter records this part from the next bar; Enter again ends the loop at
-// the bar after. Loops only ever come from this, never from timing.
-inline bool toggleRecording(ControlContext &ctx) {
-    if (ctx.studio().parts[ctx.part()].recording >= 0) {
-        ctx.stopRecording();
-        ctx.notice(QStringLiteral("Loop closes at the bar"));
-    } else {
-        const int slot = std::max(0, ctx.freeSlot());
-        ctx.record(slot, 8);
-        ctx.notice(QStringLiteral("Recording slot %1 from the next bar").arg(slot + 1));
-    }
-    return true;
-}
 
 struct NotesConfig {
     Patch patch = Patch::Lead;
@@ -254,8 +240,6 @@ public:
             ctx.stop();
             return true;
         }
-        if (k.key == Qt::Key_Return || k.key == Qt::Key_Enter)
-            return toggleRecording(ctx);
         return false;
     }
 
@@ -292,7 +276,7 @@ public:
 
     QString help() const override {
         return QStringLiteral("touch\ta note of the scale; higher on the pad, brighter\n"
-                              "Enter\trecord a loop from the next bar; Enter again closes it\n"
+                              "Space\trecord a loop from the next bar; Space again closes it\n"
                               "F1–F8\tlaunch a slot at the next bar\n"
                               "Backspace\tstop this part at the next bar");
     }
@@ -448,8 +432,6 @@ public:
             ctx.stop();
             return true;
         }
-        if (k.key == Qt::Key_Return || k.key == Qt::Key_Enter)
-            return toggleRecording(ctx);
         return false;
     }
     void paint(QPainter &p, const PaintContext &pc) override {
@@ -470,7 +452,7 @@ public:
     }
     QString help() const override {
         return QStringLiteral("tap\ta drum: kick, snare, clap, hat, open hat, perc\n"
-                              "Enter\trecord a loop from the next bar; Enter again closes it\n"
+                              "Space\trecord a loop from the next bar; Space again closes it\n"
                               "F1–F8\tlaunch a slot\nBackspace\tstop the beat");
     }
 

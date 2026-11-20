@@ -251,7 +251,7 @@ public:
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
             "click with a note down\tstrike it again, accented\n"
             "click with only shapers down\tlatch them; P releases\n"
-            "tap a rhythm, hold the next beat\tloops it into the next free slot\n"
+            "tap a riff, then hold its first note on the next beat\tloops it into the next free slot\n"
             "Z X C … /   A S D … '\tthe scale from the keyboard, low row and an octave up; Shift accents\n"
             "Q W E R T Y U I\tsub, pluck, reese, acid, wobble, growl, 808, bounce\n"
             "O\tfollow the chords: the line moves with the Chords page\n"
@@ -311,6 +311,7 @@ private:
         int key = 0, id = 0;
         double t0 = 0;
         bool long_ = false, looped = false;
+        int group = 0; // the note, for closing a riff
     };
     static constexpr int kNoKey = -1000;
 
@@ -433,7 +434,7 @@ private:
         if (h.role == NoteRole) {
             off(id, time, ctx);
             if (!h.long_ && !h.looped)
-                m_phrase.tap(h.t0, time - h.t0, 0);
+                m_phrase.tap(h.t0, time - h.t0, h.degree + 100 * h.octave);
         } else if (h.role != NoRole) {
             remember(h);
             const Shaper s = shaperOf(h.role);
@@ -560,18 +561,20 @@ private:
         for (auto &h : m_fingers)
             if (h.id >= 0 && h.role == NoteRole && !h.long_ && t - h.t0 >= kHold) {
                 h.long_ = true;
-                h.looped = closeLoop(h.t0, ctx);
+                h.looped = closeLoop(h.t0, h.degree + 100 * h.octave, ctx);
             }
         for (auto &k : m_keys)
             if (k.key && !k.long_ && t - k.t0 >= kHold) {
                 k.long_ = true;
-                k.looped = closeLoop(k.t0, ctx);
+                k.looped = closeLoop(k.t0, k.group, ctx);
             }
     }
 
-    bool closeLoop(double t0, ControlContext &ctx) {
+    // A riff loops when the hold lands on its first note again, on time: a
+    // line that merely ends on a long note doesn't.
+    bool closeLoop(double t0, int group, ControlContext &ctx) {
         double start = 0;
-        if (!m_phrase.closes(t0, 0, &start))
+        if (m_phrase.taps().empty() || m_phrase.taps().front().group != group || !m_phrase.closes(t0, group, &start))
             return false;
         const int slot = std::max(0, ctx.freeSlot());
         ctx.capture(slot, start, t0);
@@ -625,12 +628,12 @@ private:
         if (!slot)
             return;
         const double now = ctx.now();
-        *slot = {code, kKeyIdBase + code, now, false, false};
         int octave = m_octave;
         if (degree >= 100) {
             degree -= 100;
             octave += 1;
         }
+        *slot = {code, kKeyIdBase + code, now, false, false, degree + 100 * octave};
         Command on;
         on.type = Command::On;
         on.id = slot->id;
@@ -653,7 +656,7 @@ private:
                 const double now = ctx.now();
                 off(k.id, now, ctx);
                 if (!k.long_ && !k.looped)
-                    m_phrase.tap(k.t0, std::max(0.05, now - k.t0), 0);
+                    m_phrase.tap(k.t0, std::max(0.05, now - k.t0), k.group);
                 k.key = 0;
             }
     }

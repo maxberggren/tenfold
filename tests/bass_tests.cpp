@@ -278,6 +278,18 @@ private slots:
         }
     }
 
+    // A note that lands on a rest waits for the pattern's next strike.
+    void rollWaitsOnARest() {
+        Rig rig;
+        rig.send(shaper(bass::ShapeRoll, 0.6f, 0)); // OFFBEAT: --x-
+        rig.send(noteOn(1, 0, bass::Sub));          // on the downbeat, a rest
+        rig.run(60.0 / 124.0 * 2);
+        QVERIFY(rig.gateOpens.size() >= 2);
+        QVERIFY(std::fabs(rig.gateOpens[0] * 4 - 2) < 0.02);
+        QVERIFY(std::fabs(rig.gateOpens[1] * 4 - 6) < 0.02);
+        QVERIFY(rig.peak() > 0.1);
+    }
+
     // The loop steps aside while the player holds a note, and comes back.
     void theLoopStepsAsideForTheHand() {
         Rig rig;
@@ -392,6 +404,15 @@ private slots:
         QCOMPARE(int(bass.clips[0].state), int(ClipView::Playing));
         QCOMPARE(int(take.view.bpm), 120);
         QVERIFY(take.rms(3.5, 5) > 0.02); // the loop plays on after the hand lifts
+    }
+
+    // A line that ends on a long note of its own is not a riff to loop:
+    // only landing on the riff's first note again closes it.
+    void endingOnAnotherNoteDoesNotLoop() {
+        const auto take = testkit::play("page 0 2\n"
+                                        "tap 0.5 0.3 0.4\ntap 1.0 0.4 0.4\ntap 1.5 0.3 0.4\ntap 2.0 0.5 0.4\n"
+                                        "down 2.5 1 0.6 0.4\nup 2.9 1\nend 3.5\n");
+        QCOMPARE(int(take.view.parts[1].clips[0].state), int(ClipView::Empty));
     }
 
     // The keyboard plays the scale and picks the sound.

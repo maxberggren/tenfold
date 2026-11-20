@@ -433,6 +433,8 @@ public:
         }
         m_midi = m_target;
         m_glideTau = 0;
+        // Held, the lane runs, even while a roll waits for its next step.
+        m_active = true;
         if (sh.roll > 0)
             enterRoll(sh, beat);
         else
@@ -562,8 +564,10 @@ public:
         const float sawL = R.saw * (1.0f - 0.85f * sqMix);
         const float sqL = R.square + 0.8f * sqMix * (R.saw > 0 ? 1.0f : 0.0f);
         const float fmL = R.fm + grit * sh.gritChar * 0.5f;
-        const float topGain = R.level * (0.5f + 0.5f * m_vel) * 0.6f;
-        const float subGain = R.sub * (0.86f + 0.14f * m_vel) * (1.0f + 0.25f * fat) * 0.33f;
+        // A held note sits about 14 dB under full scale, the sub's peak near
+        // −10 dB: room for the kick it pumps with, and for the bus.
+        const float topGain = R.level * (0.5f + 0.5f * m_vel) * 0.42f;
+        const float subGain = R.sub * (0.86f + 0.14f * m_vel) * (1.0f + 0.25f * fat) * 0.235f;
         const float width = std::min(1.0f, R.width + 0.4f * fat);
         const int unison = R.unison;
         const float uniNorm = 1.0f / std::sqrt(float(unison));
@@ -598,7 +602,7 @@ public:
                         // roll leans into the offbeat, which is where it grooves.
                         const bool lean = within * 2 == steps || (steps == 3 && within == 1);
                         trigger(lean ? 1.0f : 0.86f, false);
-                        m_gateEnd = (double(step) + gateLen) / double(steps);
+                        m_gateEnd = (double(step) + gateLen * double(untilNext(pattern, within))) / double(steps);
                     }
                 }
                 if (m_gate && beat >= m_gateEnd && gateLen < 0.999f)
@@ -775,8 +779,8 @@ public:
             // accented, fat, resonant attack rounds off instead of hitting
             // the bus limiter, and the low end stays one signal.
             const float mag = std::fabs(mono) + std::fabs(side);
-            if (mag > 0.6f) {
-                const float k = (0.6f + 0.3f * fastTanh((mag - 0.6f) / 0.3f)) / mag;
+            if (mag > 0.45f) {
+                const float k = (0.45f + 0.25f * fastTanh((mag - 0.45f) / 0.25f)) / mag;
                 mono *= k;
                 side *= k;
             }
@@ -863,10 +867,20 @@ private:
         const int within = int(((step % steps) + steps) % steps);
         if (kPatterns[pattern].steps[within] == 'x' && sp - double(step) < 0.5) {
             trigger(1, m_cur.flags & Accent);
-            m_gateEnd = (double(step) + std::clamp(sh.roll, 0.12f, 1.0f)) / double(steps);
+            m_gateEnd = (double(step) + std::clamp(sh.roll, 0.12f, 1.0f) * double(untilNext(pattern, within))) /
+                        double(steps);
         } else if (m_gate) {
             closeGate();
         }
+    }
+    // Steps from a lit step to the next: the gate is a share of that, so an
+    // offbeat note can last an eighth and a sixteenth roll stays tight.
+    static int untilNext(int pattern, int within) {
+        const int steps = patternSteps(pattern);
+        for (int k = 1; k <= steps; ++k)
+            if (kPatterns[pattern].steps[(within + k) % steps] == 'x')
+                return k;
+        return steps;
     }
     void setVowel(float v) {
         // Formants of u, o, a, e, i (a man's voice, a little low).

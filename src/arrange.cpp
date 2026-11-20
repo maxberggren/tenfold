@@ -707,6 +707,8 @@ private:
                      mods);
         m_echoShown = mods.echoTime >= 0 && mods.echoTime < 0.58f && m_buildShown > 0 ? mods.echoTime : -1.0f;
 
+        timedMutes(in, ctx);
+
         bool idle = !m_playing && m_moves.empty() && std::fabs(m_tensionLive) < 0.002f && !m_tensionHeld;
         for (int p = 0; p < m_parts; ++p) {
             const Ride &r = m_ride[p];
@@ -727,6 +729,9 @@ private:
                     m_home[p][c] = m_sent[p][c] = v.parts[p].channel.value[c];
                     continue;
                 }
+                // A mute timed for a line still ahead is already on its way.
+                if (c == Mute && beatE < m_muteHold[p])
+                    continue;
                 sendChannel(ctx, p, c, out[c], t);
             }
             m_shown[p] = {out[Filter], out[EchoSend], out[ReverbSend], out[PumpDepth], out[Gain], out[Pan]};
@@ -744,6 +749,50 @@ private:
                 ctx.setMaster(m, val);
                 m_masterSent[m] = val;
                 m_masterSentAt[m] = t;
+            }
+        }
+    }
+
+    // The moves' mutes (a gap, a breakdown, the drop) are sent ahead, timed
+    // for the exact sample of their line: every boundary in the coming
+    // sixteenth is evaluated just after it, and what changes there is sent
+    // with its time, so the drop's first kick arrives whole and the breath
+    // before it is exactly half a beat.
+    void timedMutes(const float in[P][ChannelCount], ControlContext &ctx) {
+        const double horizon = m_beat + 0.25;
+        double lines[3 * 32 + P * 32];
+        int n = 0;
+        auto add = [&](double b) {
+            if (b > m_beat && b <= horizon && n < int(std::size(lines)))
+                lines[n++] = b;
+        };
+        for (const auto &mv : m_moves) {
+            add(mv.b0);
+            add(mv.b1);
+            if (mv.kind == MBuild) {
+                add(mv.b1 - mv.gap);
+                if (mv.flat < 0)
+                    add(mv.b1 - 2.0);
+            }
+            if (mv.kind == MBreak)
+                for (int p = 0; p < m_parts; ++p)
+                    add(mv.endFor[p]);
+        }
+        std::sort(lines, lines + n);
+        for (int i = 0; i < n; ++i) {
+            if (i > 0 && lines[i] - lines[i - 1] < 1e-9)
+                continue;
+            Mods mods;
+            for (const auto &mv : m_moves)
+                applyMove(mv, lines[i] + 1e-7, mods);
+            for (int p = 0; p < m_parts; ++p) {
+                const float m = (in[p][Mute] > 0.5f || mods.mute[p]) ? 1.0f : 0.0f;
+                if (m == m_sent[p][Mute])
+                    continue;
+                ctx.setChannel(p, Mute, m, ctx.timeAt(lines[i]));
+                m_sent[p][Mute] = m;
+                m_sentAt[p][Mute] = m_lastT;
+                m_muteHold[p] = lines[i];
             }
         }
     }
@@ -2065,6 +2114,7 @@ private:
     float m_home[P][ChannelCount] = {};
     float m_trim[P][ChannelCount] = {};
     bool m_muteFlip[P] = {};
+    double m_muteHold[P] = {}; // a timed mute is on its way for this beat
     int m_muteAtBar[P] = {-1, -1, -1, -1, -1, -1, -1, -1};
     float m_sent[P][ChannelCount] = {};
     double m_sentAt[P][ChannelCount] = {};
@@ -2349,9 +2399,9 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
         p.setFont(f);
         p.setPen(c::alpha(pc.color, 0.85f));
         p.drawText(box.adjusted(16, box.height() * 0.38, -16, -10), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-                   QStringLiteral("Loops are made on the part pages, keys 1 to 7: play, press Space to record "
-                                  "from the next bar, and Space again to close the loop. Each appears here in its "
-                                  "page's row, in the slot it went into, with its length and whether it plays."));
+                   QStringLiteral("Loops are made on the part pages, keys 1 to 7: play, then Space loops what you "
+                                  "just played. Each appears here in its page's row, in the slot it went into, "
+                                  "with its length and whether it plays."));
     }
     p.setPen(QPen(c::alpha(pc.color, 0.18f), 1));
     for (int i = 1; i < parts; ++i) {
@@ -2718,7 +2768,7 @@ QString ArrangeControl::status() const {
     else if (m_recording)
         parts << QStringLiteral("recording the song");
     if (parts.isEmpty() && !m_anyClip)
-        return QStringLiteral("no loops yet: on pages 1–7, Space records one from the next bar, Space again closes it");
+        return QStringLiteral("no loops yet: on pages 1–7, play, then Space loops it");
     if (parts.isEmpty())
         return QStringLiteral("tap clips to launch them on the bar · F1–F8 scenes · I writes a track from your loops");
     return parts.join(QStringLiteral(" · "));

@@ -112,6 +112,7 @@ struct Bank {
     PulseOsc pulse[2];
     float car[2] = {}, mod[2] = {};
     SawOsc layer;
+    Oversampler2x osL, osR;
 };
 
 struct Voice {
@@ -132,7 +133,6 @@ struct Voice {
     float cut = 4;                // smoothed cutoff, in octaves above 60 Hz
     Ladder fL, fR;
     Svf form[2][3];
-    Oversampler2x osL, osR;
     float level = 0;      // for the page
     float leadSemis = 60; // for the page and the tests
     Rng rng;
@@ -293,7 +293,7 @@ private:
                 }
             break;
         case Command::Off:
-            noteOff(li, c.id);
+            noteOff(li, c.id, ctx);
             break;
         case Command::Param:
             switch (c.i[0]) {
@@ -352,7 +352,7 @@ private:
         if (legato && mine) {
             // A hammer-on: the voice glides on; plucks and bells strike again.
             const Sound &s = sound(v->sound);
-            v->tau = s.glide * line.glideScale;
+            v->tau = glideTime(*v, line, n, s.glide, ctx);
             v->held = 0;
             if (s.retrig)
                 strike(*v, n.vel, false);
@@ -365,7 +365,7 @@ private:
             // from where it was into the new note and starts again from its
             // own level, with no click.
             v->releasing = false;
-            v->tau = s.porta * line.glideScale;
+            v->tau = glideTime(*v, line, n, s.porta, ctx);
             v->held = 0;
             strike(*v, n.vel, true);
             return;
@@ -377,7 +377,7 @@ private:
         start(m_voices[size_t(vi)], li, snd, n, ctx);
     }
 
-    void noteOff(int li, int id) {
+    void noteOff(int li, int id, AudioContext &ctx) {
         Line &line = m_lines[size_t(li)];
         const NoteIn *was = line.top();
         const bool wasTop = was && was->id == id;
@@ -392,8 +392,18 @@ private:
             release(*v);
         } else if (wasTop) {
             // A pull-off: back to the note still held, gliding, no new attack.
-            v->tau = sound(v->sound).glide * line.glideScale;
+            v->tau = glideTime(*v, line, *line.top(), sound(v->sound).glide, ctx);
         }
+    }
+
+    // A player's glide: quick across a step, so trills and runs stay
+    // crisp, and slower across a leap, so a jump of a fifth or an octave
+    // is heard as a swoop.
+    static float glideTime(const Voice &v, const Line &line, const NoteIn &to, float base, AudioContext &ctx) {
+        float pitch[Voice::kBanks], level[Voice::kBanks];
+        targetsFor(line, to, ctx.harmony(), pitch, level);
+        const float interval = std::fabs(pitch[0] - v.banks[0].pitch);
+        return base * line.glideScale * clampf(std::sqrt(interval / 5.0f), 0.4f, 1.6f);
     }
 
     static bool removeNote(Line &line, int id) {
@@ -810,16 +820,19 @@ private:
                     bl += o;
                     br += o;
                 }
+                // Each voice is driven on its own: driven together, a third
+                // and its melody would grind out difference tones down in
+                // the bass's range. Hard drive runs at twice the rate so its
+                // harmonics don't fold.
+                if (drive > 0.3f) {
+                    bl = k.osL.process(bl, [&](float x) { return fastTanh(x * driveGain); }) * driveNorm;
+                    br = k.osR.process(br, [&](float x) { return fastTanh(x * driveGain); }) * driveNorm;
+                } else if (drive > 0) {
+                    bl = fastTanh(bl * driveGain) * driveNorm;
+                    br = fastTanh(br * driveGain) * driveNorm;
+                }
                 sl += bl * gb;
                 sr += br * gb;
-            }
-            if (drive > 0.3f) {
-                // Hard drive runs at twice the rate so its harmonics don't fold.
-                sl = v.osL.process(sl, [&](float x) { return fastTanh(x * driveGain); }) * driveNorm;
-                sr = v.osR.process(sr, [&](float x) { return fastTanh(x * driveGain); }) * driveNorm;
-            } else if (drive > 0) {
-                sl = fastTanh(sl * driveGain) * driveNorm;
-                sr = fastTanh(sr * driveGain) * driveNorm;
             }
             if (s.formant) {
                 float fl = 0, fr = 0;
@@ -1064,6 +1077,7 @@ public:
             } else if (!k.down && kh.down) {
                 kh.down = false;
                 off(ctx, kh.id, t);
+                liftLanding(kh.id, t);
             }
             return true;
         }
@@ -1177,7 +1191,7 @@ private:
         int abs = 0;        // its absolute degree
         int slot = -1;      // harmony slot
         float y0 = 0, angle0 = 0;
-        Motion motion;
+        Motion motion, twistMotion;
         bool long_ = false, looped = false;
         double lastSend = 0;
         float sent[8] = {};
@@ -1237,13 +1251,30 @@ private:
         ctx.send(c);
     }
 
-    // Phrases for the loop gesture count every note's onset. A note goes
-    // into the phrase when the next one lands, so the one being held is
-    // never part of the phrase it might close.
+    // The loop gesture listens for a riff: short, detached notes. A note
+    // goes into the phrase when the next one lands (so the note being held
+    // is never part of the phrase it might close), and a long or legato
+    // note means the player is singing a line, not tapping a riff: the
+    // phrase starts over. That keeps a melody that happens to come back to
+    // its first note on the beat from turning into a loop.
     void pushLanding(int abs, double t, int id) {
-        if (m_pendingTap.id >= 0)
-            m_phrase.tap(m_pendingTap.t, 0.05, m_pendingTap.abs);
-        m_pendingTap = {id, abs, t};
+        int held = 0;
+        for (const auto &h : m_held)
+            held += h.id >= 0 && h.id != id && h.role == Role::Note && !h.looped;
+        for (const auto &k : m_keys)
+            held += k.down && k.id != id;
+        if (m_pendingTap.id >= 0) {
+            const double len = m_pendingTap.lifted - m_pendingTap.t;
+            if (m_pendingTap.lifted >= 0 && len < 0.3 && !m_pendingTap.legato && held == 0)
+                m_phrase.tap(m_pendingTap.t, std::max(0.05, len), m_pendingTap.abs);
+            else
+                m_phrase.clear();
+        }
+        m_pendingTap = {id, abs, t, -1, held > 0};
+    }
+    void liftLanding(int id, double t) {
+        if (m_pendingTap.id == id && m_pendingTap.lifted < 0)
+            m_pendingTap.lifted = t;
     }
 
     void land(Held &h, const Touch &t, double now, ControlContext &ctx) {
@@ -1327,6 +1358,9 @@ private:
                 const float s = mag * mag * (3.0f - 2.0f * mag);
                 twist = d < 0 ? s : -s; // clockwise bends up
             }
+            // And like the slide, a twist held still rests on a whole step:
+            // a finger that happens to sit a little turned stays in tune.
+            twist = rounded(twist, h.twistMotion.update(twist * 4.0f, now));
             const int abs = (m_neckOct + m_shift) * m_per + h.q;
             Command mv;
             mv.type = Command::Move;
@@ -1353,7 +1387,7 @@ private:
                 for (auto &o : m_held)
                     notesHeld += o.id >= 0 && o.role == Role::Note;
                 const auto &taps = m_phrase.taps();
-                if (notesHeld == 1 && m_pendingTap.id == h.id && taps.size() >= 3 && taps.front().group == h.abs &&
+                if (notesHeld == 1 && m_pendingTap.id == h.id && !m_pendingTap.legato && taps.size() >= 3 && taps.front().group == h.abs &&
                     m_phrase.closes(h.t0, h.abs, &start)) {
                     const int slot = std::max(0, ctx.freeSlot());
                     ctx.capture(slot, start, h.t0);
@@ -1413,6 +1447,7 @@ private:
         case Role::Note:
             if (!h.looped)
                 off(ctx, h.id, now);
+            liftLanding(h.id, now);
             break;
         case Role::Harmony: {
             Slot &s = m_slots[h.slot];
@@ -1484,7 +1519,8 @@ private:
     Slot m_slots[kHarmSlots];
     struct {
         int id = -1, abs = 0;
-        double t = 0;
+        double t = 0, lifted = -1;
+        bool legato = false;
     } m_pendingTap;
     Phrase m_phrase;
     Frame m_frame;

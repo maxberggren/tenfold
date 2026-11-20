@@ -136,12 +136,12 @@ inline const Sound &sound(int i) {
         // A vocal lead: saws through three vowel formants, the finger's
         // height going oo, oh, ah, eh, ee; notes scoop into pitch like a voice.
         {"Vox", 0.85f, 0.3f, 0.0f, 0.0f, 3, 9.0f, 0.55f, 0.5f, 0.0f, 1.0f, 0.0f, 0.3f, 1.0f, true,
-         0.85f, 0.05f, 0.05f, 0.08f, 0.5f, 0.3f, 0.18f, 0.025f, 0.6f, 0.9f, 0.28f, 0.07f, 0.0f, 0.7f, 0.07f,
+         0.85f, 0.05f, 0.05f, 0.08f, 0.5f, 0.3f, 0.18f, 0.025f, 0.6f, 0.9f, 0.28f, 0.07f, 0.0f, 0.7f, 0.045f,
          5.4f, 0.24f, 0.32f, false, 0.14f, 0.3f, 0.75f, 0.5f},
         // A screaming saw: driven hard into a resonant filter, always
         // gliding, every attack bent up into the note.
         {"Scream", 1.0f, 0.4f, 0.0f, 0.0f, 3, 13.0f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.3f, 1.0f, false,
-         0.48f, 0.36f, 0.42f, 0.32f, 0.45f, 0.6f, 0.85f, 0.004f, 0.5f, 0.92f, 0.22f, 0.09f, 0.08f, 1.4f, 0.09f,
+         0.48f, 0.36f, 0.42f, 0.32f, 0.45f, 0.6f, 0.85f, 0.004f, 0.5f, 0.92f, 0.22f, 0.08f, 0.08f, 1.4f, 0.055f,
          5.9f, 0.3f, 0.3f, false, 0.2f, 0.36f, 0.75f, 1.1f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];

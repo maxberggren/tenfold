@@ -168,10 +168,9 @@ public:
 
     void init(float rate) override {
         m_rate = rate;
-        // Past the ONE a riser lets go in a few tens of milliseconds: it
-        // peaks on the line and runs into the hit rather than stopping dead
-        // before it.
-        m_cutDecay = std::exp(-1.0f / (0.02f * rate));
+        // Past the ONE a riser lets go in a few milliseconds: its peak must
+        // not stack on the kick's, which the limiter would take out of both.
+        m_cutDecay = std::exp(-1.0f / (0.005f * rate));
         m_busAttack = 1.0f - std::exp(-1.0f / (0.004f * rate));
         m_busRelease = 1.0f - std::exp(-1.0f / (0.18f * rate));
         m_room.init(rate);
@@ -357,8 +356,11 @@ public:
                 m_roomIdle = (L == 0 && R == 0) ? m_roomIdle + 1 : 0;
                 m_room.process(m_roomHpL.step(L).high, m_roomHpR.step(R).high, wl, wr);
             }
-            l[i] = L + 0.55f * wl;
-            r[i] = R + 0.55f * wr;
+            // The room's return ducks under the kick too, so a riser's tail
+            // never sits on the ONE.
+            const float wet = 0.55f * (1.0f - 0.7f * duck[i]);
+            l[i] = L + wet * wl;
+            r[i] = R + wet * wr;
         }
         // The FX bus: a soft compressor, so that five risers stacked at full
         // pressure are a wall, not five times the level. The dry lows join
@@ -1123,18 +1125,21 @@ private:
         constexpr float kickWindow = 0.04f, fadeIn = 0.03f, kHitDelay = 0.004f;
         const float dt = 1.0f / m_rate;
         const float boomDecay = std::exp(-dt / (0.28f + 0.3f * I));
-        const float bodyDecay = std::exp(-dt / 0.085f), snapDecay = std::exp(-dt / 0.025f);
+        const float bodyDecay = std::exp(-dt / 0.14f), snapDecay = std::exp(-dt / 0.025f);
         const float crashDecay = std::exp(-dt / (0.8f + 0.9f * I));
         const float tailDecay = std::exp(-dt / 0.9f);
         const float pitchDecay = std::exp(-dt / 0.06f), bodyPitchDecay = std::exp(-dt / 0.018f);
         // The crash's top closes from 12 kHz to 4.5 kHz as it rings down.
-        const float top = 4500.0f + 7500.0f * v.env3 * v.env3;
+        const float top = 3000.0f + 6000.0f * v.env3 * v.env3;
         v.oL.set(top, m_rate);
         v.oR.set(top * 1.06f, m_rate);
         const float tailHz = 7000.0f * std::exp2(-v.t * 2.2f * float(m_bpm) / 120.0f);
         v.cL.set(std::max(250.0f, tailHz), 2.2f, m_rate);
-        if (v.t == 0)
-            v.cR.set(1200.0f, 0.7f, m_rate);
+        if (v.t == 0) {
+            v.cR.set(650.0f, 1.2f, m_rate); // the knock's upper band, filling the mids
+            v.bR.set(1700.0f, 0.7f, m_rate);
+            v.bL.set(1500.0f, 0.7f, m_rate);
+        }
         static const float metal[6] = {1373.0f, 2035.0f, 2471.0f, 3496.0f, 3611.0f, 5355.0f};
         // A layer under the kick, not over it: the drop's weight is the
         // kick's, the impact is its size.
@@ -1146,11 +1151,11 @@ private:
             v.ph[1] += bodyHz * (1.0f + 1.2f * v.glideNote) / m_rate;
             v.ph[1] -= std::floor(v.ph[1]);
             const float n0 = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
-            const float knock = v.aL.step(n0).band * 2.5f;
+            const float knock = v.aL.step(n0).band * 2.5f + v.cR.step(n0).band * 2.6f;
             const float body = v.aR.step((sin01(v.ph[1]) + knock) * v.env2).high;
             v.env2 *= bodyDecay;
-            // The snap: 25 ms of bright noise, the edge of the hit.
-            const float snap = v.cR.step(n2).high * v.pressPeak;
+            // The snap: 25 ms of noise, the edge of the hit.
+            const float snap = n2 * 0.35f * v.pressPeak;
             v.pressPeak *= snapDecay;
             // Boom: after the kick's window, from phase zero.
             float boom = 0;
@@ -1180,11 +1185,11 @@ private:
             // impact blooms just after it, under it, so it adds weight to the
             // ONE instead of a second peak for the limiter to fight.
             const float attack = clampf((v.t - kHitDelay) * 400.0f, 0, 1);
-            const float L = (0.3f * body + 0.25f * snap + 0.3f * cl + 0.12f * tl) * vel * attack;
-            const float R = (0.3f * body - 0.25f * snap + 0.3f * cr + 0.12f * tr) * vel * attack;
+            const float L = (0.55f * body + 0.2f * snap + 0.3f * cl + 0.12f * tl) * vel * attack;
+            const float R = (0.55f * body - 0.2f * snap + 0.3f * cr + 0.12f * tr) * vel * attack;
             l[i] += L;
             r[i] += R;
-            low[i] += 0.5f * boom * vel;
+            low[i] += 0.22f * boom * vel;
             peak = std::max(peak, std::fabs(L) + std::fabs(R) + std::fabs(boom));
             v.t += 1.0f / m_rate;
         }

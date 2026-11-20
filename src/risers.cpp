@@ -336,21 +336,11 @@ private:
 
     // Where a new build lands: the next phrase line (every 8 bars, or 16 for
     // the 16-bar row) with room for the row's length, always forward. The
-    // phrase is counted from bar 0, or from the start of an 8-bar loop that
-    // is playing. The riser then enters its length before that line.
-    double phraseDrop(ControlContext &ctx, double beat, int bars) const {
-        const StudioView &sv = ctx.studio();
-        double origin = 0, longest = 0;
-        for (int p = 0; p < sv.partCount && p < kMaxParts; ++p) {
-            const PartView &pv = sv.parts[p];
-            if (pv.playing < 0)
-                continue;
-            const ClipView &c = pv.clips[pv.playing];
-            if (c.lengthBeats >= 32 && c.lengthBeats > longest) {
-                longest = c.lengthBeats;
-                origin = sv.beat - double(c.phase) * c.lengthBeats;
-            }
-        }
+    // phrase is counted from when the music started (the bar the first loop
+    // began on), or from bar 0. The riser then enters its length before
+    // that line.
+    double phraseDrop(ControlContext &, double beat, int bars) const {
+        const double origin = m_songStart >= 0 ? m_songStart : 0.0;
         const double phrase = bars >= 16 ? 64.0 : 32.0;
         const double earliest = beat + 4.0 * bars - 2.0;
         double k = std::ceil((earliest - origin) / phrase - 1e-9);
@@ -529,6 +519,19 @@ private:
 
         const double drop = d[pub::Drop];
         m_take = sv.parts[ctx.part()].recording;
+        // When the music started: the bar the first loop began on, kept
+        // while anything plays.
+        int playing = -1;
+        for (int p = 0; p < sv.partCount && p < kMaxParts; ++p)
+            if (sv.parts[p].playing >= 0 && playing < 0)
+                playing = p;
+        if (playing < 0) {
+            m_songStart = -1;
+        } else if (m_songStart < 0) {
+            const PartView &pv = sv.parts[playing];
+            const ClipView &c = pv.clips[pv.playing];
+            m_songStart = nearestBar(sv.beat - double(c.phase) * c.lengthBeats);
+        }
         m_statusDrop = drop;
         m_statusBeat = beat;
         if (drop > 0) {
@@ -575,10 +578,12 @@ private:
         // limiter answer peaks, so no layer laid on a kick can make the ONE
         // louder by itself; this does, and is handed back exactly.
         if (m_buildMix) {
-            constexpr float lift = 0.898f; // +2 dB at unity (gain goes as the square)
-            if (drop > 0 && beat >= drop - horizon && beat < drop)
-                pull(MasterGain, lift, 1, ctx.timeAt(drop) - 0.05);
-            const double last = d[pub::LastDrop];
+            constexpr float lift = 0.92f; // the lift, at unity (gain goes as the square)
+            if (drop > 0 && beat >= drop - horizon && beat < drop) {
+                pull(MasterGain, lift, 1, ctx.timeAt(drop) - 0.08);
+                m_liftDrop = drop; // the view only says it fired a tick later
+            }
+            const double last = std::max(double(d[pub::LastDrop]), m_liftDrop);
             if (last > 0 && beat >= last && beat < last + kBeatsPerBar) {
                 const float u = float((beat - last) / kBeatsPerBar);
                 pull(MasterGain, lift, u < 0.25f ? 1.0f : 1.0f - smoothstep((u - 0.25f) / 0.75f));
@@ -587,11 +592,14 @@ private:
 
         // The power-down: the mix darkens and sinks until its bar line.
         const double s0 = d[pub::StopStart], s1 = d[pub::StopEnd];
-        if (s1 > 0 && beat >= s1 - horizon && beat < s1) {
-            m_mods[MasterFilter].releaseAt = ctx.timeAt(s1) - ease;
-            m_mods[MasterGain].releaseAt = ctx.timeAt(s1) - ease;
+        // It comes home 150 ms early: from that deep, the studio's smoothing
+        // needs that long to have it all back on the ONE.
+        const double home = 0.15 * bps;
+        if (s1 > 0 && beat >= s1 - home - horizon && beat < s1) {
+            m_mods[MasterFilter].releaseAt = ctx.timeAt(s1) - 0.15;
+            m_mods[MasterGain].releaseAt = ctx.timeAt(s1) - 0.15;
         }
-        if (s1 > 0 && beat < s1 - horizon && beat >= s0) {
+        if (s1 > 0 && beat < s1 - home - horizon && beat >= s0) {
             const float u = clampf(float((beat - s0) / std::max(0.25, s1 - s0)), 0, 1);
             pull(MasterFilter, 0.03f, std::pow(u, 0.6f));
             pull(MasterGain, 0.12f, u * u);
@@ -678,6 +686,8 @@ private:
     double m_localDrop = -1;
     double m_statusDrop = -1, m_statusBeat = 0;
     int m_take = -1;
+    double m_liftDrop = -1;
+    double m_songStart = -1;
 };
 
 // --- drawing -------------------------------------------------------------------
@@ -1045,9 +1055,11 @@ PartSpec makeRisers() {
     s.color = QColor("#FF4136");
     s.engine = std::make_unique<risers::Engine>();
     s.control = std::make_unique<FxPage>();
-    // A big room and a little echo: risers and impacts live in the space
-    // around the mix. They don't pump; the drop pumps everything else.
-    const float channel[ChannelCount] = {0.72f, 0.5f, 0.5f, 0.32f, 0.12f, 0.0f, 0.0f, 0.0f};
+    // No sends: risers and hits have a room of their own inside the engine,
+    // one that never hears the boom or the sub, and nothing here pumps (the
+    // risers breathe with the kick themselves). Throw and wash still take
+    // these sends when they are held.
+    const float channel[ChannelCount] = {0.72f, 0.5f, 0.5f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     std::copy(channel, channel + ChannelCount, s.channel);
     return s;
 }

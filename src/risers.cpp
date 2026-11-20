@@ -28,6 +28,7 @@
 #include "risers.h"
 
 #include <QPainter>
+#include <QPainterPath>
 #include <QStringList>
 #include <array>
 #include <cmath>
@@ -42,6 +43,8 @@ namespace tf {
 namespace {
 
 using namespace risers;
+
+QColor alphaOf(QColor c, float a) { return console::alpha(c, a); }
 
 constexpr float kHitTop = 0.2f;                      // the hit row is the bottom fifth
 constexpr int kRows = 5;                              // 1, 2, 4, 8, 16 bars
@@ -634,6 +637,123 @@ private:
 
 // --- drawing -------------------------------------------------------------------
 
+// A small picture of each sound's shape over time, left to right: what the
+// column or cell will do before a finger asks it to.
+void glyph(QPainter &p, const QRectF &r, int kind, QColor col) {
+    QPainterPath path;
+    auto at = [&](double u, double v) { return QPointF(r.left() + u * r.width(), r.bottom() - v * r.height()); };
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(col, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    switch (kind) {
+    case Noise: // a hiss that swells and brightens
+        for (int i = 0; i < 28; ++i) {
+            const double u = (i + 0.5) / 28.0, h = std::pow(u, 2.0) * (0.55 + 0.45 * std::fabs(std::sin(i * 2.3)));
+            p.drawLine(at(u, 0.5 - h / 2), at(u, 0.5 + h / 2));
+        }
+        return;
+    case Pitch: // a glide up, its vibrato quickening
+        for (int i = 0; i <= 60; ++i) {
+            const double u = i / 60.0, v = 0.05 + 0.85 * std::pow(u, 1.5) + 0.06 * u * std::sin(u * u * 60.0);
+            i ? path.lineTo(at(u, v)) : path.moveTo(at(u, v));
+        }
+        break;
+    case Saw: // stabs coming faster and taller
+    case Roll: { // hits coming faster
+        double u = 0;
+        const double steps[4] = {0.125, 0.0625, 0.03125, 0.0156};
+        while (u < 0.98) {
+            const int part = u < 0.5 ? 0 : u < 0.75 ? 1 : u < 0.875 ? 2 : 3;
+            const double h = 0.2 + 0.8 * u;
+            if (kind == Saw) {
+                p.drawLine(at(u, 0.05), at(u, 0.05 + h * 0.9));
+                p.drawLine(at(u, 0.05 + h * 0.9), at(u + steps[part] * 0.7, 0.05 + h * 0.25));
+            } else {
+                p.setBrush(col);
+                p.drawEllipse(at(u, 0.5), 1.0 + 2.0 * h, 1.0 + 2.0 * h);
+                p.setBrush(Qt::NoBrush);
+            }
+            u += steps[part];
+        }
+        return;
+    }
+    case Swell: // a sound played backwards: nothing, then all at once
+        for (int i = 0; i <= 50; ++i) {
+            const double u = i / 50.0, v = std::exp((u - 1.0) * 4.5);
+            i ? path.lineTo(at(u, 0.5 + 0.48 * v)) : path.moveTo(at(u, 0.5 + 0.48 * v));
+        }
+        for (int i = 50; i >= 0; --i) {
+            const double u = i / 50.0, v = std::exp((u - 1.0) * 4.5);
+            path.lineTo(at(u, 0.5 - 0.48 * v));
+        }
+        p.setBrush(alphaOf(col, 0.25f));
+        break;
+    case Impact: // a hit and a long tail
+        path.moveTo(at(0, 0.5));
+        path.lineTo(at(0.04, 0.98));
+        for (int i = 1; i <= 40; ++i) {
+            const double u = 0.04 + 0.96 * i / 40.0;
+            path.lineTo(at(u, 0.5 + 0.48 * std::exp(-(u - 0.04) * 4.0)));
+        }
+        for (int i = 40; i >= 0; --i) {
+            const double u = 0.04 + 0.96 * i / 40.0;
+            path.lineTo(at(u, 0.5 - 0.48 * std::exp(-(u - 0.04) * 4.0)));
+        }
+        path.closeSubpath();
+        p.setBrush(alphaOf(col, 0.25f));
+        break;
+    case Sub: // a dive onto the root
+    case Down: // falling away
+        for (int i = 0; i <= 40; ++i) {
+            const double u = i / 40.0;
+            const double v = kind == Sub ? 0.15 + 0.75 * (1 - u) * (1 - u) * (1 - u) : 0.95 - 0.85 * std::pow(u, 0.6);
+            i ? path.lineTo(at(u, v)) : path.moveTo(at(u, v));
+        }
+        break;
+    case Zap: // pew, pew, pew
+        for (int k = 0; k < 3; ++k) {
+            QPainterPath z;
+            for (int i = 0; i <= 16; ++i) {
+                const double u = i / 16.0, x = 0.04 + k * 0.33 + u * 0.26, v = 0.2 + 0.75 * std::exp(-u * 5.0) + 0.1 * k;
+                i ? z.lineTo(at(x, v)) : z.moveTo(at(x, v));
+            }
+            p.drawPath(z);
+        }
+        return;
+    case Stop: // a wave slowing down and sinking
+        for (int i = 0; i <= 120; ++i) {
+            const double u = i / 120.0, ph = 30.0 * (u - 0.5 * u * u), a = 0.45 * (1 - u * u);
+            const double v = 0.5 + a * std::sin(ph);
+            i ? path.lineTo(at(u, v)) : path.moveTo(at(u, v));
+        }
+        break;
+    case Throw: // repeats, each one quieter
+        for (int k = 0; k < 6; ++k) {
+            const double u = 0.06 + k * 0.17, h = 0.9 * std::pow(0.68, k);
+            p.drawLine(at(u, 0.5 - h / 2), at(u, 0.5 + h / 2));
+        }
+        return;
+    case Wash: // a cloud
+        for (int k = 0; k < 4; ++k) {
+            const QRectF e(at(0.1 + k * 0.2, 0.75), at(0.45 + k * 0.2, 0.1));
+            p.drawEllipse(e.normalized());
+        }
+        return;
+    case Sweep: // a filter's slope, moving
+        path.moveTo(at(0, 0.7));
+        path.lineTo(at(0.45, 0.7));
+        path.quadTo(at(0.6, 0.85), at(0.68, 0.55));
+        path.lineTo(at(0.85, 0.05));
+        p.drawPath(path);
+        p.drawLine(at(0.3, 0.2), at(0.95, 0.2));
+        p.drawLine(at(0.95, 0.2), at(0.88, 0.3));
+        p.drawLine(at(0.3, 0.2), at(0.37, 0.3));
+        return;
+    default:
+        return;
+    }
+    p.drawPath(path);
+}
+
 void FxPage::paint(QPainter &p, const PaintContext &pc) {
     namespace c = console;
     const QColor col = pc.color;
@@ -717,12 +837,14 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             label = QStringLiteral("%1 · %2").arg(bars).arg(
                 enter <= beat ? QStringLiteral("NOW") : QStringLiteral("IN %1").arg(std::ceil((enter - beat) / 4.0 - 1e-6)));
         }
-        c::text(p, QRectF(cell.left() + 8, cell.bottom() - 20, cell.width(), 16), label, c::alpha(col, 0.45f), 10, true);
+        c::text(p, QRectF(cell.left() + 8, cell.bottom() - 15, cell.width(), 13), label, c::alpha(col, 0.45f), 10, true);
     }
     for (int k = 0; k < kRisers; ++k) {
         const QRectF head = pc.rect(float(k) / kRisers, 1 - kRowH, float(k + 1) / kRisers, 1);
-        c::text(p, QRectF(head.left(), head.top() + 48, head.width(), 18), QString::fromUtf8(columns[k]),
+        c::text(p, QRectF(head.left(), head.top() + 42, head.width(), 18), QString::fromUtf8(columns[k]),
                 c::alpha(col, 0.85f), 13, true, Qt::AlignCenter);
+        const qreal gw = std::min<qreal>(84, head.width() * 0.6);
+        glyph(p, QRectF(head.center().x() - gw / 2, head.top() + 61, gw, 14), k, c::alpha(col, 0.55f));
     }
 
     // The hit row.
@@ -746,8 +868,11 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             p.setPen(QPen(c::alpha(col, 0.25f), 1));
             p.drawLine(cell.topLeft(), cell.bottomLeft());
         }
-        c::text(p, QRectF(cell.left(), cell.center().y() - 9, cell.width(), 18), QString::fromUtf8(hits[k]),
+        c::text(p, QRectF(cell.left(), cell.center().y() - 2, cell.width(), 18), QString::fromUtf8(hits[k]),
                 lit > 0.5f ? QColor::fromRgb(c::kInk) : col, 12, true, Qt::AlignCenter);
+        const qreal gw = std::min<qreal>(56, cell.width() * 0.5);
+        glyph(p, QRectF(cell.center().x() - gw / 2, cell.center().y() - 24, gw, 18), kRisers + k,
+              lit > 0.5f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.6f));
         c::text(p, QRectF(cell.left() + 6, cell.top() + 4, 30, 14), QString(QChar(kHitKeys[k])), c::alpha(col, 0.4f), 10, true);
     }
 

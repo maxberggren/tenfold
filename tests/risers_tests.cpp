@@ -209,6 +209,23 @@ private slots:
         QVERIFY(rmsDb(take, timeOf(8.0) - 0.2, timeOf(8.0) + 0.4) < -60);
     }
 
+    // Q: every riser falls away at once, the drop is called off and the
+    // mix comes home.
+    void theWholeBuildFallsAway() {
+        StudioView after;
+        const auto take = testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\ntap 0.7 %.3f %.3f len=0.2\nkey 2.5 Q\n", columnX(0),
+                                            rowY(1), columnX(2), rowY(1)) +
+                                            fmt("end %.3f\n", timeOf(8.0) + 0.5),
+                                        [&](Session &s) { after = s.view(); });
+        QVERIFY(after.parts[kFx].data[risers::pub::LastDrop] < 0);
+        QVERIFY(voicesOf(after).empty());
+        QCOMPARE(after.master[MasterFilter], 0.5f);
+        QCOMPARE(after.master[RoomSize], 0.35f);
+        // It falls rather than stops: still sounding just after, quiet soon.
+        QVERIFY(rmsDb(take, 2.52, 2.62) > -60);
+        QVERIFY(rmsDb(take, timeOf(8.0) - 0.2, timeOf(8.0) + 0.4) < -60);
+    }
+
     // The pitch riser lands on the key's tonic two octaves up, and follows a
     // key change.
     void pitchedRisersLandInKey() {

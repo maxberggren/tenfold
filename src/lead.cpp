@@ -137,6 +137,7 @@ struct Voice {
     Ladder fL, fR;
     Svf form[2][3];
     float level = 0;      // for the page
+    float lastL = 0, lastR = 0; // the last sample out, for a stolen voice's declick
     Rng rng;
 };
 
@@ -155,6 +156,7 @@ public:
         m_echoHp2.set(280.0f, 0.6f, rate);
         m_echoLpL.set(4800.0f, rate);
         m_echoLpR.set(4800.0f, rate);
+        m_declickFade = std::exp(-1.0f / (0.003f * rate));
         m_hpL.set(120.0f, 0.6f, rate);
         m_hpR.set(120.0f, 0.6f, rate);
     }
@@ -434,9 +436,16 @@ private:
 
     void start(Voice &v, int li, int snd, const NoteIn &n, AudioContext &ctx) {
         const Sound &s = sound(snd);
-        // A stolen voice's line lets go of it.
-        if (v.active && v.owner >= 0 && v.owner != li)
-            m_lines[size_t(v.owner)].voice = -1;
+        if (v.active) {
+            // A stolen voice: its line lets go of it, and where its wave
+            // stood is eased back to zero over a few milliseconds instead of
+            // stepping there.
+            if (v.owner >= 0 && v.owner != li)
+                m_lines[size_t(v.owner)].voice = -1;
+            m_declickL += v.lastL;
+            m_declickR += v.lastR;
+        }
+        v.lastL = v.lastR = 0;
         v.active = true;
         v.releasing = false;
         v.owner = li;
@@ -867,6 +876,8 @@ private:
             sr *= g2;
             outL[i] += sl;
             outR[i] += sr;
+            v.lastL = sl;
+            v.lastR = sr;
             sendL[i] += sl * send;
             sendR[i] += sr * send;
             peak = std::max(peak, std::fabs(sl) + std::fabs(sr));
@@ -904,7 +915,9 @@ private:
             const float fr = m_echoLpR.step(m_echoHp2.step(dl).high) * m_echoFb;
             m_echoL.push(fastTanh(0.7f * (m_sendL[i] + m_sendR[i]) + fl));
             m_echoR.push(fastTanh(fr));
-            const float ol = l[i] + dl * 0.7f, orr = r[i] + dr * 0.7f;
+            m_declickL *= m_declickFade;
+            m_declickR *= m_declickFade;
+            const float ol = l[i] + dl * 0.7f + m_declickL, orr = r[i] + dr * 0.7f + m_declickR;
             // Nothing under the lead's own range: the −OCT voice keeps its
             // body, the rumble goes.
             l[i] = m_dcL.step(m_hpL.step(ol).high);
@@ -929,6 +942,7 @@ private:
     Svf m_echoHp, m_echoHp2;
     OnePoleLp m_echoLpL, m_echoLpR;
     float m_echoFb = 0.3f, m_echoLevel = 0, m_throw = 0;
+    float m_declickL = 0, m_declickR = 0, m_declickFade = 0.99f;
     Svf m_hpL, m_hpR;
     DcBlock m_dcL, m_dcR;
 };

@@ -1265,7 +1265,7 @@ private:
             held += k.down && k.id != id;
         if (m_pendingTap.id >= 0) {
             const double len = m_pendingTap.lifted - m_pendingTap.t;
-            if (m_pendingTap.lifted >= 0 && len < 0.3 && !m_pendingTap.legato && held == 0)
+            if (m_pendingTap.lifted >= 0 && len < 0.45 && !m_pendingTap.legato && held == 0)
                 m_phrase.tap(m_pendingTap.t, std::max(0.05, len), m_pendingTap.abs);
             else
                 m_phrase.clear();

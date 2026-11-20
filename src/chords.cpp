@@ -998,23 +998,19 @@ QString Control::help() const {
         "the five rows\tits colour, bottom to top: power 5, sus, triad, add9, seventh\n"
         "slide up or down\tchange colour while it sounds; the voices glide\n"
         "another finger\ta new chord takes over; lift it and the one still held returns\n"
-        "press harder\tswells it, louder and brighter\n"
-        "flat finger\tbigger: the root an octave under, the top an octave over\n"
+        "press harder · flat finger\tswell it · double it an octave under and over\n"
         "twist\tthe filter, a knob under the finger\n"
-        "press until it clicks\thold: chords ring until the next one (click again to let go)\n"
+        "press until it clicks, or L\thold: chords ring until the next one\n"
         "tap the rail along the top\tkeep that gate rhythm for this sound\n"
         "hold the rail\tplay that rhythm over everything, loops too, while the finger stays\n"
-        "higher on the rail\tlonger hits; twist there for swing\n"
+        "higher on the rail · twist there\tlonger hits · swing\n"
         "two, three fingers on the rail\tdouble, then quadruple time, brighter: a build-up\n"
         "tap chords, hold the next beat\tloops the taps into the next free slot\n"
         "A S D F G H J\tchords I to VII; Q row add9, Z row sus; Shift for sevenths (Z row: power)\n"
-        "Return\tloops the last bars you played: 1, 2, 4 or 8\n"
-        "← →\tthe sound: pad, trance, organ, piano, pluck, pump\n"
-        "↑ ↓\tvoicing higher or lower\n"
-        "[ ]\tthe gate pattern; - and = the filter\n"
-        "L\thold on or off\n"
-        "F1–F8\tlaunch a slot at the next bar; with Shift, clear it\n"
-        "Backspace\tstop the loop at the next bar; Shift+Return overdubs");
+        "Return · Shift+Return\tloop the last bars you played (1, 2, 4 or 8) · overdub\n"
+        "← → · ↑ ↓\tthe sound: pad, trance, organ, piano, pluck, pump · voicing higher or lower\n"
+        "[ ] · - =\tthe gate pattern · the filter\n"
+        "F1–F8 · Backspace\tlaunch a slot at the next bar (Shift: clear it) · stop the loop");
 }
 
 QString Control::status() const {

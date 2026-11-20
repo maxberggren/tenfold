@@ -62,12 +62,12 @@ struct StyleDef {
 inline const StyleDef &styleDef(int s) {
     static const StyleDef defs[StyleCount] = {
         // name     blurb                          osc            uni det   a      d     s     r     cut   env   envD  res   leg   retr  sprd  glide  ctr    gain   pump strum   width pattern
-        {"PAD", "big supersaw pad", StyleDef::Saw, 7, 26.0f, 0.28f, 1.2f, 0.85f, 0.45f, 0.70f, 0.10f, 0.6f, 0.12f, true, false, true, 0.16f, 62.0f, 0.36f, 0.0f, 0.0f, 1.0f, Hold},
-        {"TRANCE", "gated supersaw", StyleDef::Saw, 7, 20.0f, 0.004f, 0.4f, 0.9f, 0.09f, 0.76f, 0.14f, 0.25f, 0.18f, true, false, false, 0.04f, 66.0f, 0.42f, 0.0f, 0.0f, 0.85f, TranceGate},
+        {"PAD", "big supersaw pad", StyleDef::Saw, 7, 26.0f, 0.28f, 1.2f, 0.85f, 0.45f, 0.70f, 0.10f, 0.6f, 0.12f, true, false, true, 0.045f, 62.0f, 0.36f, 0.0f, 0.0f, 1.0f, Hold},
+        {"TRANCE", "gated supersaw", StyleDef::Saw, 7, 20.0f, 0.004f, 0.4f, 0.9f, 0.09f, 0.76f, 0.14f, 0.25f, 0.18f, true, false, false, 0.018f, 66.0f, 0.42f, 0.0f, 0.0f, 0.85f, TranceGate},
         {"ORGAN", "house organ stabs", StyleDef::OrganOsc, 1, 5.0f, 0.003f, 0.5f, 0.42f, 0.05f, 0.80f, 0.12f, 0.15f, 0.05f, false, true, false, 0.02f, 64.0f, 0.31f, 0.0f, 0.0f, 0.5f, Offbeat},
         {"PIANO", "house piano", StyleDef::PianoOsc, 1, 4.0f, 0.0015f, 2.4f, 0.0f, 0.22f, 0.88f, 0.10f, 0.45f, 0.05f, false, true, false, 0.02f, 63.0f, 0.22f, 0.0f, 0.007f, 0.6f, Charleston},
         {"PLUCK", "supersaw pluck", StyleDef::Saw, 5, 16.0f, 0.001f, 0.55f, 0.0f, 0.25f, 0.36f, 0.62f, 0.2f, 0.22f, false, true, false, 0.02f, 67.0f, 0.4f, 0.0f, 0.004f, 0.8f, Tresillo},
-        {"PUMP", "filtered, sidechained", StyleDef::Saw, 4, 13.0f, 0.012f, 0.5f, 0.92f, 0.22f, 0.56f, 0.12f, 0.4f, 0.42f, true, false, false, 0.06f, 60.0f, 0.44f, 0.82f, 0.0f, 0.7f, Hold},
+        {"PUMP", "filtered, sidechained", StyleDef::Saw, 4, 13.0f, 0.012f, 0.5f, 0.92f, 0.22f, 0.56f, 0.12f, 0.4f, 0.42f, true, false, false, 0.025f, 60.0f, 0.44f, 0.82f, 0.0f, 0.7f, Hold},
     };
     return defs[std::clamp(s, 0, StyleCount - 1)];
 }
@@ -747,7 +747,8 @@ private:
     int effectivePattern(int style) const { return m_override >= 0 ? m_override : m_rhythm[style].pattern; }
 
     // How far (in samples) a stab landing just before a hit of its gate
-    // should wait for it, so a finger a little early still lands on the beat.
+    // should wait for it, so a finger a few milliseconds early still lands
+    // with the hit instead of flamming against it.
     int snapToHit(int style, const Transport &tr, int offset) const {
         const int pattern = effectivePattern(style);
         if (!styleDef(style).retrig || pattern == Hold)
@@ -1253,7 +1254,9 @@ private:
             const float a = v.amp.step();
             const float fe = v.filt.step();
             if (((i - from) & 7) == 0) {
-                const float c = clampf(base + sd.envAmt * fe * accent, 0.0f, 1.12f);
+                // A wub opens the filter as it swells: the chord talks.
+                const float wub = chop && G.smooth ? 0.32f * (G.g[i] - 0.55f) : 0.0f;
+                const float c = clampf(base + sd.envAmt * fe * accent + wub, 0.0f, 1.12f);
                 const float hz = std::min(60.0f * std::exp2(c * 8.1f), m_rate * 0.42f);
                 if (ladder) {
                     v.ladL.set(hz, sd.res, m_rate);

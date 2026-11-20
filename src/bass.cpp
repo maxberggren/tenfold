@@ -8,9 +8,12 @@
 // twist the sound's morph, a flat finger fattens it, and sliding sideways
 // glides to the next note. A second note finger while the first is held
 // slides to it without a new attack, as a 303 slides; lifting it slides
-// back. Above, the shaper rail, four zones a finger lands in to bend
-// whatever is sounding, the loop included, for as long as it stays:
+// back. Above, the rail: LOOP at its left end, then four zones a finger
+// lands in to bend whatever is sounding, the loop included, for as long as
+// it stays:
 //
+//   LOOP  tap: record from the next bar; tap again: close at the bar line,
+//         and it loops. Nothing else ever makes a loop.
 //   OCT   up an octave (two fingers, two octaves): tap it for octave pumps
 //   ROLL  held notes strike in a rhythm locked to the bar; slide sideways
 //         for the pattern, up and down for the gate
@@ -22,7 +25,7 @@
 //
 // The keyboard is a second way in: two rows of the scale (Z to / and A to '
 // an octave up), the eight sounds on Q to I, O to follow the chords, and
-// the usual F1–F8, Backspace for the clips.
+// the usual F1–F8, Backspace for the clips; Enter is LOOP.
 
 #include <QLinearGradient>
 #include <QPainter>
@@ -33,7 +36,6 @@
 #include "bass.h"
 #include "console.h"
 #include "parts.h"
-#include "phrase.h"
 
 namespace tf {
 
@@ -45,9 +47,10 @@ constexpr float kField = 0.76f; // the note field below this height, the rail ab
 constexpr int kLowDegree = -2;  // the leftmost column: two degrees under the root
 constexpr int kColumns = 12;
 constexpr int kKeyIdBase = 0x200000; // ids for notes played on the keyboard
-constexpr double kHold = 0.25;  // a touch this long is a hold, not a tap
+constexpr float kLoopW = 0.12f; // the rail's LOOP button, at its left end
+constexpr float kZoneW = (1.0f - kLoopW) / 4.0f; // and its four shapers
 
-enum Role { NoRole, NoteRole, OctRole, RollRole, WobRole, GritRole };
+enum Role { NoRole, NoteRole, OctRole, RollRole, WobRole, GritRole, LoopRole };
 
 const char *roleName(Role r) {
     switch (r) {
@@ -85,7 +88,6 @@ public:
 
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
         const bool click = f.button && !m_button;
         m_button = f.button;
 
@@ -111,10 +113,36 @@ public:
         }
         if (click)
             this->click(f.t, ctx);
-        holds(f.t, ctx);
     }
 
-    void idle(double t, ControlContext &ctx) override { holds(t, ctx); }
+    // Recording goes on whichever page shows: keep its state, close an
+    // early second tap at the right moment, and say what was caught.
+    void background(double t, ControlContext &ctx) override {
+        (void)t;
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        const double beat = ctx.beatAt(ctx.now());
+        if (m_recSlot >= 0 && m_closeEarly && beat >= m_recStart + 0.5) {
+            // Tapped again before the take began: close after its first bar.
+            m_closeEarly = false;
+            m_closing = true;
+            ctx.stopRecording();
+        }
+        if (m_recSlot >= 0 && pv.recording < 0 && beat > m_recStart + 1) {
+            const ClipView &cv = pv.clips[m_recSlot];
+            if (cv.state != ClipView::Empty && cv.lengthBeats > 0)
+                ctx.notice(QStringLiteral("Bass loop in slot %1: %2 %3, %4 events, playing")
+                               .arg(m_recSlot + 1)
+                               .arg(cv.lengthBeats >= 4 ? int(cv.lengthBeats / 4) : int(cv.lengthBeats))
+                               .arg(cv.lengthBeats >= 4 ? (cv.lengthBeats >= 8 ? QStringLiteral("bars")
+                                                                               : QStringLiteral("bar"))
+                                                        : QStringLiteral("beats"))
+                               .arg(cv.events));
+            else
+                ctx.notice(QStringLiteral("Nothing was played: slot %1 stays empty").arg(m_recSlot + 1));
+            m_recSlot = -1;
+            m_closing = m_closeEarly = false;
+        }
+    }
 
     void leave(ControlContext &ctx) override {
         for (auto &h : m_fingers)
@@ -170,16 +198,10 @@ public:
         case Qt::Key_Backspace:
             ctx.stop();
             return true;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
         case Qt::Key_F9:
-            if (pv.recording >= 0) {
-                ctx.stopRecording();
-                ctx.notice(QStringLiteral("Bass recording ends at the bar"));
-            } else {
-                const int slot = std::max(0, ctx.freeSlot());
-                resetSlot(slot, ctx);
-                ctx.record(slot, 8);
-                ctx.notice(QStringLiteral("Bass records into slot %1 from the next bar").arg(slot + 1));
-            }
+            loop(ctx);
             return true;
         case Qt::Key_F10:
             ctx.overdub(!pv.overdub);
@@ -246,20 +268,25 @@ public:
             "touch the lower field\ta note in the key: higher is brighter (clean sub to biting), harder accents\n"
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back\n"
             "twist / flatten the finger\tmorph the sound / fatten it\n"
-            "OCT (the rail, top left)\tup an octave while held, two fingers two: tap it to pump octaves\n"
+            "OCT\tup an octave while held, two fingers two: tap it to pump octaves\n"
             "ROLL\tthe held note strikes in a rhythm on the bar; sideways the pattern, up/down the gate\n"
             "WOB\ta wobble locked to the tempo; sideways the rate (1/2 to 1/32), up/down the depth\n"
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
             "click\twith a note down, strike it again accented; with only shapers down, latch them (P frees)\n"
-            "tap a riff, hold its first note on the beat\tloops it into the next free slot\n"
+            "LOOP (the rail, far left) or Enter\tarms a take from the next bar; tap again to close it at the bar: it loops\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
             "Q W E R T Y U I\tsub, pluck, reese, acid, wobble, growl, 808, bounce\n"
             "O   [ ]   - =   ↑ ↓   ← →\tfollow the chords   morph   slide time   pad octave   key tone\n"
-            "F1–F8 (Shift clears)  F9  F10  Backspace\tlaunch a slot   record   overdub   stop the loop");
+            "F1–F8 (Shift clears)  F10  Backspace\tlaunch a slot   overdub   stop the loop");
     }
 
     QString status() const override {
         QStringList parts;
+        const QString take = loopState(m_beat);
+        if (!take.isEmpty())
+            parts << take.toUpper();
+        else
+            parts << QStringLiteral("LOOP or Enter records a loop");
         parts << QString::fromUtf8(recipe(m_sound).name);
         for (const auto &h : m_fingers) {
             if (h.id < 0)
@@ -303,13 +330,9 @@ private:
         float amount = 0, second = 0;                     // a shaper's two axes
         int index = 0;                                    // a shaper's pattern or rate
         float sentA = 0, sentB = 0;                       // what this shaper last asked for
-        bool long_ = false, looped = false;
     };
     struct KeyNote {
         int key = 0, id = 0;
-        double t0 = 0;
-        bool long_ = false, looped = false;
-        int group = 0; // the note, for closing a riff
     };
     static constexpr int kNoKey = -1000;
 
@@ -342,8 +365,13 @@ private:
         h.x0 = t.x;
         h.y0 = t.y;
         h.angle0 = t.angle;
+        if (t.y >= kField && t.x < kLoopW) {
+            h.role = LoopRole;
+            loop(ctx);
+            return;
+        }
         if (t.y >= kField) {
-            h.role = Role(OctRole + std::clamp(int(t.x * 4.0f), 0, 3));
+            h.role = Role(OctRole + std::clamp(int((t.x - kLoopW) / kZoneW), 0, 3));
             const Shaper s = shaperOf(h.role);
             // A finger on a latched zone takes it over, and lets it go on lift.
             m_latched[s] = false;
@@ -394,6 +422,8 @@ private:
     }
 
     void drag(Finger &h, const Touch &t, double time, ControlContext &ctx) {
+        if (h.role == LoopRole)
+            return;
         if (h.role != NoteRole) {
             shape(h, t, time, ctx, false);
             return;
@@ -438,9 +468,7 @@ private:
         h.id = -1;
         if (h.role == NoteRole) {
             off(id, time, ctx);
-            if (!h.long_ && !h.looped)
-                m_phrase.tap(h.t0, time - h.t0, h.degree + 100 * h.octave);
-        } else if (h.role != NoRole) {
+        } else if (h.role != NoRole && h.role != LoopRole) {
             remember(h);
             const Shaper s = shaperOf(h.role);
             // Another finger still in the same zone takes over where it is.
@@ -574,32 +602,56 @@ private:
         ctx.notice(QStringLiteral("%1 latched: P lets go").arg(names.join(QStringLiteral(" + "))));
     }
 
-    // Holds close a tapped phrase into a loop.
-    void holds(double t, ControlContext &ctx) {
-        for (auto &h : m_fingers)
-            if (h.id >= 0 && h.role == NoteRole && !h.long_ && t - h.t0 >= kHold) {
-                h.long_ = true;
-                h.looped = closeLoop(h.t0, h.degree + 100 * h.octave, ctx);
+    // The one way a loop is made: a deliberate tap on LOOP (or Enter).
+    // The first arms a take from the next bar; the second closes it at the
+    // bar's end, and the loop plays from there. The rail and the status line
+    // show each step, and a notice says what was caught.
+    void loop(ControlContext &ctx) {
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        const double beat = ctx.beatAt(ctx.now());
+        (void)pv;
+        if (m_recSlot >= 0) {
+            if (m_closing || m_closeEarly)
+                return;
+            if (beat < m_recStart) {
+                m_closeEarly = true;
+                ctx.notice(QStringLiteral("A one-bar loop: the take closes after its first bar"));
+            } else {
+                m_closing = true;
+                ctx.stopRecording();
+                ctx.notice(QStringLiteral("The loop closes at the bar line"));
             }
-        for (auto &k : m_keys)
-            if (k.key && !k.long_ && t - k.t0 >= kHold) {
-                k.long_ = true;
-                k.looped = closeLoop(k.t0, k.group, ctx);
-            }
+            return;
+        }
+        const int slot = ctx.freeSlot();
+        if (slot < 0) {
+            ctx.notice(QStringLiteral("All eight bass slots hold loops: Shift+F1–F8 clears one"));
+            return;
+        }
+        resetSlot(slot, ctx);
+        ctx.record(slot, 8);
+        m_recSlot = slot;
+        m_recStart = std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar;
+        m_closing = m_closeEarly = false;
+        ctx.notice(QStringLiteral("Bass records into slot %1 from the next bar: play, then tap LOOP again").arg(slot + 1));
     }
 
-    // A riff loops when the hold lands on its first note again, on time: a
-    // line that merely ends on a long note doesn't.
-    bool closeLoop(double t0, int group, ControlContext &ctx) {
-        double start = 0;
-        if (m_phrase.taps().empty() || m_phrase.taps().front().group != group || !m_phrase.closes(t0, group, &start))
-            return false;
-        const int slot = std::max(0, ctx.freeSlot());
-        resetSlot(slot, ctx);
-        ctx.capture(slot, start, t0);
-        ctx.notice(QStringLiteral("Bass loop in slot %1").arg(slot + 1));
-        m_phrase.clear();
-        return true;
+    // Where the take is, for the rail and the status line.
+    QString loopState(double beat) const {
+        if (m_recSlot < 0)
+            return {};
+        if (beat < m_recStart)
+        {
+            const int beats = int(std::ceil(m_recStart - beat));
+            return QStringLiteral("armed: slot %1 records in %2 %3")
+                .arg(m_recSlot + 1)
+                .arg(beats)
+                .arg(beats == 1 ? QStringLiteral("beat") : QStringLiteral("beats"));
+        }
+        const int bar = int((beat - m_recStart) / kBeatsPerBar) + 1;
+        if (m_closing || m_closeEarly)
+            return QStringLiteral("recording bar %1: closing at the bar").arg(bar);
+        return QStringLiteral("recording bar %1 of 8: tap LOOP to close").arg(bar);
     }
 
     void resetSlot(int slot, ControlContext &ctx) {
@@ -661,7 +713,7 @@ private:
             degree -= 100;
             octave += 1;
         }
-        *slot = {code, kKeyIdBase + code, now, false, false, degree + 100 * octave};
+        *slot = {code, kKeyIdBase + code};
         Command on;
         on.type = Command::On;
         on.id = slot->id;
@@ -682,10 +734,7 @@ private:
     void keyOff(int code, ControlContext &ctx) {
         for (auto &k : m_keys)
             if (k.key == code) {
-                const double now = ctx.now();
-                off(k.id, now, ctx);
-                if (!k.long_ && !k.looped)
-                    m_phrase.tap(k.t0, std::max(0.05, now - k.t0), k.group);
+                off(k.id, ctx.now(), ctx);
                 k.key = 0;
             }
     }
@@ -700,7 +749,12 @@ private:
 
     Finger m_fingers[16];
     KeyNote m_keys[16];
-    Phrase m_phrase;
+    // The take LOOP armed: its slot (−1: none), the beat it starts, and
+    // whether it is closing.
+    int m_recSlot = -1;
+    double m_recStart = 0;
+    bool m_closing = false, m_closeEarly = false;
+    double m_beat = 0; // as of the last paint, for status()
     Frame m_frame;
     bool m_button = false;
 
@@ -731,6 +785,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     m_family = sv.family;
     m_brightness = sv.brightness;
     m_chordRoot = sv.chordRoot;
+    m_beat = pc.beat;
     Tuning tuning;
     tuning.set(sv.root, sv.family, sv.brightness, sv.just);
 
@@ -934,6 +989,35 @@ void Control::paintScope(QPainter &p, const PaintContext &pc) {
 
 void Control::paintRail(QPainter &p, const PaintContext &pc) {
     const float *d = pc.view->data;
+    // LOOP: idle, armed (blinking, counting the beats in), recording (red,
+    // the bar it is on), closing.
+    {
+        const QRectF r = pc.rect(0, kField, kLoopW, 1.0f).adjusted(6, 14, -6, -6);
+        const bool blink = std::fmod(pc.time, 0.5) < 0.25;
+        QString title = QStringLiteral("LOOP"), body = QStringLiteral("TAP TO\nRECORD");
+        QColor col = pc.color;
+        bool lit = false;
+        if (m_recSlot >= 0) {
+            col = c::red();
+            if (pc.beat < m_recStart) {
+                title = QStringLiteral("ARMED");
+                body = QStringLiteral("SLOT %1\nIN %2").arg(m_recSlot + 1).arg(int(std::ceil(m_recStart - pc.beat)));
+                lit = blink;
+            } else {
+                const int bar = int((pc.beat - m_recStart) / kBeatsPerBar) + 1;
+                title = QStringLiteral("REC %1").arg(bar);
+                body = m_closing || m_closeEarly ? QStringLiteral("CLOSING\nAT BAR") : QStringLiteral("TAP TO\nCLOSE");
+                lit = true;
+            }
+        }
+        c::button(p, r, title, col, lit);
+        const QStringList lines = body.split(QLatin1Char('\n'));
+        const QRectF inner = r.adjusted(4, 26, -4, -6);
+        for (int k = 0; k < lines.size(); ++k)
+            c::text(p, QRectF(inner.left(), inner.top() + inner.height() * k / lines.size(), inner.width(),
+                              inner.height() / lines.size()),
+                    lines[k], c::alpha(col, 0.85f), 10, true, Qt::AlignCenter);
+    }
     const QColor amber = c::amber();
     bool held[ShaperCount] = {};
     for (const auto &h : m_fingers)
@@ -941,7 +1025,8 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
             held[shaperOf(h.role)] = true;
     for (int z = 0; z < ShaperCount; ++z) {
         const Shaper s = Shaper(z);
-        const QRectF r = pc.rect(0.25f * float(z), kField, 0.25f * float(z + 1), 1.0f).adjusted(6, 14, -6, -6);
+        const QRectF r =
+            pc.rect(kLoopW + kZoneW * float(z), kField, kLoopW + kZoneW * float(z + 1), 1.0f).adjusted(6, 14, -6, -6);
         const bool on = s == ShapeOct    ? d[PubOct] > 0
                         : s == ShapeRoll ? d[PubRoll] > 0
                         : s == ShapeWob  ? held[s] || m_latched[s]

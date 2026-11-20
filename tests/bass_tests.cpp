@@ -425,24 +425,44 @@ private slots:
         QVERIFY(take.rms(0.8, 1.8) > 0.03);
     }
 
-    // Tap a rhythm, hold the next beat: a loop, and the studio's tempo.
-    void tapThenHoldMakesALoop() {
-        const auto take = testkit::play("page 0 2\n"
-                                        "tap 0.5 0.3 0.4\ntap 1.0 0.4 0.4\ntap 1.5 0.3 0.4\ntap 2.0 0.5 0.4\n"
-                                        "down 2.5 1 0.3 0.4\nup 2.9 1\nend 5\n");
+    // LOOP arms a take from the next bar, a second tap closes it at the bar
+    // line, and it loops; the notice says what was caught.
+    void loopButtonRecordsABar() {
+        QString notice;
+        const auto take = testkit::play("page 0 2\ntempo 0 120\n"
+                                        "tap 0.3 0.05 0.9\n" // LOOP: armed, the take starts at 2.0 s
+                                        "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.21 0.4\n"
+                                        "tap 3.2 0.05 0.9\n" // LOOP again: closes at 4.0 s
+                                        "tap 3.5 0.46 0.4\nend 6\n",
+                                        [&](Session &session) {
+                                            uint32_t seq = 0;
+                                            notice = session.notice(&seq);
+                                        });
         const PartView &bass = take.view.parts[1];
         QCOMPARE(int(bass.clips[0].state), int(ClipView::Playing));
+        QCOMPARE(int(bass.clips[0].lengthBeats), 4);
         QCOMPARE(int(take.view.bpm), 120);
-        QVERIFY(take.rms(3.5, 5) > 0.02); // the loop plays on after the hand lifts
+        QVERIFY(take.rms(4.5, 6) > 0.02); // the loop plays on after the hand lifts
+        QVERIFY2(notice.contains(QStringLiteral("slot 1")) && notice.contains(QStringLiteral("bar")), qPrintable(notice));
     }
 
-    // A line that ends on a long note of its own is not a riff to loop:
-    // only landing on the riff's first note again closes it.
-    void endingOnAnotherNoteDoesNotLoop() {
+    // Enter does what LOOP does; tapped twice before the bar, it makes a
+    // one-bar loop.
+    void enterRecordsTooAndTwiceIsOneBar() {
+        const auto take = testkit::play("page 0 2\ntempo 0 120\nkey 0.3 Return\nkey 0.6 Return\n"
+                                        "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.21 0.4\ntap 3.5 0.46 0.4\nend 5\n");
+        QCOMPARE(int(take.view.parts[1].clips[0].state), int(ClipView::Playing));
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
+    }
+
+    // Playing never makes a loop by itself: taps and then a hold on the
+    // first note, on the beat, are just a bass line.
+    void playingNeverLoopsByItself() {
         const auto take = testkit::play("page 0 2\n"
                                         "tap 0.5 0.3 0.4\ntap 1.0 0.4 0.4\ntap 1.5 0.3 0.4\ntap 2.0 0.5 0.4\n"
-                                        "down 2.5 1 0.6 0.4\nup 2.9 1\nend 3.5\n");
-        QCOMPARE(int(take.view.parts[1].clips[0].state), int(ClipView::Empty));
+                                        "down 2.5 1 0.3 0.4\nup 3.2 1\nend 3.5\n");
+        for (int slot = 0; slot < kClipSlots; ++slot)
+            QCOMPARE(int(take.view.parts[1].clips[slot].state), int(ClipView::Empty));
     }
 
     // The keyboard plays the scale and picks the sound.

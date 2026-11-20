@@ -664,6 +664,71 @@ private slots:
         }
     }
 
+    void aHeldKeyRollsOnTimeWithOnlyASlowTick() {
+        // No frames at all, a tick every 16 ms (a slow UI timer), and the
+        // hat key held in the straight techno kit: every step still lands
+        // on the grid, none late.
+        Studio studio(kRate);
+        studio.setTimeOrigin(0);
+        setScriptClock(0);
+        Session session(&studio);
+        session.setClock(&scriptClock);
+        session.setPage(0);
+        testkit::Take take;
+        float buf[768 * 2];
+        auto press = [&](int key, bool down) {
+            KeyEvent k;
+            k.key = key;
+            k.down = down;
+            session.key(k);
+        };
+        for (int tick = 0; tick * 0.016 < 3.0; ++tick) {
+            const double t = tick * 0.016;
+            setScriptClock(t);
+            session.refresh();
+            if (tick == 6)
+                press(Qt::Key_Right, true);
+            if (tick == 62)
+                press(Qt::Key_V, true);
+            if (tick == 175)
+                press(Qt::Key_V, false);
+            session.idle(t);
+            studio.render(buf, 768);
+            for (int i = 0; i < 768; ++i) {
+                take.left.push_back(buf[2 * i]);
+                take.right.push_back(buf[2 * i + 1]);
+            }
+        }
+        const auto on = onsets(take, 1.3, 2.75);
+        QVERIFY(on.size() >= 10);
+        const double lag = offGridMs(on[0], 0.25);
+        QVERIFY(lag > -0.5 && lag < 3.0);
+        for (double t : on)
+            QVERIFY2(std::fabs(offGridMs(t, 0.25) - lag) < 0.8, qPrintable(QString::number(offGridMs(t, 0.25))));
+    }
+
+    void aFatFirmHitLowOnTheKickStillPlays() {
+        // A wide contact near the edge is a resting thumb only when it's
+        // light; pressed firmly it's a kick.
+        const auto kick = testkit::play("page 0 1\ndown 1.0 1 0.12 0.10 p=0.7 size=1.5\nup 1.1 1\nend 1.5\n");
+        QVERIFY(kick.rms(1.0, 1.3) > 0.01);
+        const auto thumb = testkit::play("page 0 1\ndown 1.0 1 0.12 0.10 p=0.2 size=1.5\nup 1.6 1\nend 1.7\n");
+        QVERIFY(thumb.rms(0.9, 1.7) < 0.0005);
+    }
+
+    void aFastRepeatsFirstStepIsNotRushed() {
+        // REPEAT at 1/32: landing 20 ms after a step (past a quarter step)
+        // doesn't count as it; no two hits come closer than 3/4 of a step.
+        const double step = 4 * kSpb;
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\ndown 0.5 99 0.79 0.02\ndown " +
+                                        std::to_string(step + 0.02) + " 1 " + at(drums::Hat) + "\nup " +
+                                        std::to_string(step + 0.6) + " 1\nend " + std::to_string(step + 0.7) + "\n");
+        const auto on = onsets(take, step - 0.05, step + 0.55, 0.02);
+        QVERIFY(on.size() >= 6);
+        for (size_t i = 1; i < on.size(); ++i)
+            QVERIFY2(on[i] - on[i - 1] > 0.75 * 0.125 * kSpb, qPrintable(QString::number(on[i] - on[i - 1])));
+    }
+
     void swingLeavesThirtySecondsEven() {
         // Garage swings 62%, but a rim rolling in thirty-seconds stays even.
         const auto take = testkit::play("page 0 1\nkey 0.1 Left\n"

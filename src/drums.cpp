@@ -54,15 +54,21 @@ constexpr int kCols = 4, kRows = 4;
 constexpr double kHoldSecs = 0.08;
 constexpr double kFirstStepSecs = 0.17;
 constexpr double kFirstLeadSecs = 0.012;
+// A held step must go out before its time comes, so the lead is at least
+// the longest recent gap between ticks (250 Hz live: 4 ms; a still finger
+// or a held key gets no frames) plus a margin, and never over 25 ms.
+constexpr double kTickMargin = 0.004, kMaxLeadSecs = 0.025;
 constexpr double kTogetherSecs = 0.08; // fingers landing this close are one hand
 // The REPEAT strip: the near edge of the pad, where a thumb rests. Along it,
 // left to right, the roll rates; a landing within kSnapSecs of a step of
 // the grid counts as that step.
 constexpr float kStripY = 0.05f;
-// A contact this much larger than a fingertip, this near the edge, is a
-// thumb resting: REPEAT too, a little above the drawn strip.
+// A contact this much larger than a fingertip, this near the edge and this
+// light, is a thumb resting: REPEAT too, a little above the drawn strip. A
+// fat, firm hit low on the kick is still a kick.
 constexpr float kThumbY = 0.12f;
 constexpr float kThumbSize = 1.3f;
+constexpr float kThumbPressure = 0.35f;
 constexpr double kSnapSecs = 0.03;
 constexpr double kRepeatGapSecs = 0.08; // the closest a first repeat may follow a landing that plays at once
 
@@ -458,7 +464,7 @@ private:
         *h = Holder{};
         h->used = true;
         h->src = t.id;
-        if (t.y < kStripY || (t.y < kThumbY && t.size > kThumbSize)) {
+        if (t.y < kStripY || (t.y < kThumbY && t.size > kThumbSize && t.pressure < kThumbPressure)) {
             // A thumb on the strip: no sound, just REPEAT at the rate under it.
             h->mode = Mode::Repeat;
             h->landing = false;
@@ -531,7 +537,9 @@ private:
             k -= 1; // k: the last step heard at or before the landing
         double t = h.t0;
         double cursor = landed;
-        if (h.t0 - heardAt(k) <= kSnapSecs) {
+        // A quarter of a step at most, so a fast rate's first repeat isn't rushed.
+        const double snap = std::min(kSnapSecs, 0.25 * stepBeats * 60.0 / std::max(1.0, ctx.studio().bpm));
+        if (h.t0 - heardAt(k) <= snap) {
             cursor = k * stepBeats + 1e-6;
         } else if (heardAt(k + 1) - h.t0 < kRepeatGapSecs) {
             t = heardAt(k + 1);
@@ -947,9 +955,14 @@ private:
     // --- scheduling ------------------------------------------------------------
 
     void schedule(double now, ControlContext &ctx) {
+        // The longest gap between ticks lately, forgotten over a second or so.
+        if (m_lastTick > 0 && now > m_lastTick)
+            m_tickGap = std::max(now - m_lastTick, m_tickGap * std::exp(-(now - m_lastTick) / 1.5));
+        m_lastTick = now;
+        const double lead = std::clamp(m_tickGap + kTickMargin, kFirstLeadSecs, kMaxLeadSecs);
         const double beatNow = ctx.beatAt(now);
         const double horizon = ctx.beatAt(now + kLookahead);
-        const double tight = ctx.beatAt(now + kFirstLeadSecs); // how far ahead a roll's first step may go
+        const double tight = ctx.beatAt(now + lead); // how far ahead a held step may go
 
         if (m_keep.active && beatNow > m_keep.until + kBeatsPerBar) {
             // The clock jumped (a loop on another page set a new tempo):
@@ -1216,6 +1229,7 @@ private:
     bool m_button = false;
     bool m_userOverdub = false;
     uint8_t m_repeatKeys = 0; // B and N, held as REPEAT
+    double m_lastTick = 0, m_tickGap = 0; // when schedule() last ran, and the longest recent gap
     int m_playing = -1, m_recording = -1; // this part's clips, as the studio last said
     uint32_t m_muted[kClipSlots] = {};  // per slot, the pads taken out of its loop
     Frame m_frame;

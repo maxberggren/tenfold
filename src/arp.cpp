@@ -19,6 +19,7 @@
 #include "arp.h"
 
 #include <QPainter>
+#include <QFontMetricsF>
 #include <QPainterPath>
 #include <algorithm>
 #include <climits>
@@ -266,6 +267,7 @@ inline float squareBlep(float ph, float inc) {
 }
 
 constexpr int kVoices = 28;
+constexpr double kTopMidi = 96.0; // C7: arps climb no higher
 constexpr float kOutGain = 1.6f;
 constexpr int kSoftVoices = 18; // past this, the oldest notes are faded out to make room
 
@@ -388,9 +390,9 @@ struct Voice {
                                 0.78f * spread};
             const float p[7] = {0, -0.4f, 0.4f, -0.7f, 0.7f, -0.95f, 0.95f};
             setUnits(7, c, p);
-            cutBias = 0.5f;
+            cutBias = 1.6f; // the anthem arp sits bright
             sustain = 0.6f;
-            envOct = 2.6f;
+            envOct = 3.0f;
             attack = 0.003f;
             gain = 0.16f;
             release = 0.07f + 0.4f * g;
@@ -972,13 +974,29 @@ struct Engine::Impl {
                 const int n = poolDegrees(L, s, h, perOct, deg, vel);
                 if (n > 0) {
                     PoolView pv;
-                    buildPool(deg, vel, n, s.octaves, perOct, pv);
+                    // The climb stops at the octave that would pass the top
+                    // of the range (C7), rather than folding back down and
+                    // breaking the pattern's shape.
+                    int top = deg[0];
+                    for (int i = 1; i < n; ++i)
+                        top = std::max(top, deg[i]);
+                    int octaves = s.octaves;
+                    while (octaves > 1 && h.midi(top + (octaves - 1) * perOct, s.reg) > kTopMidi)
+                        --octaves;
+                    buildPool(deg, vel, n, octaves, perOct, pv);
                     L.curCount = patternNotes(s.pattern, pv, L.counter + uint64_t(L.plan.skip), s.seed, s.octaves,
                                               perOct, L.cur, L.curVel, 16);
                     L.counter += 1 + uint64_t(L.plan.skip);
-                    if (L.plan.leap)
+                    if (L.plan.leap) {
+                        bool room = true;
                         for (int i = 0; i < L.curCount; ++i)
-                            L.cur[i] += perOct;
+                            room &= h.midi(L.cur[i] + perOct, s.reg) <= kTopMidi;
+                        if (room)
+                            for (int i = 0; i < L.curCount; ++i)
+                                L.cur[i] += perOct;
+                        else
+                            L.plan.leap = 0;
+                    }
                     // Which held notes have now been heard.
                     for (int i = 0; i < L.count; ++i) {
                         PoolNote &p = L.notes[i];
@@ -1051,7 +1069,8 @@ struct Engine::Impl {
         const int perOct = h.tuning.degreesPerOctave();
         for (int k = 0; k < L.curCount; ++k) {
             double midi = h.midi(L.cur[k], s.reg);
-            while (midi > 100.0)
+            // Only notes held above the range itself fold down.
+            while (midi > kTopMidi + 12.0)
                 midi -= 12.0;
             if (tie && s.sound == Acid && L.curCount == 1) {
                 Voice *held = nullptr;
@@ -2592,7 +2611,16 @@ void ArpControl::paintFingers(QPainter &p, const PaintContext &pc) {
                 if (k.overlay)
                     color = c::amber();
             }
-        c::finger(p, pc, t, color, label, glow);
+        // Near the right edge the tag goes on the finger's left, inside the pad.
+        if (t.x > 0.8f && !label.isEmpty()) {
+            c::finger(p, pc, t, color, QString(), glow);
+            const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
+            const qreal w = QFontMetricsF(c::font(12, true)).horizontalAdvance(label) + 12;
+            const QPointF at = pc.at(t.x, t.y);
+            c::tag(p, QPointF(at.x() - r - 6 - w, at.y() - r * 0.6), label, color, 12);
+        } else {
+            c::finger(p, pc, t, color, label, glow);
+        }
     }
 }
 

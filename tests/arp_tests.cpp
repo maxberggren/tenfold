@@ -443,6 +443,33 @@ private slots:
         QCOMPARE(int(pitches.size()), 6);
     }
 
+    void aHighRunStopsClimbingInsteadOfFolding() {
+        // Register 3 through four octaves would pass C7: the climb stops an
+        // octave short, so "up" still only goes up within each cycle.
+        Clock c(120);
+        std::unique_ptr<arp::Engine> owner;
+        arp::Engine &e = *fresh(owner);
+        arp::Settings s;
+        s.reg = 3;
+        s.octaves = 4;
+        state(e, c, s, 0.9);
+        note(e, c, Command::On, 1, 0, 0, 1.0, 2);
+        c.runTo(e, 5.0);
+        const auto log = e.log();
+        std::set<float> pitches;
+        for (const auto &f : log) {
+            QVERIFY(f.midi <= 96.0f);
+            pitches.insert(f.midi);
+        }
+        const size_t cycle = pitches.size();
+        QVERIFY(cycle >= 3);
+        for (size_t i = 0; i < log.size(); ++i) {
+            QCOMPARE(log[i].midi, log[i % cycle].midi);
+            if (i % cycle)
+                QVERIFY(log[i].midi > log[i - 1].midi);
+        }
+    }
+
     void stopsWhenTheNotesGoAndFallsSilent() {
         Clock c(120);
         std::unique_ptr<arp::Engine> owner;

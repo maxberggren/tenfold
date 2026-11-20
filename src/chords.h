@@ -77,12 +77,12 @@ inline const StyleDef &styleDef(int s) {
         // Drawbars, percussion and click, a quick decay: struck on every hit.
         {.name = "ORGAN", .blurb = "house organ stabs", .osc = StyleDef::OrganOsc, .unison = 2, .detune = 5.0f,
          .a = 0.003f, .d = 0.5f, .s = 0.42f, .r = 0.05f, .cutoff = 0.80f, .envAmt = 0.12f, .envDecay = 0.15f,
-         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 64.0f, .gain = 0.31f, .width = 0.5f,
+         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 64.0f, .gain = 0.38f, .width = 0.5f,
          .pattern = Offbeat},
         // Hammered FM that rings down, a little strum from the bottom up.
         {.name = "PIANO", .blurb = "house piano", .osc = StyleDef::PianoOsc, .unison = 2, .detune = 4.0f,
          .a = 0.0015f, .d = 2.4f, .s = 0.0f, .r = 0.22f, .cutoff = 0.88f, .envAmt = 0.10f, .envDecay = 0.45f,
-         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 63.0f, .gain = 0.22f, .strum = 0.007f,
+         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 63.0f, .gain = 0.25f, .strum = 0.007f,
          .width = 0.6f, .pattern = Charleston},
         // Five saws with a snapping filter and no sustain.
         {.name = "PLUCK", .blurb = "supersaw pluck", .osc = StyleDef::Saw, .unison = 5, .detune = 16.0f,
@@ -276,6 +276,12 @@ inline Voicing voiceChord(const Tuning &t, const Shape &shape, double centre, bo
     auto consider = [&](double *notes, int count, bool rootBottom, double bias) {
         sortSmall(notes, count);
         double cost = bias;
+        // Neighbouring voices a semitone apart rub; low in the chord they
+        // turn to mud, so there they are as good as forbidden (an add9 puts
+        // its ninth on top, a major seventh keeps its root below it).
+        for (int i = 0; i + 1 < count; ++i)
+            if (notes[i + 1] - notes[i] < 1.5)
+                cost += notes[i] < 72.0 ? 40.0 : 4.0;
         if (notes[0] < lo)
             cost += 4.0 * (lo - notes[0]);
         if (notes[count - 1] > hi)
@@ -483,6 +489,7 @@ struct ChordVoice {
     float graceEnv = 0;  // keeps a chopping gate open for a fresh chord, so a tap always speaks
     int graceHold = 0;
     int minHold = 0;     // a struck chord rings at least this long before a gate may end it
+    bool lateRelease = false; // let go before it spoke: release once it has rung its shortest
     float leslie = 0;    // the organ's slow rotor
     Rng rng{0x1234567u};
 
@@ -490,6 +497,10 @@ struct ChordVoice {
 };
 
 // --- the engine -------------------------------------------------------------
+
+// The organ's and the piano's balance of the copy in the middle and the
+// detuned copy at the sides (scaled by the style's width).
+constexpr float kMid = 0.74f, kSide = 0.5f;
 
 class Engine : public PartEngine {
 public:
@@ -531,7 +542,7 @@ public:
             else
                 L.stack[L.depth - 1] = e;
             int offset = ctx.offsetOf(c.t, kBlock);
-            offset += snapToHit(e.style, ctx.transport(), offset);
+            offset += waitForHit(e.style, ctx.transport(), offset);
             sound(lane, e, offset, true, ctx);
             break;
         }
@@ -614,10 +625,26 @@ public:
             computeGate(k, tr, n, used[k]);
         if (used[Pump])
             computePump(tr, n);
+        // A different chord held live over a loop would sound two harmonies
+        // at once while the studio announces one: the loop steps back
+        // (−18 dB in about 30 ms) until the finger lifts. The same chord
+        // over the loop leaves it whole.
+        bool loopSounding = false;
+        for (const auto &v : m_voices)
+            loopSounding |= v.active && v.lane == kReplayLane;
+        const ChordVoice *live = current(m_lanes[kLiveLane]);
+        const Shape &loopShape = m_lanes[kReplayLane].shape;
+        auto column = [&](int d) { return ((d % m_count) + m_count) % m_count; };
+        const bool clash = live && loopSounding && loopShape.count > 0 &&
+                           column(live->degree) != column(loopShape.tones[0]);
+        const float loop0 = m_loopGain;
+        m_loopGain += ((clash ? 0.125f : 1.0f) - m_loopGain) * (1.0f - std::exp(-float(n) / (0.01f * m_rate)));
         float mixL[kBlock] = {}, mixR[kBlock] = {};
         for (auto &v : m_voices)
-            if (v.active)
-                renderVoice(v, mixL, mixR, n);
+            if (v.active) {
+                const bool loop = v.lane == kReplayLane;
+                renderVoice(v, mixL, mixR, n, loop ? loop0 : 1.0f, loop ? m_loopGain : 1.0f);
+            }
         // Chords leave the low end to the bass: a fourth-order high-pass
         // under 140 Hz.
         for (int i = 0; i < n; ++i) {
@@ -743,6 +770,12 @@ private:
 
     static void release(ChordVoice &v) {
         v.releasing = true;
+        // A stab still waiting for its hit plays it anyway, for its shortest
+        // ring, and then lets go: a tap between hits is heard on the next.
+        if (v.delay > 0) {
+            v.lateRelease = true;
+            return;
+        }
         v.amp.off();
         v.filt.off();
     }
@@ -771,22 +804,24 @@ private:
 
     int effectivePattern(int style) const { return m_override >= 0 ? m_override : m_rhythm[style].pattern; }
 
-    // How far (in samples) a stab landing just before a hit of its gate
-    // should wait for it, so a finger a few milliseconds early still lands
-    // with the hit instead of flamming against it.
-    int snapToHit(int style, const Transport &tr, int offset) const {
+    // A struck sound under a gate speaks on the gate's hits: a chord landing
+    // between them waits (in samples, returned) for the next one, so an
+    // organ on the offbeat never stabs the downbeat because a finger moved
+    // there. Landing in the first part of a hit's step strikes at once.
+    int waitForHit(int style, const Transport &tr, int offset) const {
         const int pattern = effectivePattern(style);
         if (!styleDef(style).retrig || pattern == Hold)
             return 0;
         const GateDef &g = gateDef(pattern);
         const double stepsPerBeat = double(g.steps * m_globalRate) / kBeatsPerBar;
         const double pos = tr.beatAt(offset) * stepsPerBeat;
-        const double into = pos - std::floor(pos);
-        const int next = int(long(std::floor(pos) + 1) % g.steps);
-        if (g.hits[next] == '.')
+        const long k = long(std::floor(pos));
+        if (g.hits[k % g.steps] != '.' && pos - double(k) < 0.4)
             return 0;
-        const double waitSamples = (1.0 - into) / stepsPerBeat / tr.beatsPerSample;
-        return waitSamples < 0.035 * double(m_rate) ? int(waitSamples) : 0;
+        long next = k + 1;
+        while (g.hits[next % g.steps] == '.' && next < k + g.steps)
+            ++next;
+        return int((double(next) - pos) / stepsPerBeat / tr.beatsPerSample);
     }
 
     // Plays the lane's front chord: a fresh onset (a finger landing) or a
@@ -905,6 +940,7 @@ private:
         v.graceEnv = 1;
         v.graceHold = int(0.06f * m_rate);
         v.minHold = int(0.11f * m_rate);
+        v.lateRelease = false;
         v.glideCoef = 1.0f - std::exp(-float(kBlock) / (std::max(sd.glide, 0.005f) * m_rate));
         v.amp.set(sd.a, sd.d, sd.s, sd.r, m_rate);
         v.filt.set(0.001f, sd.envDecay, 0.0f, 0.3f, m_rate);
@@ -928,7 +964,9 @@ private:
         const float *sp = sd.unison >= 7 ? spread7 : sd.unison == 5 ? spread5 : spread4;
         v.unison = saw ? std::min(sd.unison, ChordVoice::kUnison) : 2;
         for (int u = 0; u < ChordVoice::kUnison; ++u) {
-            const float d = saw ? (u < v.unison ? sp[u] : 0.0f) : (u == 0 ? -0.5f : 0.5f);
+            // The organ and the piano: a centre copy in tune and a side copy
+            // detuned (see renderVoice), so they widen without thinning in mono.
+            const float d = saw ? (u < v.unison ? sp[u] : 0.0f) : (u == 0 ? 0.0f : 1.0f);
             v.ratio[u] = std::exp2(d * sd.detune / 1200.0f);
             const float pan = saw ? clampf(-d * sd.width * 1.05f, -1.0f, 1.0f) : (u == 0 ? -sd.width : sd.width);
             v.panL[u] = std::sqrt(0.5f * (1.0f - pan));
@@ -1108,7 +1146,8 @@ private:
         m_pumpView = 1.0f - m_pump[n - 1];
     }
 
-    void renderVoice(ChordVoice &v, float *outL, float *outR, int n) {
+    // g0 and g1: a gain ramp over the block (the loop stepping back).
+    void renderVoice(ChordVoice &v, float *outL, float *outR, int n, float g0, float g1) {
         int from = 0;
         if (v.delay > 0) {
             if (v.delay >= n) {
@@ -1186,23 +1225,25 @@ private:
                     nt.phase[u] = ph;
                 }
             } else if (sd.osc == StyleDef::OrganOsc) {
-                // Two drawbar waves a few cents apart, one each side, and the
-                // percussion: a decaying third harmonic that gives each stab
-                // its bite.
+                // The drawbar wave in the middle, a copy a few cents off as the
+                // stereo side (it widens the stab and leaves mono whole), and
+                // the percussion: a decaying third harmonic that gives each
+                // stab its bite.
                 const float incL = hz * v.ratio[0] * invRate, incR = hz * v.ratio[1] * invRate;
                 const float incP = std::min(3.0f * hz * invRate, 0.45f);
                 float pl = nt.phase[0], pr = nt.phase[1], pp = nt.phase2[0];
                 float perc = v.strike * 0.38f;
                 const float percDecay = std::exp(-1.0f / (0.11f * m_rate));
-                const float gl = v.panL[0], gr = v.panR[1];
+                const float side = kSide * sd.width;
                 for (int i = start; i < n; ++i) {
                     pl = wrap01(pl + incL);
                     pr = wrap01(pr + incR);
                     pp = wrap01(pp + incP);
-                    const float p = lut(tb.sine, pp) * perc;
+                    const float mid = (lut(tb.organ, pl) + lut(tb.sine, pp) * perc) * kMid;
+                    const float sd2 = lut(tb.organ, pr) * side;
                     perc *= percDecay;
-                    nl[i] += (lut(tb.organ, pl) + p) * gl;
-                    nr[i] += (lut(tb.organ, pr) + p) * gr;
+                    nl[i] += mid + sd2;
+                    nr[i] += mid - sd2;
                 }
                 nt.phase[0] = pl;
                 nt.phase[1] = pr;
@@ -1211,7 +1252,7 @@ private:
                 // Two-operator FM at 1:1, its index falling with the strike, so
                 // a chord starts bright and hammered and mellows as it rings,
                 // with an octave modulator for the attack's clang; a second
-                // carrier a few cents off for width.
+                // carrier a few cents off as the stereo side.
                 const float incL = hz * v.ratio[0] * invRate, incR = hz * v.ratio[1] * invRate;
                 const float incM = std::min(hz * 2.0f * invRate, 0.45f);
                 float pl = nt.phase[0], pr = nt.phase[1], pm = nt.phase2[0];
@@ -1220,7 +1261,7 @@ private:
                 float strike = v.strike;
                 const float sDecay = std::exp(-1.0f / (0.32f * m_rate));
                 const float idx0 = (0.7f + 2.3f * v.vel) * bright / kTwoPi;
-                const float gl = v.panL[0], gr = v.panR[1];
+                const float side = kSide * sd.width;
                 for (int i = start; i < n; ++i) {
                     pl = wrap01(pl + incL);
                     pr = wrap01(pr + incR);
@@ -1228,8 +1269,9 @@ private:
                     const float idx = idx0 * (0.18f + strike);
                     const float mod = lut(tb.sine, pm) * 0.35f * strike / kTwoPi;
                     const float ml = lut(tb.sine, pl) * idx + mod, mr = lut(tb.sine, pr) * idx + mod;
-                    nl[i] += lut(tb.sine, wrap01(pl + ml)) * gl;
-                    nr[i] += lut(tb.sine, wrap01(pr + mr)) * gr;
+                    const float mid = lut(tb.sine, wrap01(pl + ml)) * kMid, sd2 = lut(tb.sine, wrap01(pr + mr)) * side;
+                    nl[i] += mid + sd2;
+                    nr[i] += mid - sd2;
                     strike *= sDecay;
                 }
                 nt.phase[0] = pl;
@@ -1264,6 +1306,11 @@ private:
         const float rot = v.style == Organ ? 0.13f * lut(tb.sine, v.leslie) : 0.0f;
         float peak = 0;
         for (int i = from; i < n; ++i) {
+            if (v.minHold > 0 && --v.minHold == 0 &&
+                (v.lateRelease || (strikeGate && !v.releasing && G.g[i] < 0.3f))) {
+                v.amp.off();
+                v.filt.off();
+            }
             if (strikeGate && !v.releasing) {
                 if (G.hitOn[i]) {
                     v.amp.on();
@@ -1271,12 +1318,7 @@ private:
                     v.strike = 1;
                     v.clickEnv = 1;
                 }
-                if (v.minHold > 0) {
-                    if (--v.minHold == 0 && G.g[i] < 0.3f) {
-                        v.amp.off();
-                        v.filt.off();
-                    }
-                } else if (G.hitOff[i]) {
+                if (v.minHold == 0 && G.hitOff[i]) {
                     v.amp.off();
                     v.filt.off();
                 }
@@ -1311,7 +1353,7 @@ private:
                 xl = v.svfL.step(xl).low;
                 xr = v.svfR.step(xr).low;
             }
-            float g = a * gain;
+            float g = a * gain * (g0 + (g1 - g0) * float(i) * invN);
             if (chop) {
                 if (v.graceHold > 0)
                     --v.graceHold;
@@ -1344,6 +1386,7 @@ private:
     int m_count = 7;
     float m_pump[kBlock] = {};
     float m_pumpView = 0;
+    float m_loopGain = 1;
     Svf m_hp1L, m_hp1R, m_hp2L, m_hp2R;
 };
 

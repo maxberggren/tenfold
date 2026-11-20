@@ -1,10 +1,10 @@
 # Chords demo: filtered, pumping chords at 122 BPM in A minor.
 # The pump sound ducks itself on every beat, no drums needed. The first chord
 # is twisted shut, and each of the next three twists the filter a little
-# further open (the twist is a knob: it stays where it was left). Then a click
-# arms the recorder, two bars of tapped stabs are recorded from the bar line,
-# and a second click closes them into a loop; over it a
-# big flat-fingered chord is swept shut and open again with one twist.
+# further open (the twist is a knob: it stays where it was left); Space on the
+# next ONE loops the four bars, sweep and all. Over the loop, stabs tapped on
+# the loop's own chords; then a big flat-fingered chord on another degree, the
+# loop stepping back under it, swept shut and wide open with one twist.
 tempo 0 122
 page 0.01 3
 key 0.020 Left
@@ -21,22 +21,32 @@ down 5.912 4 0.3571 0.720 p=0.6 twist=0
 glide 6.112 7.669 4 0.3571 0.720 twist=25 p=0.8
 up 5.952 3
 up 7.839 4
-# bar 4, beat 3: click to arm the recorder; bars 5-6 a tapped stab rhythm; a click just after bar 7 starts loops it
-click 7.377
-tap 7.869 0.0714 0.720 len=0.15 p=0.7
-tap 8.238 0.0714 0.720 len=0.15 p=0.7
-tap 8.607 0.0714 0.720 len=0.15 p=0.7
-tap 9.098 0.5000 0.720 len=0.15 p=0.7
-tap 9.467 0.5000 0.720 len=0.15 p=0.7
-tap 9.836 0.7857 0.720 len=0.15 p=0.7
-tap 10.205 0.7857 0.720 len=0.15 p=0.7
-tap 10.574 0.9286 0.720 len=0.15 p=0.7
-tap 11.066 0.9286 0.720 len=0.15 p=0.7
-tap 11.311 0.9286 0.720 len=0.15 p=0.7
-click 11.902
-# bars 7-10: over the loop, a big chord swept shut, then wide open
-down 13.780 5 0.7857 0.560 p=0.6 size=1.8 twist=0
-glide 14.016 17.213 5 0.7857 0.560 twist=-55 p=0.7 size=1.8
-glide 17.705 21.148 5 0.7857 0.560 twist=75 p=1.0 size=1.8
-up 21.639 5
-end 24.590
+# Space on the next ONE: the four bars loop and set the tempo
+key 7.919 Space
+# bars 5-8: stabs tapped over the loop on its own chords
+tap 8.115 0.0714 0.560 len=0.12 p=0.75
+tap 8.484 0.0714 0.560 len=0.12 p=0.75
+tap 9.098 0.0714 0.560 len=0.12 p=0.75
+tap 9.344 0.0714 0.560 len=0.12 p=0.75
+tap 9.590 0.0714 0.560 len=0.12 p=0.75
+tap 10.082 0.5000 0.560 len=0.12 p=0.75
+tap 10.451 0.5000 0.560 len=0.12 p=0.75
+tap 11.066 0.5000 0.560 len=0.12 p=0.75
+tap 11.311 0.5000 0.560 len=0.12 p=0.75
+tap 11.557 0.5000 0.560 len=0.12 p=0.75
+tap 12.049 0.9286 0.560 len=0.12 p=0.75
+tap 12.418 0.9286 0.560 len=0.12 p=0.75
+tap 13.033 0.9286 0.560 len=0.12 p=0.75
+tap 13.279 0.9286 0.560 len=0.12 p=0.75
+tap 13.525 0.9286 0.560 len=0.12 p=0.75
+tap 14.016 0.3571 0.560 len=0.12 p=0.75
+tap 14.385 0.3571 0.560 len=0.12 p=0.75
+tap 15.000 0.3571 0.560 len=0.12 p=0.75
+tap 15.246 0.3571 0.560 len=0.12 p=0.75
+tap 15.492 0.3571 0.560 len=0.12 p=0.75
+# bars 9-12: a big chord on VI: the loop steps back while it is held; swept shut, then wide open
+down 15.748 5 0.7857 0.560 p=0.6 size=1.8 twist=0
+glide 15.984 19.180 5 0.7857 0.560 twist=-55 p=0.7 size=1.8
+glide 19.672 23.115 5 0.7857 0.560 twist=75 p=1.0 size=1.8
+up 23.607 5
+end 27.541

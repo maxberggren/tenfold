@@ -2,6 +2,7 @@
 // follow, colours, gates on the beat, loops that keep driving the harmony,
 // keys, hold, and the low end left to the bass.
 
+#include <array>
 #include <complex>
 #include <functional>
 #include <set>
@@ -107,12 +108,11 @@ double bandShare(const testkit::Take &take, double from, double lo, double hi) {
     return all > 0 ? in / all : 1;
 }
 
-// A loop made the deliberate way: a click arms the recorder, the chords
-// play from the next bar line one beat each, and a second click just after
-// the following bar line closes a one-bar loop there.
+// A loop made the deliberate way: chords one beat each from the first bar
+// line, then Space where the phrase starts again (the next ONE).
 constexpr double kBeat = 60.0 / 124.0, kBar = 4 * kBeat;
 std::string recordedLoop(std::initializer_list<int> degrees, int row = Triad, const std::string &before = {}) {
-    std::string s = "page 0 3\n" + before + "click 0.3\n";
+    std::string s = "page 0 3\n" + before;
     double t = kBar;
     int id = 60;
     for (int d : degrees) {
@@ -121,7 +121,7 @@ std::string recordedLoop(std::initializer_list<int> degrees, int row = Triad, co
         t += kBeat;
         ++id;
     }
-    s += "click " + num(2 * kBar + 0.1) + "\n";
+    s += "key " + num(2 * kBar + 0.02) + " Space\n";
     return s;
 }
 
@@ -250,8 +250,8 @@ private slots:
         }
     }
 
-    // Click, play a progression, click again: it loops, and as it replays it
-    // keeps telling the studio which chord is playing.
+    // Play a progression, press Space: it loops, and as it replays it keeps
+    // telling the studio which chord is playing.
     void aLoopKeepsDrivingTheHarmony() {
         std::set<int> rootsAfter;
         double lastChange = 0;
@@ -515,14 +515,102 @@ private slots:
             QCOMPARE(int(take.view.parts[kChords].clips[c].state), int(ClipView::Empty));
     }
 
-    // The page says a loop is coming before it does: armed until the bar
-    // line, then recording, bar by bar.
+    // The page says a loop is coming before it does: a Space take over a
+    // playing loop waits for the bar line, and the page says so; Return
+    // stands back for it, and says why.
     void theLoopIsAnnounced() {
-        QString armed, rec;
-        testkit::play("page 0 3\nclick 0.3\nend 0.9\n", [&](Session &s) { armed = s.pageStatus(); });
-        testkit::play("page 0 3\nclick 0.3\nend " + num(kBar + 0.6) + "\n", [&](Session &s) { rec = s.pageStatus(); });
-        QVERIFY2(armed.contains("armed"), qPrintable(armed));
-        QVERIFY2(rec.contains("rec bar 1"), qPrintable(rec));
+        QString waiting;
+        int filled = 0;
+        const std::string over = recordedLoop({0, 5, 2, 6}) + "down " + num(3 * kBar + 0.01) + " 70 " + cell(3, Triad) +
+                                 "\nup " + num(3 * kBar + 1.5 * kBeat) + " 70\nkey " + num(3 * kBar + 2 * kBeat) +
+                                 " Space\nkey " + num(3 * kBar + 2.2 * kBeat) + " Return\nend " +
+                                 num(3 * kBar + 2.5 * kBeat) + "\n";
+        const auto take = testkit::play(over, [&](Session &s) { waiting = s.pageStatus(); });
+        for (int c = 0; c < 8; ++c)
+            filled += take.view.parts[kChords].clips[c].state != ClipView::Empty;
+        QVERIFY2(waiting.contains("loop at the bar line"), qPrintable(waiting));
+        QCOMPARE(take.view.parts[kChords].recording, 1);
+        QCOMPARE(filled, 2); // the loop and the waiting take: Return made nothing of its own
+    }
+
+    // A chord landed a hair early for its bar belongs to it: Return keeps
+    // all four chords of a progression played 20 ms ahead of each bar.
+    void earlyChordsStayInTheLoop() {
+        std::string s = "tempo 0 128\npage 0.01 3\n";
+        const double bar = 240.0 / 128.0;
+        for (int b = 0; b < 4; ++b) {
+            const int d = std::array<int, 4>{0, 5, 2, 6}[size_t(b)];
+            s += "down " + num((b + 1) * bar - 0.02) + " " + std::to_string(b + 1) + " " + cell(d, Triad) + "\n";
+            s += "up " + num((b + 2) * bar - 0.08) + " " + std::to_string(b + 1) + "\n";
+        }
+        s += "key " + num(5 * bar + 0.25) + " Return\nend " + num(10 * bar) + "\n";
+        std::set<int> roots;
+        const auto take = playWatching(s, [&](double now, const StudioView &v) {
+            if (now > 5 * bar + 0.3)
+                roots.insert(v.chordRoot);
+        });
+        QCOMPARE(take.view.parts[kChords].clips[0].events, 8);
+        QCOMPARE(int(roots.size()), 4);
+        for (int b = 6; b < 10; ++b)
+            QVERIFY2(take.rms(b * bar, (b + 1) * bar) > 0.01, qPrintable(QString("bar %1 is silent").arg(b)));
+    }
+
+    // A different chord held over a loop: the loop steps back, so one
+    // harmony sounds; the same chord leaves it whole.
+    void aDifferentLiveChordDucksTheLoop() {
+        const std::string loop = recordedLoop({0, 0, 0, 0});
+        const auto alone = testkit::play(loop + "end 6\n");
+        const auto same = testkit::play(loop + "down 4.3 80 " + cell(0, Triad) + " p=0.01\nend 6\n");
+        const auto other = testkit::play(loop + "down 4.3 80 " + cell(5, Triad) + " p=0.01\nend 6\n");
+        QVERIFY(alone.rms(5, 6) > 0.01);
+        // With its own chord in the same column, everything stays.
+        QVERIFY(same.rms(5, 6) > alone.rms(5, 6));
+        // Another chord: the A minor loop's E steps back under the F.
+        const double eAlone = bandShare(alone, 5.0, 325, 335), eOther = bandShare(other, 5.0, 325, 335);
+        const double fOther = bandShare(other, 5.0, 344, 354);
+        QVERIFY2(eOther < 0.1 * fOther, qPrintable(QString("E %1 F %2 (alone %3)").arg(eOther).arg(fOther).arg(eAlone)));
+    }
+
+    // The organ and the piano keep their weight in mono.
+    void stabsSurviveMono() {
+        for (const char *keys : {"key 0.05 Right\nkey 0.06 Right\n", "key 0.05 Right\nkey 0.06 Right\nkey 0.07 Right\n"}) {
+            const auto take = testkit::play(std::string("page 0 3\n") + keys + "down 0.2 1 " + cell(0, Seventh) +
+                                            "\nup 3.8 1\nend 4\n");
+            double lr = 0, ll = 0, rr = 0, mono = 0, stereo = 0;
+            for (size_t i = size_t(0.3 * 48000); i < size_t(3.8 * 48000); ++i) {
+                const double l = take.left[i], r = take.right[i];
+                lr += l * r, ll += l * l, rr += r * r;
+                mono += 0.25 * (l + r) * (l + r);
+                stereo += 0.5 * (l * l + r * r);
+            }
+            const double corr = lr / std::sqrt(ll * rr), loss = 10 * std::log10(mono / stereo);
+            QVERIFY2(corr > 0.5 && loss > -1.5, qPrintable(QString("corr %1 loss %2 dB").arg(corr).arg(loss)));
+        }
+    }
+
+    // A stab that lands between its gate's hits waits for the next one: the
+    // offbeat organ never stabs the downbeat a chord lands on.
+    void stabsWaitForTheirHit() {
+        std::string s = "page 0 3\nkey 0.05 Right\nkey 0.06 Right\n";
+        for (int b = 1; b < 5; ++b)
+            s += "down " + num(b * kBar + 0.005) + " " + std::to_string(b) + " " + cell(b % 2 ? 0 : 5, Triad) + "\nup " +
+                 num((b + 1) * kBar - 0.01) + " " + std::to_string(b) + "\n";
+        s += "end " + num(5 * kBar) + "\n";
+        const auto take = testkit::play(s);
+        double down = 0, off = 0;
+        for (int b = 1; b < 5; ++b) {
+            down += take.rms(b * kBar + 0.005, b * kBar + 0.09);
+            off += take.rms(b * kBar + 2 * kBeat / 4 + 0.005, b * kBar + 2 * kBeat / 4 + 0.09);
+        }
+        QVERIFY2(down < 0.2 * off, qPrintable(QString("downbeat %1 offbeat %2").arg(down).arg(off)));
+    }
+
+    // Clicking the pad holds, like L.
+    void theClickHolds() {
+        const auto held = testkit::play("page 0 3\ndown 0.2 1 " + cell(0, Triad) + "\nclick 0.3\nup 0.6 1\nend 2.5\n");
+        QVERIFY(held.rms(2.0, 2.5) > 0.01);
+        for (int c = 0; c < 8; ++c)
+            QCOMPARE(int(held.view.parts[kChords].clips[c].state), int(ClipView::Empty));
     }
 
     // Ten fingers at once, all over the pad and the rail, stay within bounds.

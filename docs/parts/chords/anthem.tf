@@ -1,7 +1,7 @@
 # Chords demo: a trance anthem at 138 BPM in A minor.
 # Four bars of supersaw pad played legato with one hand (Am add9, Fmaj7,
 # C add9, Gsus4 sliding up into G, the last with a flat finger), looped with
-# Return at the bar line. Over the loop: the gated trance sound, a voicing
+# Space where the phrase starts again. Over the loop: the gated trance sound, a voicing
 # higher, its filter twisted open; a build on the rail with two and three
 # fingers; then the pluck in 3-3-2 over the pad loop, and a held wub to end.
 tempo 0 138
@@ -16,12 +16,13 @@ up 3.558 2
 down 5.237 4 0.9286 0.240 p=0.55 size=1.9
 up 5.297 3
 glide 6.087 6.261 4 0.9286 0.400 p=0.9 size=1.9
-key 6.304 Return
 up 6.907 4
+# Space on the next ONE: the four bars loop
+key 7.007 Space
 # bars 5-8: the trance gate over the loop, a voicing up, filter twisted open on the third chord
 key 7.087 Right
 key 7.109 Up
-down 6.967 5 0.0714 0.400 p=0.7
+down 7.077 5 0.0714 0.400 p=0.7
 up 8.666 5
 down 8.706 6 0.7857 0.400 p=0.7
 up 10.405 6

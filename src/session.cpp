@@ -26,9 +26,10 @@ public:
         if (m_part < 0)
             return;
         // Onsets, for Space to know what was just played.
-        if (!(c.flags & (Command::NoRecord | Command::Continue)) &&
-            (c.type == Command::On || (c.flags & Command::Quantize))) {
-            onsets[onsetHead % onsets.size()] = c.t > 0 ? c.t : now();
+        if (!(c.flags & Command::NoRecord) && (c.type == Command::On || (c.flags & Command::Quantize))) {
+            // A Continue keeps a phrase going (an arp running from held
+            // notes) but never starts one.
+            onsets[onsetHead % onsets.size()] = {c.t > 0 ? c.t : now(), !(c.flags & Command::Continue)};
             ++onsetHead;
         }
         StudioMsg m;
@@ -76,8 +77,9 @@ public:
         m.f = value;
         m.d0 = t;
         post(m);
-        // Shown at once, before the studio's next view says so.
-        if (part >= 0 && part < kMaxParts && channel >= 0 && channel < ChannelCount)
+        // Shown at once, before the studio's next view says so, unless it is
+        // set for later: then the view says so when it happens.
+        if (t <= now() && part >= 0 && part < kMaxParts && channel >= 0 && channel < ChannelCount)
             m_s->m_view.parts[part].channel.value[channel] = value;
     }
     void setMaster(int master, float value, double t) override {
@@ -87,7 +89,7 @@ public:
         m.f = value;
         m.d0 = t;
         post(m);
-        if (master >= 0 && master < MasterCount)
+        if (t <= now() && master >= 0 && master < MasterCount)
             m_s->m_view.master[master] = value;
     }
     void setTempo(double bpm) override {
@@ -114,7 +116,11 @@ public:
         ++m_s->m_noticeSeq;
     }
 
-    std::array<double, 128> onsets{};
+    struct Onset {
+        double t = 0;
+        bool real = false;
+    };
+    std::array<Onset, 256> onsets{};
     size_t onsetHead = 0;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
 
@@ -347,21 +353,50 @@ void Session::toggleRecording(ControlContext &base) {
     }
     const double nowT = now();
     const double spb = 60.0 / std::max(1.0, m_view.bpm);
-    // The phrase: onsets back from the latest, until a pause of two bars.
-    std::vector<double> times;
+    // The phrase: what was played back from the latest, until a pause of two
+    // bars. It starts at its earliest real onset; carried-on sounds bridge
+    // pauses and mark where it ends.
+    std::vector<Context::Onset> times;
     const size_t n = std::min(ctx.onsetHead, ctx.onsets.size());
     for (size_t i = 0; i < n; ++i)
         times.push_back(ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()]);
-    std::sort(times.begin(), times.end());
-    double first = -1;
+    std::sort(times.begin(), times.end(), [](const auto &x, const auto &y) { return x.t < y.t; });
+    double first = -1, earliest = -1, last = -1;
     for (size_t i = times.size(); i-- > 0;) {
-        if (times[i] > nowT + 0.05)
+        const double t = times[i].t;
+        if (t > nowT + 0.05)
             continue;
-        if (first >= 0 && first - times[i] > 8 * spb)
+        if (last < 0) {
+            if (nowT - t > 8 * spb)
+                break;
+            last = t;
+        } else if (earliest - t > 8 * spb) {
             break;
-        if (first < 0 && nowT - times[i] > 8 * spb)
-            break;
-        first = times[i];
+        }
+        earliest = t;
+        if (times[i].real)
+            first = t;
+    }
+    if (first < 0)
+        first = earliest;
+    if (first < 0 && m_view.parts[part].voices > 0) {
+        // Nothing played lately, but the part is sounding (a bed latched a
+        // while ago, an arp left running): loop the bar that just went by,
+        // or the one now ending. The take carries in what was held across
+        // its start, so the loop is the sound as it is.
+        const double beatNow = ctx.beatAt(nowT);
+        const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
+        const double end = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
+        StudioMsg m;
+        m.kind = StudioMsg::TakeBars;
+        m.part = int8_t(part);
+        m.slot = int8_t(slot);
+        m.d0 = end - kBeatsPerBar;
+        m.d1 = end;
+        ctx.post(m);
+        m_view.parts[part].recording = slot;
+        ctx.notice(QStringLiteral("Looping what is sounding: 1 bar in slot %1").arg(slot + 1));
+        return;
     }
     if (first < 0) {
         ctx.notice(QStringLiteral("Play something, then Space loops it"));
@@ -380,14 +415,20 @@ void Session::toggleRecording(ControlContext &base) {
         ctx.notice(QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
         return;
     }
-    const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first);
+    const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
     const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
-    const double end = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
-    // A first note a little early for its bar belongs to that bar.
+    // The loop ends at the bar line after the last thing played (a note a
+    // hair before a bar line belongs to the bar it leads into), but never
+    // later than the next bar line: a pause before Space adds no empty bars.
+    double end = std::ceil((beatLast + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+    end = std::min(end, beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar);
+    end = std::max(end, std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar + kBeatsPerBar);
+    // A first note a little early for its bar belongs to that bar; the
+    // length goes to the nearest of 1, 2, 4 or 8 bars.
     const double startBar = std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-    int bars = 1;
-    while (bars < 8 && end - bars * kBeatsPerBar > startBar + 1e-6)
-        bars *= 2;
+    const double played = std::max(1.0, (end - startBar) / kBeatsPerBar);
+    int bars = int(std::lround(std::exp2(std::round(std::log2(played)))));
+    bars = std::clamp(bars, 1, 8);
     StudioMsg m;
     m.kind = StudioMsg::TakeBars;
     m.part = int8_t(part);

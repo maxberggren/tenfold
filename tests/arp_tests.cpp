@@ -444,7 +444,7 @@ private slots:
     }
 
     void aHighRunStopsClimbingInsteadOfFolding() {
-        // Register 3 through four octaves would pass C7: the climb stops an
+        // Register 3 through four octaves would pass E7: the climb stops an
         // octave short, so "up" still only goes up within each cycle.
         Clock c(120);
         std::unique_ptr<arp::Engine> owner;
@@ -458,7 +458,7 @@ private slots:
         const auto log = e.log();
         std::set<float> pitches;
         for (const auto &f : log) {
-            QVERIFY(f.midi <= 96.0f);
+            QVERIFY(f.midi <= 100.0f);
             pitches.insert(f.midi);
         }
         const size_t cycle = pitches.size();
@@ -547,8 +547,8 @@ private slots:
     void spaceLoopsWhatWasPlayedFromWhereThePatternWas() {
         // A chord held from bar 1, Space just before bar 3: the two bars just
         // played become a loop from that bar line, with the very notes the
-        // hand played in the same places, and the hand plays on until it
-        // lifts. (The metronome stands in for a playing loop.)
+        // hand played in the same places. (The metronome stands in for a
+        // playing loop.)
         std::vector<arp::Engine::Fired> log;
         StudioView view;
         const auto take = testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) +
@@ -587,11 +587,58 @@ private slots:
         }
         QVERIFY(compared >= 30);
         QVERIFY(repeats >= 30);
-        // The take did not cut the hand short: it played on to the lift.
-        int after = 0;
+        // From the take's first beat the loop plays alone: the hand still
+        // down stepped aside instead of doubling it.
         for (const auto &f : log)
-            after += f.lane == 0 && f.beat > 12.0;
-        QVERIFY(after >= 5);
+            if (f.lane == 0)
+                QVERIFY2(f.beat < 12.0 - 1e-6, qPrintable(QString::number(f.beat)));
+    }
+
+    void holdingThroughTheLandingDoesNotDoubleTheLoop() {
+        // The chord held on well past the bar where the take lands: the bars
+        // after it sound like the bars it took, not louder.
+        const auto take = testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ntap 0.2 0.90 0.005\ndown " + at(4.0) + " 1 " +
+                                        gridX(0) + " 0.32\nkey " + at(11.5) + " Space\nup " + at(19.0) + " 1\nend " +
+                                        at(20.0) + "\n");
+        auto peak = [&](double b0, double b1) {
+            double p = 0;
+            for (size_t i = size_t(b0 * 60 / 124 * 48000); i < size_t(b1 * 60 / 124 * 48000); ++i)
+                p = std::max({p, double(std::fabs(take.left[i])), double(std::fabs(take.right[i]))});
+            return 20 * std::log10(p);
+        };
+        auto rms = [&](double b0, double b1) { return 20 * std::log10(take.rms(b0 * 60 / 124, b1 * 60 / 124)); };
+        const double took = rms(6, 12), after = rms(12, 18);
+        QVERIFY2(std::fabs(after - took) < 1.0, qPrintable(QStringLiteral("%1 then %2 dB").arg(took).arg(after)));
+        QVERIFY2(peak(12, 18) < peak(6, 12) + 1.0, qPrintable(QStringLiteral("%1 then %2 dBFS").arg(peak(6, 12)).arg(peak(12, 18))));
+        // The landing step itself: no louder than the take's own steps.
+        QVERIFY2(peak(11.9, 12.4) < peak(6, 12) + 1.0, qPrintable(QString::number(peak(11.9, 12.4))));
+    }
+
+    void aLatchedPatternGivesWayOnTheTakesFirstBeat() {
+        std::vector<arp::Engine::Fired> log;
+        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) +
+                          " 0.32\nclick " + at(5.0) + " len=0.1\nup " + at(6.0) + " 1\nkey " + at(11.5) +
+                          " Space\nend " + at(20.0) + "\n",
+                      [&](Session &s) {
+                          log = engineOf(s)->log();
+                          QVERIFY(!s.pageStatus().contains(QStringLiteral("latched")));
+                      });
+        int live = 0, loop = 0;
+        for (const auto &f : log) {
+            if (f.lane == 0)
+                QVERIFY(f.beat < 12.0 - 1e-6);
+            (f.lane ? loop : live) += f.beat >= 11.0;
+        }
+        QVERIFY(live >= 3); // the latch played up to the line
+        QVERIFY(loop >= 20);
+    }
+
+    void theWaitingTakeSaysHowLongAndWhen() {
+        QString status;
+        testkit::play("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) + " 0.32\nkey " + at(10.5) +
+                          " Space\nend " + at(10.9) + "\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("2 bars into slot 1 · in 1.")), qPrintable(status));
     }
 
     void aOneBarLoopRollsTheSameDiceEveryPass() {

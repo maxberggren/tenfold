@@ -267,7 +267,7 @@ inline float squareBlep(float ph, float inc) {
 }
 
 constexpr int kVoices = 28;
-constexpr double kTopMidi = 96.0; // C7: arps climb no higher
+constexpr double kTopMidi = 100.0; // E7: arps climb no higher
 constexpr float kOutGain = 1.6f;
 constexpr int kSoftVoices = 18; // past this, the oldest notes are faded out to make room
 
@@ -875,6 +875,11 @@ struct Engine::Impl {
             retime(1, before, b);
             break;
         }
+        case kCut:
+            for (Voice &v : voices)
+                if (v.on && v.lane == 0)
+                    v.fade(rate);
+            break;
         case Command::On:
             noteOn(lane, c, b);
             break;
@@ -975,7 +980,7 @@ struct Engine::Impl {
                 if (n > 0) {
                     PoolView pv;
                     // The climb stops at the octave that would pass the top
-                    // of the range (C7), rather than folding back down and
+                    // of the range (E7), rather than folding back down and
                     // breaking the pattern's shape.
                     int top = deg[0];
                     for (int i = 1; i < n; ++i)
@@ -984,7 +989,7 @@ struct Engine::Impl {
                     while (octaves > 1 && h.midi(top + (octaves - 1) * perOct, s.reg) > kTopMidi)
                         --octaves;
                     buildPool(deg, vel, n, octaves, perOct, pv);
-                    L.curCount = patternNotes(s.pattern, pv, L.counter + uint64_t(L.plan.skip), s.seed, s.octaves,
+                    L.curCount = patternNotes(s.pattern, pv, L.counter + uint64_t(L.plan.skip), s.seed, octaves,
                                               perOct, L.cur, L.curVel, 16);
                     L.counter += 1 + uint64_t(L.plan.skip);
                     if (L.plan.leap) {
@@ -1452,25 +1457,30 @@ public:
 
     void background(double t, ControlContext &ctx) override {
         const double beat = ctx.beatAt(t);
-        // Space's take (the session's): shown while it waits; when it lands,
-        // a latched pattern hands over to the loop instead of doubling it.
-        const PartView &pv = ctx.studio().parts[ctx.part()];
+        // Space's take (the session's). The live notes end exactly where the
+        // loop takes over, so the two never play the same notes side by
+        // side: a scheduled Off a moment before the take's beat (late enough
+        // that Space can still call it off), or at once when the take lands
+        // at once (nothing else playing: the loop sets the clock there).
+        const StudioView &sv = ctx.studio();
+        const PartView &pv = sv.parts[ctx.part()];
         if (pv.recording >= 0) {
             m_take = pv.recording;
-        } else if (m_take >= 0) {
-            if (pv.playing == m_take) {
-                bool latched = false;
-                for (auto &n : m_notes)
-                    if (n.used && n.touch < 0 && !n.key) {
-                        release(n, t, ctx);
-                        latched = true;
-                    }
-                if (latched) {
-                    m_latch = false;
-                    ctx.notice(QStringLiteral("Loop in slot %1 carries on; the latch let go").arg(m_take + 1));
-                }
+            m_takeView = pv;
+            m_takeBeat = beat;
+            bool anyPlaying = sv.metronome;
+            for (int i = 0; i < sv.partCount; ++i)
+                anyPlaying |= sv.parts[i].playing >= 0 || sv.parts[i].queued >= 0;
+            if (!m_takeHanded && anyNotes()) {
+                const double lead = 0.06 * sv.bpm / 60.0;
+                if (pv.takeAt > 0 && beat >= pv.takeAt - lead)
+                    handToTake(std::max(ctx.timeAt(pv.takeAt), t), ctx);
+                else if (pv.takeAt <= 0 && !anyPlaying)
+                    handToTake(t, ctx, true);
             }
+        } else {
             m_take = -1;
+            m_takeHanded = false;
         }
         // At every bar line, the notes held hand over to fresh ids, so any
         // window that starts on a bar holds them from its first moment, and
@@ -1493,7 +1503,7 @@ public:
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const double t = ctx.now();
         m_perOct = perOctaveOf(ctx.studio());
-            // The piano row: notes, held like fingers.
+        // The piano row: notes, held like fingers.
         static const int piano[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G, Qt::Key_H,
                                     Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Semicolon, Qt::Key_Apostrophe};
         for (int i = 0; i < 11; ++i)
@@ -1613,8 +1623,7 @@ public:
         // Space's take, while it waits for its bar line, on the pad's top edge.
         if (pc.view->recording >= 0)
             c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
-                   QStringLiteral("LOOP TAKE · SLOT %1 · FROM THE BAR LINE · SPACE CALLS IT OFF")
-                       .arg(pc.view->recording + 1),
+                   QStringLiteral("LOOP TAKE · %1 · SPACE CALLS IT OFF").arg(takeText(*pc.view, pc.beat)),
                    std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.7f), 12, true);
         paintStrip(p, pc);
     }
@@ -1659,7 +1668,7 @@ public:
         if (m_latch)
             s += QStringLiteral(" · latched");
         if (m_take >= 0)
-            s += QStringLiteral(" · loop take for slot %1 waits for the bar (Space calls it off)").arg(m_take + 1);
+            s += QStringLiteral(" · loop take: %1 (Space calls it off)").arg(takeText(m_takeView, m_takeBeat).toLower());
         else if (held > 0)
             s += QStringLiteral(" · Space loops what you just played");
         return s;
@@ -2158,6 +2167,48 @@ private:
         }
     }
 
+    // How a waiting take reads: its length and how soon it starts.
+    static QString takeText(const PartView &v, double beat) {
+        const int slot = v.recording + 1;
+        if (v.takeBeats <= 0)
+            return QStringLiteral("INTO SLOT %1 · LENGTH OPEN UNTIL IT CLOSES").arg(slot);
+        const int bars = int(std::lround(v.takeBeats / kBeatsPerBar));
+        const QString len = bars >= 1 ? QStringLiteral("%1 BAR%2").arg(bars).arg(bars > 1 ? "S" : "")
+                                      : QStringLiteral("%1 BEATS").arg(double(v.takeBeats));
+        const double left = v.takeAt - beat;
+        return left > 0.05 ? QStringLiteral("%1 INTO SLOT %2 · IN %3 BEATS").arg(len).arg(slot).arg(left, 0, 'f', 1)
+                           : QStringLiteral("%1 INTO SLOT %2 · NOW").arg(len).arg(slot);
+    }
+
+    // A take begins: every live note ends at its first beat, fingers still
+    // down step aside until they lift (a new landing starts a fresh layer),
+    // and a latch lets go.
+    void handToTake(double t, ControlContext &ctx, bool atOnce = false) {
+        m_takeHanded = true;
+        // A loop that sets the clock starts its ONE where Space was pressed,
+        // which can sit just after a live step on the old grid: that step
+        // fades at once rather than ring against the loop's first note.
+        if (atOnce) {
+            Command cut;
+            cut.type = kCut;
+            cut.flags = Command::NoRecord;
+            cut.id = kStateId;
+            ctx.send(cut);
+        }
+        bool any = false;
+        for (auto &n : m_notes)
+            if (n.used) {
+                sendNote(Command::Off, n, t, ctx);
+                spend(n, t, ctx);
+                any = true;
+            }
+        if (any)
+            ctx.notice(m_latch ? QStringLiteral("Slot %1 plays on from here; the latch let go").arg(m_take + 1)
+                               : QStringLiteral("Slot %1 plays on from here; lift and land for a new layer")
+                                     .arg(m_take + 1));
+        m_latch = false;
+    }
+
     // A bar line passed with notes held: each takes a fresh id from that
     // line, with the settings of the moment and where the pattern was.
     void handOver(int64_t bar, int phase, ControlContext &ctx) {
@@ -2205,6 +2256,9 @@ private:
     bool m_button = false, m_buttonIgnored = false;
     double m_lastPress = -1;
     int m_take = -1;
+    bool m_takeHanded = false;
+    PartView m_takeView;
+    double m_takeBeat = 0;
     int64_t m_handedBar = INT64_MIN;
     int m_id = 0;
     int m_perOct = 7;
@@ -2470,8 +2524,25 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
                     const bool reach = reg > s.reg && reg < s.reg + s.octaves && o == 0;
                     p.fillRect(cell, c::alpha(tint, covered ? 0.42f : reach ? 0.16f : 0.06f));
                 }
+            // The octaves that fit under the top of the range (E7) with the
+            // notes held now: the engine stops the climb there.
+            int fit = s.octaves;
+            {
+                const int perOct = tuning.degreesPerOctave();
+                int top = INT_MIN;
+                for (const auto &n : m_notes)
+                    if (n.used) {
+                        int st[5] = {0};
+                        const int m = n.first && !s.follow ? stackNotes(n.stack, st) : 1;
+                        top = std::max(top, n.col + n.row * perOct + st[m - 1]);
+                    }
+                while (top > INT_MIN && fit > 1 &&
+                       tuning.baseMidi() + 12.0 * s.reg + tuning.degreeSemis(top + (fit - 1) * perOct) > kTopMidi)
+                    --fit;
+            }
             c::text(p, QRectF(r.left(), r.top() + 1, r.width() - 6, 20),
-                    QStringLiteral("%1 OCT FROM %2").arg(s.octaves).arg(noteLabel(tuning, s.reg, 0, 0)),
+                    fit < s.octaves ? QStringLiteral("%1 OF %2 OCT FIT FROM %3").arg(fit).arg(s.octaves).arg(noteLabel(tuning, s.reg, 0, 0))
+                                    : QStringLiteral("%1 OCT FROM %2").arg(s.octaves).arg(noteLabel(tuning, s.reg, 0, 0)),
                     touched ? QColor::fromRgb(c::kInk) : tint, 10, true, Qt::AlignRight | Qt::AlignVCenter);
             marker((float(s.reg) + 0.5f) / kRegisters, (float(s.octaves) - 0.5f) / kMaxOctaves);
             break;
@@ -2632,7 +2703,7 @@ void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
     QString line = QStringLiteral("SPACE LOOPS WHAT YOU PLAYED");
     QColor ink = c::alpha(pc.color, 0.75f);
     if (pc.view->recording >= 0) {
-        line = QStringLiteral("TAKE WAITING · SLOT %1").arg(pc.view->recording + 1);
+        line = takeText(*pc.view, pc.beat);
         ink = std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f);
     } else if (pc.view->data[kDataOverlay] > 0.5f) {
         line = QStringLiteral("SHAPING THE LOOP");

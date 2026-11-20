@@ -560,10 +560,12 @@ private slots:
     // before it, inside the take's window [from, to): returns how many
     // matched, and fails on any that differ.
     static int matchesTheTake(const std::vector<arp::Engine::Fired> &log, double from, double to, double len) {
-        std::map<int64_t, int> live;
+        // (A chord changed a hair late plays its step over the old one's, so
+        // a step may hold two notes; the loop's must be among them.)
+        std::map<int64_t, std::set<int>> live;
         for (const auto &f : log)
             if (f.lane == 0)
-                live[int64_t(std::llround(f.beat * 8))] = int(std::lround(f.midi));
+                live[int64_t(std::llround(f.beat * 8))].insert(int(std::lround(f.midi)));
         int matched = 0;
         for (const auto &f : log) {
             if (f.lane != 1)
@@ -576,9 +578,9 @@ private slots:
             const auto it = live.find(int64_t(std::llround(back * 8)));
             if (it == live.end())
                 continue;
-            if (it->second != int(std::lround(f.midi))) {
+            if (!it->second.count(int(std::lround(f.midi)))) {
                 qWarning("loop note at beat %.3f is %d, the take's at %.3f was %d", f.beat, int(std::lround(f.midi)),
-                         back, it->second);
+                         back, *it->second.begin());
                 return -1;
             }
             ++matched;
@@ -587,10 +589,10 @@ private slots:
     }
 
     void spaceLoopsWhatWasPlayedFromWhereThePatternWas() {
-        // A chord held from bar 1, Space just after bar 3's line: the two
-        // bars the arp played become the loop at once, note for note, and
-        // the hand still down steps aside. (The metronome stands in for a
-        // playing loop.)
+        // A chord held from bar 1, Space just after bar 3's line: a held
+        // chord's take is the bar after its last new note, which the arp
+        // played; it loops at once, note for note, and the hand still down
+        // steps aside. (The metronome stands in for a playing loop.)
         std::vector<arp::Engine::Fired> log;
         StudioView view;
         const auto take = run("key 0.1 Ctrl+M\npage 0.05 5\ndown " + at(4.0) + " 1 " + gridX(0) + " 0.32\ndown " +
@@ -599,9 +601,9 @@ private slots:
                               log, &view);
         QVERIFY(take.error.empty());
         QCOMPARE(view.parts[4].playing, 0);
-        QCOMPARE(int(view.parts[4].clips[0].lengthBeats), 8);
+        QCOMPARE(int(view.parts[4].clips[0].lengthBeats), 4);
         QVERIFY(take.rms(10, 16) > 0.02);
-        QVERIFY(matchesTheTake(log, 4.0, 12.0, 8.0) >= 50);
+        QVERIFY(matchesTheTake(log, 4.0, 8.0, 4.0) >= 50);
         for (const auto &f : log)
             if (f.lane == 0)
                 QVERIFY2(f.beat < 12.1, qPrintable(QString::number(f.beat)));
@@ -632,7 +634,7 @@ private slots:
             for (const auto &f : log)
                 if (f.lane == 0)
                     QVERIFY(f.beat < 12.1);
-            QVERIFY(matchesTheTake(log, 4.0, 12.0, 8.0) >= 25);
+            QVERIFY(matchesTheTake(log, 4.0, 8.0, 4.0) >= 25);
             QVERIFY(!status.contains(QStringLiteral("latched")));
         }
     }

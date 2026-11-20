@@ -76,8 +76,9 @@ public:
         m.f = value;
         m.d0 = t;
         post(m);
-        // Shown at once, before the studio's next view says so.
-        if (part >= 0 && part < kMaxParts && channel >= 0 && channel < ChannelCount)
+        // Shown at once, before the studio's next view says so, unless it is
+        // set for later: then the view says so when it happens.
+        if (t <= now() && part >= 0 && part < kMaxParts && channel >= 0 && channel < ChannelCount)
             m_s->m_view.parts[part].channel.value[channel] = value;
     }
     void setMaster(int master, float value, double t) override {
@@ -87,7 +88,7 @@ public:
         m.f = value;
         m.d0 = t;
         post(m);
-        if (master >= 0 && master < MasterCount)
+        if (t <= now() && master >= 0 && master < MasterCount)
             m_s->m_view.master[master] = value;
     }
     void setTempo(double bpm) override {

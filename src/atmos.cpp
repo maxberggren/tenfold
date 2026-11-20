@@ -1221,19 +1221,23 @@ private:
         float fg[3] = {};
         if (v.family == Choir) {
             static const float vowel[5][3][2] = {
-                {{330, 1.0f}, {760, 0.32f}, {2600, 0.12f}},  // oo
-                {{470, 1.0f}, {860, 0.5f}, {2750, 0.16f}},   // oh
-                {{760, 1.0f}, {1200, 0.6f}, {2800, 0.22f}},  // ah
-                {{560, 1.0f}, {1800, 0.45f}, {2650, 0.24f}}, // eh
-                {{340, 1.0f}, {2250, 0.32f}, {3000, 0.24f}}, // ee
+                {{330, 1.0f}, {760, 0.35f}, {2600, 0.06f}},  // oo
+                {{470, 1.0f}, {860, 0.55f}, {2750, 0.1f}},   // oh
+                {{760, 1.0f}, {1200, 0.7f}, {2800, 0.25f}},  // ah
+                {{560, 1.0f}, {1800, 0.65f}, {2650, 0.32f}}, // eh
+                {{320, 1.0f}, {2300, 0.75f}, {3100, 0.4f}},  // ee
             };
             const float vv = clampf(colour * 4.0f + 0.25f * b1 * (0.4f + evolve), 0.0f, 4.0f);
             const int a = std::min(3, int(vv));
             const float f = vv - float(a);
-            static const float bw[3] = {90, 110, 160};
+            static const float bw[3] = {90, 120, 180};
+            // Open vowels lose the strong low partials to a high first
+            // formant; level them so the colour changes, not the loudness.
+            static const float makeup[5] = {1.0f, 1.0f, 1.8f, 1.05f, 1.0f};
+            const float mk = lerpf(makeup[a], makeup[a + 1], f);
             for (int i = 0; i < 3; ++i) {
                 const float hz = std::exp(lerpf(std::log(vowel[a][i][0]), std::log(vowel[a + 1][i][0]), f));
-                fg[i] = lerpf(vowel[a][i][1], vowel[a + 1][i][1], f);
+                fg[i] = mk * lerpf(vowel[a][i][1], vowel[a + 1][i][1], f);
                 v.fL[i].set(hz, hz / bw[i], m_rate);
                 copyCoefficients(v.fR[i], v.fL[i]);
             }
@@ -1320,8 +1324,8 @@ private:
             if (v.family == Choir) {
                 // Breath noise through the same formants keeps it airy.
                 const float nl = 0.02f * v.rng.bipolar(), nr = 0.02f * v.rng.bipolar();
-                L = 0.18f * oL.low;
-                R = 0.18f * oR.low;
+                L = 0.1f * oL.low;
+                R = 0.1f * oR.low;
                 for (int f = 0; f < 3; ++f) {
                     L += fg[f] * v.fL[f].k * v.fL[f].step(sL[i] + nl).band;
                     R += fg[f] * v.fR[f].k * v.fR[f].step(sR[i] + nr).band;

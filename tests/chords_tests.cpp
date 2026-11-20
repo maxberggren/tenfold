@@ -107,19 +107,21 @@ double bandShare(const testkit::Take &take, double from, double lo, double hi) {
     return all > 0 ? in / all : 1;
 }
 
-// A progression of taps (a quarter of a second each, every half second),
-// closed by a hold on the next beat: the tap-then-hold loop.
-std::string tappedLoop(std::initializer_list<int> degrees, int row = Triad) {
-    std::string s = "page 0 3\n";
-    double t = 0.5;
-    int first = -1;
+// A loop made the deliberate way: a click arms the recorder, the chords
+// play from the next bar line one beat each, and a second click just after
+// the following bar line closes a one-bar loop there.
+constexpr double kBeat = 60.0 / 124.0, kBar = 4 * kBeat;
+std::string recordedLoop(std::initializer_list<int> degrees, int row = Triad, const std::string &before = {}) {
+    std::string s = "page 0 3\n" + before + "click 0.3\n";
+    double t = kBar;
+    int id = 60;
     for (int d : degrees) {
-        if (first < 0)
-            first = d;
-        s += "tap " + num(t) + " " + cell(d, row) + " len=0.3\n";
-        t += 0.5;
+        s += "down " + num(t + 0.01) + " " + std::to_string(id) + " " + cell(d, row) + "\n";
+        s += "up " + num(t + kBeat - 0.03) + " " + std::to_string(id) + "\n";
+        t += kBeat;
+        ++id;
     }
-    s += "down " + num(t) + " 9 " + cell(first, row) + "\nup " + num(t + 0.4) + " 9\n";
+    s += "click " + num(2 * kBar + 0.1) + "\n";
     return s;
 }
 
@@ -248,13 +250,13 @@ private slots:
         }
     }
 
-    // Tap a progression in time, land on the next beat and hold: it loops,
-    // and as it replays it keeps telling the studio which chord is playing.
+    // Click, play a progression, click again: it loops, and as it replays it
+    // keeps telling the studio which chord is playing.
     void aLoopKeepsDrivingTheHarmony() {
         std::set<int> rootsAfter;
         double lastChange = 0;
         int last = -1;
-        const auto take = playWatching(tappedLoop({0, 5, 2, 6}) + "end 9\n", [&](double now, const StudioView &v) {
+        const auto take = playWatching(recordedLoop({0, 5, 2, 6}) + "end 9\n", [&](double now, const StudioView &v) {
             if (now > 4.0) {
                 rootsAfter.insert(v.chordRoot);
                 if (v.chordRoot != last)
@@ -271,7 +273,7 @@ private slots:
     // A chord held live wins over the loop's for as long as it is held.
     void aLiveChordWinsOverTheLoop() {
         bool heldOnly = true;
-        playWatching(tappedLoop({0, 5, 2, 6}) + "down 5.0 20 " + cell(4, Seventh) + "\nup 7.0 20\nend 8\n",
+        playWatching(recordedLoop({0, 5, 2, 6}) + "down 5.0 20 " + cell(4, Seventh) + "\nup 7.0 20\nend 8\n",
                      [&](double now, const StudioView &v) {
                          if (now > 5.1 && now < 6.9)
                              heldOnly = heldOnly && v.chordRoot == 4 && v.chordCount == 4;
@@ -364,10 +366,10 @@ private slots:
         }
     }
 
-    // Clicking the pad holds: the chord rings after the finger lifts, until
-    // the next one replaces it.
-    void clickHolds() {
-        const auto held = testkit::play("page 0 3\ndown 0.2 1 " + cell(0, Triad) + "\nclick 0.3\nup 0.6 1\nend 2.5\n");
+    // L holds: the chord rings after the finger lifts, until the next one
+    // replaces it.
+    void holdKeepsTheChord() {
+        const auto held = testkit::play("page 0 3\nkey 0.1 L\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
         const auto loose = testkit::play("page 0 3\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
         QVERIFY(held.rms(2.0, 2.5) > 0.01);
         QVERIFY(loose.rms(2.0, 2.5) < 0.3 * held.rms(2.0, 2.5));
@@ -383,7 +385,7 @@ private slots:
     // A loop follows the key: the same degrees, in the new key.
     void aLoopFollowsTheKey() {
         std::vector<float> before, after;
-        playWatching(tappedLoop({0, 0, 0, 0}) + "key 5.0 Ctrl+Right\nend 7\n", [&](double now, const StudioView &v) {
+        playWatching(recordedLoop({0, 0, 0, 0}) + "key 5.0 Ctrl+Right\nend 7\n", [&](double now, const StudioView &v) {
             const auto n = voicing(v, 1);
             if (now > 4.0 && now < 4.9 && !n.empty())
                 before = n;
@@ -401,11 +403,11 @@ private slots:
     // included, for as long as the finger stays; lifting gives the loop
     // back its own (here none: a sustained pad).
     void holdingTheRailGatesTheLoop() {
-        const std::string s = tappedLoop({0, 5, 2, 6}, Seventh) + "down 5.0 30 " + rail(Offbeat) +
+        const std::string s = recordedLoop({0, 5, 2, 6}, Seventh) + "down 5.0 30 " + rail(Offbeat) +
                               "\nup 7.0 30\nend 9.5\n";
         const auto take = testkit::play(s);
         QCOMPARE(take.view.parts[kChords].playing, 0);
-        const double gated = choppiness(take, 5.3, 6.9, 120), free = choppiness(take, 7.4, 8.4, 120);
+        const double gated = choppiness(take, 5.3, 6.9, 124), free = choppiness(take, 7.4, 8.4, 124);
         QVERIFY2(gated > 3.0 * free, qPrintable(QString("gated %1 free %2").arg(gated).arg(free)));
     }
 
@@ -435,8 +437,8 @@ private slots:
     // A loop keeps the sound it was played with: an organ loop stays an
     // organ while the pad is played over it.
     void aLoopKeepsItsSound() {
-        std::string s = "page 0 3\nkey 0.1 Right\nkey 0.15 Right\n" + tappedLoop({0, 5, 2, 6}).substr(9) +
-                        "key 3.5 Left\nkey 3.55 Left\ndown 4.0 40 " + cell(3, Triad) + "\nend 5\n";
+        std::string s = recordedLoop({0, 5, 2, 6}, Triad, "key 0.1 Right\nkey 0.15 Right\n") +
+                        "key 4.1 Left\nkey 4.15 Left\ndown 4.3 40 " + cell(3, Triad) + "\nend 5\n";
         int loopStyle = -1, liveStyle = -1;
         playWatching(s, [&](double now, const StudioView &v) {
             const float *d = v.parts[kChords].data;
@@ -496,6 +498,31 @@ private slots:
         for (float n : notes)
             pcs.insert(int(std::lround(n)) % 12);
         QVERIFY(pcs.count(2) && pcs.count(6) && pcs.count(9)); // D F♯ A
+    }
+
+    // Ordinary playing never makes a loop by itself: tapping chords in time
+    // and then holding one on the next beat is just playing.
+    void playingNeverLoopsByItself() {
+        std::string s = "page 0 3\n";
+        double t = 0.5;
+        for (int d : {0, 5, 2, 6, 0, 5}) {
+            s += "tap " + num(t) + " " + cell(d, Triad) + " len=0.12\n";
+            t += 0.5;
+        }
+        s += "down " + num(t) + " 9 " + cell(0, Triad) + "\nup " + num(t + 1.5) + " 9\nend " + num(t + 2) + "\n";
+        const auto take = testkit::play(s);
+        for (int c = 0; c < 8; ++c)
+            QCOMPARE(int(take.view.parts[kChords].clips[c].state), int(ClipView::Empty));
+    }
+
+    // The page says a loop is coming before it does: armed until the bar
+    // line, then recording, bar by bar.
+    void theLoopIsAnnounced() {
+        QString armed, rec;
+        testkit::play("page 0 3\nclick 0.3\nend 0.9\n", [&](Session &s) { armed = s.pageStatus(); });
+        testkit::play("page 0 3\nclick 0.3\nend " + num(kBar + 0.6) + "\n", [&](Session &s) { rec = s.pageStatus(); });
+        QVERIFY2(armed.contains("armed"), qPrintable(armed));
+        QVERIFY2(rec.contains("rec bar 1"), qPrintable(rec));
     }
 
     // Ten fingers at once, all over the pad and the rail, stay within bounds.

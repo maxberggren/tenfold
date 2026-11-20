@@ -9,18 +9,23 @@
 // over with a new chord (pads glide into it); lifting it returns to the
 // chord still held. Sliding up or down changes the colour while it sounds,
 // pressing harder swells it, a flat finger doubles it out to both octaves,
-// twisting turns its filter, and pressing until the pad clicks holds it.
+// and twisting turns its filter.
 //
 // The rail along the top is the rhythm. Each sound keeps its own gate
 // pattern, synced to the bar: tap a cell to keep it, hold a cell to play it
 // over everything for as long as the finger stays (a fill over a loop),
 // higher on the rail for longer hits, more fingers for double and quadruple
-// time. Rhythm also comes from the fingers themselves: tap chords in time,
-// land on the next beat and hold, and the taps loop.
+// time.
+//
+// Loops are made on purpose and announced before they happen: pressing the
+// pad until it clicks records from the next bar line, a second click closes
+// the loop on a bar line; Return loops the last bars already played. The
+// page shows what is armed, recording or about to close, and says what it
+// caught.
 //
 // The keyboard plays the same chords: A S D F G H J are I to VII as triads,
 // the Q row adds the ninth, the Z row is sus, Shift makes sevenths (power on
-// the Z row). Return loops the last bars played, however they were played.
+// the Z row). L holds chords until the next one.
 //
 // Every chord that sounds, live or from a loop, tells the studio
 // (ctx.setChord), so Bass, Arp and Lead can follow it.
@@ -34,7 +39,6 @@
 #include "chords.h"
 #include "console.h"
 #include "parts.h"
-#include "phrase.h"
 
 namespace tf {
 
@@ -45,9 +49,6 @@ namespace {
 constexpr float kRail = 0.8f; // the rhythm rail starts this high on the pad
 constexpr float kRowHeight = kRail / float(ColourCount);
 constexpr int kHeldMax = 16;
-// A chord stab is often longer than a drum tap: anything shorter than this is
-// a tap of a rhythm, anything longer a hold (the one that closes a loop).
-constexpr double kHoldAfter = 0.38;
 
 int rowAt(float y) { return std::clamp(int(y / kRowHeight), 0, ColourCount - 1); }
 int columnsOf(const Tuning &t) { return std::min(8, t.degreesPerOctave()); }
@@ -156,11 +157,11 @@ public:
 
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
         const Tuning t = tuningOf(ctx.studio());
-        // Pressing the pad down until it clicks: hold mode.
+        // Pressing the pad down until it clicks: record a loop from the next
+        // bar, and click again to close it.
         if (f.button && !m_button)
-            setHold(!m_hold, ctx, f.t);
+            toggleRecord(f.t, ctx);
         m_button = f.button;
         // Lifts first, so a finger replaced in the same frame frees its place.
         for (auto &h : m_held) {
@@ -184,13 +185,9 @@ public:
         }
     }
 
-    void idle(double t, ControlContext &) override { m_phrase.expire(t); }
-
     void background(double t, ControlContext &ctx) override {
-        // Keys held long enough close a tapped phrase, like a finger.
-        for (auto &h : m_held)
-            if (h.touch < 0 && h.key != 0 && !h.long_ && t - h.t0 >= kHoldAfter)
-                checkClose(h, ctx);
+        m_beatNow = ctx.beatAt(t);
+        watchRecording(t, ctx);
         // A loop of the last bars is taken just before the bar line it ends
         // on, so its first chord comes round on that downbeat.
         if (m_retroEnd >= 0 && ctx.beatAt(t) >= m_retroEnd - 0.06) {
@@ -341,7 +338,7 @@ private:
         float angle0 = 0, filter0 = 0.5f, swing0 = 0;
         float pressure = 0.5f, big = 0;
         double lastMove = 0;
-        bool long_ = false, looped = false, moved = false;
+        bool moved = false;
         int cell = 0;
     };
 
@@ -525,24 +522,82 @@ private:
         }
         if (send && (now || t - h.lastMove >= 1.0 / 60.0))
             sendMove(h, t, ctx);
-        if (!h.long_ && t - h.t0 >= kHoldAfter)
-            checkClose(h, ctx);
     }
 
-    void checkClose(Held &h, ControlContext &ctx) {
-        h.long_ = true;
-        double start = 0;
-        if (!m_phrase.closes(h.t0, 0, &start))
+    // --- loops ----------------------------------------------------------------
+    //
+    // A loop is always something the player asks for, and the page says what
+    // is about to happen before it does: a click arms a recording that starts
+    // on the next bar line (ARMED, counting the beats down), runs bar by bar
+    // (REC, with the bar count, the pad framed in red), and a second click
+    // closes it on a bar line (CLOSING) into a loop that plays at once.
+    // Return does the same for what was already played.
+
+    void toggleRecord(double t, ControlContext &ctx) {
+        if (m_recSlot >= 0 && !m_recClosing) {
+            ctx.stopRecording();
+            m_recClosing = true;
+            const double beat = ctx.beatAt(t);
+            const double into = beat - std::floor(beat / kBeatsPerBar) * kBeatsPerBar;
+            m_recEnd = into < 0.5 ? beat - into : std::ceil(beat / kBeatsPerBar) * kBeatsPerBar;
+            m_recEnd = std::max(m_recEnd, m_recFrom + kBeatsPerBar);
+            ctx.notice(QStringLiteral("The loop closes at the bar line"));
+            return;
+        }
+        if (m_recSlot >= 0)
             return;
         const int slot = ctx.freeSlot();
         if (slot < 0) {
             ctx.notice(QStringLiteral("Every slot is full: Shift+F1–F8 clears one"));
             return;
         }
-        ctx.capture(slot, start, h.t0);
-        ctx.notice(QStringLiteral("Loop in slot %1").arg(slot + 1));
-        h.looped = true;
-        m_phrase.clear();
+        ctx.record(slot, kMaxRecordBars);
+        m_recSlot = slot;
+        m_recClosing = false;
+        m_recFrom = std::ceil(ctx.beatAt(t) / kBeatsPerBar - 1e-9) * kBeatsPerBar;
+        m_recEnd = m_recFrom + kMaxRecordBars * kBeatsPerBar;
+        ctx.notice(QStringLiteral("Recording into slot %1 from the next bar: click again to close the loop")
+                       .arg(slot + 1));
+    }
+
+    // When the studio has made the recording into a loop, say what it holds.
+    void watchRecording(double t, ControlContext &ctx) {
+        if (m_recSlot < 0)
+            return;
+        const PartView &v = ctx.studio().parts[ctx.part()];
+        if (ctx.beatAt(t) < m_recFrom + 0.25 || v.recording == m_recSlot)
+            return;
+        const ClipView &c = v.clips[m_recSlot];
+        if (c.state != ClipView::Empty && c.lengthBeats > 0) {
+            const int bars = std::max(1, int(std::lround(c.lengthBeats / kBeatsPerBar)));
+            ctx.notice(QStringLiteral("Loop of %1 bar%2 in slot %3").arg(bars).arg(bars > 1 ? "s" : "").arg(m_recSlot + 1));
+        } else {
+            ctx.notice(QStringLiteral("Nothing was played: no loop"));
+        }
+        m_recSlot = -1;
+        m_recClosing = false;
+    }
+
+    // What the page is about to do with loops, for the screen: empty when
+    // nothing is pending.
+    QString loopCue(double beat, bool *recording) const {
+        *recording = false;
+        auto beats = [](double n) {
+            const int b = std::max(1, int(std::ceil(n - 1e-6)));
+            return QStringLiteral("%1 beat%2").arg(b).arg(b > 1 ? "s" : "");
+        };
+        if (m_recSlot >= 0) {
+            if (beat < m_recFrom)
+                return QStringLiteral("ARMED · REC IN %1").arg(beats(m_recFrom - beat));
+            *recording = true;
+            const int bar = int(std::floor((beat - m_recFrom) / kBeatsPerBar)) + 1;
+            if (m_recClosing)
+                return QStringLiteral("REC %1 · LOOP IN %2").arg(bar).arg(beats(m_recEnd - beat));
+            return QStringLiteral("REC BAR %1 OF %2 · CLICK TO LOOP").arg(bar).arg(kMaxRecordBars);
+        }
+        if (m_retroEnd >= 0)
+            return QStringLiteral("LOOPING THE LAST BARS IN %1").arg(beats(m_retroEnd - beat));
+        return {};
     }
 
     void moveRail(Held &h, const Touch &tc, ControlContext &ctx) {
@@ -588,8 +643,6 @@ private:
             updateRate(ctx);
             return;
         }
-        if (!h.long_ && !h.looped)
-            m_phrase.tap(h.t0, t - h.t0, 0);
         // In hold mode the newest chord keeps ringing after the finger lifts.
         bool newest = true;
         for (const auto &o : m_held)
@@ -741,7 +794,11 @@ private:
     void paintKeys(QPainter &p, const QRectF &r, const PaintContext &pc, const float *d);
 
     std::array<Held, kHeldMax> m_held{};
-    Phrase m_phrase;
+    static constexpr int kMaxRecordBars = 8;
+    int m_recSlot = -1; // the slot being recorded (armed or running), or −1
+    double m_beatNow = 0;
+    bool m_recClosing = false;
+    double m_recFrom = 0, m_recEnd = 0; // beats
     Frame m_frame;
     bool m_button = false, m_heard = false;
     int m_nextId = 0, m_order = 0;
@@ -859,6 +916,21 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
             nameTag(p, QPointF(x, y), name, last ? col : c::alpha(col, 0.35f + 0.08f * float(i)), 11);
             x -= 8;
         }
+    }
+
+    // A loop on its way: amber while armed or waiting for the bar line, red
+    // (and the pad framed in red, pulsing on the beat) while recording.
+    bool recording = false;
+    const QString cue = loopCue(pc.beat, &recording);
+    if (!cue.isEmpty()) {
+        const QColor cc = recording ? c::red() : c::amber();
+        const float pulse = 1.0f - float(pc.beat - std::floor(pc.beat));
+        if (recording) {
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(cc, 0.45f + 0.5f * pulse), 3.0));
+            p.drawRect(pc.pad.adjusted(-4, -4, 4, 4));
+        }
+        c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, kRail).y()), cue, cc, 15, true);
     }
 
     // Fingers, each with what it is doing: a chord finger its chord, a rail
@@ -1005,12 +1077,12 @@ QString Control::help() const {
         "another finger\ta new chord takes over; lift it and the one still held returns\n"
         "press harder · flat finger\tswell it · double it an octave under and over\n"
         "twist\tthe filter, a knob under the finger\n"
-        "press until it clicks, or L\thold: chords ring until the next one\n"
+        "L\thold: chords ring until the next one (L again lets go)\n"
         "tap the rail along the top\tkeep that gate rhythm for this sound\n"
         "hold the rail\tplay that rhythm over everything, loops too, while the finger stays\n"
         "higher on the rail · twist there\tlonger hits · swing\n"
         "two, three fingers on the rail\tdouble, then quadruple time, brighter: a build-up\n"
-        "tap chords, hold the next beat\tloops the taps into the next free slot\n"
+        "press until it clicks\trecord a loop from the next bar line; click again to close it\n"
         "A S D F G H J\tchords I to VII; Q row add9, Z row sus; Shift for sevenths (Z row: power)\n"
         "Return · Shift+Return\tloop the last bars you played (1, 2, 4 or 8) · overdub\n"
         "← → · ↑ ↓\tthe sound: pad, trance, organ, piano, pluck, pump · voicing higher or lower\n"
@@ -1034,6 +1106,9 @@ QString Control::status() const {
         parts << QStringLiteral("hold");
     if (m_register != 0)
         parts << QStringLiteral("voicing %1%2").arg(m_register > 0 ? "+" : "").arg(m_register);
+    bool recording = false;
+    const QString cue = loopCue(m_beatNow, &recording);
+    parts << (cue.isEmpty() ? QStringLiteral("click to record a loop, Return to loop what you played") : cue.toLower());
     return parts.join(QStringLiteral(" · "));
 }
 

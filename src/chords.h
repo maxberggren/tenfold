@@ -459,6 +459,7 @@ struct ChordVoice {
         Role role = Core;
         bool exists = true; // a doubling the voicing has room for
         int delay = 0;      // a strum: samples before this note speaks
+        float onset = 1;    // a strummed note fades in over a couple of milliseconds once it speaks
         float phase[kUnison] = {};
         float phase2[2] = {}; // the piano's modulators, the organ's percussion
     };
@@ -938,6 +939,7 @@ private:
         for (int k = 0; k < ChordVoice::kNotes; ++k) {
             auto &nt = v.notes[k];
             nt.delay = 0;
+            nt.onset = 1;
             nt.exists = true;
             nt.ampPrev = nt.amp = nt.ampTarget = 0;
             for (float &p : nt.phase)
@@ -948,6 +950,7 @@ private:
                 nt.midi = nt.target = vc.notes[k];
                 nt.amp = nt.ampPrev = nt.ampTarget = 1;
                 nt.delay = int(sd.strum * float(k) * m_rate);
+                nt.onset = nt.delay > 0 ? 0.0f : 1.0f;
             } else if (k == 4) {
                 nt.role = ChordVoice::Low;
                 nt.exists = low > 0;
@@ -959,6 +962,7 @@ private:
                 nt.midi = nt.target = top > 0 ? top : vc.notes[vc.count - 1];
                 nt.amp = nt.ampPrev = nt.ampTarget = nt.exists ? 0.55f * v.big : 0.0f;
                 nt.delay = int(sd.strum * float(vc.count) * m_rate);
+                nt.onset = nt.delay > 0 ? 0.0f : 1.0f;
             } else {
                 nt.role = ChordVoice::Core;
                 nt.midi = nt.target = vc.notes[0];
@@ -1232,8 +1236,11 @@ private:
                 nt.phase[1] = pr;
                 nt.phase2[0] = pm;
             }
+            const float onsetStep = 1.0f / (0.002f * m_rate);
             for (int i = start; i < n; ++i) {
-                const float a = a0 + da * float(i);
+                const float a = (a0 + da * float(i)) * nt.onset;
+                if (nt.onset < 1.0f)
+                    nt.onset = std::min(1.0f, nt.onset + onsetStep);
                 bL[i] += nl[i] * a;
                 bR[i] += nr[i] * a;
             }

@@ -63,6 +63,10 @@ inline const char *kindName(int k) {
 //         no riser aims at any more is called off.
 enum : uint16_t { CmdDrop = Command::User, CmdFall = Command::User + 1 };
 enum : int32_t { FlagEnterLate = 1 }; // a riser joining a drop enters its length before it
+// Param i[0]: the drop style, f[0] 0 clean, 1 gap, 2 strip. In a gap (and a
+// strip, which ends in one) the risers stop half a beat before the ONE.
+enum : int32_t { ParamStyle = 1 };
+constexpr double kGapBeats = 0.5;
 // Fall's id for every riser at once: the low 24 bits survive a clip's
 // rewriting of ids, so a replayed "everything falls away" still means it.
 constexpr int32_t kEveryone = 0xFFFFFF;
@@ -168,9 +172,11 @@ public:
 
     void init(float rate) override {
         m_rate = rate;
-        // Past the ONE a riser lets go in a few milliseconds: its peak must
-        // not stack on the kick's, which the limiter would take out of both.
-        m_cutDecay = std::exp(-1.0f / (0.005f * rate));
+        // A riser is gone by the ONE: it lets go 3 ms before the line, in a
+        // millisecond and a half, so nothing of it stacks on the kick's peak
+        // (which sits at the limiter's ceiling, and would lose what the riser
+        // added). Heard, it still peaks on the downbeat.
+        m_cutDecay = std::exp(-1.0f / (0.0015f * rate));
         m_busAttack = 1.0f - std::exp(-1.0f / (0.004f * rate));
         m_busRelease = 1.0f - std::exp(-1.0f / (0.18f * rate));
         m_room.init(rate);
@@ -265,6 +271,10 @@ public:
         case CmdDrop:
             drop(onset, tr.beat);
             break;
+        case Command::Param:
+            if (c.i[0] == ParamStyle)
+                m_gap = std::lround(c.f[0]) >= 1; // gap, and strip, which ends in one
+            break;
         case CmdFall:
             for (Voice &v : m_voices)
                 if (v.active && isRiser(v.kind) && ((c.id & kEveryone) == kEveryone || v.id == c.id) && v.state <= Running)
@@ -282,6 +292,7 @@ public:
         const double b0 = tr.beat, bps = tr.beatsPerSample, b1 = b0 + bps * n;
         m_beat = b0;
         m_bpm = tr.bpm;
+        m_cutLead = 0.003 * tr.bpm / 60.0;
         const float smooth = 1.0f - std::exp(-float(n) / (0.04f * m_rate));
 
         // A drop that falls in this block: the impact and the sub, on its
@@ -318,6 +329,8 @@ public:
             if (isRiser(v.kind)) {
                 l = rl;
                 r = rr;
+                if (v.state == Waiting && v.held)
+                    tick(v, hl, hr, n, b0, bps);
             } else {
                 l = hl;
                 r = hr;
@@ -358,7 +371,7 @@ public:
             }
             // The room's return ducks under the kick too, so a riser's tail
             // never sits on the ONE.
-            const float wet = 0.55f * (1.0f - 0.7f * duck[i]);
+            const float wet = 0.55f * (1.0f - duck[i]);
             l[i] = L + wet * wl;
             r[i] = R + wet * wr;
         }
@@ -483,6 +496,7 @@ private:
         bool active = false, explicit_ = false;
         double beat = 0, start = 0;
         float intensity = 0;
+        float climb = 1; // how far a rushed build had got: its impact is that big
     };
 
     Voice &take(int id) {
@@ -564,7 +578,7 @@ private:
                 slot = &d;
                 break;
             }
-        *slot = {true, explicit_, beat, start, intensity};
+        *slot = {true, explicit_, beat, start, intensity, 1.0f};
     }
 
     // The drop moves to the next bar line (a click a sixteenth late still
@@ -582,6 +596,7 @@ private:
         }
         const double from = pending ? pending->beat : -1;
         float intensity = pending ? pending->intensity : 0.7f;
+        float climb = pending ? 0.0f : 1.0f;
         double start = std::min(onset, now);
         for (Voice &v : m_voices) {
             if (!v.active || !isRiser(v.kind) || v.state > Running || std::fabs(v.end - from) > 0.01)
@@ -593,6 +608,7 @@ private:
                 // Keep the progress it has reached and finish the rest in
                 // the time that is left.
                 const double p0 = std::clamp((now - v.start) / (v.end - v.start), 0.0, 0.97);
+                climb = std::max(climb, float(p0));
                 v.start = target - span / (1.0 - p0);
             }
             v.end = target;
@@ -621,6 +637,9 @@ private:
             v.state = Running;
         }
         addDrop(target, start, intensity, true);
+        for (DropPoint &d : m_drops)
+            if (d.active && std::fabs(d.beat - target) < 0.01)
+                d.climb = pending ? clampf(0.35f + climb, 0.35f, 1.0f) : 1.0f;
     }
 
     void fall(Voice &v, double now) {
@@ -663,7 +682,7 @@ private:
         boom.held = false;
         boom.delay = offset;
         boom.start = d.beat;
-        boom.vel = 0.75f + 0.25f * size;
+        boom.vel = (0.75f + 0.25f * size) * (0.6f + 0.4f * d.climb);
         boom.quiet = armedSub;
         m_hitFlash[Impact - kRisers] = 1.0f;
     }
@@ -693,6 +712,8 @@ private:
             if (b1 <= v.start)
                 return false;
             v.state = Running;
+            v.env = 0;
+            v.lastStep = -1; // the tick's count is not the riser's grid
         }
         if (v.state == Falling && b0 - v.fallAt >= v.fallBeats) {
             v.active = false;
@@ -703,10 +724,15 @@ private:
     // Per sample: after the drop's sample, a riser goes down in a few
     // milliseconds, so its peak is the ONE.
     inline float cutAt(Voice &v, double b) {
-        if (v.state == Running && b >= v.end) {
+        if (v.state == Running && b >= v.end - m_cutLead - (m_gap ? kGapBeats : 0.0)) {
             v.cut *= m_cutDecay;
-            if (v.cut < 1e-4f)
+            if (v.cut < 1e-4f) {
                 v.active = false;
+                // Gone into a gap before its line: the drop is still coming.
+                for (DropPoint &d : m_drops)
+                    if (d.active && std::fabs(d.beat - v.end) < 0.01)
+                        d.explicit_ = true;
+            }
         }
         return v.cut;
     }
@@ -719,6 +745,29 @@ private:
     }
     // The riser's level: −dB·(1−p)^k, so it grows slowly, then all at once.
     static float riseGain(float p, float db, float k) { return dbToGain(-db * std::pow(1.0f - p, k)); }
+
+    // A landing that waits bars to come in ticks softly on each beat while
+    // its finger is down, so the player hears it is armed.
+    void tick(Voice &v, float *l, float *r, int n, double b0, double bps) {
+        const float decay = std::exp(-1.0f / (0.006f * m_rate));
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double beat = std::floor(b);
+            if (beat != v.lastStep) {
+                if (v.lastStep >= 0)
+                    v.env = 1.0f;
+                v.lastStep = beat;
+            }
+            if (v.env < 1e-4f)
+                continue;
+            v.ph[7] += 2400.0f / m_rate;
+            v.ph[7] -= std::floor(v.ph[7]);
+            const float o = sin01(v.ph[7]) * v.env * 0.025f;
+            v.env *= decay;
+            l[i] += o;
+            r[i] += o;
+        }
+    }
 
     // --- risers --------------------------------------------------------------
 
@@ -1034,7 +1083,7 @@ private:
         float peak = 0;
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
-            const float g = (e0 + (e1 - e0) * float(i) / float(n)) * cutAt(v, b);
+            const float g = e0 + (e1 - e0) * float(i) / float(n);
             float m = 0;
             for (int k = 0; k < 6; ++k) {
                 v.ph[k] += metal[k] / m_rate;
@@ -1059,6 +1108,10 @@ private:
                 L = v.apL[k].step(L);
                 R = v.apR[k].step(R);
             }
+            // Cut after the smear, so none of it runs past the line.
+            const float cut = cutAt(v, b);
+            L *= cut;
+            R *= cut;
             l[i] += L;
             r[i] += R;
             peak = std::max(peak, std::fabs(L) + std::fabs(R));
@@ -1122,7 +1175,7 @@ private:
             v.bL.set(2400.0f, 0.7f, m_rate);
             v.bR.set(2600.0f, 0.7f, m_rate);
         }
-        constexpr float kickWindow = 0.04f, fadeIn = 0.03f, kHitDelay = 0.004f;
+        constexpr float kickWindow = 0.04f, fadeIn = 0.03f, kHitDelay = 0.02f;
         const float dt = 1.0f / m_rate;
         const float boomDecay = std::exp(-dt / (0.28f + 0.3f * I));
         const float bodyDecay = std::exp(-dt / 0.14f), snapDecay = std::exp(-dt / 0.025f);
@@ -1146,7 +1199,14 @@ private:
         const float vel = v.vel * (0.75f + 0.35f * I) * pressGain(v) * 0.42f;
         float peak = 0;
         for (int i = from; i < n; ++i) {
-            // Body: on the sample.
+            // Nothing for the kick's first 20 ms: its peak sits at the
+            // limiter's ceiling, and anything laid on it only takes level
+            // away from it. The body, snap and crash begin just after.
+            if (v.t < kHitDelay) {
+                v.t += 1.0f / m_rate;
+                continue;
+            }
+            // Body.
             v.glideNote *= bodyPitchDecay;
             v.ph[1] += bodyHz * (1.0f + 1.2f * v.glideNote) / m_rate;
             v.ph[1] -= std::floor(v.ph[1]);
@@ -1181,10 +1241,7 @@ private:
             const float tl = v.cL.step(n1).band * v.env4, tr = tl;
             v.env3 *= crashDecay;
             v.env4 *= tailDecay;
-            // The kick's own peak comes in its first few milliseconds: the
-            // impact blooms just after it, under it, so it adds weight to the
-            // ONE instead of a second peak for the limiter to fight.
-            const float attack = clampf((v.t - kHitDelay) * 400.0f, 0, 1);
+            const float attack = clampf((v.t - kHitDelay) * 1000.0f, 0, 1);
             const float L = (0.55f * body + 0.2f * snap + 0.3f * cl + 0.12f * tl) * vel * attack;
             const float R = (0.55f * body - 0.2f * snap + 0.3f * cr + 0.12f * tr) * vel * attack;
             l[i] += L;
@@ -1430,6 +1487,8 @@ private:
 
     float m_rate = 48000;
     float m_cutDecay = 0.99f;
+    double m_cutLead = 0.006;
+    bool m_gap = false;
     float m_busEnv = 0, m_busAttack = 0.005f, m_busRelease = 0.0001f;
     Reverb m_room;
     Svf m_roomHpL, m_roomHpR;

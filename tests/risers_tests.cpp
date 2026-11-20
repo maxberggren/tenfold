@@ -53,6 +53,21 @@ const char *kBeat = "page 0 1\n"
                     "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
                     "key 2.5 Space\n";
 
+// The peak of the mix below 150 Hz between two times: the kick's weight.
+double lowPeakDb(const testkit::Take &take, double from, double to) {
+    Svf a, b;
+    a.set(150, 0.7f, 48000);
+    b.set(150, 0.7f, 48000);
+    double peak = 0;
+    const size_t start = size_t(std::max(0.0, from - 0.05) * 48000), end = size_t(to * 48000);
+    for (size_t i = start; i < end && i < take.left.size(); ++i) {
+        const float y = b.step(a.step(0.5f * (take.left[i] + take.right[i])).low).low;
+        if (i >= size_t(from * 48000))
+            peak = std::max(peak, double(std::fabs(y)));
+    }
+    return 20 * std::log10(peak + 1e-9);
+}
+
 // The touch-clock time of a beat, from a view.
 double timeOfBeat(const StudioView &v, double beat) { return v.time + (beat - v.beat) * 60.0 / v.bpm; }
 
@@ -116,18 +131,17 @@ private slots:
             }
     }
 
-    // The ONE with the FX on it is never weaker than the beat's own ONE, in
-    // any drop style: the impact's body comes just after the kick's peak, its
-    // boom waits out the kick's first 40 ms and ducks under it, nothing low
-    // goes in a room, and the drop lifts the master. (A build loud right up
-    // to the line keeps the studio's peak-sensing glue and limiter busy, so
-    // the margin over a lone kick is a fraction of a dB to about one.)
+    // The ONE with the FX on it is louder than the beat's own ONE, in any
+    // drop style, and the kick keeps its weight: the risers are gone 3 ms
+    // before the line, the impact waits 20 ms and its boom 40 ms (ducked
+    // under the kick), nothing low goes in a room, and the drop lifts the
+    // master.
     void theDropAddsToTheKick() {
         for (int style = 0; style < 3; ++style) {
             std::string fx = std::string(kBeat) + "page 3.0 7\n";
             for (int k = 0; k < style; ++k)
                 fx += fmt("key %.3f Right\n", 3.02 + 0.03 * k);
-            fx += fmt("down 3.1 1 %.3f %.3f p=0.6\nup 3.6 1\n", columnX(0), rowY(3));
+            fx += fmt("down 3.1 1 %.3f %.3f p=0.6\nup 3.6 1\n", columnX(0), rowY(2));
             std::vector<VoiceInfo> v;
             StudioView view;
             testkit::play(fx + "end 4\n", [&](Session &s) {
@@ -139,27 +153,33 @@ private slots:
             const auto with = testkit::play(fx + fmt("end %.3f\n", tDrop + 1.0));
             const auto without = testkit::play(std::string(kBeat) + fmt("end %.3f\n", tDrop + 1.0));
             const double a = rmsDb(with, tDrop, tDrop + 0.04), b = rmsDb(without, tDrop, tDrop + 0.04);
-            const double need = 0.0;
-            QVERIFY2(a > b + need, qPrintable(QString("style %1: with %2, beat alone %3").arg(style).arg(a).arg(b)));
+            QVERIFY2(a > b, qPrintable(QString("style %1: with %2, beat alone %3").arg(style).arg(a).arg(b)));
+            // The kick keeps its weight: its low peak within half a dB.
+            const double la = lowPeakDb(with, tDrop, tDrop + 0.04), lb = lowPeakDb(without, tDrop, tDrop + 0.04);
+            QVERIFY2(la > lb - 0.5, qPrintable(QString("style %1: low peak %2 against %3").arg(style).arg(la).arg(lb)));
             QVERIFY2(rmsDb(with, tDrop + 0.3, tDrop + 0.45) > rmsDb(without, tDrop + 0.3, tDrop + 0.45) - 1.0,
                      qPrintable(QString::number(rmsDb(with, tDrop + 0.3, tDrop + 0.45))));
             QVERIFY(with.peak() < 1.0);
         }
     }
 
-    // The impact's body starts on the drop's very sample.
-    void theImpactLandsOnTheSample() {
+    // The riser is gone by the ONE (only its room rings on, and that ducks
+    // under a kick) and the impact comes 20 ms after it, leaving the kick's
+    // peak alone at the limiter's ceiling.
+    void theImpactWaitsOutTheKicksPeak() {
         // A one-bar swell landed at beat 25.1 enters at 28 and drops at 32.
         const double tDrop = timeOf(32.0);
         const auto take = testkit::play(
             fmt("page 0 7\ntap %.3f %.3f %.3f\nend %.3f\n", timeOf(25.1), columnX(4), rowY(0), tDrop + 0.5));
-        const size_t at = size_t(tDrop * 48000);
-        double before = 0, after = 0;
-        for (size_t i = at - 480; i < at; ++i)
-            before = std::max(before, double(std::fabs(take.left[i])));
-        for (size_t i = at; i < at + 480; ++i)
-            after = std::max(after, double(std::fabs(take.left[i])));
-        QVERIFY2(after > before * 1.2, qPrintable(QString("%1 %2").arg(before).arg(after)));
+        auto peak = [&](double from, double to) {
+            double p = 0;
+            for (size_t i = size_t(from * 48000); i < size_t(to * 48000); ++i)
+                p = std::max(p, double(std::fabs(take.left[i])));
+            return p;
+        };
+        const double before = peak(tDrop - 0.02, tDrop - 0.004);
+        QVERIFY2(peak(tDrop + 0.002, tDrop + 0.018) < 0.25 * before, qPrintable(QString::number(peak(tDrop + 0.002, tDrop + 0.018))));
+        QVERIFY2(peak(tDrop + 0.021, tDrop + 0.04) > 0.3 * before, qPrintable(QString::number(peak(tDrop + 0.021, tDrop + 0.04))));
         QVERIFY(take.peak() < 1.0);
     }
 
@@ -187,9 +207,10 @@ private slots:
         QCOMPARE(after.master[MasterGain], 0.8f);
     }
 
-    // Strip takes drums and bass out for the build's last bar; gap mutes
-    // everything but the risers for the last half beat. Both bring the mix
-    // back on the ONE: the kick is there within 3 ms of the line.
+    // Strip leaves the risers alone for the build's last bar; gap mutes
+    // everything else for the last half beat, and the risers stop too. Both
+    // bring the mix back on the ONE: the kick is there within 3 ms of the
+    // line.
     void dropStylesMuteAndHandBack() {
         for (int style : {1, 2}) {
             std::string fx = std::string(kBeat) + "page 3.0 7\n";
@@ -206,7 +227,7 @@ private slots:
             testkit::play(fx + fmt("end %.3f\n", tDrop - 0.15), [&](Session &s) { last = s.view(); });
             QCOMPARE(last.parts[0].channel.value[Mute], 1.0f);
             QCOMPARE(last.parts[1].channel.value[Mute], 1.0f);
-            QCOMPARE(last.parts[2].channel.value[Mute], style == 1 ? 1.0f : 0.0f);
+            QCOMPARE(last.parts[2].channel.value[Mute], 1.0f);
             QCOMPARE(last.parts[kFx].channel.value[Mute], 0.0f);
             const auto take = testkit::play(fx + fmt("end %.3f\n", tDrop + 0.3), [&](Session &s) { after = s.view(); });
             for (int p = 0; p < after.partCount; ++p)
@@ -214,6 +235,34 @@ private slots:
             QVERIFY2(rmsDb(take, tDrop + 0.001, tDrop + 0.004) > -30,
                      qPrintable(QString::number(rmsDb(take, tDrop + 0.001, tDrop + 0.004))));
         }
+    }
+
+    // The styles sound different: a gap is a breath, at least 8 dB down on
+    // the clean build in its half beat; a strip is the risers alone, down on
+    // the clean build over its last bar even over this sparse beat.
+    void dropStylesAreHeard() {
+        double gapWindow[3] = {}, lastBar[3] = {};
+        double tDrop = 0;
+        for (int style = 0; style < 3; ++style) {
+            std::string fx = std::string(kBeat) + "page 3.0 7\n";
+            for (int k = 0; k < style; ++k)
+                fx += fmt("key %.3f Right\n", 3.02 + 0.03 * k);
+            fx += fmt("down 3.1 1 %.3f %.3f p=0.6\nup 3.6 1\n", columnX(0), rowY(2));
+            if (style == 0) {
+                std::vector<VoiceInfo> v;
+                StudioView view;
+                testkit::play(fx + "end 4\n", [&](Session &s) {
+                    v = voicesOf(s.view());
+                    view = s.view();
+                });
+                tDrop = timeOfBeat(view, v[0].end);
+            }
+            const auto take = testkit::play(fx + fmt("end %.3f\n", tDrop + 0.2));
+            gapWindow[style] = rmsDb(take, tDrop - 0.22, tDrop - 0.01);
+            lastBar[style] = rmsDb(take, tDrop - 2.0, tDrop - 0.01);
+        }
+        QVERIFY2(gapWindow[1] < gapWindow[0] - 8, qPrintable(QString("gap %1 clean %2").arg(gapWindow[1]).arg(gapWindow[0])));
+        QVERIFY2(lastBar[2] < lastBar[0] - 1, qPrintable(QString("strip %1 clean %2").arg(lastBar[2]).arg(lastBar[0])));
     }
 
     // A second finger joins the drop the first one set, and its row says

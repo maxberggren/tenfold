@@ -27,6 +27,7 @@
 
 #include "risers.h"
 
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPainterPath>
 #include <QStringList>
@@ -152,6 +153,7 @@ public:
         case Qt::Key_Left:
         case Qt::Key_Right:
             m_style = (m_style + (k.key == Qt::Key_Right ? 1 : StyleCount - 1)) % StyleCount;
+            sendStyle(t, ctx);
             ctx.notice(QStringLiteral("Drop style: %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()));
             return true;
         case Qt::Key_W:
@@ -225,8 +227,8 @@ public:
             "Space\tloop what you just played (as on every page)\n"
             "A S D F G\tnoise, pitch, saw, roll, swell risers; Up / Down sets their length\n"
             "Z X C V B N M ,\tthe bottom row's hits, held as long as the key\n"
-            "Left / Right\tdrop style: clean, a half-beat gap with only the risers left in it, or drums and bass out "
-            "for the last bar\n"
+            "Left / Right\tdrop style: clean; gap, a half-beat breath before the ONE with only the risers' room ringing; "
+            "or strip, the risers alone for the build's last bar, then the breath\n"
             "Q\tthe whole build falls away\n"
             "W\tbuilds move the mix (high-pass, room, and drive when pushed) or leave it alone\n"
             "F1–F8\tlaunch a slot at the next bar\n"
@@ -459,6 +461,17 @@ private:
         h.id = -1;
     }
 
+    // The engine needs the style too: in a gap the risers stop half a beat
+    // early. A Param, so a clip replays it.
+    void sendStyle(double t, ControlContext &ctx) {
+        Command c;
+        c.type = Command::Param;
+        c.t = t;
+        c.i[0] = ParamStyle;
+        c.f[0] = float(m_style);
+        ctx.send(c);
+    }
+
     void sendDrop(double t, ControlContext &ctx) {
         Command c;
         c.type = CmdDrop;
@@ -556,8 +569,11 @@ private:
                 pull(MasterDrive, 0.1f + 0.12f * push, last * last * push);
                 pull(RoomSize, 0.72f, 0.6f * p * depth);
             }
-            // The gap mutes everything but this page, so the risers hang
-            // alone in it; the strip takes out drums and bass.
+            // The gap mutes everything for the last half beat: the risers stop
+            // there too (the engine knows the style), and only their room
+            // rings into the ONE. The strip leaves the risers alone for the
+            // build's last bar (every other part goes) and ends in the same
+            // breath.
             for (int part = 0; part < parts; ++part)
                 if (beat >= drop - horizon && beat < drop)
                     m_mods[ch(part, Mute)].releaseAt = tDrop;
@@ -567,8 +583,9 @@ private:
                         if (part != ctx.part())
                             pull(ch(part, Mute), 1, 1);
                 if (m_style == Strip && drop - start >= 4 && beat >= drop - kBeatsPerBar)
-                    for (int part = 0; part < std::min(parts, 2); ++part)
-                        pull(ch(part, Mute), 1, 1);
+                    for (int part = 0; part < parts; ++part)
+                        if (part != ctx.part())
+                            pull(ch(part, Mute), 1, 1);
             }
         }
 
@@ -580,7 +597,7 @@ private:
         if (m_buildMix) {
             constexpr float lift = 0.92f; // the lift, at unity (gain goes as the square)
             if (drop > 0 && beat >= drop - horizon && beat < drop) {
-                pull(MasterGain, lift, 1, ctx.timeAt(drop) - 0.08);
+                pull(MasterGain, lift, 1, ctx.timeAt(drop) - 0.03);
                 m_liftDrop = drop; // the view only says it fired a tick later
             }
             const double last = std::max(double(d[pub::LastDrop]), m_liftDrop);
@@ -1008,12 +1025,18 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
                 glow = 0.3f + 0.7f * h.intensity;
                 intensity = h.intensity;
             }
-        c::finger(p, pc, t, col, label, glow);
-        if (intensity >= 0) {
-            const QPointF at = pc.at(t.x, t.y);
-            const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
-            c::gauge(p, QRectF(at.x() + r + 6, at.y() - r * 0.6 + 12, 64, 5), intensity, col, 8);
-        }
+        c::finger(p, pc, t, col, QString(), glow);
+        // The tag beside the finger, on its left when the right would run off
+        // the pad.
+        const QPointF at = pc.at(t.x, t.y);
+        const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
+        const qreal w = QFontMetricsF(c::font(12, true)).horizontalAdvance(label) + 12;
+        const bool left = at.x() + r + 6 + w > pc.pad.right() - 4;
+        const qreal x = left ? at.x() - r - 6 - w : at.x() + r + 6;
+        if (!label.isEmpty())
+            c::tag(p, QPointF(x, at.y() - r * 0.6), label, col, 12);
+        if (intensity >= 0)
+            c::gauge(p, QRectF(left ? x + w - 64 : x, at.y() - r * 0.6 + 12, 64, 5), intensity, col, 8);
     }
 
     // The ONE: the whole pad lights.

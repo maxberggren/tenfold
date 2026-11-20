@@ -520,7 +520,11 @@ void Engine::apply(const Command &c) {
     case Cmd::LoopReady:
         if (Loop *l = findLoop(c.id)) {
             double len = std::max(l->length, 0.05 * s.rate);
-            if (!s.tempoSet) {
+            // With the click running (the tutorial's first loop), the player
+            // has tapped along to it: the click is the clock, and the loop
+            // snaps to it like any later loop, at least a beat long.
+            const bool toClick = !s.tempoSet && s.metronome;
+            if (!s.tempoSet && !s.metronome) {
                 // The first loop is the clock: a bar of a comfortable length,
                 // rounded to a whole number of beats per minute.
                 double bar = len;
@@ -541,7 +545,8 @@ void Engine::apply(const Command &c) {
                 s.tempoSet = true;
             } else {
                 const double q = std::exp2(std::round(std::log2(len / s.bar)));
-                const double target = s.bar * std::clamp(q, 1.0 / 16, 4.0);
+                const double target = s.bar * std::clamp(q, toClick ? 0.25 : 1.0 / 16, 4.0);
+                s.tempoSet = true;
                 const double k = target / len;
                 for (int i = 0; i < l->count; ++i) {
                     l->hits[i].offset *= k;

@@ -761,6 +761,46 @@ private slots:
         QVERIFY(std::fabs(f - am) <= 7.0f);
     }
 
+    void aLoopTappedToTheClickKeepsItsTempo() {
+        // With the click on, three quick kicks closed after 0.43 s become a
+        // one-beat loop at the click's 120 BPM, not a new tempo.
+        Engine e(48000);
+        e.setTimeOrigin(0);
+        Command m;
+        m.type = Cmd::Metronome;
+        m.f[0] = 1;
+        e.send(m);
+        Command b;
+        b.type = Cmd::LoopBegin;
+        b.id = 1;
+        b.t = 0.02;
+        b.f[0] = 0.43f;
+        e.send(b);
+        for (float o : {0.0f, 0.15f, 0.29f}) {
+            Command h;
+            h.type = Cmd::LoopHit;
+            h.id = 1;
+            h.f[0] = o;
+            h.i1 = DrumRow;
+            h.i2 = int(Drum::Kick);
+            h.f[1] = 0.9f;
+            h.f[2] = 0.1f;
+            h.f[3] = 0.05f;
+            e.send(h);
+        }
+        Command r;
+        r.type = Cmd::LoopReady;
+        r.id = 1;
+        e.send(r);
+        std::vector<float> out(48000 * 2);
+        e.render(out.data(), 48000);
+        e.fetchView();
+        QVERIFY(std::fabs(e.barSeconds() - 2.0f) < 1e-3f);
+        for (const auto &l : e.view().loops)
+            if (l.active)
+                QVERIFY(std::fabs(l.lengthSec - 0.5f) < 1e-3f);
+    }
+
     void loopsQuantiseAndRepeat() {
         Engine e(48000);
         e.setTimeOrigin(0);

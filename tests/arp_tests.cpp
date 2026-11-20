@@ -222,7 +222,7 @@ private slots:
                 state(e, c, s, 0.5);
                 note(e, c, Command::On, 1, 0, 0, 0.5, 2);
                 c.runTo(e, 8.0);
-                const auto &log = e.log();
+                const auto log = e.log();
                 QVERIFY(log.size() > 8);
                 for (size_t i = 1; i < log.size(); ++i) {
                     const auto &f = log[i];
@@ -286,7 +286,7 @@ private slots:
         state(e, c, s, 0.9);
         note(e, c, Command::On, 1, 0, 0, 1.0, 0);
         c.runTo(e, 2.0);
-        const auto &log = e.log();
+        const auto log = e.log();
         QCOMPARE(int(log.size()), 16);
         for (size_t i = 0; i < log.size(); ++i)
             QVERIFY(std::fabs(log[i].beat - (1.0 + 0.0625 * double(i))) < 1e-6);

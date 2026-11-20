@@ -249,7 +249,7 @@ inline float squareBlep(float ph, float inc) {
 }
 
 constexpr int kVoices = 28;
-constexpr float kOutGain = 1.9f;
+constexpr float kOutGain = 1.6f;
 constexpr int kSoftVoices = 18; // past this, the oldest notes are faded out to make room
 
 // One arp note. Five sounds, all through the same ladder filter so the
@@ -336,6 +336,7 @@ struct Voice {
             const float c[2] = {-7.0f, 7.0f}, p[2] = {-0.55f, 0.55f};
             setUnits(2, c, p);
             blend = s.color;
+            attack = 0.002f;
             sustain = 0.22f;
             envOct = 3.6f;
             gain = 0.78f;
@@ -392,10 +393,10 @@ struct Voice {
             blend = s.color;
             sustain = 0.8f;
             envOct = 3.4f + 1.8f * s.accent;
-            resBias = 0.45f;
+            resBias = 0.35f;
             cutBias = -1.0f;
             fdecay = clampf(0.06f + 0.5f * g, 0.05f, 0.35f) * (s.accent > 0 ? 0.7f : 1.0f);
-            gain = 0.55f;
+            gain = 0.48f;
             release = 0.025f;
             break;
         }
@@ -429,7 +430,7 @@ struct Voice {
                 float rate) {
         const float resonance = clampf(res + resBias, 0.0f, 0.97f);
         const float base = cutHz * keyTrack * std::exp2(cutBias);
-        const float resComp = 1.0f + 0.6f * resonance * resonance;
+        const float resComp = 1.0f + 0.35f * resonance * resonance;
         float peak = 0;
         for (int i = from; i < to; ++i) {
             if (stage == 0) {
@@ -630,7 +631,8 @@ struct Engine::Impl {
     int64_t barIndex = -1;
     uint64_t barCount = 0;
     float level = 0;
-    std::vector<Fired> *log = nullptr;
+    std::vector<Fired> *log = nullptr; // a ring, sized at init
+    uint64_t logCount = 0;
     Fired recent[kRecent];
     int recentHead = 0;
     uint32_t noteSeed = 0x2545F491u;
@@ -969,7 +971,9 @@ struct Engine::Impl {
         const int cyc = accentCycle(s.accent);
         const float accentGain =
             L.plan.accent ? 1.0f + 0.4f * s.accentDepth : (cyc > 0 ? 1.0f - 0.22f * s.accentDepth : 1.0f);
-        const float stack = L.curCount > 1 ? 1.15f / std::sqrt(float(L.curCount)) : 1.0f;
+        // A stab's notes start together: their peaks add, so each is quieter
+        // than its share of the power alone would say.
+        const float stack = L.curCount > 1 ? 1.1f * std::pow(float(L.curCount), -0.7f) : 1.0f;
         const int perOct = h.tuning.degreesPerOctave();
         for (int k = 0; k < L.curCount; ++k) {
             double midi = h.midi(L.cur[k], s.reg);
@@ -998,15 +1002,15 @@ struct Engine::Impl {
             f.sample = rendered + uint64_t(cursor);
             f.beat = b;
             f.midi = float(midi);
+            f.degree = L.cur[k];
             f.vel = st.vel;
             f.lane = lane;
             f.accent = L.plan.accent;
             recent[recentHead] = f;
             recentHead = (recentHead + 1) % kRecent;
             if (log) {
-                if (log->size() >= log->capacity())
-                    log->erase(log->begin(), log->begin() + long(log->size() / 2));
-                log->push_back(f);
+                (*log)[logCount % log->size()] = f;
+                ++logCount;
             }
         }
     }
@@ -1028,7 +1032,7 @@ void Engine::init(float rate) {
     }
     d->refreshEff(0);
     d->refreshEff(1);
-    m_log.reserve(1 << 14);
+    m_log.assign(1 << 13, Fired{});
     d->log = &m_log;
 }
 
@@ -1132,7 +1136,7 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
     const Settings &e = s.eff[lead];
     const float fb = std::min(0.93f, 0.2f + 0.42f * e.echo + 0.4f * e.throwFb);
     s.echo.process(sendL, sendR, dryL, dryR, n, float(echoBeats(e.echoTime) * tr.samplesPerBeat()), fb,
-                   0.8f + 0.3f * e.throwFb);
+                   0.8f + 0.12f * e.throwFb);
     float pk = 0;
     for (int i = 0; i < n; ++i) {
         const float L = s.hpL.step(dryL[i]).high * kOutGain, R = s.hpR.step(dryR[i]).high * kOutGain;
@@ -1191,7 +1195,7 @@ void Engine::publish(float *data) {
         const Fired &f = s.recent[(s.recentHead + i) % kRecent];
         float *o = data + kDataRecent + 4 * i;
         o[0] = float(std::fmod(f.beat, 64.0));
-        o[1] = f.midi;
+        o[1] = float(f.degree);
         o[2] = f.accent ? -f.vel : f.vel;
         o[3] = f.midi > 0 ? float(f.lane + 1) : 0.0f;
     }
@@ -1203,6 +1207,16 @@ int Engine::voices() const {
         n += v.on;
     return n;
 }
+
+std::vector<Engine::Fired> Engine::log() const {
+    std::vector<Fired> out;
+    const uint64_t n = std::min<uint64_t>(d->logCount, m_log.size());
+    for (uint64_t i = d->logCount - n; i < d->logCount; ++i)
+        out.push_back(m_log[i % m_log.size()]);
+    return out;
+}
+
+void Engine::clearLog() { d->logCount = 0; }
 
 const Settings &Engine::laneSettings(int lane) const { return d->eff[std::clamp(lane, 0, 1)]; }
 uint64_t Engine::laneCounter(int lane) const { return d->lanes[std::clamp(lane, 0, 1)].counter; }
@@ -2197,12 +2211,14 @@ void ArpControl::paintGrid(QPainter &p, const PaintContext &pc) {
     p.setPen(QPen(col, 2));
     p.drawLine(pc.at(kSplit, 0), pc.at(kSplit, 1));
 
-    // The notes just played, as a running trace over the grid: the last bar
-    // from left to right, pitch upward, accents larger, the loop in amber.
-    const QRectF band = pc.rect(0.012f, kChipsLow + 0.05f, kSplit - 0.012f, kChipsTop - 0.04f);
+    // The notes just played, drawn where they sit on the grid and joined in
+    // the order they came: the pattern's path through the chord, fading
+    // over a beat. Notes above the grid ride its upper edge; the loop's are
+    // amber.
     const double now = std::fmod(pc.beat, 64.0);
-    QPointF last;
-    bool have = false;
+    const qreal cw = pc.pad.width() * kSplit / kColumns, ch = pc.pad.height() * rowH;
+    QPointF last[2];
+    bool have[2] = {false, false};
     for (int i = 0; i < kRecent; ++i) {
         const float *o = data + kDataRecent + 4 * i;
         if (o[3] <= 0)
@@ -2210,24 +2226,37 @@ void ArpControl::paintGrid(QPainter &p, const PaintContext &pc) {
         double age = now - double(o[0]);
         if (age < 0)
             age += 64.0;
-        if (age > 4.0)
+        if (age > 1.5)
             continue;
-        const QPointF pt(band.right() - band.width() * age / 4.0,
-                         band.bottom() - band.height() * clampf((o[1] - 50.0f) / 46.0f, 0, 1));
-        const QColor dot = o[3] > 1.5f ? c::amber() : col;
-        const float fade = float(1.0 - age / 4.0);
-        if (have && o[3] < 1.5f) {
-            p.setPen(QPen(c::alpha(dot, 0.25f * fade), 1));
-            p.drawLine(last, pt);
+        const int lane = o[3] > 1.5f ? 1 : 0;
+        const int d = int(std::lround(o[1]));
+        int row = d < perOct ? 0 : 1;
+        int colIdx = d - row * perOct, above = 0;
+        while (colIdx >= kColumns) {
+            colIdx -= perOct;
+            ++above;
         }
-        const qreal rad = 1.8 + 3.2 * std::fabs(o[2]) + (o[2] < 0 ? 2.2 : 0);
+        if (colIdx < 0)
+            continue;
+        const QPointF centre = pc.at(kSplit * (float(colIdx) + 0.5f) / kColumns, kChipsLow + rowH * (float(row) + 0.5f));
+        const QPointF pt = centre + QPointF(0, -std::min(0.42, 0.14 * above) * ch - (lane ? cw * 0.18 : 0));
+        const QColor dot = lane ? c::amber() : col;
+        const float fade = float(1.0 - age / 1.5);
+        if (have[lane]) {
+            p.setPen(QPen(c::alpha(dot, 0.55f * fade), 1.5));
+            p.drawLine(last[lane], pt);
+        }
+        const qreal rad = 2.5 + 4.0 * std::fabs(o[2]) + (o[2] < 0 ? 3.0 : 0);
         p.setPen(Qt::NoPen);
-        p.setBrush(c::alpha(dot, 0.2f + 0.75f * fade));
+        p.setBrush(c::alpha(dot, 0.15f + 0.85f * fade));
         p.drawEllipse(pt, rad, rad);
-        if (o[3] < 1.5f) {
-            last = pt;
-            have = true;
+        if (above > 0) {
+            p.setPen(QPen(c::alpha(dot, 0.8f * fade), 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(pt, rad + 3.0 * above, rad + 3.0 * above);
         }
+        last[lane] = pt;
+        have[lane] = true;
     }
 }
 
@@ -2299,6 +2328,8 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
     const float *data = pc.view->data;
     const bool overlay = data[kDataOverlay] > 0.5f;
     const Settings &s = m_s;
+    Tuning tuning;
+    tuning.set(pc.studio->root, pc.studio->family, pc.studio->brightness, pc.studio->just);
     for (int pad = 0; pad < PadCount; ++pad) {
         const QRectF a = padArea(pad);
         const QRectF r = pc.rect(float(a.left()), float(a.top()), float(a.right()), float(a.bottom())).adjusted(6, 12, -6, -6);
@@ -2361,7 +2392,7 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
             c::text(p, QRectF(centre.x() - 40, centre.y() - 11, 80, 20), QStringLiteral("%1/%2").arg(hits).arg(n), tint,
                     14, true, Qt::AlignCenter);
             c::text(p, QRectF(centre.x() - 40, centre.y() + 7, 80, 14),
-                    s.ratchet > 0.01f ? QStringLiteral("ROLLS") : QStringLiteral("↻ %1").arg(s.rotate % n),
+                    s.ratchet > 0.01f ? QStringLiteral("ROLLS") : QStringLiteral("ROT %1").arg(s.rotate % n),
                     c::alpha(tint, 0.7f), 10, true, Qt::AlignCenter);
             marker(float(hits - 1) / float(std::max(1, n - 1)), (float(s.rotate % n) + 0.5f) / float(n));
             break;
@@ -2376,7 +2407,7 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
                     p.fillRect(cell, c::alpha(tint, covered ? 0.42f : reach ? 0.16f : 0.06f));
                 }
             c::text(p, QRectF(r.left(), r.top() + 1, r.width() - 6, 20),
-                    QStringLiteral("%1 OCT FROM %2").arg(s.octaves).arg(s.reg + 3),
+                    QStringLiteral("%1 OCT FROM %2").arg(s.octaves).arg(noteLabel(tuning, s.reg, 0, 0)),
                     touched ? QColor::fromRgb(c::kInk) : tint, 10, true, Qt::AlignRight | Qt::AlignVCenter);
             marker((float(s.reg) + 0.5f) / kRegisters, (float(s.octaves) - 0.5f) / kMaxOctaves);
             break;
@@ -2420,14 +2451,39 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
                 c::text(p, cell, i == 0 ? QStringLiteral("–") : QString::number(accentCycle(i)),
                         on ? QColor::fromRgb(c::kInk) : c::alpha(tint, 0.55f), 10, true, Qt::AlignCenter);
             }
-            // Chaos as a column of dice dots rising with it.
-            const int dots = int(std::lround(s.chaos * 10));
-            for (int i = 0; i < 10; ++i) {
-                const qreal y = in.bottom() - 24 - (in.height() - 30) * (i + 0.5) / 10.0;
-                const qreal x = in.left() + in.width() * (0.15 + 0.7 * unit(hash(s.seed, uint32_t(i))));
-                p.setPen(Qt::NoPen);
-                p.setBrush(c::alpha(tint, i < dots ? 0.75f : 0.1f));
-                p.drawEllipse(QPointF(x, y), 2.4, 2.4);
+            // The bar to come, step by step, as the groove will play it:
+            // the euclidean hits, accents tall, rolls split, chaos's skips
+            // missing and its leaps lifted. The dice repeat every two bars,
+            // so this is what will sound.
+            {
+                const int n = stepsPerBar(s.rate);
+                const int64_t bar = int64_t(std::floor(pc.beat / kBeatsPerBar));
+                const QRectF lane(in.left(), in.top() + 6, in.width(), in.height() - 30);
+                const qreal w2 = lane.width() / n;
+                uint64_t counter = 0;
+                for (int i = 0; i < n; ++i) {
+                    const int64_t step = bar * n + i;
+                    const StepPlan plan = planStep(s, step, counter);
+                    const qreal x = lane.left() + w2 * i;
+                    const bool now = int64_t(std::floor(pc.beat / stepBeats(s.rate))) == step;
+                    if (!plan.fire) {
+                        p.fillRect(QRectF(x + w2 * 0.2, lane.bottom() - 2, w2 * 0.6, 2), c::alpha(tint, 0.25f));
+                        continue;
+                    }
+                    ++counter;
+                    const qreal h = lane.height() * (plan.accent ? 0.9 : 0.35 + 0.3 * (plan.gain - 0.8) / 0.2);
+                    const int r = std::max(1, plan.ratchet);
+                    const qreal seg = h / r;
+                    for (int k = 0; k < r; ++k)
+                        p.fillRect(QRectF(x + w2 * 0.15, lane.bottom() - seg * (k + 1) + (k ? 1.5 : 0), w2 * 0.7,
+                                          seg - (k ? 1.5 : 0)),
+                                   c::alpha(tint, now ? 1.0f : plan.accent ? 0.85f : 0.55f));
+                    if (plan.leap) {
+                        p.setPen(Qt::NoPen);
+                        p.setBrush(c::alpha(tint, 0.9f));
+                        p.drawEllipse(QPointF(x + w2 * 0.5, lane.bottom() - h - 5), 2, 2);
+                    }
+                }
             }
             c::text(p, QRectF(r.left(), r.top() + 1, r.width() - 6, 20), QStringLiteral("CHAOS %1").arg(int(s.chaos * 100)),
                     touched ? QColor::fromRgb(c::kInk) : c::alpha(tint, s.chaos > 0.01f ? 0.95f : 0.4f), 10, true,
@@ -2436,18 +2492,26 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
             break;
         }
         case PadEcho: {
-            // The repeats as bars falling away, spaced by the echo's time,
-            // alternating sides like the ping-pong itself.
+            // The repeats over the next bar, spaced by the echo's time and
+            // fading by its feedback, left and right in turn like the
+            // ping-pong itself; the beats ticked along the bottom.
             const float fb = std::min(0.93f, 0.2f + 0.42f * s.echo + 0.4f * s.throwFb);
-            const qreal spacing = in.width() * 0.16 * echoBeats(s.echoTime);
-            float lvl = 0.25f + 0.75f * s.echo;
-            for (int i = 0; i < 16 && lvl > 0.03f; ++i) {
-                const qreal x = in.left() + 4 + spacing * (i + 1);
-                if (x > in.right() - 4)
+            const QRectF lane(in.left() + 4, in.top() + 4, in.width() - 8, in.height() - 12);
+            p.setPen(QPen(c::alpha(tint, 0.3f), 1));
+            for (int b = 0; b <= 4; ++b) {
+                const qreal x = lane.left() + lane.width() * b / 4.0;
+                p.drawLine(QPointF(x, lane.bottom()), QPointF(x, lane.bottom() + 4));
+            }
+            p.drawLine(QPointF(lane.left(), lane.center().y()), QPointF(lane.right(), lane.center().y()));
+            p.fillRect(QRectF(lane.left() - 1, lane.top(), 3, lane.height()), c::alpha(tint, 0.8f));
+            float lvl = 0.9f * s.echo;
+            for (int i = 1; i < 24 && lvl > 0.02f; ++i) {
+                const qreal x = lane.left() + lane.width() * echoBeats(s.echoTime) * i / 4.0;
+                if (x > lane.right())
                     break;
-                const qreal h = (in.height() * 0.42) * lvl;
-                const qreal mid = in.center().y() + (i % 2 ? 6 : -6);
-                p.fillRect(QRectF(x - 2, mid - h / 2, 4, h), c::alpha(tint, 0.25f + 0.6f * s.echo));
+                const qreal h = lane.height() * 0.48 * lvl;
+                const qreal y0 = lane.center().y();
+                p.fillRect(i % 2 ? QRectF(x - 2, y0 - h, 4, h) : QRectF(x - 2, y0, 4, h), c::alpha(tint, 0.35f + 0.6f * lvl));
                 lvl *= fb;
             }
             c::text(p, QRectF(r.left(), r.top() + 1, r.width() - 6, 20),

@@ -161,7 +161,7 @@ enum : int {
     kDataOverlay = 59,
     kDataLiveRatchet = 60, // the last step's roll count
     kDataLiveAccent = 61,
-    kDataRecent = 64, // kRecent × (beat mod 64, midi, velocity (negative: accent), lane)
+    kDataRecent = 64, // kRecent × (beat mod 64, degree, velocity (negative: accent), lane + 1)
 };
 constexpr int kFlashCells = 24;
 constexpr int kRecent = 40;
@@ -295,11 +295,13 @@ public:
         uint64_t sample = 0;
         double beat = 0;
         float midi = 0, vel = 0;
+        int degree = 0; // above the register's tonic
         int lane = 0;
         bool accent = false;
     };
-    const std::vector<Fired> &log() const { return m_log; }
-    void clearLog() { m_log.clear(); }
+    // A copy, oldest first (not for the audio thread).
+    std::vector<Fired> log() const;
+    void clearLog();
     const Settings &laneSettings(int lane) const;
     uint64_t laneCounter(int lane) const;
 
@@ -307,7 +309,7 @@ public:
 
 private:
     Impl *d;
-    std::vector<Fired> m_log; // reserved at init; bounded
+    std::vector<Fired> m_log; // a ring of the last few thousand, sized at init
 };
 
 }

@@ -362,6 +362,10 @@ struct PartSpec {
     std::unique_ptr<PartControl> control;
     std::unique_ptr<PartEngine> engine;
     float channel[ChannelCount] = {0.8f, 0.5f, 0.5f, 0.15f, 0.0f, 0.6f, 0.0f, 0.0f};
+    // Whether what it plays depends on the chord of the moment (bass, arp,
+    // pads…): Space then hears the same notes over a new chord as new
+    // playing, so a line that follows a progression loops the progression.
+    bool followsChords = true;
 };
 
 }

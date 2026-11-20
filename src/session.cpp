@@ -15,6 +15,7 @@ namespace tf {
 
 struct Session::Page {
     PartSpec spec;
+    bool followsChords = true;
     int part = -1; // the studio's index, or −1 for the arrange page
     std::unique_ptr<Context> ctx;
 };
@@ -34,7 +35,9 @@ public:
             // Its key says which sound it was (a pad, a note, a chord): the
             // first field is each page's "what", so Space can tell a
             // repeated pattern from new playing.
-            const uint32_t key = uint32_t(c.type) * 2654435761u ^ uint32_t(c.i[0]) * 40503u;
+            uint32_t key = uint32_t(c.type) * 2654435761u ^ uint32_t(c.i[0]) * 40503u;
+            if (m_s->m_pages[size_t(m_part)]->followsChords)
+                key ^= uint32_t(m_s->m_view.chordRoot + 1) * 7919u;
             onsets[onsetHead % onsets.size()] = {c.t > 0 ? c.t : now(), !(c.flags & Command::Continue), key};
             ++onsetHead;
         }
@@ -189,6 +192,7 @@ Session::Session(Studio *studio) : m_studio(studio) {
     for (auto &spec : parts) {
         auto page = std::make_unique<Page>();
         page->part = m_studio->addPart(std::move(spec.engine), spec.channel);
+        page->followsChords = spec.followsChords;
         page->spec = std::move(spec);
         page->ctx = std::make_unique<Context>(this, page->part);
         m_pages.push_back(std::move(page));
@@ -367,7 +371,7 @@ bool Session::key(const KeyEvent &k) {
     // it at the bar after.
     if (k.key == Qt::Key_Space) {
         if (k.down && !k.repeat && p.part >= 0)
-            toggleRecording(*p.ctx);
+            toggleRecording(*p.ctx, (k.modifiers & Qt::ShiftModifier) != 0);
         return true;
     }
     return false;
@@ -387,7 +391,43 @@ void Session::refresh() {
         }
         if (m_takeOrder.size() > 64)
             m_takeOrder.erase(m_takeOrder.begin(), m_takeOrder.end() - 64);
+        const long bin = long(std::floor(m_view.time * 4.0));
+        for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
+            const bool on = m_view.parts[p].voices > 0 && m_view.parts[p].playing < 0;
+            // Bins skipped since the last view were the same as now.
+            for (long b = std::max(m_soundBin[p] + 1, bin - kSoundBins + 1); b <= bin; ++b)
+                m_sounding[p][((b % kSoundBins) + kSoundBins) % kSoundBins] = on;
+            m_soundBin[p] = bin;
+        }
     }
+}
+
+// No stretch longer than maxGap in [t0, t1] where the part was silent.
+bool Session::soundedThrough(int part, double t0, double t1, double maxGap) const {
+    if (part < 0 || part >= kMaxParts)
+        return false;
+    const long b0 = long(std::floor(t0 * 4.0)), b1 = long(std::floor(t1 * 4.0));
+    if (b1 - b0 >= kSoundBins || b1 > m_soundBin[part] + 2)
+        return false;
+    double silent = 0;
+    for (long b = b0; b <= b1; ++b) {
+        if (m_sounding[part][((b % kSoundBins) + kSoundBins) % kSoundBins])
+            silent = 0;
+        else if ((silent += 0.25) > maxGap)
+            return false;
+    }
+    return true;
+}
+
+// The latest moment since `since` the part was sounding, or -1.
+double Session::lastSounding(int part, double since) const {
+    if (part < 0 || part >= kMaxParts)
+        return -1;
+    const long b0 = std::max(long(std::floor(since * 4.0)), m_soundBin[part] - kSoundBins + 1);
+    for (long b = m_soundBin[part]; b >= b0; --b)
+        if (m_sounding[part][((b % kSoundBins) + kSoundBins) % kSoundBins])
+            return double(b + 1) / 4.0;
+    return -1;
 }
 
 void Session::paint(QPainter &painter, const QRectF &pad, double time) {
@@ -478,7 +518,7 @@ double settledLoop(const std::vector<Hit> &hits, double end, double earliest, co
 
 }
 
-void Session::toggleRecording(ControlContext &base) {
+void Session::toggleRecording(ControlContext &base, bool layer) {
     // Space loops what was just played. Play first, then press Space:
     //   * nothing else playing: press it where the phrase would start again
     //     (the next ONE). The phrase becomes the loop and sets the tempo.
@@ -519,11 +559,12 @@ void Session::toggleRecording(ControlContext &base) {
         const double t = times[i].t;
         if (t > nowT + 0.05)
             continue;
+        // A pause is two bars with nothing played and nothing sounding.
         if (last < 0) {
-            if (nowT - t > 8 * spb)
+            if (nowT - t > 8 * spb && !soundedThrough(part, t, nowT, 8 * spb))
                 break;
             last = t;
-        } else if (earliest - t > 8 * spb) {
+        } else if (earliest - t > 8 * spb && !soundedThrough(part, t, earliest, 8 * spb)) {
             break;
         }
         earliest = t;
@@ -604,6 +645,14 @@ void Session::toggleRecording(ControlContext &base) {
                            : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
         return;
     }
+    // Sound that went on after the last note (a riser building into its
+    // drop, an impact ringing out) is part of what was played.
+    {
+        // A note's own release isn't that: only sound going on well past it.
+        const double sounding = lastSounding(part, last);
+        if (sounding > last + 2 * spb)
+            last = std::min(sounding, nowT);
+    }
     const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
     // The loop ends where the playing did: now, or a beat after the last
     // note if there was a pause before Space, on the sixteenth grid. It
@@ -629,7 +678,7 @@ void Session::toggleRecording(ControlContext &base) {
     // whose bars are alike but not the same stays two bars once it has been
     // played twice.
     double length = 0, bestScore = 0.75;
-    for (double p : {4.0, 8.0, 16.0, 32.0}) {
+    for (double p : {4.0, 8.0, 16.0, 32.0, 64.0}) {
         if (end - 2 * p < beatFirst - 0.125 - 0.2)
             break;
         const double score = repeats(hits, end - p, end, p, 0.2, 0.125);
@@ -647,7 +696,18 @@ void Session::toggleRecording(ControlContext &base) {
         // Played once: the whole phrase, in whole bars, with no bars of
         // silence added to round it.
         const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
-        length = kBeatsPerBar * std::clamp(played, 1.0, 8.0);
+        length = kBeatsPerBar * std::clamp(played, 1.0, 16.0);
+    }
+    // Over loops already playing, a take long enough to cover the longest
+    // of them takes its length: a bass line over a four-bar progression
+    // loops all four bars, in step with it.
+    {
+        double phrase = 0;
+        for (int q = 0; q < m_view.partCount; ++q)
+            if ((q != part || layer) && m_view.parts[q].playing >= 0)
+                phrase = std::max(phrase, double(m_view.parts[q].clips[m_view.parts[q].playing].lengthBeats));
+        if (phrase > length && phrase <= 64 && end - phrase >= beatFirst - 1.0)
+            length = phrase;
     }
     const int bars = int(std::lround(length / kBeatsPerBar));
     StudioMsg m;
@@ -656,12 +716,19 @@ void Session::toggleRecording(ControlContext &base) {
     m.slot = int8_t(slot);
     m.d0 = end - length;
     m.d1 = end;
+    // Shift+Space: on top of this part's playing loop, as one loop.
+    const int into = m_view.parts[part].playing;
+    if (layer && into >= 0)
+        m.value = into + 1;
     ctx.post(m);
     m_view.parts[part].recording = slot;
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
-    ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
+    if (layer && into >= 0)
+        ctx.notice(QStringLiteral("Layered %1 onto slot %2 (Ctrl+Z takes it off)").arg(what).arg(into + 1));
+    else
+        ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
 }
 
 void Session::undoTake() {

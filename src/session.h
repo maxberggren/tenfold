@@ -79,7 +79,7 @@ public:
     void undoTake();
     void startOver();
     // Space: arm a loop on this part from the next bar, or close it.
-    void toggleRecording(ControlContext &ctx);
+    void toggleRecording(ControlContext &ctx, bool layer = false);
 
     // The clock the touch frames use (the same one live, script time
     // offline), so a page's ctx.now() is right between frames.
@@ -106,6 +106,14 @@ private:
     void deliver(const Frame &f);
     Frame withMouse(Frame f) const;
     std::vector<int> m_takeOrder;          // the part of each take that landed, oldest first
+    // Whether each part was sounding with no clip of its own playing, in
+    // quarter-second bins over the last minute: a riser building for bars,
+    // a latched arp, a ringing pad isn't a pause in the playing.
+    static constexpr int kSoundBins = 256;
+    uint8_t m_sounding[kMaxParts][kSoundBins] = {};
+    long m_soundBin[kMaxParts] = {};
+    bool soundedThrough(int part, double t0, double t1, double maxGap) const;
+    double lastSounding(int part, double since) const;
     uint32_t m_takesSeen[kMaxParts] = {};
     double m_startOverAsked = -1;
     Frame m_last;            // the last frame, as the pad sent it

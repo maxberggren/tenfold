@@ -22,6 +22,7 @@ Rectangle {
         "Ctrl [ ]\t" + qsTr("mode, darker or brighter"),
         "Ctrl M\t" + qsTr("metronome"),
         "Ctrl ⌫\t" + qsTr("stop every clip at the next bar"),
+        "Shift Space\t" + qsTr("layer what you just played onto this part's playing loop, as one loop"),
         "Ctrl Z\t" + qsTr("take back the newest loop, on any page; what played before plays again"),
         "Ctrl N, Ctrl N\t" + qsTr("start over: every loop cleared, the next one sets the tempo"),
         "Ctrl R\t" + qsTr("record to ~/Music/tenfold"),

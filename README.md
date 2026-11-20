@@ -38,6 +38,10 @@ something playing, Space finds the bars you repeated and loops them from the
 bar line, leaving out whatever you tried before. F1–F8 launch a page's eight
 slots and Backspace stops it.
 
+**Layers.** Shift+Space puts what you just played on top of the part's playing
+loop, as one loop. On Arrange, pick two loops of a part and press M to layer
+them, Shift+M to chain them.
+
 **Changed your mind?** Ctrl+Z takes back the newest loop on any page, and
 what was playing before comes back. Ctrl+N twice starts over.
 

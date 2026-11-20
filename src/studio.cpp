@@ -33,7 +33,7 @@ int replayId(int id, int slot) { return kReplayBit | (slot << 24) | (id & 0xFFFF
 // shorter ones snap to 1, 2 or 4 beats.
 double snapLength(double beats) {
     if (beats >= 3.0)
-        return std::clamp(std::round(beats / kBeatsPerBar), 1.0, 8.0) * kBeatsPerBar;
+        return std::clamp(std::round(beats / kBeatsPerBar), 1.0, 16.0) * kBeatsPerBar;
     static const double lengths[] = {1, 2, 4};
     double best = 4, bestErr = 1e9;
     for (double l : lengths) {
@@ -106,7 +106,8 @@ struct Studio::PartState {
     bool overdub = false;
     int recording = -1;
     double recStart = 0, recEnd = -1, recOrigin = 0;
-    int recMaxBars = 8;
+    int recLayerInto = -1; // a take that lands layered into this slot's clip
+    int recMaxBars = 16;
     int held[kReplayHeld] = {};
     int heldCount = 0;
 };
@@ -453,6 +454,57 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     }
 }
 
+// a ← a + b. Layered: both at once, the shorter repeated to the longer's
+// length, each in its place against the bars. Chained: a, then b. b stays.
+// Kept for Ctrl+Z; `count` says whether it counts as a take of its own.
+static bool mergeInto(Studio::PartState &p, Studio::Impl &s, int a, int b, bool chain, bool count) {
+    if (a < 0 || a >= kClipSlots || b < 0 || b >= kClipSlots || a == b || p.clips[a].length <= 0 ||
+        p.clips[b].length <= 0)
+        return false;
+    auto &before = keepForUndo(p, a); // also the source for a's own events
+    const bool was = p.playing == a;
+    if (was)
+        stopClip(p, s);
+    auto &dst = p.clips[a];
+    const auto &other = p.clips[b];
+    const double lenA = before.length, lenB = other.length;
+    const double len = chain ? lenA + lenB : std::max(lenA, lenB);
+    dst.events.clear();
+    dst.length = len;
+    dst.anchor = before.anchor;
+    // The other clip's sounds get ids of their own, so a note in one never
+    // ends a note in the other.
+    auto otherId = [](Command c) {
+        c.id ^= 0x800000;
+        return c;
+    };
+    auto room = [&] { return int(dst.events.size()) < kClipEvents; };
+    if (chain) {
+        for (const auto &e : before.events)
+            if (room())
+                dst.events.push_back(e);
+        for (const auto &e : other.events)
+            if (room())
+                dst.events.push_back({lenA + e.pos, otherId(e.c), -1e18});
+    } else {
+        for (double k = 0; k < len - 1e-9; k += lenA)
+            for (const auto &e : before.events)
+                if (room())
+                    dst.events.push_back({k + e.pos, e.c, -1e18});
+        const double shift = floorMod(other.anchor - before.anchor, lenB);
+        for (double k = 0; k < len - 1e-9; k += lenB)
+            for (const auto &e : other.events)
+                if (room())
+                    dst.events.push_back({floorMod(k + e.pos + shift, len), otherId(e.c), -1e18});
+    }
+    sortClip(dst.events);
+    if (was)
+        startClip(p, s, a, dst.anchor);
+    if (count)
+        ++p.takes;
+    return true;
+}
+
 void Studio::apply(const StudioMsg &m) {
     Impl &s = *d;
     Transport &tr = s.transportState;
@@ -537,8 +589,9 @@ void Studio::apply(const StudioMsg &m) {
         p->recording = m.slot;
         p->recStart = nextBar();
         p->recOrigin = p->recStart;
+        p->recLayerInto = -1;
         p->recEnd = -1;
-        p->recMaxBars = std::clamp(m.value, 1, 8);
+        p->recMaxBars = std::clamp(m.value, 1, 16);
         break;
     case StudioMsg::StopRecord:
         if (!p || p->recording < 0)
@@ -559,6 +612,7 @@ void Studio::apply(const StudioMsg &m) {
         p->recording = m.slot;
         p->recStart = m.d0;
         p->recEnd = m.d1;
+        p->recLayerInto = m.value > 0 ? m.value - 1 : -1;
         {
             // The clip's anchor: the window's start rounded down to the grid
             // its length lives on (the bar, or the beat for shorter loops).
@@ -566,7 +620,7 @@ void Studio::apply(const StudioMsg &m) {
             const double g = std::min(len, double(kBeatsPerBar));
             p->recOrigin = std::floor(m.d0 / g + 1e-9) * g;
         }
-        p->recMaxBars = 8;
+        p->recMaxBars = 16;
         break;
     case StudioMsg::CancelRecord:
         if (p)
@@ -659,59 +713,10 @@ void Studio::apply(const StudioMsg &m) {
         ++p->takes;
         break;
     }
-    case StudioMsg::MergeClips: {
-        // slot ← slot + value. f < 0.5 layers them (both at once, the shorter
-        // repeated to the longer's length); otherwise chains them (slot, then
-        // value, one after the other). The other clip stays as it is.
-        const int a = m.slot, b = m.value;
-        if (!p || a < 0 || a >= kClipSlots || b < 0 || b >= kClipSlots || a == b || p->clips[a].length <= 0 ||
-            p->clips[b].length <= 0)
-            return;
-        const bool chain = m.f >= 0.5f;
-        auto &before = keepForUndo(*p, a); // also the source for a's own events
-        const bool was = p->playing == a;
-        if (was)
-            stopClip(*p, s);
-        auto &dst = p->clips[a];
-        const auto &other = p->clips[b];
-        const double lenA = before.length, lenB = other.length;
-        const double len = chain ? lenA + lenB : std::max(lenA, lenB);
-        dst.events.clear();
-        dst.length = len;
-        dst.anchor = before.anchor;
-        // The other clip's sounds get ids of their own, so a note in one
-        // never ends a note in the other.
-        auto otherId = [](Command c) {
-            c.id ^= 0x800000;
-            return c;
-        };
-        auto room = [&] { return int(dst.events.size()) < kClipEvents; };
-        if (chain) {
-            for (const auto &e : before.events)
-                if (room())
-                    dst.events.push_back(e);
-            for (const auto &e : other.events)
-                if (room())
-                    dst.events.push_back({lenA + e.pos, otherId(e.c), -1e18});
-        } else {
-            for (double k = 0; k < len - 1e-9; k += lenA)
-                for (const auto &e : before.events)
-                    if (room())
-                        dst.events.push_back({k + e.pos, e.c, -1e18});
-            // The other clip's positions, moved into this clip's frame: the
-            // same place against the bars.
-            const double shift = floorMod(other.anchor - before.anchor, lenB);
-            for (double k = 0; k < len - 1e-9; k += lenB)
-                for (const auto &e : other.events)
-                    if (room())
-                        dst.events.push_back({floorMod(k + e.pos + shift, len), otherId(e.c), -1e18});
-        }
-        sortClip(dst.events);
-        if (was)
-            startClip(*p, s, a, dst.anchor);
-        ++p->takes;
+    case StudioMsg::MergeClips:
+        if (p)
+            mergeInto(*p, s, m.slot, m.value, m.f >= 0.5f, true);
         break;
-    }
     case StudioMsg::UndoTake: {
         if (!p || p->undoCount == 0)
             return;
@@ -836,6 +841,22 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 const int slot = p.recording;
                 p.recording = -1;
                 makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false);
+                // Layered onto the loop that was playing: the take goes into
+                // that clip, which plays on with both, and its own slot is
+                // freed. One Ctrl+Z takes the layer back off.
+                const int into = p.recLayerInto;
+                p.recLayerInto = -1;
+                if (into >= 0 && into != slot && p.clips[slot].length > 0 && p.clips[into].length > 0) {
+                    --p.undoCount; // the take's own slot was empty: nothing to keep
+                    p.catchUp = false;
+                    mergeInto(p, s, into, slot, false, false);
+                    p.undo[p.undoCount - 1].playing = into;
+                    if (p.playing == slot)
+                        stopClip(p, s);
+                    p.clips[slot].events.clear();
+                    p.clips[slot].length = 0;
+                    startClip(p, s, into, p.clips[into].anchor);
+                }
             }
         }
         if (p.playing < 0)

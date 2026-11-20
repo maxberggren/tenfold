@@ -601,6 +601,11 @@ void Studio::apply(const StudioMsg &m) {
     case StudioMsg::Clear:
         if (!p || m.slot < 0 || m.slot >= kClipSlots)
             return;
+        // Kept for Ctrl+Z like a take: clearing a slot can be taken back.
+        if (p->clips[m.slot].length > 0) {
+            keepForUndo(*p, m.slot);
+            ++p->takes;
+        }
         if (p->playing == m.slot)
             stopClip(*p, s);
         if (p->queued == m.slot)

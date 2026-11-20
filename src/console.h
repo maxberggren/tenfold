@@ -49,7 +49,8 @@ void finger(QPainter &p, const PaintContext &pc, const Touch &t, QColor color, c
             float glow = 0);
 // Faint lines dividing the pad into columns and rows.
 void grid(QPainter &p, const PaintContext &pc, int columns, int rows, QColor color, float a = 0.18f);
-// The four beats of the bar, the current one lit, at the pad's top right.
+// The four beats of the bar, the current one lit, at the pad's top right;
+// dark until a clip plays or the metronome is on.
 void beats(QPainter &p, const PaintContext &pc, QColor color);
 // This part's eight clip slots in a row: empty, stopped, queued (blinking),
 // playing (a hand sweeping round), recording (red).

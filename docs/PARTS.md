@@ -49,7 +49,7 @@ about 60 times a second and the page reads as `pc.view->data`.
     the studio's tempo. Loops must be deliberate and visible: the player asked
     "what is triggering the loop in slot?" when timing alone (the tap-then-hold
     rule in `src/phrase.h`) made them. Make a loop only from an explicit act
-    (Space, the click, a marked zone), show a cue before it happens, and say
+    (Space, which the session handles), show a cue before it happens, and say
     what was captured.
   - `ctx.record(slot, maxBars)` / `ctx.stopRecording()` record armed from the
     next bar.
@@ -97,12 +97,16 @@ about 60 times a second and the page reads as `pc.view->data`.
    by default. Electronic, big, modern, polished: a producer should want to
    use it in a real track.
 4. **The keyboard is yours,** except the digits, Escape, Tab, `?` and every
-   Ctrl combination (the session's). Convention across pages, at the user's
-   request: **Space records a loop** (from the next bar; Space again closes it).
-   If your page doesn't handle Space, the session does exactly that for you;
-   handle it yourself to add your own cues. F1–F8 launch your slots, Backspace
-   stops your clip. Use letter keys where they
-   make the instrument better (a piano row, chord buttons, pads).
+   Ctrl combination (the session's). **Space loops what was just played**, the
+   same on every page, and the session does it for you. Don't handle Space.
+   The player plays first, then presses Space. With nothing else playing they
+   press it where the phrase would start again, and that loop sets the tempo.
+   Over a playing loop, the bars that hold the phrase become a loop from the
+   bar line. Space again while a take waits calls it off. The session finds
+   the phrase from your onsets, so send every onset as `On` or flagged
+   `Command::Quantize`. Show it on your page from `pc.view->recording` (a take
+   waiting) and the clip strip. F1–F8 launch your slots, Backspace stops your
+   clip.
 5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about
    0.5%) and at most about 60 Hz per finger. A clip holds 2048 events.
 6. **Ids** stay below `1 << 24`.

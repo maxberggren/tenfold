@@ -276,7 +276,7 @@ public:
 
     QString help() const override {
         return QStringLiteral("touch\ta note of the scale; higher on the pad, brighter\n"
-                              "Space\trecord a loop from the next bar; Space again closes it\n"
+                              "Space\tloop what you just played (press it on the next ONE)\n"
                               "F1–F8\tlaunch a slot at the next bar\n"
                               "Backspace\tstop this part at the next bar");
     }
@@ -452,7 +452,7 @@ public:
     }
     QString help() const override {
         return QStringLiteral("tap\ta drum: kick, snare, clap, hat, open hat, perc\n"
-                              "Space\trecord a loop from the next bar; Space again closes it\n"
+                              "Space\tloop what you just played (press it on the next ONE)\n"
                               "F1–F8\tlaunch a slot\nBackspace\tstop the beat");
     }
 

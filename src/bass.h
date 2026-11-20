@@ -50,7 +50,7 @@ struct Pattern {
     const char *steps; // 'x' struck, '-' rest
 };
 constexpr Pattern kPatterns[] = {
-    {"OFFBEAT", "--x-"}, {"SKIP", "-x-x"}, {"GALLOP", "x-xx"}, {"ROLL", "-xxx"},
+    {"OFFBEAT", "--x-"}, {"SKIP", "-x-x"}, {"GALLOP", "x-xx"}, {"PSY", "-xxx"},
     {"DRIVE", "xxxx"},   {"TRIPLET", "-xx"}, {"STUTTER", "xxxxxxxx"}, {"8THS", "x-x-"},
 };
 constexpr int kPatternCount = int(sizeof(kPatterns) / sizeof(kPatterns[0]));

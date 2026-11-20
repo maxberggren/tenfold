@@ -60,6 +60,15 @@ public:
         post(m);
     }
     void record(int slot, int maxBars) override { simple(StudioMsg::Record, m_part, slot, maxBars); }
+    void take(int slot, double b0, double b1) override {
+        StudioMsg m;
+        m.kind = StudioMsg::TakeBars;
+        m.part = int8_t(m_part);
+        m.slot = int8_t(slot);
+        m.d0 = b0;
+        m.d1 = b1;
+        post(m);
+    }
     void stopRecording() override { simple(StudioMsg::StopRecord, m_part, 0, 0); }
     void overdub(bool on) override { simple(StudioMsg::Overdub, m_part, 0, on); }
     void launch(int slot, bool now) override { launchPart(m_part, slot, now); }

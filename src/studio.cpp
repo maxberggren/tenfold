@@ -80,6 +80,7 @@ struct Studio::PartState {
     Clip clips[kClipSlots];
     int playing = -1;
     int queued = -1;
+    uint32_t takes = 0;       // clips made from what was played, ever
     bool catchUp = false;     // a new clip's first block also plays what it just passed
     bool catchUpHeld = false; // …only the sounds still held at that point, and settings
     double queuedAt = 0;
@@ -694,12 +695,25 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 if (pos0 > 0 && pos0 < 0.25)
                     fireRange(0, pos0, 0);
             } else if (pos0 > 0) {
+                // Settings first: the latest of each Param and of each
+                // non-onset command a part uses for its state, so the bar
+                // plays the way the take sounded.
+                auto isSetting = [](const Command &c) {
+                    return c.type == Command::Param ||
+                           (c.type >= Command::User && (!(c.flags & Command::Quantize) || (c.flags & Command::Continue)));
+                };
+                for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
+                    if (!isSetting(it->c))
+                        continue;
+                    bool later = false;
+                    for (auto jt = it + 1; jt != clip.events.end() && jt->pos < pos0; ++jt)
+                        later |= isSetting(jt->c) && jt->c.type == it->c.type &&
+                                 (it->c.type != Command::Param || jt->c.i[0] == it->c.i[0]);
+                    if (!later)
+                        fire(*it, pos0);
+                }
                 for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
                     const Command &c = it->c;
-                    if (c.type == Command::Param) {
-                        fire(*it, pos0);
-                        continue;
-                    }
                     if (c.type != Command::On)
                         continue;
                     bool ended = false;

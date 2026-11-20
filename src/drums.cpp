@@ -4,6 +4,9 @@
 //
 //   * a tap is a hit, as hard as it was pressed, coloured by where on the
 //     pad it landed;
+//   * with a thumb resting in the REPEAT strip along the near edge (or B
+//     or N held), a pad rolls the moment it lands, MPC note-repeat style:
+//     the landing is the first step, at the rate the thumb points at;
 //   * a finger that stays rolls, locked to the grid: slide up for faster
 //     (1/4 to 1/32 triplets), sideways to bend its pitch, twist to open
 //     it, press to swell it;
@@ -49,9 +52,15 @@ constexpr int kCols = 4, kRows = 4;
 // 130 ms to sprout a step, longer than a tap lasts, while a roll still
 // starts within a step and kFirstStepSecs of landing, with no hole after.
 constexpr double kHoldSecs = 0.08;
-constexpr double kFirstStepSecs = 0.14;
+constexpr double kFirstStepSecs = 0.17;
 constexpr double kFirstLeadSecs = 0.012;
 constexpr double kTogetherSecs = 0.08; // fingers landing this close are one hand
+// The REPEAT strip: the near edge of the pad, where a thumb rests. Along it,
+// left to right, the roll rates; a landing within kSnapSecs of a step of
+// the grid counts as that step.
+constexpr float kStripY = 0.05f;
+constexpr double kSnapSecs = 0.03;
+
 // A light first reading is often a finger still coming down: such a landing
 // waits one more frame (a few milliseconds) and takes the hardest it pressed.
 // A firm one plays at once.
@@ -176,6 +185,13 @@ public:
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const bool shift = k.modifiers & Qt::ShiftModifier;
+        if (k.key == Qt::Key_B || k.key == Qt::Key_N) {
+            // REPEAT, as long as it's held: pads roll the moment they land.
+            const uint8_t bit = k.key == Qt::Key_B ? 1 : 2;
+            if (!k.repeat)
+                m_repeatKeys = k.down ? m_repeatKeys | bit : m_repeatKeys & ~bit;
+            return true;
+        }
         for (int i = 0; i < kKeyPadCount; ++i) {
             if (kKeyPads[i].key != k.key)
                 continue;
@@ -264,6 +280,7 @@ public:
                 release(h, ctx.now(), ctx, false);
         m_frame = Frame{};
         m_button = false;
+        m_repeatKeys = 0;
     }
 
     // --- drawing -------------------------------------------------------------
@@ -273,6 +290,8 @@ public:
     QString help() const override {
         return QStringLiteral(
             "tap a pad\ta hit, as hard as you press; where on the pad colours it (the ride's far edge is its bell)\n"
+            "thumb on the REPEAT strip (near edge)\tpads roll the moment they land, at the rate under the thumb "
+            "(1/4 left … 1/32T right); B or N held does the same at each drum's rate\n"
             "hold a pad\tit rolls on the grid: slide up for faster (1/4 … 1/32T), sideways bends its pitch, "
             "twist opens it, press to swell\n"
             "land fingers together and hold\ta groove: each pad plays its part in the kit's style; "
@@ -318,6 +337,8 @@ public:
         }
         if (!groove.isEmpty())
             parts.prepend(QStringLiteral("%1 grooving").arg(groove.join('+')));
+        if (repeating())
+            parts.prepend(QStringLiteral("REPEAT: pads roll as they land"));
         if (m_keep.active)
             parts << QStringLiteral("keeping %1 at the bar").arg(barsText(m_keep.length));
         if (m_recording >= 0)
@@ -345,6 +366,7 @@ private:
         Sweep,   // run across the pads
         Loop,    // closed a phrase into a loop: nothing more to do
         Kept,    // its roll or groove was kept: it plays on by itself
+        Repeat,  // a thumb in the REPEAT strip: pads roll as they land
     };
 
     // A finger or a key on a pad.
@@ -430,6 +452,16 @@ private:
         *h = Holder{};
         h->used = true;
         h->src = t.id;
+        if (t.y < kStripY) {
+            // A thumb on the strip: no sound, just REPEAT at the rate under it.
+            h->mode = Mode::Repeat;
+            h->landing = false;
+            h->x = h->x0 = t.x;
+            h->y = h->y0 = t.y;
+            h->t0 = now;
+            h->rate = stripRate(t.x);
+            return;
+        }
         h->pad = padAt(t.x, t.y);
         h->t0 = now;
         h->x0 = h->x = t.x;
@@ -441,8 +473,62 @@ private:
         h->vel = landingVelocity(t.pressure, t.size);
         h->lastCell = h->pad;
         h->cluster = clusterFor(now);
-        if (t.pressure >= kFirmPressure)
+        if (repeating() && h->pad != Sub)
+            instantRoll(*h, ctx);
+        else if (t.pressure >= kFirmPressure)
             sendLanding(*h, ctx);
+    }
+
+    static int stripRate(float x) { return std::clamp(int(x * kRates), 0, kRates - 1); }
+
+    // Is REPEAT held, by a thumb on the strip or by B or N?
+    bool repeating() const {
+        if (m_repeatKeys)
+            return true;
+        for (const auto &o : m_holders)
+            if (o.used && o.mode == Mode::Repeat)
+                return true;
+        return false;
+    }
+
+    // With REPEAT held, a pad rolls the moment it lands. Its landing is the
+    // first step: if a step of the grid is within kSnapSecs it lands on it
+    // (waiting a few milliseconds if the step is still to come), and the
+    // repeats carry on from the next step, so there is no hole at all.
+    void instantRoll(Holder &h, ControlContext &ctx) {
+        int rate = std::clamp(defaultRate(h.pad) + (h.key ? m_keyRate : 0), 0, kRates - 1);
+        for (const auto &o : m_holders)
+            if (o.used && o.mode == Mode::Repeat)
+                rate = o.rate;
+        h.landing = false;
+        if (!h.key) {
+            h.vel = landingVelocity(h.peak, h.size);
+            h.p0 = h.peak;
+        }
+        const double stepBeats = double(rateTicks(rate)) * kBeatsPerBar / kTicks;
+        const double landed = ctx.beatAt(h.t0);
+        const double k = std::round(landed / stepBeats);
+        double stepBeat = k * stepBeats;
+        const long tick = long(std::lround(stepBeat * kTicks / kBeatsPerBar)) % kTicks;
+        const bool swung = rateTicks(rate) >= 6 && tick % 12 == 6;
+        const double heard = ctx.timeAt(stepBeat + (swung ? double(m_swing - 0.5f) * 0.5 : 0.0));
+        double t = h.t0;
+        double cursor = landed;
+        if (std::fabs(heard - h.t0) <= kSnapSecs) {
+            t = std::max(heard, h.t0);
+            cursor = stepBeat + 1e-6;
+        }
+        hit(h.pad, h.vel, h.x0 * kCols - float(h.pad % kCols), h.y0 * kRows - float(h.pad / kCols), t, ctx);
+        Gen *g = newGen(h, ctx.now(), ctx);
+        h.mode = Mode::Roll;
+        h.rate = rate;
+        if (g) {
+            g->setRoll(rate);
+            g->cursor = cursor;
+            g->start = cursor;
+            g->first = false;
+        }
+        rebase(h);
     }
 
     // The landing's hit, timed when the finger came down, as hard as it
@@ -477,6 +563,8 @@ private:
         h->landing = false;
         if (h->pad == Sub)
             sendSubOn(*h, now, ctx);
+        else if (repeating())
+            instantRoll(*h, ctx);
         else
             hit(h->pad, h->vel, 0.5f, 0.5f, now, ctx);
     }
@@ -521,6 +609,9 @@ private:
         case Mode::Roll:
         case Mode::Groove:
             shapeGen(h);
+            break;
+        case Mode::Repeat:
+            h.rate = stripRate(h.x);
             break;
         case Mode::Edit:
             shapeSound(h, ctx);
@@ -577,7 +668,7 @@ private:
         }
         if (!h.key) {
             g.decay = clampf(twistBetween(h.angle0, h.angle) * 1.3f, -2.0f, 2.0f);
-            g.dyn = heldVelocity(h);
+            g.dyn = g.groove ? grooveVelocity(h) : heldVelocity(h);
         }
     }
 
@@ -684,6 +775,9 @@ private:
     static float heldVelocity(const Holder &h) {
         return h.key ? h.vel : clampf(h.vel + (h.pressure - h.p0), 0.05f, 1.0f);
     }
+    // A groove sits nearer full level: a relaxed hand grooves at about the
+    // level of a firm hit, and pressure still swells or softens it.
+    static float grooveVelocity(const Holder &h) { return clampf(0.55f + 0.5f * heldVelocity(h), 0.4f, 1.05f); }
 
     // Measure the ladder from where the finger is when it starts to
     // repeat, not where it landed: settling into a hold shouldn't change it.
@@ -710,6 +804,7 @@ private:
         h.density = 1;
         if (g) {
             g->groove = true;
+            g->dyn = grooveVelocity(h);
             g->density = 1;
             g->setPattern(groovePattern(h.pad, m_kit, 1, 0));
         }
@@ -945,7 +1040,7 @@ private:
             return false;
         uint32_t pads = 0;
         for (const auto &h : m_holders)
-            if (h.used)
+            if (h.used && h.mode != Mode::Repeat)
                 pads |= 1u << h.pad;
         if (!pads)
             return false;
@@ -1077,6 +1172,7 @@ private:
     int m_clusterSerial = 0;
     bool m_button = false;
     bool m_userOverdub = false;
+    uint8_t m_repeatKeys = 0; // B and N, held as REPEAT
     int m_playing = -1, m_recording = -1; // this part's clips, as the studio last said
     uint32_t m_muted[kClipSlots] = {};  // per slot, the pads taken out of its loop
     Frame m_frame;
@@ -1181,7 +1277,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         // A pad that repeats shows its bar of steps along the bottom, the
         // one just played lit, and what it is doing in the middle.
         if (gen) {
-            const QRectF strip(cell.left() + 8 * s, cell.bottom() - 18 * s, cell.width() - 16 * s, 10 * s);
+            // (Above the REPEAT strip on the bottom row.)
+            const double lift = row == 0 ? pc.pad.height() * kStripY : 0.0;
+            const QRectF strip(cell.left() + 8 * s, cell.bottom() - 18 * s - lift, cell.width() - 16 * s, 10 * s);
             const int nowTick = int(barPos * kTicks);
             int lastTick = -1;
             for (int i = 0; i < gen->pattern.count; ++i)
@@ -1236,6 +1334,26 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         c::tag(p, cell.center(), QString::fromUtf8(Tuning::noteName(pc12)), col, int(label * 1.2), true);
     }
 
+    // The REPEAT strip along the near edge, its rates left to right; lit
+    // under a resting thumb. B or N held lights the whole of it.
+    {
+        int thumb = -1;
+        for (const auto &h : m_holders)
+            if (h.used && h.mode == Mode::Repeat)
+                thumb = h.rate;
+        const bool on = thumb >= 0 || m_repeatKeys;
+        const QRectF strip = pc.rect(0, 0, 1, kStripY);
+        for (int r = 0; r < kRates; ++r) {
+            const QRectF seg(strip.left() + strip.width() * r / kRates + 2, strip.top() + 1,
+                             strip.width() / kRates - 4, strip.height() - 2);
+            const bool lit = r == thumb || (thumb < 0 && m_repeatKeys);
+            p.fillRect(seg, lit ? col : c::alpha(col, on ? 0.25f : 0.08f));
+            c::text(p, seg, r == 0 ? QStringLiteral("REPEAT %1").arg(rateName(r)) : QString::fromUtf8(rateName(r)),
+                    lit ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.6f), int(std::clamp(seg.height() * 0.6, 8.0, 12.0)),
+                    true, Qt::AlignCenter);
+        }
+    }
+
     // The fingers, each saying what it does.
     for (int i = 0; i < m_frame.count; ++i) {
         const Touch &t = m_frame.touches[i];
@@ -1269,6 +1387,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
             case Mode::Sweep: what = QStringLiteral("FILL"); break;
             case Mode::Loop: what = QStringLiteral("LOOP"); break;
             case Mode::Kept: what = QStringLiteral("KEPT"); break;
+            case Mode::Repeat: break; // the strip under it says so
             default: break;
             }
         }
@@ -1291,7 +1410,12 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
     if (pc.view->recording >= 0 && !m_keep.active)
         c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
-               QStringLiteral("LOOPING INTO SLOT %1 · SPACE CALLS IT OFF").arg(pc.view->recording + 1),
+               pc.view->takeBeats > 0
+                   ? QStringLiteral("%1 INTO SLOT %2 IN %3 BEATS · SPACE CALLS IT OFF")
+                         .arg(barsText(pc.view->takeBeats).toUpper())
+                         .arg(pc.view->recording + 1)
+                         .arg(std::max(0.0, pc.view->takeAt - pc.beat), 0, 'f', 1)
+                   : QStringLiteral("LOOPING INTO SLOT %1 · SPACE CALLS IT OFF").arg(pc.view->recording + 1),
                std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f), 13, true);
     c::beats(p, pc, col);
     // Below the pad: the clips, then the kits with the one playing lit and

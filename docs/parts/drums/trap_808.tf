@@ -29,14 +29,17 @@ glide 5.129 5.171 6 0.17 0.38
 glide 5.214 5.279 6 -0.03 0.38
 up 5.321 6
 key 5.364 Shift+Return
-# A hat roll over the loop: 1/16, then triplets, then thirty-seconds, bending up a
-# few semitones and back, pressing harder into the end of the phrase.
+# A hat roll over the loop, started from the REPEAT strip so it rolls the moment it
+# lands: triplets, then thirty-seconds, bending up a few semitones and back, pressing
+# harder into the end of the phrase.
+down 8.557 9 0.64 0.02
 down 8.771 7 0.88 0.12 p=0.4
 glide 9.200 9.286 7 0.88 0.19 p=0.5
 glide 9.629 9.714 7 0.95 0.26 p=0.7
 glide 10.057 10.143 7 0.86 0.19 p=0.6
 glide 10.271 10.357 7 0.82 0.12 p=0.9
 up 10.443 7
+up 10.486 9
 # Run down the toms into the drop, and the crash on the one.
 down 11.771 8 0.94 0.62 p=0.8
 glide 11.793 12.071 8 0.04 0.62 p=0.8

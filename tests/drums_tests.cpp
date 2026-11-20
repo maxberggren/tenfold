@@ -534,9 +534,9 @@ private slots:
         };
         QCOMPARE(strays(drums::Hat, 0.09), 0);
         QCOMPARE(strays(drums::Hat, 0.11), 0);
-        QVERIFY(strays(drums::Hat, 0.13) <= 1);
+        QCOMPARE(strays(drums::Hat, 0.13), 0);
         QCOMPARE(strays(drums::Rim, 0.11), 0);
-        QVERIFY(strays(drums::Rim, 0.13) <= 1);
+        QCOMPARE(strays(drums::Rim, 0.13), 0);
     }
 
     void aRollStartsAsLoudAsItsHitAndPressureSwellsIt() {
@@ -564,6 +564,49 @@ private slots:
         const auto on = onsets(swell, 0.95, 3.4);
         QVERIFY(on.size() >= 8);
         QVERIFY(peakAt(swell, on.back()) - peakAt(swell, on[1]) > 10.0);
+    }
+
+    void aThumbOnTheRepeatStripRollsFromTheLanding() {
+        // Straight techno at 124: a thumb rests on the strip at 1/16, and
+        // the hat lands on beat 4 (1.9355 s): every sixteenth from there,
+        // with no hole after the landing.
+        const double beat4 = 4 * kSpb;
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\ndown 1.0 9 0.5 0.02\n"
+                                        "down " + std::to_string(beat4) + " 1 " + at(drums::Hat) +
+                                        "\nup 3.0 1\nup 3.1 9\nend 3.2\n");
+        const auto on = onsets(take, 1.5, 3.0);
+        QVERIFY(on.size() >= 9);
+        QVERIFY2(std::fabs(on[0] - beat4) < 0.004, qPrintable(QString::number(on[0])));
+        for (size_t i = 1; i < on.size(); ++i)
+            QVERIFY2(std::fabs(on[i] - on[i - 1] - 0.25 * kSpb) < 0.003, qPrintable(QString::number(on[i] - on[i - 1])));
+        // Nothing on the strip sounds by itself.
+        QVERIFY(take.rms(1.0, 1.9) < 0.0005);
+    }
+
+    void theStripPicksTheRate() {
+        // The thumb further right, at 1/32: a roll every 60.5 ms from landing.
+        const double beat4 = 4 * kSpb;
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\ndown 1.0 9 0.79 0.02\n"
+                                        "down " + std::to_string(beat4) + " 1 " + at(drums::Hat) +
+                                        "\nup 3.0 1\nup 3.1 9\nend 3.2\n");
+        const auto on = onsets(take, 1.5, 3.0, 0.02);
+        QVERIFY(on.size() >= 16);
+        QVERIFY(std::fabs(on[0] - beat4) < 0.004);
+        for (size_t i = 1; i < on.size(); ++i)
+            QVERIFY2(std::fabs(on[i] - on[i - 1] - 0.125 * kSpb) < 0.006, qPrintable(QString::number(on[i] - on[i - 1])));
+    }
+
+    void heldBRepeatsKeysAndALandingJustEarlySnapsToTheStep() {
+        // B held: the hat key pressed 20 ms before beat 4 plays on beat 4,
+        // then every sixteenth.
+        const double beat4 = 4 * kSpb;
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\nkey 1.0 B down\n"
+                                        "key " + std::to_string(beat4 - 0.02) + " V down\nkey 3.0 V up\nkey 3.1 B up\nend 3.2\n");
+        const auto on = onsets(take, 1.5, 3.0);
+        QVERIFY(on.size() >= 9);
+        QVERIFY2(std::fabs(on[0] - beat4) < 0.004, qPrintable(QString::number(on[0])));
+        for (size_t i = 1; i < on.size(); ++i)
+            QVERIFY(std::fabs(on[i] - on[i - 1] - 0.25 * kSpb) < 0.003);
     }
 
     void swingLeavesThirtySecondsEven() {

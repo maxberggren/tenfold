@@ -51,13 +51,15 @@ testkit::Take watch(const std::string &script, const std::function<void(double, 
 }
 
 // Four one-bar loops at 120 BPM, each played and then looped with Space the
-// way every part page does it: drums (page 1), whose Space on the next ONE
+// way every part page does it, from single hits and notes so they lean as
+// little as possible on any page's layout (the drums' kick and snare pads on
+// the near row; single notes on the other pages): drums (page 1), whose Space on the next ONE
 // sets the tempo and makes 2.5 s the studio's bar line; then bass (2),
 // chords (3) and atmos (6), each played over one bar and looped by a Space
 // just after the bar line. Bars fall every 2 s (4.5, 6.5, …); everything
 // plays by 14.5 s, and the arrange page shows at 15.
 const char *kLoops = "page 0 1\n"
-                     "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\nkey 2.5 Space\n"
+                     "tap 0.5 0.12 0.12\ntap 1.0 0.38 0.12\ntap 1.5 0.12 0.12\ntap 2.0 0.38 0.12\nkey 2.5 Space\n"
                      "page 3.0 2\n"
                      "tap 4.5 0.03 0.5 len=0.3\ntap 5.0 0.03 0.5 len=0.15\ntap 5.5 0.36 0.5 len=0.3\n"
                      "tap 6.0 0.3 0.5 len=0.15\nkey 6.6 Space\n"
@@ -530,7 +532,7 @@ private slots:
         // N, B and X with nothing playing do nothing, and leave nothing muted
         // for the loop made later.
         const auto take = testkit::play("page 0 0\nkey 0.5 N\nkey 0.7 B\nkey 0.9 X\npage 2.0 1\n"
-                                        "tap 4.5 0.05 0.5\ntap 5.0 0.25 0.5\ntap 5.5 0.05 0.5\ntap 6.0 0.25 0.5\n"
+                                        "tap 4.5 0.12 0.12\ntap 5.0 0.38 0.12\ntap 5.5 0.12 0.12\ntap 6.0 0.38 0.12\n"
                                         "key 6.5 Space\nend 14\n");
         for (int p = 0; p < take.view.partCount; ++p)
             QCOMPARE(take.view.parts[p].channel.value[Mute], 0.0f);
@@ -540,7 +542,7 @@ private slots:
     void aBreakdownOfDrumsAloneIsNeverSilentAndEnds() {
         // Only drums: N keeps them, high-passed and washed; eight bars on,
         // they are back as they were.
-        const char *drums = "page 0 1\ntap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
+        const char *drums = "page 0 1\ntap 0.5 0.12 0.12\ntap 1.0 0.38 0.12\ntap 1.5 0.12 0.12\ntap 2.0 0.38 0.12\n"
                             "key 2.5 Space\npage 3.0 0\nkey 3.3 N\nend 26\n";
         float filterDuring = 0.5f;
         const auto take = watch(drums, [&](double t, Session &s) {
@@ -556,8 +558,8 @@ private slots:
 
     void aWrittenTrackFromThinLoopsHasNoSilentBar() {
         // Drums alone, and drums with bass: every bar before the outro sounds.
-        const std::string drumsLoop = "page 0 1\ntap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\n"
-                                      "tap 2.0 0.25 0.5\nkey 2.5 Space\n";
+        const std::string drumsLoop = "page 0 1\ntap 0.5 0.12 0.12\ntap 1.0 0.38 0.12\ntap 1.5 0.12 0.12\n"
+                                      "tap 2.0 0.38 0.12\nkey 2.5 Space\n";
         const std::string bassLoop = "page 3.0 2\ntap 4.5 0.03 0.5 len=0.3\ntap 5.0 0.03 0.5 len=0.15\n"
                                      "tap 5.5 0.36 0.5 len=0.3\ntap 6.0 0.3 0.5 len=0.15\nkey 6.6 Space\n";
         for (const std::string &start : {drumsLoop, drumsLoop + bassLoop}) {

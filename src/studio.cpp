@@ -285,6 +285,8 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     // so the loop sounds the way the take did.
     if (!stretch) {
         Command held[32];
+        Command heldMove[32]; // the last Move of each held sound (a slide into the bar)
+        bool heldMoved[32] = {};
         int heldCount = 0;
         Command knobs[32];
         int knobCount = 0;
@@ -294,12 +296,23 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
                 break;
             const Command &c = lg.c;
             if (c.type == Command::On && !(c.flags & Command::Quantize)) {
-                if (heldCount < 32)
+                if (heldCount < 32) {
+                    heldMoved[heldCount] = false;
                     held[heldCount++] = c;
+                }
+            } else if (c.type == Command::Move) {
+                for (int i = 0; i < heldCount; ++i)
+                    if (held[i].id == c.id) {
+                        heldMove[i] = c;
+                        heldMoved[i] = true;
+                    }
             } else if (c.type == Command::Off) {
                 for (int i = 0; i < heldCount; ++i)
                     if (held[i].id == c.id) {
-                        held[i] = held[--heldCount];
+                        --heldCount;
+                        held[i] = held[heldCount];
+                        heldMove[i] = heldMove[heldCount];
+                        heldMoved[i] = heldMoved[heldCount];
                         break;
                     }
             } else if (c.type == Command::Param) {
@@ -316,6 +329,8 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             clip.events.push_back({0.0, knobs[i], -1e18});
         for (int i = 0; i < heldCount && openCount < 64; ++i) {
             clip.events.push_back({0.0, held[i], -1e18});
+            if (heldMoved[i])
+                clip.events.push_back({0.0, heldMove[i], -1e18});
             open[openCount++] = {held[i].id, 0.0, 0.0};
         }
     }

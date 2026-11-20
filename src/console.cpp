@@ -121,8 +121,13 @@ void beats(QPainter &p, const PaintContext &pc, QColor color) {
     const qreal box = 14, gap = 6;
     const qreal x0 = pc.pad.right() - 16 - 4 * box - 3 * gap;
     p.fillRect(QRectF(x0 - 6, pc.pad.top() - 10, 4 * box + 3 * gap + 12, 20), QColor(0, 0, 0));
+    // Until something plays or the metronome clicks, the clock is silent:
+    // a moving beat would only be a guess at where the player's ONE is.
+    bool audible = pc.studio && pc.studio->metronome;
+    for (int i = 0; pc.studio && i < pc.studio->partCount; ++i)
+        audible |= pc.studio->parts[i].playing >= 0;
     const double within = pc.beat - std::floor(pc.beat / kBeatsPerBar) * kBeatsPerBar;
-    const int beat = std::clamp(int(within), 0, 3);
+    const int beat = audible ? std::clamp(int(within), 0, 3) : -1;
     for (int b = 0; b < 4; ++b) {
         const QRectF r(x0 + b * (box + gap), pc.pad.top() - 7, box, box);
         if (b == beat) {

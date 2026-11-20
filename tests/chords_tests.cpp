@@ -518,22 +518,50 @@ private slots:
             QCOMPARE(int(take.view.parts[kChords].clips[c].state), int(ClipView::Empty));
     }
 
-    // The page says a loop is coming before it does: a Space take over a
-    // playing loop waits for the bar line, and the page says so; Return
-    // stands back for it, and says why.
+    // Space over a playing loop takes what was just played at once, and the
+    // page says what landed; Return counts down to its bar line.
     void theLoopIsAnnounced() {
-        QString waiting;
-        int filled = 0;
+        QString landed, counting;
         const std::string over = recordedLoop({0, 5, 2, 6}) + "down " + num(3 * kBar + 0.01) + " 70 " + cell(3, Triad) +
-                                 "\nup " + num(3 * kBar + 1.5 * kBeat) + " 70\nkey " + num(3 * kBar + 2 * kBeat) +
-                                 " Space\nkey " + num(3 * kBar + 2.2 * kBeat) + " Return\nend " +
-                                 num(3 * kBar + 2.5 * kBeat) + "\n";
-        const auto take = testkit::play(over, [&](Session &s) { waiting = s.pageStatus(); });
-        for (int c = 0; c < 8; ++c)
-            filled += take.view.parts[kChords].clips[c].state != ClipView::Empty;
-        QVERIFY2(waiting.contains("looping") && waiting.contains("space calls it off"), qPrintable(waiting));
-        QCOMPARE(take.view.parts[kChords].recording, 1);
-        QCOMPARE(filled, 2); // the loop and the waiting take: Return made nothing of its own
+                                 "\nup " + num(4 * kBar - 0.05) + " 70\nkey " + num(4 * kBar + 0.02) + " Space\nend " +
+                                 num(4 * kBar + 0.5) + "\n";
+        const auto take = testkit::play(over, [&](Session &s) { landed = s.pageStatus(); });
+        QVERIFY2(landed.contains("looped") && landed.contains("slot 2"), qPrintable(landed));
+        QCOMPARE(take.view.parts[kChords].playing, 1);
+        testkit::play(recordedLoop({0, 5, 2, 6}) + "down " + num(3 * kBar + 0.05) + " 71 " + cell(4, Triad) + "\nup " +
+                          num(3 * kBar + kBeat) + " 71\nkey " + num(3 * kBar + 2 * kBeat) + " Return\nend " +
+                          num(3 * kBar + 2.5 * kBeat) + "\n",
+                      [&](Session &s) { counting = s.pageStatus(); });
+        QVERIFY2(counting.contains("looping the last") && counting.contains("return calls it off"), qPrintable(counting));
+    }
+
+    // Over a running clock, a progression played twice and then Space loops
+    // one cycle of it, landing at once, with no gap before its first chord.
+    void aProgressionPlayedTwiceLoopsOnce() {
+        std::string s = "page 0 3\nkey 0.02 Ctrl+M\n";
+        const int degrees[] = {0, 5, 2, 6};
+        int id = 1;
+        for (int pass = 0; pass < 2; ++pass)
+            for (int b = 0; b < 4; ++b) {
+                const double t = (1 + pass * 4 + b) * kBar;
+                s += "down " + num(t + 0.01) + " " + std::to_string(id) + " " + cell(degrees[b], Triad) + "\nup " +
+                     num(t + kBar - 0.05) + " " + std::to_string(id) + "\n";
+                ++id;
+            }
+        const double space = 9 * kBar + 0.02;
+        s += "key " + num(space) + " Space\nkey " + num(space + 0.05) + " Ctrl+M\nend " + num(space + 8 * kBar) + "\n";
+        std::vector<std::pair<double, int>> roots;
+        const auto take = playWatching(s, [&](double now, const StudioView &v) { roots.push_back({now, v.chordRoot}); });
+        QCOMPARE(take.view.parts[kChords].playing, 0);
+        QCOMPARE(int(take.view.parts[kChords].clips[0].lengthBeats), 16);
+        // It carries straight on: the first chord again, sounding at once.
+        int after = -1;
+        for (auto &[t, r] : roots)
+            if (after < 0 && t > space + 0.15)
+                after = r;
+        QCOMPARE(after, 0);
+        for (int b = 9; b < 17; ++b)
+            QVERIFY2(take.rms(b * kBar, (b + 1) * kBar) > 0.02, qPrintable(QString("bar %1 is quiet").arg(b)));
     }
 
     // A chord landed a hair early for its bar belongs to it: Return keeps

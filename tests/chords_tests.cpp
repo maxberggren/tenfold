@@ -68,8 +68,9 @@ std::vector<float> voicing(const StudioView &v, int lane = 0) {
     return out;
 }
 
-// The share of a stretch's energy between lo and hi Hz, from one long FFT.
-double bandShare(const testkit::Take &take, double from, double lo, double hi) {
+// The share of a stretch's energy between lo and hi Hz, from one long FFT
+// (or, with absolute, the energy itself).
+double bandShare(const testkit::Take &take, double from, double lo, double hi, bool absolute = false) {
     const size_t a = size_t(from * 48000), n = 1 << 15;
     if (a + n > take.left.size())
         return 1;
@@ -105,6 +106,8 @@ double bandShare(const testkit::Take &take, double from, double lo, double hi) {
         if (f >= lo && f < hi)
             in += e;
     }
+    if (absolute)
+        return in;
     return all > 0 ? in / all : 1;
 }
 
@@ -623,15 +626,21 @@ private slots:
         }
     }
 
-    // Layering the loop's own chords a little late never ducks the loop: it
-    // is still on the loop's last chord for a moment when the loop moves on.
-    void aLateLayerKeepsTheLoopWhole() {
+    // Layering the loop's own chords a little late or a little early never
+    // ducks the loop on its downbeats.
+    void aLooseLayerKeepsTheLoopWhole_data() {
+        QTest::addColumn<double>("offset");
+        QTest::newRow("45 ms late") << 0.045;
+        QTest::newRow("50 ms early") << -0.05;
+    }
+    void aLooseLayerKeepsTheLoopWhole() {
+        QFETCH(double, offset);
         std::string loop = recordedLoop({0, 5, 2, 6}, Triad, "key 0.05 Right\nkey 0.06 Right\nkey 0.07 Right\nkey 0.08 Right\n");
         std::string layer;
         int id = 90;
         for (int bar = 3; bar < 6; ++bar)
             for (int b = 0; b < 4; ++b) {
-                const double t = bar * kBar + b * kBeat + 0.045;
+                const double t = bar * kBar + b * kBeat + offset;
                 layer += "down " + num(t) + " " + std::to_string(id) + " " + cell(std::array<int, 4>{0, 5, 2, 6}[size_t(b)], Triad) +
                          "\nup " + num(t + kBeat - 0.01) + " " + std::to_string(id) + "\n";
                 ++id;
@@ -646,6 +655,18 @@ private slots:
                 l += layered.rms(t, t + 0.06);
             }
         QVERIFY2(l >= a, qPrintable(QString("layered %1 alone %2").arg(l).arg(a)));
+    }
+
+    // A new chord played over a loop, landing as the loop moves on, is the
+    // newcomer: the loop steps back at once rather than rub for half a beat.
+    void aNewChordOnTheLoopsBeatDucksAtOnce() {
+        const double t = 4 * kBar; // a loop chord lands here too
+        const std::string loop = recordedLoop({0, 0, 0, 0});
+        const auto alone = testkit::play(loop + "end " + num(t + 1.0) + "\n");
+        const auto over = testkit::play(loop + "down " + num(t) + " 80 " + cell(5, Triad) + " p=0.01\nend " + num(t + 1.0) + "\n");
+        // The loop's E (A minor's fifth, not in F major) from 60 ms on.
+        const double e0 = bandShare(alone, t + 0.06, 325, 335, true), e1 = bandShare(over, t + 0.06, 325, 335, true);
+        QVERIFY2(e1 < 0.1 * e0, qPrintable(QString("E alone %1, under the new chord %2").arg(e0).arg(e1)));
     }
 
     // Once its finger lifts, a live chord stops being the page's chord: the

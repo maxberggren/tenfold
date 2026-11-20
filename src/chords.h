@@ -543,6 +543,11 @@ public:
             else
                 L.stack[L.depth - 1] = e;
             int offset = ctx.offsetOf(c.t, kBlock);
+            // A new chord is the lane's from now, even if a struck sound waits
+            // for its gate's next hit to speak (the same chord struck again
+            // is not a new one).
+            if (column(e.degree) != column(L.shape.tones[0]) || L.shape.count == 0)
+                m_onsetAt[lane] = ctx.transport().beatAt(offset);
             offset += waitForHit(e.style, ctx.transport(), offset);
             sound(lane, e, offset, true, ctx);
             break;
@@ -628,20 +633,25 @@ public:
             computePump(tr, n);
         // A different chord held live over a loop would sound two harmonies
         // at once while the studio announces one: the loop steps back
-        // (−18 dB in about 30 ms) until the finger lifts. The same chord
-        // over the loop leaves it whole, and so does a difference shorter
-        // than an eighth: a player layering the loop's chords a little late
-        // is still on the loop's chord when it moves on.
+        // (−18 dB in about 30 ms) until the finger lifts. The same chord over
+        // the loop leaves it whole. When the live chord is the newcomer (the
+        // player reharmonising the loop) the loop steps back after 30 ms,
+        // long enough for a finger landing a hair before the loop reaches
+        // the same chord. When the loop moved on under a chord already held,
+        // it waits half a beat (an eighth note): a player layering the loop's
+        // chords a little late is still on the loop's last chord for a moment.
         bool loopSounding = false;
         for (const auto &v : m_voices)
             loopSounding |= v.active && v.lane == kReplayLane;
         const ChordVoice *live = current(m_lanes[kLiveLane]);
         const Shape &loopShape = m_lanes[kReplayLane].shape;
-        auto column = [&](int d) { return ((d % m_count) + m_count) % m_count; };
         const bool differ = live && loopSounding && loopShape.count > 0 &&
                             column(live->degree) != column(loopShape.tones[0]);
         m_differFor = differ ? m_differFor + double(n) * tr.beatsPerSample : 0.0;
-        const bool clash = m_differFor > 0.5;
+        // Landing with the loop's chord, to a tenth of a beat, counts as new.
+        const bool newcomer = m_onsetAt[kLiveLane] >= m_onsetAt[kReplayLane] - 0.1;
+        const double wait = newcomer ? 0.03 / tr.secondsPerBeat() : 0.5;
+        const bool clash = m_differFor > wait;
         const float loop0 = m_loopGain;
         m_loopGain += ((clash ? 0.125f : 1.0f) - m_loopGain) * (1.0f - std::exp(-float(n) / (0.01f * m_rate)));
         float mixL[kBlock] = {}, mixR[kBlock] = {};
@@ -778,7 +788,13 @@ private:
         return v.active && !v.releasing ? &v : nullptr;
     }
 
-    static void release(ChordVoice &v) {
+    // How long a chord takes to fall away when a new one takes its place.
+    static constexpr float kDamp = 0.02f;
+
+    // Lets a voice go: its own release, or a faster one (seconds) when given.
+    void release(ChordVoice &v, float fast = 0) {
+        if (fast > 0)
+            v.amp.cr = std::max(v.amp.cr, 1.0f - std::exp(-1.0f / (fast * m_rate)));
         v.releasing = true;
         // A stab still waiting for its hit plays it anyway, for its shortest
         // ring, and then lets go: a tap between hits is heard on the next.
@@ -811,6 +827,9 @@ private:
                 sound(k, L.stack[L.depth - 1], 0, false, ctx, false);
         }
     }
+
+    // A degree as its column on the pad: the same chord in any octave.
+    int column(int degree) const { return ((degree % m_count) + m_count) % m_count; }
 
     int effectivePattern(int style) const { return m_override >= 0 ? m_override : m_rhythm[style].pattern; }
 
@@ -876,8 +895,10 @@ private:
                 cur->graceHold = int(0.06f * m_rate);
             }
         } else {
+            // The chord it replaces is damped, not left to ring under the new
+            // one: two harmonies would rub for the length of a release.
             if (cur)
-                release(*cur);
+                release(*cur, kDamp);
             ChordVoice &v = allocate();
             start(v, e, lane, vc, rootMidi, offset);
             L.voice = int(&v - m_voices.data());
@@ -886,6 +907,10 @@ private:
         L.last = vc;
         L.hasLast = true;
         L.lastReg = e.reg;
+        // When the lane's chord last became a different one, for the loop's
+        // step back (an On has set it already).
+        if (!fresh && column(shape.tones[0]) != column(L.shape.tones[0]))
+            m_onsetAt[lane] = ctx.transport().beatAt(offset);
         L.shape = shape;
         if (tell)
             announce(lane, ctx);
@@ -1208,7 +1233,11 @@ private:
             const float fall = std::exp(-1.0f / ((v.style == Piano ? 0.32f : 0.11f) * m_rate));
             const float rise = 1.0f / (0.002f * m_rate);
             float st = v.strike;
+            const bool strikes = G.active && sd.retrig && !v.releasing;
             for (int i = from; i < n; ++i) {
+                // A gate hit strikes in its own block, from its own sample.
+                if (strikes && G.hitOn[i])
+                    v.strikeRise = true;
                 if (v.strikeRise) {
                     st += rise;
                     if (st >= 1.0f) {
@@ -1347,8 +1376,7 @@ private:
                 if (G.hitOn[i]) {
                     v.amp.on();
                     v.filt.on();
-                    v.strikeRise = true;
-                    v.clickEnv = 1;
+                    v.clickEnv = 1; // (the strike already began climbing at this sample)
                 }
                 if (v.minHold == 0 && G.hitOff[i]) {
                     v.amp.off();
@@ -1419,6 +1447,7 @@ private:
     float m_pumpView = 0;
     float m_loopGain = 1;
     double m_differFor = 0; // beats the live chord has differed from the loop's
+    double m_onsetAt[kLanes] = {-1e9, -1e9}; // the beat each lane's chord began
     Svf m_hp1L, m_hp1R, m_hp2L, m_hp2R;
 };
 

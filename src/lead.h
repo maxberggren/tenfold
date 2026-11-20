@@ -122,7 +122,8 @@ struct Sound {
     int unison = 1;
     float detune = 0;      // cents for the outermost saw at a normal touch
     float spread = 0.5f;   // how wide the unison stands, 0..1
-    float pw = 0.5f, pwm = 0; // pulse width, and how far a slow sweep moves it
+    float pw = 0.5f, pwm = 0, pwmRate = 0.37f; // pulse width, how far a sweep moves it, how fast
+    float pulse2 = 0;      // a second pulse a few cents off (a flat finger brings it up anyway)
     float fmRatio = 1, fmIndex = 0, fmDecay = 0.3f, fmFloor = 1; // the index falls to fmIndex·fmFloor
     bool formant = false;  // through three vowel formants, the finger's height choosing the vowel
     // The ladder filter: base cutoff (0..1, about eight octaves above 60 Hz),
@@ -141,7 +142,7 @@ struct Sound {
     float gain = 1;
 };
 
-constexpr int kSounds = 6;
+constexpr int kSounds = 8;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -183,6 +184,19 @@ inline const Sound &sound(int i) {
          .a = 0.004f, .d = 0.5f, .s = 0.92f, .r = 0.22f, .glide = 0.08f, .porta = 0.08f, .scoop = 1.4f,
          .scoopTime = 0.055f, .vibRate = 5.9f, .vibDepth = 0.3f, .vibDelay = 0.3f, .swoop = true, .echo = 0.2f, .echoFb = 0.36f,
          .gain = 1.17f},
+        // The hoover: saws and a fast-swept pulse in a wide, wobbling
+        // chorus, driven, bending up into every note from well below.
+        {.name = "Hoover", .saw = 0.8f, .pulse = 0.7f, .unison = 5, .detune = 30.0f, .spread = 0.9f,
+         .pwm = 0.38f, .pwmRate = 4.6f, .cutoff = 0.62f, .cutoffY = 0.3f, .res = 0.2f, .envAmt = 0.2f,
+         .envDecay = 0.4f, .keyTrack = 0.5f, .drive = 0.4f, .a = 0.01f, .d = 0.6f, .s = 0.9f, .r = 0.3f,
+         .glide = 0.1f, .porta = 0.1f, .scoop = 2.5f, .scoopTime = 0.09f, .vibDepth = 0.0f, .swoop = true,
+         .echo = 0.15f, .gain = 1.1f},
+        // The big-room lead: two squares a few cents apart and an octave
+        // above, bright and short, made to cut through a festival mix.
+        {.name = "Big room", .pulse = 1.0f, .layer = 0.35f, .detune = 8.0f, .spread = 0.8f, .pulse2 = 0.9f,
+         .cutoff = 0.7f, .cutoffY = 0.25f, .res = 0.1f, .envAmt = 0.35f, .envDecay = 0.25f, .keyTrack = 0.5f,
+         .drive = 0.15f, .a = 0.002f, .d = 0.3f, .s = 0.55f, .r = 0.15f, .glide = 0.03f, .vibDepth = 0.06f,
+         .echo = 0.22f, .gain = 1.09f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

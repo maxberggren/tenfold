@@ -794,7 +794,7 @@ private:
         const float layerDet = std::exp2((4.0f + 6.0f * v.fat) / 1200.0f);
         const float pulseDet = std::exp2((2.0f + 6.0f * v.fat) / 1200.0f);
         const float fmDet = std::exp2((s.detune * (0.25f + 0.75f * v.fat)) / 1200.0f);
-        v.pwmPhase += 0.37f * dt;
+        v.pwmPhase += s.pwmRate * dt;
         v.pwmPhase -= std::floor(v.pwmPhase);
         const float pw = clampf(s.pw + s.pwm * sine()(v.pwmPhase), 0.06f, 0.94f);
         // The FM strike falls to its floor; a high note gets less index so
@@ -887,7 +887,7 @@ private:
                     const float p1 = k.pulse[1].step(std::min(inc * pulseDet, 0.45f), 1.0f - pw);
                     // A second pulse, a few cents off and leaning right, comes
                     // up as the finger flattens: a chorus.
-                    const float w = 0.2f + 0.6f * v.fat;
+                    const float w = std::max(s.pulse2, 0.2f + 0.6f * v.fat);
                     bl += s.pulse * 0.6f * (p0 + 0.6f * w * p1);
                     br += s.pulse * 0.6f * (0.8f * p0 + w * p1);
                 }
@@ -988,9 +988,16 @@ private:
             fbBase = std::max(fbBase, sound(v.sound).echoFb);
         }
         const float target = std::min(beats * float(tr.secondsPerBeat()) * m_rate, 3.0f * m_rate);
-        const float fbTarget = fbBase + (0.8f - fbBase) * m_throw;
+        // A throw lifts the feedback near its edge and lets go slowly, and
+        // darkens the repeats as it goes, so the tail is long and sinks
+        // behind the line instead of clattering over it.
+        const float fbTarget = fbBase + (0.88f - fbBase) * m_throw;
         const float dt = float(n) / m_rate;
-        m_echoFb += (fbTarget - m_echoFb) * (1.0f - std::exp(-dt / (fbTarget > m_echoFb ? 0.05f : 2.5f)));
+        m_echoFb += (fbTarget - m_echoFb) * (1.0f - std::exp(-dt / (fbTarget > m_echoFb ? 0.05f : 4.0f)));
+        const float dark = clampf((m_echoFb - fbBase) / 0.5f, 0.0f, 1.0f);
+        const float lpHz = 4800.0f * std::exp2(-1.6f * dark);
+        m_echoLpL.set(lpHz, m_rate);
+        m_echoLpR.set(lpHz, m_rate);
         float peak = 0;
         for (int i = 0; i < n; ++i) {
             const float d = m_echoTime.step(target);
@@ -1310,7 +1317,7 @@ public:
             "Space, after playing\tloops it (the studio's key): alone, press it on the phrase's next ONE and it sets the tempo; over a loop, its bars loop from the bar line. The pad shows what Space would take and counts the take down\n"
             "Space again\tcalls a waiting take off\n"
             "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents\n"
-            "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream\n"
+            "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room\n"
             "↑ ↓\toctave of the neck and the keys\n"
             "Shift+↑ ↓\tglide longer, shorter\n"
             "Enter (or F11, Shift+§)\tfollow the chord: notes and harmony land on chord tones\n"
@@ -2002,6 +2009,18 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         mode(QStringLiteral("harmony held"), m_latch);
         if (live[14] > 0.02f)
             mode(QStringLiteral("vibrato"), true);
+    }
+
+    // An empty pad says how to start.
+    if (m_frame.count == 0 && live[0] <= 0 && pv.playing < 0 && m_loopHint.isEmpty() && m_loopText.isEmpty()) {
+        const QRectF r(neck.left(), neck.center().y() - 50 * unit, neck.width(), 100 * unit);
+        p.setPen(c::alpha(col, 0.45f));
+        p.setFont(c::font(int(14 * unit + 1), true));
+        p.drawText(r, Qt::AlignCenter,
+                   QStringLiteral("one finger sings · a second glides to it\n"
+                                  "slide, wiggle, press, twist, click\n"
+                                  "left hand: harmony · bend · throw\n"
+                                  "space loops what you played"));
     }
 
     // Fingers, each saying what it does.

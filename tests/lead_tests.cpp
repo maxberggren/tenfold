@@ -184,7 +184,7 @@ std::string riffInBarTwo() {
 }
 
 const char *soundName(int i) {
-    static const char *n[6] = {"Anthem", "Pluck", "Bell", "Chip", "Vox", "Scream"};
+    static const char *n[8] = {"Anthem", "Pluck", "Bell", "Chip", "Vox", "Scream", "Hoover", "Big room"};
     return n[i];
 }
 
@@ -275,7 +275,7 @@ private slots:
     void aVowelSweepKeepsItsLevel() {
         // Vox, A4, the five vowels from the bottom of the pad to the top:
         // within three decibels of each other.
-        std::string s = "page 0 4\nkey 0.05 Left\nkey 0.1 Left\n";
+        std::string s = "page 0 4\nkey 0.05 Right\nkey 0.08 Right\nkey 0.11 Right\nkey 0.14 Right\n";
         const float ys[5] = {0.02f, 0.25f, 0.5f, 0.75f, 0.98f};
         for (int i = 0; i < 5; ++i)
             s += fmt("down %.1f %.0f %.4f %.2f\n", 0.3 + 1.2 * i, 1 + i, cellX(7), ys[i]) +
@@ -580,7 +580,7 @@ private slots:
     void everySoundStaysInBoundsAtTheExtremes() {
         // Each sound pushed: top of the pad, flat finger, hard press, the
         // highest note, harmony on three rows, an octave up, thrown.
-        for (int snd = 0; snd < 6; ++snd) {
+        for (int snd = 0; snd < 8; ++snd) {
             std::string s = "page 0 4\n";
             for (int k = 0; k < snd; ++k)
                 s += fmt("key %.2f Right\n", 0.02 + 0.02 * k);

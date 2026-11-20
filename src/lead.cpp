@@ -1257,7 +1257,7 @@ public:
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between\n"
             "BEND\ta pitch wheel: slide up or down, rests on whole steps\n"
             "THROW\tinto the echo; higher throws harder; lift and the repeats ring out\n"
-            "tap a phrase, hold its first note\tloops it into the next free slot\n"
+            "tap a riff, then its first note again on the beat, held\tloops it into the next free slot\n"
             "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents\n"
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream\n"
             "↑ ↓\toctave of the neck and the keys\n"
@@ -1677,31 +1677,39 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                 return true;
         return false;
     };
+    // Columns first, unsmoothed: they sit on whole pixels anyway, and the
+    // rasteriser's antialiased path is several times slower on big fills.
+    p.setRenderHint(QPainter::Antialiasing, false);
     for (int k = 0; k < cells; ++k) {
         const int abs = neckBase + k;
         const QRectF cell(neck.left() + neck.width() * k / cells, neck.top(), neck.width() / cells, neck.height());
-        const bool root = ((abs % per) + per) % per == 0;
-        const bool tone = isChordTone(abs);
-        if (root)
+        if (((abs % per) + per) % per == 0)
             p.fillRect(cell, c::alpha(col, 0.09f));
-        if (follow && tone)
+        if (follow && isChordTone(abs))
             p.fillRect(cell, c::alpha(col, 0.07f));
-        // Chord tones carry a mark over their names: safe places to land.
+    }
+    p.setPen(QPen(c::alpha(col, 0.15f), 1));
+    for (int k = 1; k < cells; ++k) {
+        const qreal x = std::round(neck.left() + neck.width() * k / cells) + 0.5;
+        p.drawLine(QPointF(x, neck.top()), QPointF(x, neck.bottom()));
+    }
+    p.setRenderHint(QPainter::Antialiasing, true);
+    // The note names, and over them a mark on each chord tone: the safe
+    // places to land.
+    p.setFont(c::font(int(11 * unit + 1), true));
+    for (int k = 0; k < cells; ++k) {
+        const int abs = neckBase + k;
+        const QRectF cell(neck.left() + neck.width() * k / cells, neck.top(), neck.width() / cells, neck.height());
+        const bool tone = isChordTone(abs);
         if (tone) {
             const QRectF mark(cell.center().x() - 3 * unit - 1, cell.bottom() - 36 * unit, 6 * unit + 2, 6 * unit + 2);
             p.setPen(Qt::NoPen);
             p.setBrush(c::alpha(col, follow ? 0.9f : 0.45f));
             p.drawEllipse(mark);
         }
-        const double midi = midiOf(abs);
-        c::text(p, QRectF(cell.left(), cell.bottom() - 24 * unit, cell.width(), 20 * unit),
-                QString::fromUtf8(Tuning::noteName(int(std::lround(midi)))),
-                c::alpha(col, follow && !tone ? 0.3f : 0.75f), int(11 * unit + 1), true, Qt::AlignCenter);
-    }
-    p.setPen(QPen(c::alpha(col, 0.15f), 1));
-    for (int k = 1; k < cells; ++k) {
-        const qreal x = neck.left() + neck.width() * k / cells;
-        p.drawLine(QPointF(x, neck.top()), QPointF(x, neck.bottom()));
+        p.setPen(c::alpha(col, follow && !tone ? 0.3f : 0.75f));
+        p.drawText(QRectF(cell.left(), cell.bottom() - 24 * unit, cell.width(), 20 * unit), Qt::AlignCenter,
+                   QString::fromUtf8(Tuning::noteName(int(std::lround(midiOf(abs))))));
     }
     // The height's meaning, on the right edge.
     {
@@ -1716,42 +1724,67 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     }
 
     // The trail: the last few seconds of what each line sang, rising from
-    // the note names as it ages. Glides are curves, vibrato is a ripple.
+    // the note names as it ages. Glides are curves, vibrato is a ripple. It
+    // is drawn as a few polylines, one per stretch of a tenth of the span,
+    // each as bright and thick as it was loud: thousands of separate strokes
+    // would hold the session's lock for milliseconds every frame.
     {
         p.save();
         p.setClipRect(neck.adjusted(1, 1, -1, -1));
         const double span = 3.2;
+        const int buckets = 10;
         const double now = pc.time;
+        const qreal floorY = neck.bottom() - 40 * unit, rise = neck.height() - 40 * unit;
+        auto xAt = [&](float pos) { return neck.left() + (xOf(pos) - kColumn) / (1 - kColumn) * neck.width(); };
         for (int k = 1; k >= 0; --k) {
             const QColor lc = k == 0 ? col : c::alpha(col, 0.55f);
             for (int b = 0; b < 1 + kHarmSlots; ++b) {
+                QPolygonF poly;
+                float levelSum = 0;
+                int bucket = -1, octaves = 0;
+                auto flush = [&] {
+                    if (poly.size() >= 2) {
+                        const float la = levelSum / float(poly.size());
+                        const float fade = float(1.0 - (bucket + 0.5) / buckets) * (octaves ? 0.45f : 1.0f);
+                        const float w = (b == 0 ? 2.0f : 1.2f) + (b == 0 ? 7.0f : 3.0f) * std::min(1.0f, la);
+                        p.setPen(QPen(c::alpha(lc, fade * (b == 0 ? 0.85f : 0.5f) * std::min(1.0f, 0.4f + la)),
+                                      w * unit, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                        p.drawPolyline(poly);
+                    }
+                    poly.clear();
+                    levelSum = 0;
+                };
                 for (int i = 1; i < kTrail; ++i) {
                     const TrailPoint &a = m_trail[size_t((m_trailHead - i + kTrail) % kTrail)];
-                    const TrailPoint &z = m_trail[size_t((m_trailHead - i - 1 + kTrail) % kTrail)];
-                    if (a.t < 0 || z.t < 0 || z.t > a.t)
+                    if (a.t < 0 || a.t > now + 0.05)
                         break;
-                    const double ageA = now - a.t, ageZ = now - z.t;
-                    if (ageZ > span)
+                    const double age = std::max(0.0, now - a.t);
+                    if (age > span)
                         break;
-                    const float la = a.level[k][b], lz = z.level[k][b];
-                    if (la < 0.01f || lz < 0.01f)
-                        continue;
-                    if (std::fabs(a.pos[k][b] - z.pos[k][b]) > 3.0f)
-                        continue;
-                    int oa = 0, oz = 0;
-                    const float fa = fold(a.pos[k][b], &oa), fz = fold(z.pos[k][b], &oz);
-                    if (oa != oz)
-                        continue;
-                    const float fade = float(1.0 - ageA / span) * (oa ? 0.45f : 1.0f);
-                    const QPointF pa(neck.left() + (xOf(fa) - kColumn) / (1 - kColumn) * neck.width(),
-                                     neck.bottom() - 40 * unit - (neck.height() - 40 * unit) * ageA / span);
-                    const QPointF pz(neck.left() + (xOf(fz) - kColumn) / (1 - kColumn) * neck.width(),
-                                     neck.bottom() - 40 * unit - (neck.height() - 40 * unit) * ageZ / span);
-                    const float w = (b == 0 ? 2.0f : 1.2f) + (b == 0 ? 7.0f : 3.0f) * std::min(1.0f, la);
-                    p.setPen(QPen(c::alpha(lc, fade * (b == 0 ? 0.85f : 0.5f) * std::min(1.0f, 0.4f + la)),
-                                  w * unit, Qt::SolidLine, Qt::RoundCap));
-                    p.drawLine(pa, pz);
+                    const float level = a.level[k][b];
+                    int oct = 0;
+                    const float pos = fold(a.pos[k][b], &oct);
+                    const int bk = std::min(buckets - 1, int(age / span * buckets));
+                    const QPointF pt(xAt(pos), floorY - rise * age / span);
+                    // A silence, a jump, a new octave or a new stretch ends a stroke;
+                    // a new stretch starts where the last one ended, so it stays whole.
+                    const bool gap = level < 0.01f || (!poly.isEmpty() && (oct != octaves ||
+                                                                          std::fabs(pt.x() - poly.last().x()) > neck.width() * 0.2));
+                    if (gap) {
+                        flush();
+                        if (level < 0.01f)
+                            continue;
+                    } else if (bk != bucket && !poly.isEmpty()) {
+                        const QPointF joint = poly.last();
+                        flush();
+                        poly << joint;
+                    }
+                    bucket = bk;
+                    octaves = oct;
+                    poly << pt;
+                    levelSum += level;
                 }
+                flush();
             }
         }
         p.restore();
@@ -1775,7 +1808,9 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
             g.setColorAt(0, c::alpha(col, 0));
             g.setColorAt(0.5, c::alpha(col, (k == 0 ? 0.35f : 0.2f) * std::min(1.0f, level * 1.5f)));
             g.setColorAt(1, c::alpha(col, 0));
+            p.setRenderHint(QPainter::Antialiasing, false);
             p.fillRect(QRectF(x - 14 * unit, neck.top(), 28 * unit, neck.height()), g);
+            p.setRenderHint(QPainter::Antialiasing, true);
             p.setPen(QPen(c::alpha(col, std::min(1.0f, 0.3f + level)), width * unit,
                           octaves ? Qt::DashLine : Qt::SolidLine));
             p.drawLine(QPointF(x, neck.top()), QPointF(x, neck.bottom() - 40 * unit));
@@ -1788,7 +1823,9 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
 
     // --- the left hand's column ---
     const QRectF column = pc.rect(0, 0, kColumn, 1);
+    p.setRenderHint(QPainter::Antialiasing, false);
     p.fillRect(column, QColor(10, 7, 0));
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.setPen(QPen(c::alpha(col, 0.7f), 1.5));
     p.drawLine(QPointF(column.right(), column.top()), QPointF(column.right(), column.bottom()));
     const float *live = pv.data;

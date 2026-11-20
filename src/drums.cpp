@@ -15,8 +15,11 @@
 //     sound: drag to tune it, up for longer, twist for its tone, while it
 //     plays on every beat;
 //   * a finger run fast across pads plays every pad it crosses, a fill;
-//   * and the tap-then-hold loop of every page: tap a beat, come back to
-//     its first pad on time and stay.
+//   * Space records a loop from the next bar, as on every page; holding a
+//     pad and pressing Delete takes that drum out of the loop that plays.
+//
+// Loops come only from Space or a click: holding a pad always rolls, never
+// closes a loop by its timing.
 //
 // Rolls and grooves are scheduled from here a little ahead of time, on the
 // studio's grid, as ordinary hits: they land sample-exact, and a captured
@@ -31,7 +34,6 @@
 #include "console.h"
 #include "drums.h"
 #include "parts.h"
-#include "phrase.h"
 
 namespace tf {
 
@@ -40,8 +42,16 @@ namespace {
 using namespace drums;
 
 constexpr int kCols = 4, kRows = 4;
-constexpr double kHoldSecs = 0.22;     // a finger down longer than this repeats
-constexpr double kTogetherSecs = 0.12; // fingers landing this close are one hand
+// A finger still down after this repeats. Short, so a roll starts on the
+// first step of the grid it can (at least kFirstStepSecs after landing)
+// instead of leaving a hole; the first step itself only goes out if the
+// finger is still down just before it, so a long tap never sprouts one.
+constexpr double kHoldSecs = 0.10;
+constexpr double kFirstStepSecs = 0.09;
+constexpr double kTogetherSecs = 0.08; // fingers landing this close are one hand
+// A landing's velocity is the hardest it pressed in its first few
+// milliseconds: the pressure is still rising in the first frame.
+constexpr double kVelocitySecs = 0.006;
 constexpr double kLookahead = 0.06;    // how far ahead rolls are scheduled
 constexpr float kLadderStep = 0.07f;   // pad heights of travel per rate or density step
 constexpr int kKeyBit = 1 << 20;       // holders for keys, apart from finger ids
@@ -84,7 +94,7 @@ float twistBetween(float from, float to) {
 // How hard a landing finger hit: pressure, helped by how much of the
 // fingertip came down.
 float landingVelocity(float pressure, float size) {
-    return clampf(0.3f + 0.9f * pressure + 0.1f * (size - 1.0f), 0.15f, 1.0f);
+    return clampf(0.12f + 1.0f * pressure + 0.08f * (size - 1.0f), 0.08f, 1.0f);
 }
 // How loud a held finger keeps a roll: pressing harder swells it.
 float holdingDynamics(float pressure) { return clampf(0.45f + 0.85f * pressure, 0.3f, 1.05f); }
@@ -97,7 +107,6 @@ public:
 
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
 
         // Lifts first, so a finger that left and one that landed in the
         // same frame don't meet.
@@ -123,6 +132,9 @@ public:
             h->pressure = t.pressure;
             h->size = t.size;
             h->angle = t.angle;
+            h->peak = std::max(h->peak, t.pressure);
+            if (h->landing && f.t - h->t0 >= kVelocitySecs)
+                sendLanding(*h, ctx);
             follow(*h, f.t, ctx);
         }
 
@@ -135,14 +147,21 @@ public:
     }
 
     void idle(double t, ControlContext &ctx) override {
-        m_phrase.expire(t);
+        for (auto &h : m_holders)
+            if (h.used && h.landing && t - h.t0 >= kVelocitySecs)
+                sendLanding(h, ctx);
         resolve(t, ctx);
     }
 
     // Rolls, grooves and anything kept are scheduled here, whether the page
     // shows or not: a groove that was kept goes on to its bar line even if
     // the player has turned to the bass.
-    void background(double t, ControlContext &ctx) override { schedule(t, ctx); }
+    void background(double t, ControlContext &ctx) override {
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        m_playing = pv.playing;
+        m_recording = pv.recording;
+        schedule(t, ctx);
+    }
 
     // --- keys ----------------------------------------------------------------
 
@@ -193,21 +212,16 @@ public:
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (shift) {
-                m_userOverdub = !m_userOverdub;
-                ctx.overdub(m_userOverdub);
-                ctx.notice(m_userOverdub ? QStringLiteral("Overdub: what you play joins the loop")
-                                         : QStringLiteral("Overdub off"));
-            } else if (ctx.studio().parts[ctx.part()].recording >= 0) {
-                ctx.stopRecording();
-                ctx.notice(QStringLiteral("The loop closes at the bar"));
-            } else {
-                const int slot = freeSlot(ctx);
-                ctx.record(slot, 8);
-                ctx.notice(QStringLiteral("Recording slot %1 from the next bar").arg(slot + 1));
-            }
+            if (!shift)
+                return false;
+            m_userOverdub = !m_userOverdub;
+            ctx.overdub(m_userOverdub);
+            ctx.notice(m_userOverdub ? QStringLiteral("Overdub: what you play joins the loop")
+                                     : QStringLiteral("Overdub off"));
             return true;
         case Qt::Key_Delete:
+            if (toggleLanes(ctx))
+                return true;
             for (int p = 0; p < PadCount; ++p)
                 if (m_edit[p].any()) {
                     m_edit[p] = {};
@@ -224,6 +238,7 @@ public:
         if (k.key >= Qt::Key_F1 && k.key <= Qt::Key_F8) {
             const int slot = k.key - Qt::Key_F1;
             if (shift) {
+                clearMutes(slot, ctx);
                 ctx.clear(slot);
                 ctx.notice(QStringLiteral("Slot %1 emptied").arg(slot + 1));
             } else {
@@ -254,18 +269,20 @@ public:
             "land fingers together and hold\ta groove: each pad plays its part in the kit's style; "
             "slide one up for busier, sideways to shift it\n"
             "hold another pad while grooving\tadds its drum to the groove\n"
-            "click while rolling or grooving\tkeep it: at the bar it loops (or overdubs into the loop playing)\n"
+            "click while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it was held "
+            "(or overdubs into the loop playing)\n"
             "click a pad you just touched, drag\twith nothing rolling, shape that drum: sideways tunes, up lengthens, "
             "twist changes its tone\n"
             "run a finger fast across pads\tplays each one it crosses: a fill\n"
             "hold the 808\tsustains; slide sideways to glide through the scale\n"
-            "tap a beat, hold its first pad on time\tloops it into the next free slot\n"
             "Z X C V · A S D F · Q W E R · U I O P\tthe pads, row by row from the bottom (M , . / and J K L ; too); "
             "hold to roll, Shift for an accent, hold several together for a groove\n"
             "Up / Down\tfaster or slower key rolls\n"
             "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
             "[ / ]\tless or more swing\n"
-            "Enter · Shift+Enter\trecord a loop from the next bar · overdub on or off\n"
+            "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
+            "Shift+Enter\toverdub on or off: what you play joins the loop\n"
+            "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in)\n"
             "Delete\tevery drum back to the kit's own sound\n"
             "F1–F8 · Shift+F1–F8\tlaunch a slot at the next bar · empty it\n"
             "Backspace\tstop the beat at the next bar");
@@ -293,7 +310,16 @@ public:
         if (!groove.isEmpty())
             parts.prepend(QStringLiteral("%1 grooving").arg(groove.join('+')));
         if (m_keep.active)
-            parts << QStringLiteral("keeping at the bar");
+            parts << QStringLiteral("keeping %1 at the bar").arg(barsText(m_keep.length));
+        if (m_recording >= 0)
+            parts.prepend(QStringLiteral("a take waits for slot %1").arg(m_recording + 1));
+        if (m_playing >= 0 && m_muted[m_playing]) {
+            QStringList out;
+            for (int p = 0; p < PadCount; ++p)
+                if (m_muted[m_playing] >> p & 1u)
+                    out << QString::fromUtf8(padName(p, m_kit)).toUpper();
+            parts << QStringLiteral("%1 out of loop %2").arg(out.join('+')).arg(m_playing + 1);
+        }
         parts << QStringLiteral("%1 kit, swing %2%")
                      .arg(QString::fromUtf8(kitName(m_kit)))
                      .arg(int(std::lround(m_swing * 100)));
@@ -328,6 +354,8 @@ private:
         int rate = 0, density = 1;
         int lastCell = 0;
         int degree = 0; // the 808's glide, in degrees
+        bool landing = true; // its first hit waits a moment for the pressure's peak
+        float peak = 0;
         Edit editFrom;
     };
 
@@ -344,10 +372,18 @@ private:
         double start = 0;  // the first beat it played
         double until = -1; // a kept generator stops here
         bool untilInclusive = false;
+        bool first = true; // its first step goes out only just before it plays
+        bool swing = true; // a pattern finer than sixteenths isn't swung
         Pattern pattern;
+        void setPattern(const Pattern &p) {
+            pattern = p;
+            swing = true;
+            for (int i = 0; i < p.count; ++i)
+                swing &= p.steps[i].tick % 6 == 0;
+        }
         void setRoll(int r) {
             rate = r;
-            pattern = rollPattern(r);
+            setPattern(rollPattern(r));
         }
     };
 
@@ -355,6 +391,7 @@ private:
     struct Keep {
         bool active = false, overdub = false, overdubOn = false;
         double from = 0, until = 0; // beats
+        double length = kBeatsPerBar;
         int slot = 0;
     };
 
@@ -390,13 +427,22 @@ private:
         h->angle0 = h->angle = t.angle;
         h->pressure = t.pressure;
         h->size = t.size;
+        h->peak = t.pressure;
         h->vel = landingVelocity(t.pressure, t.size);
         h->lastCell = h->pad;
         h->cluster = clusterFor(now);
-        if (h->pad == Sub)
-            sendSubOn(*h, now, ctx);
+        (void)ctx;
+    }
+
+    // The landing's hit, timed when the finger came down, as hard as it
+    // pressed since.
+    void sendLanding(Holder &h, ControlContext &ctx) {
+        h.landing = false;
+        h.vel = landingVelocity(h.peak, h.size);
+        if (h.pad == Sub)
+            sendSubOn(h, h.t0, ctx);
         else
-            hit(h->pad, h->vel, t.x * kCols - float(h->pad % kCols), t.y * kRows - float(h->pad / kCols), now, ctx);
+            hit(h.pad, h.vel, h.x0 * kCols - float(h.pad % kCols), h.y0 * kRows - float(h.pad / kCols), h.t0, ctx);
     }
 
     void pressKey(int index, bool accent, ControlContext &ctx) {
@@ -416,6 +462,7 @@ private:
         h->pressure = accent ? 0.7f : 0.45f;
         h->lastCell = h->pad;
         h->cluster = clusterFor(now);
+        h->landing = false;
         if (h->pad == Sub)
             sendSubOn(*h, now, ctx);
         else
@@ -449,6 +496,8 @@ private:
             const int cell = padAt(h.x, h.y);
             if (cell == h.lastCell || !wellInside(h.x, h.y))
                 break;
+            if (h.landing)
+                sendLanding(h, ctx);
             if (h.mode == Mode::Pending && h.pad == Sub)
                 sendOff(h, now, ctx);
             h.mode = Mode::Sweep;
@@ -473,7 +522,7 @@ private:
                 mv.id = h.src & 0xFFFFFF;
                 mv.t = now;
                 mv.i[0] = Sub;
-                mv.i[1] = deg;
+                mv.i[1] = deg + int(std::lround(m_edit[Sub].tune));
                 ctx.send(mv);
             }
             break;
@@ -490,7 +539,12 @@ private:
         if (h.gen < 0)
             return;
         Gen &g = m_gens[size_t(h.gen)];
-        const int steps = int(std::lround((h.y - h.y0) / kLadderStep));
+        // A rung is a fixed travel, shortened where the pad runs out: the
+        // top row can still climb three rungs, the bottom row fall three.
+        const float dy = h.y - h.y0;
+        const float room = dy >= 0 ? 1.0f - h.y0 : h.y0;
+        const float rung = clampf(room / 3.5f, 0.025f, kLadderStep);
+        const int steps = int(std::lround(dy / rung));
         const float dx = h.x - h.x0;
         if (g.groove) {
             const int density = std::clamp(h.density + steps, 0, kDensities - 1);
@@ -498,7 +552,7 @@ private:
             if (density != g.density || shift != g.shift) {
                 g.density = density;
                 g.shift = shift;
-                g.pattern = groovePattern(g.pad, m_kit, density, shift);
+                g.setPattern(groovePattern(g.pad, m_kit, density, shift));
             }
         } else {
             const int rate = std::clamp(h.rate + steps, 0, kRates - 1);
@@ -533,8 +587,8 @@ private:
 
     // A finger or a key leaves (or the page does).
     void release(Holder &h, double now, ControlContext &ctx, bool countTap) {
-        if (countTap && h.mode == Mode::Pending)
-            m_phrase.tap(h.t0, now - h.t0, h.pad);
+        if (countTap && h.landing)
+            sendLanding(h, ctx);
         if (h.pad == Sub && (h.mode == Mode::Pending || h.mode == Mode::Bass || h.mode == Mode::Edit ||
                              h.mode == Mode::Loop))
             sendOff(h, now, ctx);
@@ -569,17 +623,10 @@ private:
             bool grooving = false;
             for (const auto &o : m_holders)
                 grooving |= o.used && o.mode == Mode::Groove;
-            double start = 0;
+            if (h.landing)
+                sendLanding(h, ctx);
             if (together >= 2 || grooving) {
                 becomeGroove(h, now, ctx);
-            } else if (!anyGen() && !m_phrase.taps().empty() && m_phrase.taps().front().group == h.pad &&
-                       m_phrase.closes(h.t0, h.pad, &start)) {
-                // Back on the phrase's first pad, on time: the loop.
-                const int slot = freeSlot(ctx);
-                ctx.capture(slot, start, h.t0);
-                ctx.notice(QStringLiteral("Beat in slot %1").arg(slot + 1));
-                m_phrase.clear();
-                h.mode = Mode::Loop;
             } else if (h.pad == Sub) {
                 h.mode = Mode::Bass;
             } else {
@@ -604,7 +651,9 @@ private:
             g.active = true;
             g.holder = indexOf(h);
             g.pad = h.pad;
-            g.cursor = ctx.beatAt(now);
+            // From the first step at least kFirstStepSecs after landing, or
+            // a hair before now if that has passed: never a hole.
+            g.cursor = std::max(ctx.beatAt(h.t0 + kFirstStepSecs), ctx.beatAt(now - 0.008));
             g.start = g.cursor;
             g.sx = std::clamp(h.x0 * kCols - float(h.pad % kCols), 0.0f, 1.0f);
             g.sy = std::clamp(h.y0 * kRows - float(h.pad / kCols), 0.0f, 1.0f);
@@ -641,7 +690,7 @@ private:
         if (g) {
             g->groove = true;
             g->density = 1;
-            g->pattern = groovePattern(h.pad, m_kit, 1, 0);
+            g->setPattern(groovePattern(h.pad, m_kit, 1, 0));
         }
         rebase(h);
     }
@@ -711,11 +760,17 @@ private:
             k.until = k.from + pv.clips[pv.playing].lengthBeats;
             k.slot = pv.playing;
         } else {
-            // A whole bar of it, ending on a bar line.
+            // Whole bars of it, ending on a bar line: as many (one, two or
+            // four) as it has been held, so a groove that was varied while
+            // it played keeps its variation.
             const double need = std::max(beat, first + kBeatsPerBar);
             k.from = std::ceil(need / kBeatsPerBar - 1e-6) * kBeatsPerBar;
             k.until = k.from;
+            for (double bars : {2.0, 4.0})
+                if (k.from - bars * kBeatsPerBar >= first - 0.3)
+                    k.length = bars * kBeatsPerBar;
             k.slot = freeSlot(ctx);
+            clearMutes(k.slot, ctx);
         }
         for (auto &g : m_gens) {
             if (!g.active || g.preview || g.until >= 0)
@@ -729,8 +784,8 @@ private:
             g.holder = -1;
         }
         m_keep = k;
-        ctx.notice(k.overdub ? QStringLiteral("Into the loop from the bar")
-                             : QStringLiteral("Loop in slot %1 at the bar").arg(k.slot + 1));
+        ctx.notice(k.overdub ? QStringLiteral("Into the loop from the bar, for one pass")
+                             : QStringLiteral("The last %1 into slot %2 at the bar").arg(barsText(k.length)).arg(k.slot + 1));
     }
 
     // --- scheduling ------------------------------------------------------------
@@ -738,6 +793,7 @@ private:
     void schedule(double now, ControlContext &ctx) {
         const double beatNow = ctx.beatAt(now);
         const double horizon = ctx.beatAt(now + kLookahead);
+        const double tight = ctx.beatAt(now + 0.015); // how far ahead a roll's first step may go
 
         if (m_keep.active && beatNow > m_keep.until + kBeatsPerBar) {
             // The clock jumped (a loop on another page set a new tempo):
@@ -749,25 +805,25 @@ private:
         if (m_keep.active && m_keep.overdub && !m_keep.overdubOn && horizon >= m_keep.from) {
             // Everything before the pass begins goes out first, then the
             // overdub opens, so the pass holds exactly one round.
-            sendSteps(beatNow, m_keep.from - 1e-6, ctx);
+            sendSteps(beatNow, m_keep.from - 1e-6, tight, ctx);
             if (!m_userOverdub)
                 ctx.overdub(true);
             m_keep.overdubOn = true;
         }
-        sendSteps(beatNow, horizon, ctx);
+        sendSteps(beatNow, horizon, tight, ctx);
         if (m_keep.active && m_keep.overdub && horizon >= m_keep.until) {
             if (!m_userOverdub)
                 ctx.overdub(false);
             m_keep = Keep{};
         }
         if (m_keep.active && !m_keep.overdub && beatNow >= m_keep.from + 0.02) {
-            ctx.capture(m_keep.slot, ctx.timeAt(m_keep.from - kBeatsPerBar), ctx.timeAt(m_keep.from), 0.85f);
+            ctx.capture(m_keep.slot, ctx.timeAt(m_keep.from - m_keep.length), ctx.timeAt(m_keep.from), 0.85f);
             m_keep = Keep{};
         }
     }
 
     // Sends every step of every generator from its cursor up to `to`.
-    void sendSteps(double beatNow, double to, ControlContext &ctx) {
+    void sendSteps(double beatNow, double to, double tight, ControlContext &ctx) {
         for (auto &g : m_gens) {
             if (!g.active)
                 continue;
@@ -775,7 +831,9 @@ private:
             // rather than catch up with a burst.
             if (g.cursor < beatNow - 0.25)
                 g.cursor = beatNow;
-            double end = to;
+            // Until its first step has gone, a held roll looks only a
+            // moment ahead: a finger that lifts just before it is a tap.
+            double end = g.first && g.holder >= 0 ? std::min(to, tight) : to;
             bool finishing = false;
             if (g.until >= 0 && g.until <= to) {
                 end = g.until;
@@ -795,6 +853,7 @@ private:
                     if (b < beatNow - 0.02)
                         continue; // too late to play in time
                     sendStep(g, s, b, ctx);
+                    g.first = false;
                 }
             }
             g.cursor = end;
@@ -806,7 +865,7 @@ private:
     void sendStep(const Gen &g, const Step &s, double beat, ControlContext &ctx) {
         // Swing: every other sixteenth comes late, the MPC way.
         double b = beat;
-        if (s.tick % 12 == 6)
+        if (g.swing && s.tick % 12 == 6)
             b += double(m_swing - 0.5f) * 0.5;
         // No two strokes alike: a few percent of velocity, the same for the
         // same step of the same pad every bar, so a loop of it still loops.
@@ -827,7 +886,74 @@ private:
         c.f[4] = g.decay;
         if (g.pad == Sub) // a groove's 808 rings a little over a sixteenth
             c.f[5] = float(0.4 * 60.0 / std::max(40.0, ctx.studio().bpm));
+        stamp(c);
         ctx.send(c);
+    }
+
+    // Every hit carries the page's whole sound for its pad, the kit and the
+    // shaping, so a loop sounds as it was played whatever comes later.
+    void stamp(Command &c) const {
+        const int pad = std::clamp(c.i[0], 0, PadCount - 1);
+        const Edit &e = m_edit[pad];
+        c.i[2] = m_kit + 1;
+        if (tonal(pad))
+            c.i[1] += int(std::lround(e.tune));
+        else
+            c.f[3] += e.tune;
+        c.f[4] += e.decay;
+        c.f[6] = e.tone;
+    }
+
+    // Holding pads and pressing Delete takes those drums out of the loop
+    // that plays (and puts them back). Clips can't be edited from a page, so
+    // the engine silences that pad's lane in that slot; the slot forgets it
+    // when something new is recorded into it. False when nothing applies.
+    bool toggleLanes(ControlContext &ctx) {
+        if (m_playing < 0)
+            return false;
+        uint32_t pads = 0;
+        for (const auto &h : m_holders)
+            if (h.used)
+                pads |= 1u << h.pad;
+        if (!pads)
+            return false;
+        QStringList names;
+        bool out = false;
+        for (int p = 0; p < PadCount; ++p) {
+            if (!(pads >> p & 1u))
+                continue;
+            m_muted[m_playing] ^= 1u << p;
+            out = m_muted[m_playing] >> p & 1u;
+            sendMute(m_playing, p, out, ctx);
+            names << QString::fromUtf8(padName(p, m_kit)).toUpper();
+        }
+        ctx.notice(QStringLiteral("%1 %2 loop %3").arg(names.join('+'), out ? "out of" : "back in").arg(m_playing + 1));
+        return true;
+    }
+
+    void sendMute(int slot, int pad, bool on, ControlContext &ctx) {
+        Command c;
+        c.type = Command::Param;
+        c.flags = Command::NoRecord;
+        c.i[0] = ParamMute;
+        c.i[1] = slot;
+        c.i[2] = pad;
+        c.i[3] = on ? 1 : 0;
+        ctx.send(c);
+    }
+
+    void clearMutes(int slot, ControlContext &ctx) {
+        if (slot < 0 || slot >= kClipSlots)
+            return;
+        for (int p = 0; p < PadCount; ++p)
+            if (m_muted[slot] >> p & 1u)
+                sendMute(slot, p, false, ctx);
+        m_muted[slot] = 0;
+    }
+
+    static QString barsText(double beats) {
+        const int bars = int(std::lround(beats / kBeatsPerBar));
+        return bars == 1 ? QStringLiteral("bar") : QStringLiteral("%1 bars").arg(bars);
     }
 
     // --- commands --------------------------------------------------------------
@@ -843,6 +969,7 @@ private:
         c.f[2] = clampf(sy, 0, 1);
         if (pad == Sub) // run over by a fill, the 808 is a short hit
             c.f[5] = 0.25f;
+        stamp(c);
         ctx.send(c);
     }
 
@@ -853,6 +980,7 @@ private:
         c.t = t;
         c.i[0] = Sub;
         c.f[0] = h.vel;
+        stamp(c);
         ctx.send(c);
     }
 
@@ -889,7 +1017,7 @@ private:
         // Grooves that are playing take up the new kit's parts at once.
         for (auto &g : m_gens)
             if (g.active && g.groove)
-                g.pattern = groovePattern(g.pad, m_kit, g.density, g.shift);
+                g.setPattern(groovePattern(g.pad, m_kit, g.density, g.shift));
         ctx.notice(QStringLiteral("%1 kit, swing %2%")
                        .arg(QString::fromUtf8(kitName(kit)).toUpper())
                        .arg(int(std::lround(m_swing * 100))));
@@ -917,7 +1045,8 @@ private:
     int m_clusterSerial = 0;
     bool m_button = false;
     bool m_userOverdub = false;
-    Phrase m_phrase;
+    int m_playing = -1, m_recording = -1; // this part's clips, as the studio last said
+    uint32_t m_muted[kClipSlots] = {};  // per slot, the pads taken out of its loop
     Frame m_frame;
 };
 

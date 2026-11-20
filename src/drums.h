@@ -108,19 +108,24 @@ inline bool tonal(int pad) {
 //
 // A hit: type Hit, flagged Quantize when a hand played it (so a captured
 // loop pulls it to the grid) and not when the page generated it on the grid
-// already (a roll, a groove), NoRecord for an audition.
-//   i[0] pad   i[1] scale degrees (tonal pads)
+// already (a roll, a groove), NoRecord for an audition. Every hit carries
+// its whole sound, the kit and the pad's shaping included, so a loop sounds
+// the way it was played whatever the page is set to later.
+//   i[0] pad   i[1] scale degrees (tonal pads, the pad's tuning included)
+//   i[2] kit + 1 (0: the engine's current kit)
 //   f[0] velocity 0..1   f[1], f[2] where on the pad it was struck (0..1)
-//   f[3] semitones (the other pads)   f[4] decay, as a power of two
-//   f[5] for the 808: seconds to hold before it lets go (0: a hit)
-// The 808 played by a finger is held instead: On (i[0] = Sub, i[1] degree,
-// f[0] velocity), Move (i[1] the degree it glides to), Off.
-// Params never go into clips: the kit and the sound edits are the page's
-// sound, whatever plays through it.
-//   i[0] ParamKit: i[1] kit.   i[0] ParamEdit: i[1] pad, f[0] tune (degrees on
-//   tonal pads, semitones on the rest), f[1] decay (power of two), f[2] tone −1..1.
+//   f[3] semitones (the other pads, tuning included)
+//   f[4] decay, as a power of two   f[5] for the 808: seconds to hold before
+//   it lets go (0: a hit)   f[6] tone −1..1
+// The 808 played by a finger is held instead: On (the same fields), Move
+// (i[1] the degree it glides to), Off.
+// Params never go into clips:
+//   ParamKit: i[1] the page's kit (the room's size, and hits that name none).
+//   ParamEdit: i[1] pad, f[0..2] tune, decay, tone, mirrored for the view.
+//   ParamMute: i[1] clip slot, i[2] pad, i[3] 1 to silence that pad in that
+//   slot's loop, 0 to bring it back.
 constexpr uint16_t Hit = Command::User;
-enum ParamKind : int { ParamKit = 0, ParamEdit = 1 };
+enum ParamKind : int { ParamKit = 0, ParamEdit = 1, ParamMute = 2 };
 
 struct Edit {
     float tune = 0, decay = 0, tone = 0;
@@ -135,6 +140,8 @@ struct Strike {
     int degrees = 0;
     float semis = 0;
     float decay = 0;
+    float tone = 0;
+    int kit = -1;   // −1: the engine's
     float hold = 0; // 808 only
 };
 
@@ -155,6 +162,18 @@ inline int octaveNear(const Harmony &h, float hz) {
 
 inline float degreeHz(const Harmony &h, int degree, float nearHz) {
     return midiToHz(h.midi(degree, octaveNear(h, nearHz)));
+}
+
+// The kick sits on the key's root when the root falls within a few
+// semitones of where a kick lives, else on its fifth: every key gets a kick
+// between about 43 and 62 Hz that still belongs to it.
+inline float kickHz(const Harmony &h, int degrees, float nearHz) {
+    const float root = degreeHz(h, 0, nearHz);
+    const bool fits = root >= nearHz * 0.83f && root <= nearHz * 1.2f;
+    const int base = fits ? 0 : h.tuning.degreesPerOctave() == 7 ? 4 : 3;
+    const float hz = midiToHz(h.midi(base, octaveNear(h, nearHz)));
+    const float near = hz > nearHz * 1.41f ? hz * 0.5f : hz < nearHz * 0.71f ? hz * 2.0f : hz;
+    return near * std::exp2(float(h.tuning.degreeSemis(base + degrees) - h.tuning.degreeSemis(base)) / 12.0f);
 }
 
 // --- grooves ----------------------------------------------------------------
@@ -409,8 +428,7 @@ inline float decayMul(float seconds, float rate) { return std::exp(-1.0f / (std:
 // Everything a voice needs from the engine when it starts.
 struct Setup {
     float rate = 48000;
-    int kit = House;
-    Edit edit;
+    int kit = House; // when the strike names none
     const Harmony *harmony = nullptr;
 };
 
@@ -447,7 +465,7 @@ struct Voice {
         rate = rate_;
         active = true;
         pad = s.pad;
-        kit = su.kit;
+        kit = std::clamp(s.kit >= 0 ? s.kit : su.kit, 0, KitCount - 1);
         delay = delaySamples;
         t = 0;
         fade = 1;
@@ -466,16 +484,15 @@ struct Voice {
         f5.reset();
         f6.reset();
         const Harmony &h = *su.harmony;
-        const Edit &e = su.edit;
         const float vel = clampf(s.vel, 0.02f, 1.0f);
         // Louder hits are louder by more than their velocity, the way a
-        // drum responds, but a ghost note still speaks.
-        const float dyn = 0.08f + 0.92f * std::pow(vel, 1.5f);
-        const float decayScale = std::exp2(clampf(e.decay + s.decay, -3.0f, 3.0f));
-        const float tone = clampf(e.tone, -1.0f, 1.0f);
-        const float semis = s.semis + (tonal(pad) ? 0.0f : e.tune);
-        const float ratio = std::exp2(semis / 12.0f);
-        const int degrees = s.degrees + (tonal(pad) ? int(std::lround(e.tune)) : 0);
+        // drum responds, but a ghost note still speaks: about 24 dB from
+        // the lightest touch to the hardest.
+        const float dyn = 0.05f + 0.95f * std::pow(vel, 1.7f);
+        const float decayScale = std::exp2(clampf(s.decay, -3.0f, 3.0f));
+        const float tone = clampf(s.tone, -1.0f, 1.0f);
+        const float ratio = std::exp2(s.semis / 12.0f);
+        const int degrees = s.degrees;
         const float edge = clampf((s.sy - 0.5f) * 2.0f, -1.0f, 1.0f); // −1 near edge … +1 far edge
         float pan = 0;
         send = 0;
@@ -491,7 +508,7 @@ struct Voice {
             static const float drive[KitCount] = {1.8f, 3.6f, 1.5f, 2.4f, 2.0f};
             static const float click[KitCount] = {0.45f, 0.4f, 0.5f, 0.7f, 0.5f};
             static const float clickHz[KitCount] = {3500.0f, 2600.0f, 4200.0f, 2200.0f, 3200.0f};
-            hz[0] = degreeHz(h, degrees, kit == Trap ? 47.0f : 52.0f);
+            hz[0] = kickHz(h, degrees, kit == Trap ? 47.0f : 52.0f);
             k[0] = amt[kit];
             k[1] = 8.0f;
             mul[0] = decayMul(tauP[kit], rate);
@@ -563,6 +580,8 @@ struct Voice {
             f2.set(c * 1.04f, 1.4f, rate);
             f3.set(2500.0f * ratio, 0.7f, rate);
             f4.set(2500.0f * ratio, 0.7f, rate);
+            f5.set(std::min(12000.0f, rate * 0.4f), 0.6f, rate);
+            f6.set(std::min(12000.0f, rate * 0.4f), 0.6f, rate);
             k[5] = 0.35f + 0.25f * tone; // sizzle
             gain = 0.7f;
             send = 0.45f;
@@ -619,7 +638,7 @@ struct Voice {
             f1.set(std::min(9000.0f * std::exp2(0.3f * tone), rate * 0.42f), 1.1f, rate);
             f2.set(6800.0f * std::exp2(0.3f * tone), 0.7f, rate);
             f4.set(6000.0f * std::exp2(0.3f * tone), 0.7f, rate);
-            f3.set(std::min(15000.0f, rate * 0.45f), 0.7f, rate);
+            f3.set(std::min(13500.0f, rate * 0.42f), 0.7f, rate);
             // Brighter and looser kits are trimmed to sit as far under the kick.
             static const float level[KitCount] = {1.0f, 1.0f, 0.7f, 0.8f, 1.0f};
             gain = (open ? 0.19f : 0.25f) * level[kit];
@@ -737,6 +756,7 @@ struct Voice {
             k[0] = 0.42f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
             f1.set(6500.0f, 0.7f, rate);
             f2.set(5000.0f, 1.2f, rate);
+            f3.set(std::min(12000.0f, rate * 0.4f), 0.6f, rate); // a ride's wash, not fizz
             gain = 0.17f;
             pan = 0.3f;
             send = 0.1f;
@@ -850,8 +870,10 @@ struct Voice {
                 const float tail = tailing ? env[1] * 0.55f : 0.0f;
                 // A clap is a crowd of transients: rounding the tallest
                 // keeps it loud without spiking past the kick.
-                sl = fastTanh(1.6f * (bl * burst + bl * tail)) * 0.8f;
-                sr = fastTanh(1.6f * (bl * burst + br * tail)) * 0.8f;
+                // Then a low-pass at 12 kHz: the saturated noise would
+                // otherwise fizz up to Nyquist.
+                sl = f5.step(fastTanh(1.6f * (bl * burst + bl * tail)) * 0.8f).low;
+                sr = f6.step(fastTanh(1.6f * (bl * burst + br * tail)) * 0.8f).low;
                 stereo = true;
                 break;
             }
@@ -938,7 +960,7 @@ struct Voice {
                 env[1] *= mul[1];
                 env[2] *= mul[2];
                 if ((int(t) & 15) == 0) {
-                    const float hz2 = std::min(6500.0f + 9000.0f * env[2], rate * 0.45f);
+                    const float hz2 = std::min(6000.0f + 7000.0f * env[2], rate * 0.4f);
                     f3.set(hz2, 0.6f, rate);
                     f4.set(hz2, 0.6f, rate);
                 }
@@ -956,7 +978,7 @@ struct Voice {
                 env[0] *= mul[0];
                 env[1] *= mul[1];
                 const float n0 = rng.bipolar();
-                v += f1.step(n0).high * env[0] * k[0] + f2.step(n0).band * env[1] * 0.6f;
+                v += f3.step(f1.step(n0).high).low * env[0] * k[0] + f2.step(n0).band * env[1] * 0.6f;
                 sl = v;
                 break;
             }
@@ -1174,6 +1196,8 @@ public:
         case Command::On: {
             const int pad = std::clamp(c.i[0], 0, PadCount - 1);
             const int64_t at = int64_t(m_sample) + delay;
+            if (replay && (m_muted[(c.id >> 24) & 7] >> pad & 1u))
+                return; // this pad's lane is silenced in the loop that sent it
             if (replay) {
                 // A clip that was overdubbed while a hand (or a held
                 // groove) played the same pad can bring back what was just
@@ -1206,8 +1230,9 @@ public:
             } else if (c.i[0] == ParamEdit) {
                 const int pad = std::clamp(c.i[1], 0, PadCount - 1);
                 m_edit[pad] = {c.f[0], c.f[1], c.f[2]};
-                if (pad == Sub)
-                    m_sub.edit = m_edit[pad];
+            } else if (c.i[0] == ParamMute && c.i[1] >= 0 && c.i[1] < kClipSlots) {
+                const uint32_t bit = 1u << std::clamp(c.i[2], 0, PadCount - 1);
+                m_muted[c.i[1]] = c.i[3] ? m_muted[c.i[1]] | bit : m_muted[c.i[1]] & ~bit;
             }
             break;
         default:
@@ -1234,9 +1259,10 @@ public:
             if (v.active)
                 v.render(l, r, room, n);
         m_sub.render(l, r, n, ctx.harmony());
-        // The trim sits the kit where the studio's master expects a part:
-        // a full-velocity kick peaks around −7 dBFS before the bus glue.
-        constexpr float trim = 0.63f;
+        // The trim sits the kit where the studio's master expects a part,
+        // with room for the bass and the chords: a full-velocity kick peaks
+        // around −10 dBFS before the bus glue.
+        constexpr float trim = 0.45f;
         for (int i = 0; i < n; ++i) {
             float rl, rr;
             m_room.process(room[i], rl, rr);
@@ -1307,10 +1333,11 @@ public:
     // For tests: start a hit at once, as if a command had come.
     void strike(const Strike &s, const Harmony &h) {
         if (s.pad == Sub) {
-            m_sub.start(0, s.degrees, s.vel, std::max(0.05f, s.hold), m_kit, m_edit[Sub], 0, m_rate);
+            m_sub.start(0, s.degrees, s.vel, std::max(0.05f, s.hold), s.kit >= 0 ? s.kit : m_kit,
+                        Edit{0, s.decay, s.tone}, 0, m_rate);
             return;
         }
-        Setup su{m_rate, m_kit, m_edit[s.pad], &h};
+        Setup su{m_rate, m_kit, &h};
         startVoice(s, su, 0);
     }
     int kit() const { return m_kit; }
@@ -1359,13 +1386,15 @@ private:
             s.sy = c.f[2];
             s.semis = c.f[3];
             s.decay = c.f[4];
+            s.tone = c.f[6];
+            s.kit = c.i[2] > 0 ? std::clamp(c.i[2] - 1, 0, KitCount - 1) : m_kit;
             if (pad == Sub) {
                 // A hit on the 808 (a groove's) lets go by itself; an On is
                 // held until its Off.
                 const float hold = c.type == Hit ? std::max(0.05f, c.f[5]) : 0.0f;
-                m_sub.start(c.id, s.degrees, s.vel, hold, m_kit, m_edit[Sub], offset, m_rate);
+                m_sub.start(c.id, s.degrees, s.vel, hold, s.kit, Edit{0, s.decay, s.tone}, offset, m_rate);
             } else {
-                Setup su{m_rate, m_kit, m_edit[pad], &ctx.harmony()};
+                Setup su{m_rate, m_kit, &ctx.harmony()};
                 startVoice(s, su, offset);
             }
             float &flash = p.replay ? m_flashReplay[pad] : m_flash[pad];
@@ -1453,6 +1482,7 @@ private:
                                      INT64_MIN / 2, INT64_MIN / 2, INT64_MIN / 2, INT64_MIN / 2,
                                      INT64_MIN / 2, INT64_MIN / 2, INT64_MIN / 2, INT64_MIN / 2};
     uint32_t m_serial = 0;
+    uint32_t m_muted[kClipSlots] = {}; // per clip slot, the pads silenced in its loop
     float m_flash[PadCount] = {}, m_flashReplay[PadCount] = {};
 };
 

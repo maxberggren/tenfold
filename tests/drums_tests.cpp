@@ -125,6 +125,27 @@ std::vector<double> onsets(const testkit::Take &take, double from, double to, do
     return out;
 }
 
+// The share of a dry sound's energy above 18 kHz: four poles of high-pass.
+double fizz(const Dry &d) {
+    Svf a, b;
+    a.set(18000.0f, 0.7f, kRate);
+    b.set(18000.0f, 0.7f, kRate);
+    double hi = 0, all = 0;
+    for (size_t i = 0; i < d.l.size(); ++i) {
+        const float x = 0.5f * (d.l[i] + d.r[i]);
+        const float y = b.step(a.step(x).high).high;
+        hi += double(y) * y;
+        all += double(x) * x;
+    }
+    return all > 0 ? hi / all : 0;
+}
+
+// The energy of a take between two times.
+double energy(const testkit::Take &take, double from, double to) {
+    const double r = take.rms(from, to);
+    return r * r * (to - from);
+}
+
 // How far t is from the nearest step of `beats` on the studio's grid, in ms.
 double offGridMs(double t, double beats) {
     const double step = beats * kSpb;
@@ -193,9 +214,11 @@ private slots:
         Ctx ctx;
         const Dry a = strike(drums::Kick, drums::House, 1.0f, 0.5, ctx);
         QVERIFY(std::fabs(settledHz(a.l, 0.12, 0.3) - 55.0) < 2.0);
+        // In C the root is out of a kick's range either way: it takes the
+        // fifth, G1.
         ctx.h.tuning.set(0, 0, 4, false);
         const Dry c = strike(drums::Kick, drums::House, 1.0f, 0.5, ctx);
-        QVERIFY(std::fabs(settledHz(c.l, 0.12, 0.3) - 65.4) < 2.5);
+        QVERIFY(std::fabs(settledHz(c.l, 0.12, 0.3) - 49.0) < 2.0);
         ctx.h.tuning.set(9, 0, 4, false);
         const Dry tom = strike(drums::TomHi, drums::House, 1.0f, 0.6, ctx);
         // E3 is the fifth of A minor.
@@ -358,25 +381,6 @@ private slots:
         QVERIFY(part.clips[1].state == ClipView::Empty);
     }
 
-    void tappingABeatThenHoldingItsFirstPadLoops() {
-        const auto take = testkit::play("page 0 1\n"
-                                        "tap 0.5 " + at(drums::Kick) + "\ntap 1.0 " + at(drums::Snare) +
-                                        "\ntap 1.5 " + at(drums::Kick) + "\ntap 2.0 " + at(drums::Snare) +
-                                        "\ndown 2.5 1 " + at(drums::Kick) + "\nup 2.9 1\nend 6\n");
-        QCOMPARE(take.view.parts[0].playing, 0);
-        QCOMPARE(int(std::lround(take.view.bpm)), 120);
-    }
-
-    void holdingAnotherPadAfterABeatRollsInstead() {
-        // The hat isn't where the phrase began: it rolls, nothing loops.
-        const auto take = testkit::play("page 0 1\n"
-                                        "tap 0.5 " + at(drums::Kick) + "\ntap 1.0 " + at(drums::Hat) +
-                                        "\ntap 1.5 " + at(drums::Kick) + "\ntap 2.0 " + at(drums::Hat) +
-                                        "\ndown 2.5 1 " + at(drums::Hat) + "\nup 3.5 1\nend 3.6\n");
-        QCOMPARE(take.view.parts[0].playing, -1);
-        QVERIFY(onsets(take, 2.8, 3.5).size() >= 4);
-    }
-
     void aClickDragShapesTheDrum() {
         // Click on a fresh kick, drag right two degrees and up: tuned up and
         // longer, and the engine has it.
@@ -431,15 +435,215 @@ private slots:
         QVERIFY(take.rms(2.2, 3.0) < 0.0005);
     }
 
-    void recordingFromTheKeyboardMakesALoop() {
-        // Enter arms a recording from the next bar; Enter again closes it.
-        std::string s = "page 0 1\nkey 0.2 Return\n";
-        for (int b = 0; b < 8; ++b)
-            s += "key " + std::to_string(2.0 + b * kSpb) + (b % 2 ? " X\n" : " Z\n");
-        s += "key 4.5 Return\nend 9\n";
-        const auto take = testkit::play(s);
-        QVERIFY(take.view.parts[0].clips[0].state == ClipView::Playing);
-        QVERIFY(take.view.parts[0].clips[0].events >= 4);
+    // --- loops come only from an explicit act --------------------------------
+
+    void holdingAfterHatsRollsAndNeverLoops() {
+        const auto take = testkit::play("page 0 1\n"
+                                        "tap 1.000 0.88 0.12 p=0.5 len=0.07\ntap 1.242 0.88 0.12 p=0.5 len=0.07\n"
+                                        "tap 1.484 0.88 0.12 p=0.5 len=0.07\ntap 1.726 0.88 0.12 p=0.5 len=0.07\n"
+                                        "down 1.968 1 0.88 0.12 p=0.5\nup 3.5 1\nend 5\n");
+        QCOMPARE(take.view.parts[0].playing, -1);
+        QVERIFY(take.view.parts[0].clips[0].state == ClipView::Empty);
+        QVERIFY(onsets(take, 2.05, 3.5).size() >= 10);
+    }
+
+    void holdingTheKickAfterABeatRollsAndNeverLoops() {
+        const auto take = testkit::play("page 0 1\n"
+                                        "tap 1.000 0.12 0.12 p=0.6 len=0.07\ntap 1.484 0.38 0.12 p=0.6 len=0.07\n"
+                                        "tap 1.968 0.12 0.12 p=0.6 len=0.07\ntap 2.452 0.38 0.12 p=0.6 len=0.07\n"
+                                        "down 2.936 1 0.12 0.12 p=0.6\nup 4.5 1\nend 6\n");
+        QCOMPARE(take.view.parts[0].playing, -1);
+        // The kick rolls in quarters while it's held.
+        QVERIFY(onsets(take, 3.1, 4.5, 0.2).size() >= 2);
+    }
+
+    void holdingTheSnareEarlyKeepsTheTempo() {
+        const auto take = testkit::play("page 0 1\n"
+                                        "tap 1.000 0.38 0.12 p=0.6 len=0.07\ntap 1.968 0.38 0.12 p=0.6 len=0.07\n"
+                                        "down 2.80 1 0.38 0.12 p=0.6\nglide 3.0 5.0 1 0.38 0.5\nup 5.0 1\nend 6\n");
+        QCOMPARE(take.view.parts[0].playing, -1);
+        QCOMPARE(int(std::lround(take.view.bpm)), 124);
+    }
+
+    void ghostNotesOverALoopDontReplaceIt() {
+        const auto take = testkit::play("page 0 1\n"
+                                        "down 0.484 1 0.12 0.12 p=0.65\ndown 0.503 2 0.62 0.12 p=0.6\n"
+                                        "down 0.523 3 0.88 0.12 p=0.55\nclick 1.645 len=0.12\n"
+                                        "up 2.032 1\nup 2.032 2\nup 2.032 3\n"
+                                        "tap 5.081 0.38 0.12 p=0.3 len=0.07\ntap 5.323 0.38 0.12 p=0.3 len=0.07\n"
+                                        "tap 5.565 0.38 0.12 p=0.3 len=0.07\ndown 5.807 4 0.38 0.12 p=0.6\n"
+                                        "up 7.3 4\nend 9\n");
+        const auto &part = take.view.parts[0];
+        QCOMPARE(part.playing, 0);
+        QCOMPARE(int(part.clips[0].lengthBeats), 4);
+        QVERIFY(part.clips[1].state == ClipView::Empty);
+    }
+
+    void spaceLoopsTheDrums() {
+        // The session's Space: kick, snare, kick, snare, then Space on the
+        // next one makes a bar at 120 BPM.
+        const auto take = testkit::play("page 0 1\n"
+                                        "tap 0.5 " + at(drums::Kick) + "\ntap 1.0 " + at(drums::Snare) + "\ntap 1.5 " +
+                                        at(drums::Kick) + "\ntap 2.0 " + at(drums::Snare) + "\nkey 2.5 Space\nend 6\n");
+        QCOMPARE(take.view.parts[0].playing, 0);
+        QCOMPARE(int(std::lround(take.view.bpm)), 120);
+        QCOMPARE(take.view.parts[0].clips[0].events, 4);
+    }
+
+    // --- rolls start where they can ------------------------------------------
+
+    void aRollStartsOnTheFirstGridStepItCan() {
+        // Straight sixteenths (techno) at 124: landing at 1.009 s, the first
+        // step at least 90 ms later is the one at 1.2097 s, and nothing is
+        // left out after it.
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\n"
+                                        "down 1.009 1 " + at(drums::Hat) + " p=0.6\nup 2.0 1\nend 2.2\n");
+        const auto on = onsets(take, 0.95, 2.0);
+        QVERIFY(on.size() >= 8);
+        QVERIFY(std::fabs(on[0] - 1.009) < 0.012);
+        const double firstStep = 10 * 0.25 * kSpb;
+        QVERIFY2(std::fabs(on[1] - firstStep) < 0.004, qPrintable(QString::number(on[1])));
+        for (size_t i = 2; i < on.size(); ++i)
+            QVERIFY(std::fabs(on[i] - on[i - 1] - 0.25 * kSpb) < 0.003);
+    }
+
+    void aLongTapStaysOneHit() {
+        // Down for 120 ms: past the hold, but lifted before the first step.
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\ntap 1.009 " + at(drums::Hat) + " len=0.12\nend 2\n");
+        QCOMPARE(int(onsets(take, 0.9, 2.0).size()), 1);
+    }
+
+    void swingLeavesThirtySecondsEven() {
+        // Garage swings 62%, but a rim rolling in thirty-seconds stays even.
+        const auto take = testkit::play("page 0 1\nkey 0.1 Left\n"
+                                        "down 1.0 1 0.38 0.27 p=0.6\nglide 1.3 1.4 1 0.38 0.56\nup 4.0 1\nend 4.5\n");
+        const auto on = onsets(take, 2.0, 3.9, 0.02);
+        QVERIFY(on.size() >= 25);
+        for (size_t i = 1; i < on.size(); ++i)
+            QVERIFY2(std::fabs(on[i] - on[i - 1] - 0.125 * kSpb) < 0.006, qPrintable(QString::number(on[i] - on[i - 1])));
+    }
+
+    void theTopRowClimbsThreeRungs() {
+        // The cowbell held at the far edge still climbs from 1/8 to 1/16T.
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\n"
+                                        "down 1.0 1 0.62 0.86 p=0.6\nglide 1.3 1.4 1 0.62 0.985\nup 3.5 1\nend 3.6\n");
+        const auto on = onsets(take, 2.0, 3.4, 0.02);
+        QVERIFY(on.size() >= 6);
+        const double gap = (on.back() - on.front()) / double(on.size() - 1);
+        QVERIFY2(std::fabs(gap - kSpb / 6) < 0.003, qPrintable(QString::number(gap)));
+    }
+
+    // --- loops keep their sound ----------------------------------------------
+
+    void aLoopKeepsItsKit() {
+        // A trap groove kept as a loop, then the page turns to breaks: the
+        // loop's bars still sound the same.
+        const std::string keep = "page 0 1\nkey 0.1 Right\nkey 0.15 Right\n"
+                                 "down 1.00 1 " + at(drums::Snare) + "\ndown 1.02 2 " + at(drums::Hat) +
+                                 "\ndown 1.04 3 " + at(drums::Kick) + "\nclick 2.0 len=0.15\nup 2.4 1\nup 2.4 2\nup 2.4 3\n";
+        const auto same = testkit::play(keep + "end 14\n");
+        const auto turned = testkit::play(keep + "key 8.0 Right\nend 14\n");
+        // Bars 6 and 7 (beats 24..32) come round after the kit changed.
+        const double a = energy(same, 24 * kSpb, 32 * kSpb), b = energy(turned, 24 * kSpb, 32 * kSpb);
+        QVERIFY2(std::fabs(10 * std::log10(b / a)) < 0.3, qPrintable(QString::number(10 * std::log10(b / a))));
+        QCOMPARE(int(turned.view.parts[0].data[34]), int(drums::Breaks));
+        // And a hit that names its kit sounds as that kit whatever the engine's.
+        Ctx ctx;
+        drums::Engine e;
+        e.init(kRate);
+        Command c;
+        c.type = drums::Hit;
+        c.i[0] = drums::Snare;
+        c.i[2] = drums::Trap + 1;
+        c.f[0] = 1.0f;
+        e.command(c, ctx);
+        float l[kBlock], r[kBlock];
+        double named = 0;
+        for (int i = 0; i < 300; ++i) {
+            std::fill(l, l + kBlock, 0.0f);
+            std::fill(r, r + kBlock, 0.0f);
+            e.render(l, r, kBlock, ctx);
+            for (float v : l)
+                named += double(v) * v;
+        }
+        const Dry trap = strike(drums::Snare, drums::Trap, 1.0f, 300.0 * kBlock / kRate, ctx);
+        double direct = 0;
+        for (float v : trap.l)
+            direct += double(v) * v;
+        QVERIFY(std::fabs(named / direct - 1.0) < 0.02);
+    }
+
+    void aLoopKeepsItsShaping() {
+        // A kick tuned up and kept, then the edits are cleared: the loop
+        // still plays the tuned kick (its pitch is in every hit).
+        const std::string keep = "page 0 1\n"
+                                 "down 1.0 1 " + at(drums::Kick) + "\nclick 1.05 len=0.6\n"
+                                 "glide 1.2 1.5 1 0.275 0.125\nup 1.8 1\n"
+                                 "down 2.0 2 " + at(drums::Kick) + "\ndown 2.02 3 " + at(drums::Hat) +
+                                 "\nclick 3.0 len=0.15\nup 3.4 2\nup 3.4 3\n";
+        const auto kept = testkit::play(keep + "end 12\n");
+        const auto cleared = testkit::play(keep + "key 7.0 Delete\nend 12\n");
+        QCOMPARE(cleared.view.parts[0].data[40 + 3 * drums::Kick], 0.0f);
+        const double a = energy(kept, 9.0, 12.0), b = energy(cleared, 9.0, 12.0);
+        QVERIFY(std::fabs(10 * std::log10(b / a)) < 0.3);
+    }
+
+    // --- taking a drum out of a loop -----------------------------------------
+
+    void holdingAPadAndDeleteTakesItOutOfTheLoop() {
+        // Kick, clap and hat kept from beat 8 (3.87 s); the clap lands on beats
+        // 1 and 3 of every bar. Hold the clap and press Delete: from then on
+        // the loop plays no clap; again, and it's back.
+        const std::string keep = "page 0 1\n"
+                                 "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Clap) +
+                                 "\ndown 1.04 3 " + at(drums::Hat) +
+                                 "\nclick 2.0 len=0.15\nup 2.4 1\nup 2.4 2\nup 2.4 3\n"
+                                 "down 6.0 4 " + at(drums::Clap) + "\nkey 6.3 Delete\nup 6.6 4\n";
+        const double clapAt = 25 * kSpb + 0.03;
+        const auto out = testkit::play(keep + "end " + std::to_string(clapAt) + "\n");
+        QCOMPARE(out.view.parts[0].playing, 0);
+        QVERIFY(out.view.parts[0].data[16 + drums::Clap] < 0.05f);
+        QVERIFY(out.view.parts[0].data[16 + drums::Kick] > 0.3f);
+        const auto back = testkit::play(keep + "down 8.0 5 " + at(drums::Clap) + "\nkey 8.3 Delete\nup 8.6 5\nend " +
+                                        std::to_string(clapAt) + "\n");
+        QVERIFY(back.view.parts[0].data[16 + drums::Clap] > 0.3f);
+    }
+
+    // --- loop lengths ----------------------------------------------------------
+
+    void aGrooveHeldLongerKeepsMoreBars() {
+        auto held = [&](double clickAt) {
+            const auto take = testkit::play("page 0 1\n"
+                                            "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Hat) +
+                                            "\nclick " + std::to_string(clickAt) + " len=0.12\nup " +
+                                            std::to_string(clickAt + 0.3) + " 1\nup " + std::to_string(clickAt + 0.3) +
+                                            " 2\nend " + std::to_string(clickAt + 6) + "\n");
+            return int(take.view.parts[0].clips[0].lengthBeats);
+        };
+        QCOMPARE(held(2.0), 4);
+        QCOMPARE(held(5.5), 8);
+        QCOMPARE(held(9.5), 16);
+    }
+
+    // --- sound -----------------------------------------------------------------
+
+    void nothingFizzesAboveEighteenKilohertz() {
+        for (int kit = 0; kit < drums::KitCount; ++kit)
+            for (int pad = 0; pad < drums::PadCount; ++pad) {
+                Ctx ctx;
+                const double f = fizz(strike(pad, kit, 1.0f, 1.0, ctx));
+                QVERIFY2(f < 0.02, qPrintable(QStringLiteral("%1 in %2: %3%").arg(drums::padName(pad, kit),
+                                                                                    drums::kitName(kit)).arg(f * 100)));
+            }
+    }
+
+    void aGhostIsFarQuieterThanAnAccent() {
+        Ctx ctx;
+        for (int pad : {drums::Snare, drums::Hat, drums::Kick}) {
+            const float ghost = strike(pad, drums::House, 0.17f, 0.5, ctx).peak();
+            const float accent = strike(pad, drums::House, 1.0f, 0.5, ctx).peak();
+            QVERIFY2(20 * std::log10(accent / ghost) > 18.0, drums::padName(pad));
+        }
     }
 
     void clipsDontDoubleWhatWasJustPlayedLive() {

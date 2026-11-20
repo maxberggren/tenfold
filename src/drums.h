@@ -610,7 +610,8 @@ struct Voice {
             mul[0] = dm((kit == Trap ? 0.03f : 0.045f) * (1.0f + 0.3f * tone));
             f1.set(7200.0f * ratio * std::exp2(0.4f * tone), 0.9f, rate);
             f2.set(4500.0f * ratio, 0.7f, rate);
-            gain = 0.15f;
+            f3.set(std::min(13000.0f, rate * 0.4f), 0.6f, rate);
+            gain = 0.17f;
             pan = 0.3f + 0.3f * (s.sx - 0.5f);
             send = 0.15f;
             break;
@@ -895,7 +896,7 @@ struct Voice {
                 if (t >= k[0])
                     env[0] *= mul[0];
                 const float n0 = rng.bipolar();
-                sl = f2.step(f1.step(n0).band).high * a * env[0] * 2.0f;
+                sl = f3.step(f2.step(f1.step(n0).band).high).low * a * env[0] * 2.0f;
                 break;
             }
             case Hat:

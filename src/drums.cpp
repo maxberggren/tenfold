@@ -46,12 +46,14 @@ constexpr int kCols = 4, kRows = 4;
 // first step of the grid it can (at least kFirstStepSecs after landing)
 // instead of leaving a hole; the first step itself only goes out if the
 // finger is still down just before it, so a long tap never sprouts one.
-constexpr double kHoldSecs = 0.10;
+constexpr double kHoldSecs = 0.08;
 constexpr double kFirstStepSecs = 0.09;
 constexpr double kTogetherSecs = 0.08; // fingers landing this close are one hand
-// A landing's velocity is the hardest it pressed in its first few
-// milliseconds: the pressure is still rising in the first frame.
+// A light first reading is often a finger still coming down: such a landing
+// waits one more frame (a few milliseconds) and takes the hardest it pressed.
+// A firm one plays at once.
 constexpr double kVelocitySecs = 0.006;
+constexpr float kFirmPressure = 0.45f;
 constexpr double kLookahead = 0.06;    // how far ahead rolls are scheduled
 constexpr float kLadderStep = 0.07f;   // pad heights of travel per rate or density step
 constexpr int kKeyBit = 1 << 20;       // holders for keys, apart from finger ids
@@ -158,6 +160,10 @@ public:
     // the player has turned to the bass.
     void background(double t, ControlContext &ctx) override {
         const PartView &pv = ctx.studio().parts[ctx.part()];
+        // A take the session is making (Space) starts its slot afresh: no
+        // drum is out of a loop that hasn't been played yet.
+        if (pv.recording >= 0 && pv.recording != m_recording)
+            clearMutes(pv.recording, ctx);
         m_playing = pv.playing;
         m_recording = pv.recording;
         schedule(t, ctx);
@@ -431,7 +437,8 @@ private:
         h->vel = landingVelocity(t.pressure, t.size);
         h->lastCell = h->pad;
         h->cluster = clusterFor(now);
-        (void)ctx;
+        if (t.pressure >= kFirmPressure)
+            sendLanding(*h, ctx);
     }
 
     // The landing's hit, timed when the finger came down, as hard as it
@@ -653,7 +660,9 @@ private:
             g.pad = h.pad;
             // From the first step at least kFirstStepSecs after landing, or
             // a hair before now if that has passed: never a hole.
-            g.cursor = std::max(ctx.beatAt(h.t0 + kFirstStepSecs), ctx.beatAt(now - 0.008));
+            // (A swung step plays late, so it counts from where it is heard.)
+            const double swung = double(m_swing - 0.5f) * 0.5;
+            g.cursor = std::max(ctx.beatAt(h.t0 + kFirstStepSecs) - swung, ctx.beatAt(now - 0.008));
             g.start = g.cursor;
             g.sx = std::clamp(h.x0 * kCols - float(h.pad % kCols), 0.0f, 1.0f);
             g.sy = std::clamp(h.y0 * kRows - float(h.pad / kCols), 0.0f, 1.0f);
@@ -1165,7 +1174,8 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
             p.setPen(QPen(c::alpha(col, 0.8f), 1));
             const double hx = strip.left() + strip.width() * barPos;
             p.drawLine(QPointF(hx, strip.top() - 3 * s), QPointF(hx, strip.bottom() + 2 * s));
-            if (!shaping) {
+            // Under a finger its tag says this; a kept one has no finger.
+            if (!shaping && (gen->holder < 0 || m_holders[size_t(gen->holder)].key)) {
                 QString what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
                                            : QString::fromUtf8(rateName(gen->rate));
                 if (gen->until >= 0)
@@ -1175,6 +1185,22 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
             }
         }
     }
+
+    // Pads taken out of the playing loop.
+    const int playing = pc.view->playing;
+    if (playing >= 0 && playing < kClipSlots && m_muted[playing])
+        for (int pad = 0; pad < PadCount; ++pad) {
+            if (!(m_muted[playing] >> pad & 1u))
+                continue;
+            const int row = pad / kCols, column = pad % kCols;
+            const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
+                                        float(row + 1) / kRows)
+                                    .adjusted(5 * s, 5 * s, -5 * s, -5 * s);
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            p.drawLine(cell.bottomLeft(), cell.topRight());
+            c::tag(p, QPointF(cell.center().x(), cell.bottom() - 14 * s), QStringLiteral("OUT OF LOOP %1").arg(playing + 1),
+                   c::red(), small, true);
+        }
 
     // The 808's note while it sounds.
     if (data[32] > 0.002f) {
@@ -1223,15 +1249,24 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         c::finger(p, pc, t, col, what, glow);
     }
 
-    // A keep on its way to the bar line.
+    // A keep on its way to the bar line, or a take the session is waiting
+    // to make into a loop.
     if (m_keep.active) {
         const double left = std::max(0.0, m_keep.from - pc.beat);
-        const QString msg = m_keep.overdub ? QStringLiteral("INTO THE LOOP IN %1").arg(left, 0, 'f', 1)
-                                           : QStringLiteral("LOOP %1 IN %2").arg(m_keep.slot + 1).arg(left, 0, 'f', 1);
+        const QString msg = m_keep.overdub
+                                ? QStringLiteral("INTO THE LOOP IN %1 BEATS").arg(left, 0, 'f', 1)
+                                : QStringLiteral("%1 INTO SLOT %2 IN %3 BEATS")
+                                      .arg(barsText(m_keep.length).toUpper())
+                                      .arg(m_keep.slot + 1)
+                                      .arg(left, 0, 'f', 1);
         c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()), msg,
                std::fmod(pc.time, 0.5) < 0.25 ? col : c::alpha(col, 0.6f), 13, true);
     }
 
+    if (pc.view->recording >= 0 && !m_keep.active)
+        c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
+               QStringLiteral("LOOPING INTO SLOT %1 · SPACE CALLS IT OFF").arg(pc.view->recording + 1),
+               std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f), 13, true);
     c::beats(p, pc, col);
     // Below the pad: the clips, then the kits with the one playing lit and
     // the swing.

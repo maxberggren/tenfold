@@ -1,4 +1,5 @@
-# Breaks: a beat tapped in by hand, closed on its first pad, sets 172 BPM; the snare is
+# Breaks: a beat tapped in by hand, then Space where it would start again: the loop sets
+# 172 BPM. The snare is
 # grabbed with a click and dragged lower, longer and darker while the loop plays;
 # ride and tambourine land together as a groove and are kept into the loop; then the
 # keyboard takes over: a held hat key rolling faster, accents, and a tom run to finish.
@@ -6,15 +7,14 @@ page 0 1
 key 0.1 Right
 key 0.1 Right
 key 0.1 Right
-# Kick, kick, snare, kick, snare, ghost: then back on the kick, on time, and stay.
+# Kick, kick, snare, kick, snare, ghost; Space on the next one.
 tap 0.600 0.12 0.12 p=0.8 len=0.07
 tap 0.774 0.12 0.12 p=0.5 len=0.07
 tap 0.948 0.38 0.12 p=0.75 len=0.07
 tap 1.470 0.12 0.12 p=0.7 len=0.07
 tap 1.644 0.38 0.12 p=0.75 len=0.07
 tap 1.818 0.38 0.12 p=0.15 len=0.07
-down 1.992 1 0.12 0.12 p=0.8
-up 2.514 1
+key 1.992 Space
 # Click on the snare and drag: down a few semitones, longer, twisted darker.
 down 4.776 2 0.38 0.12 p=0.6
 click 4.811 len=1.2

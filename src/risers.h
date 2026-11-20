@@ -18,6 +18,7 @@
 #include <cmath>
 
 #include "electro.h"
+#include "fx.h"
 #include "part.h"
 
 namespace tf::risers {
@@ -83,6 +84,7 @@ constexpr int SweepDrive = 11;
 constexpr int StopStart = 12; // power-down from this beat …
 constexpr int StopEnd = 13;   // … to this one (−1: none)
 constexpr int LastDrop = 14;  // the beat of the last drop that fired
+constexpr int SubArmed = 15;  // a sub waits for the drop
 constexpr int Hits = 16;      // a flash per hit cell, kHits of them
 constexpr int Voices = 32;    // then per voice:
 constexpr int Stride = 12;
@@ -148,6 +150,7 @@ struct Voice {
     Rng rng;
     Svf aL, aR, bL, bR, cL, cR;
     OnePoleLp oL, oR;
+    bool quiet = false; // an impact whose low end an armed sub plays instead
     Ladder ladL, ladR;
     SawOsc saw[12];
     float ph[8] = {};
@@ -165,9 +168,17 @@ public:
 
     void init(float rate) override {
         m_rate = rate;
-        m_cutDecay = std::exp(-1.0f / (0.004f * rate));
+        // Past the ONE a riser lets go in a few tens of milliseconds: it
+        // peaks on the line and runs into the hit rather than stopping dead
+        // before it.
+        m_cutDecay = std::exp(-1.0f / (0.02f * rate));
         m_busAttack = 1.0f - std::exp(-1.0f / (0.004f * rate));
         m_busRelease = 1.0f - std::exp(-1.0f / (0.18f * rate));
+        m_room.init(rate);
+        m_room.set(0.5f, 0.0f);
+        m_roomHpL.set(220.0f, 0.7f, rate);
+        m_roomHpR.set(220.0f, 0.7f, rate);
+        m_roomIdle = rate * 10.0f;
         for (int i = 0; i < kVoices; ++i) {
             Voice &v = m_voices[i];
             v.rng = Rng(0x7EA5u + uint32_t(i) * 2654435761u);
@@ -218,8 +229,16 @@ public:
                 if (kind == Stop)
                     v.end = stopEnd(onset);
                 m_hitFlash[kind - kRisers] = 1.0f;
-                if (kind == Impact)
-                    ctx.pump(offset, 0.9f * v.vel);
+                // A sub tapped while a drop is coming is armed onto it: subs
+                // belong on the ONE.
+                if (kind == Sub)
+                    for (const DropPoint &d : m_drops)
+                        if (d.active && d.beat > onset + 1.0) {
+                            v.state = Waiting;
+                            v.start = d.beat;
+                            v.held = false;
+                            v.releasedAt = d.beat;
+                        }
             }
             break;
         }
@@ -276,18 +295,24 @@ public:
                 aimed |= v.active && isRiser(v.kind) && v.state <= Running && std::fabs(v.end - d.beat) < 0.01;
             if (!aimed) {
                 d.active = false;
+                for (Voice &v : m_voices)
+                    if (v.active && v.kind == Sub && v.state == Waiting && std::fabs(v.start - d.beat) < 0.01)
+                        v.active = false;
                 continue;
             }
             if (d.beat < b1) {
                 const int off = std::clamp(int((d.beat - b0) / bps), 0, n - 1);
-                fireDrop(d, off, ctx);
+                fireDrop(d, off);
                 d.active = false;
             }
         }
 
-        // Risers render apart from the hits, so they can breathe with the
-        // kick on their own: the impact must never duck itself.
-        float rl[kBlock] = {}, rr[kBlock] = {};
+        // Three buses. Risers breathe with the kick on their own (the
+        // impact must never duck itself); risers and hits share a room of
+        // their own; the boom and the sub stay dry and mono, out of every
+        // room, so the low end of a drop is the kick's and theirs alone.
+        float rl[kBlock] = {}, rr[kBlock] = {}, hl[kBlock] = {}, hr[kBlock] = {}, dl[kBlock] = {};
+        const float *duck = ctx.duck();
         for (Voice &v : m_voices) {
             if (!v.active)
                 continue;
@@ -295,8 +320,8 @@ public:
                 l = rl;
                 r = rr;
             } else {
-                l = outL;
-                r = outR;
+                l = hl;
+                r = hr;
             }
             v.sPress += (v.press - v.sPress) * smooth;
             v.sTone += (v.tone - v.sTone) * smooth;
@@ -311,8 +336,8 @@ public:
             case Saw: renderSaw(v, l, r, n, b0, bps, h); break;
             case Roll: renderRoll(v, l, r, n, b0, bps, h); break;
             case Swell: renderSwell(v, l, r, n, b0, bps, h); break;
-            case Impact: renderImpact(v, l, r, n, h); break;
-            case Sub: renderSub(v, l, r, n, b0, bps, h); break;
+            case Impact: renderImpact(v, l, r, dl, n, h, duck); break;
+            case Sub: renderSub(v, dl, n, b0, bps, h, duck); break;
             case Down: renderDown(v, l, r, n, b0, bps, h); break;
             case Zap: renderZap(v, l, r, n, b0, bps, h); break;
             case Stop: renderStop(v, l, r, n, b0, bps, h); break;
@@ -322,23 +347,31 @@ public:
             default: v.active = false; break;
             }
         }
-        const float *duck = ctx.duck();
         l = outL;
         r = outR;
         for (int i = 0; i < n; ++i) {
             const float g = 1.0f - 0.32f * duck[i];
-            l[i] += rl[i] * g;
-            r[i] += rr[i] * g;
+            const float L = rl[i] * g + hl[i], R = rr[i] * g + hr[i];
+            float wl = 0, wr = 0;
+            if (m_roomIdle < m_rate * 8.0f || L != 0 || R != 0) {
+                m_roomIdle = (L == 0 && R == 0) ? m_roomIdle + 1 : 0;
+                m_room.process(m_roomHpL.step(L).high, m_roomHpR.step(R).high, wl, wr);
+            }
+            l[i] = L + 0.55f * wl;
+            r[i] = R + 0.55f * wr;
         }
         // The FX bus: a soft compressor, so that five risers stacked at full
-        // pressure are a wall, not five times the level.
+        // pressure are a wall, not five times the level. The dry lows join
+        // after it, untouched.
         for (int i = 0; i < n; ++i) {
             const float a = std::max(std::fabs(l[i]), std::fabs(r[i]));
             m_busEnv += (a - m_busEnv) * (a > m_busEnv ? m_busAttack : m_busRelease);
-            constexpr float threshold = 0.32f;
-            const float g = m_busEnv > threshold ? std::pow(threshold / m_busEnv, 0.6f) : 1.0f;
-            l[i] *= g;
-            r[i] *= g;
+            // Held under the studio's glue: a build that already squeezes the
+            // master bus leaves the drop nothing to hit with.
+            constexpr float threshold = 0.2f;
+            const float g = m_busEnv > threshold ? std::pow(threshold / m_busEnv, 0.75f) : 1.0f;
+            l[i] = l[i] * g + dl[i];
+            r[i] = r[i] * g + dl[i];
         }
         const float fade = std::exp(-float(n) / (0.25f * m_rate));
         m_flash *= fade;
@@ -376,6 +409,9 @@ public:
         d[pub::StopEnd] = -1;
         d[pub::Flash] = m_flash;
         d[pub::LastDrop] = float(m_lastDrop);
+        for (const Voice &v : m_voices)
+            if (v.active && v.kind == Sub && v.state == Waiting)
+                d[pub::SubArmed] = 1;
         for (int k = 0; k < kHits; ++k)
             d[pub::Hits + k] = m_hitFlash[k];
         int w = 0;
@@ -502,8 +538,11 @@ private:
         v.ladR.reset();
         for (auto &s : v.saw)
             s.phase = v.rng.unit();
+        // Oscillators that are a hit's body start at phase zero, so two drops
+        // sound the same; risers' start anywhere, as unison should.
         for (float &p : v.ph)
-            p = v.rng.unit();
+            p = isRiser(kind) ? v.rng.unit() : 0.0f;
+        v.quiet = false;
         v.combL.clear();
         v.combR.clear();
         v.vel = 0.55f + 0.9f * v.press;
@@ -559,6 +598,9 @@ private:
             start = std::min(start, v.start);
             intensity = std::max(intensity, v.intensity);
         }
+        for (Voice &v : m_voices)
+            if (v.active && v.kind == Sub && v.state == Waiting && std::fabs(v.start - from) < 0.01)
+                v.start = target;
         if (pending)
             pending->active = false;
         // A drop out of nothing gets a reverse swell into it when there is
@@ -598,11 +640,18 @@ private:
         return end;
     }
 
-    void fireDrop(const DropPoint &d, int offset, AudioContext &ctx) {
+    // The drop: the impact on its sample. Its boom gives way to a sub if
+    // one was armed onto this drop (they would only fight in one octave).
+    // Neither pumps the mix: the kick on the ONE does that, and the lows
+    // here duck under it.
+    void fireDrop(const DropPoint &d, int offset) {
         m_flash = 1.0f;
         m_lastDrop = d.beat;
         const float intensity = clampf(0.55f + 0.45f * d.intensity, 0.4f, 1.0f);
         const float size = clampf(float(d.beat - d.start) / 16.0f, 0.3f, 1.0f);
+        bool armedSub = false;
+        for (const Voice &v : m_voices)
+            armedSub |= v.active && v.kind == Sub && v.state == Waiting && std::fabs(v.start - d.beat) < 0.01;
         Command c;
         c.id = -2;
         c.f[0] = 0.5f;
@@ -613,16 +662,8 @@ private:
         boom.delay = offset;
         boom.start = d.beat;
         boom.vel = 0.75f + 0.25f * size;
-        Voice &sub = take(-3);
-        c.id = -3;
-        begin(sub, c, Sub, false);
-        sub.held = false;
-        sub.delay = offset;
-        sub.start = d.beat;
-        sub.vel = 0.7f + 0.3f * size;
-        sub.releasedAt = d.beat;
-        m_hitFlash[Impact - kRisers] = m_hitFlash[Sub - kRisers] = 1.0f;
-        ctx.pump(offset, 1.0f);
+        boom.quiet = armedSub;
+        m_hitFlash[Impact - kRisers] = 1.0f;
     }
 
     // --- shared pieces -------------------------------------------------------
@@ -685,15 +726,20 @@ private:
         const double bm = b0 + 0.5 * bps * n;
         const float p = progressAt(v, bm), pe = progressAt(v, b0 + bps * n);
         v.p = p;
-        const float c = std::pow(p, 1.7f);
+        const float c = std::pow(p, 1.4f);
         const float I = v.sInt;
-        const float lpHz = std::min(10000.0f, 260.0f * std::exp2(c * (5.4f + 1.2f * I) + 0.8f * v.sTone));
+        // From a breath at 1.4 kHz to the full hiss: never so dark that it
+        // can't be heard over a beat, with air above it from the start.
+        const float lpHz = std::min(11000.0f, 1400.0f * std::exp2(c * (2.4f + 0.6f * I) + 0.6f * v.sTone));
         const float hpHz = 55.0f * std::exp2(c * (4.6f + 0.8f * I) + 0.5f * v.sTone);
         const float q = 0.75f + 1.8f * I * c;
         v.aL.set(lpHz, q, m_rate);
         v.aR.set(lpHz * 1.02f, q, m_rate);
         v.bL.set(hpHz, 0.7f, m_rate);
         v.bR.set(hpHz, 0.7f, m_rate);
+        v.cL.set(7500.0f, 0.7f, m_rate);
+        v.cR.set(7900.0f, 0.7f, m_rate);
+        const float air = 0.25f + 0.35f * c;
         // The comb whistles: its delay is the period of a note gliding three
         // octaves up onto the tonic, which it reaches on the ONE.
         const float target = float(h.midi(0, 3)) + 12.0f * std::round(v.sTone * 0.6f);
@@ -707,7 +753,7 @@ private:
         // Twist: an autopan that speeds up with the build, on the grid.
         const double rate = std::exp2(std::floor(c * 3.99f)) * 0.5;
         const float g0 = v.gain;
-        const float g1 = riseGain(pe, 34.0f, 1.5f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.9f + 0.4f * I) * 0.27f;
+        const float g1 = riseGain(pe, 17.0f, 1.4f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.9f + 0.4f * I) * 0.25f;
         v.gain = g1;
         float peak = 0;
         for (int i = 0; i < n; ++i) {
@@ -715,8 +761,9 @@ private:
             const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
             const float nc = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
             float L = nc * wa + n1 * wb, R = nc * wa + n2 * wb;
-            L = v.bL.step(v.aL.step(L).low).high;
-            R = v.bR.step(v.aR.step(R).low).high;
+            const float airL = v.cL.step(L).high * air, airR = v.cR.step(R).high * air;
+            L = v.bL.step(v.aL.step(L).low).high + airL;
+            R = v.bR.step(v.aR.step(R).low).high + airR;
             const float cl = L + fb * v.combL.read(period);
             const float cr = R + fb * v.combR.read(period * 1.003f);
             v.combL.push(fastTanh(cl));
@@ -770,7 +817,7 @@ private:
         v.aL.set(cutoff, 0.8f + 1.4f * I, m_rate);
         v.aR.set(cutoff, 0.8f + 1.4f * I, m_rate);
         const float g0 = v.gain;
-        const float g1 = riseGain(pe, 30.0f, 1.4f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.16f;
+        const float g1 = riseGain(pe, 19.0f, 1.3f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.16f;
         v.gain = g1;
         float peak = 0;
         for (int i = 0; i < n; ++i) {
@@ -826,7 +873,7 @@ private:
         const float stabDecay = std::exp(-1.0f / (std::max(0.01f, stabTau) * m_rate));
         const float depth = clampf(0.85f - 0.7f * v.sMotion, 0, 1);
         const float g0 = v.gain;
-        const float g1 = riseGain(pe, 26.0f, 1.3f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.3f /
+        const float g1 = riseGain(pe, 17.0f, 1.2f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.3f /
                          std::sqrt(float(count));
         v.gain = g1;
         float peak = 0;
@@ -887,9 +934,9 @@ private:
         const float toneDecay = std::exp(-1.0f / (0.05f * m_rate));
         const float clapDecay = std::exp(-1.0f / (0.04f * m_rate));
         const float pitchDecay = std::exp(-1.0f / (0.012f * m_rate));
-        const double grid = gridFor(p, v.bars);
+        const double grid = gridFor(p, 1); // a roll never starts slower than quarters
         const float fade = fallFade(v, bm);
-        const float master = dbToGain(-14.0f * (1.0f - c)) * (0.7f + 0.5f * I) * fade * 0.55f * pressGain(v);
+        const float master = dbToGain(-8.0f * (1.0f - c)) * (0.7f + 0.5f * I) * fade * 0.55f * pressGain(v);
         const float width = 0.15f + 0.6f * v.sMotion;
         float peak = 0;
         for (int i = 0; i < n; ++i) {
@@ -900,7 +947,7 @@ private:
                 ++v.stepCount;
                 // Crescendo, the beat a little louder than the notes between.
                 const double onBeat = std::fabs(b - std::round(b)) < 0.01 ? 1.0 : 0.82;
-                const float vel = float(onBeat) * (0.35f + 0.65f * std::pow(p, 0.8f));
+                const float vel = float(onBeat) * (0.55f + 0.45f * std::pow(p, 0.8f));
                 v.env = vel;
                 v.env2 = vel;
                 v.pitchEnv = 1.0f;
@@ -945,11 +992,17 @@ private:
         // Reversed decay: the closer the ONE, the louder, as a cymbal or a
         // chord played backwards.
         const float len = float(std::max(1.0, v.end - v.start));
-        const float tau = 0.5f + 0.09f * len;
+        // Two reversed tails: one as long as the swell, so it is heard from
+        // its first bar, and a short one, the suck into the ONE.
+        const float tauLong = 0.5f * len, tauShort = 0.6f + 0.05f * len;
+        auto curve = [&](double left) {
+            const float r = float(std::max(0.0, left));
+            return 0.75f * std::exp(-r / tauLong) + 0.25f * std::exp(-r / tauShort);
+        };
         auto envAt = [&](double b) {
             if (v.state == Falling)
-                return std::exp(-float(v.end - v.fallAt) / tau) * fallFade(v, b);
-            return std::exp(-float(std::max(0.0, v.end - b)) / tau);
+                return curve(v.end - v.fallAt) * fallFade(v, b);
+            return curve(v.end - b);
         };
         const float e0 = v.gain, e1 = envAt(be) * pressGain(v) * 0.24f;
         v.gain = e1;
@@ -963,13 +1016,13 @@ private:
             inc[2 * k] = midiToHz(m + 0.07f) / m_rate;
             inc[2 * k + 1] = midiToHz(m - 0.07f) / m_rate;
         }
-        const float cut = 500.0f * std::exp2(4.6f * envAt(bm));
+        const float cut = 900.0f * std::exp2(3.8f * envAt(bm));
         v.aL.set(cut, 0.9f, m_rate);
         v.aR.set(cut * 1.05f, 0.9f, m_rate);
         v.bL.set(2600.0f, 0.7f, m_rate);
         v.bR.set(2900.0f, 0.7f, m_rate);
         v.cL.set(8500.0f, 0.9f, m_rate);
-        const float bright = 3500.0f * std::exp2(2.3f * envAt(bm));
+        const float bright = 5000.0f * std::exp2(1.6f * envAt(bm));
         v.oL.set(bright, m_rate);
         v.oR.set(bright * 1.1f, m_rate);
         // The cluster of a cymbal: six square waves at unrelated pitches,
@@ -1034,99 +1087,161 @@ private:
         return from;
     }
 
-    void renderImpact(Voice &v, float *l, float *r, int n, const Harmony &h) {
+    // The impact, in three layers:
+    //   body   a tuned thump between 100 and 400 Hz and a knock of band-passed
+    //          noise, on the sample: the weight you feel on the ONE;
+    //   boom   the key's root, but only after the first 40 ms, faded in from
+    //          phase zero and ducked under the kick: the kick owns the low end
+    //          of the downbeat, the boom is its tail;
+    //   crash  six square waves at unrelated pitches with noise, high-passed
+    //          and closing from bright to warm as it decays, so it slopes down
+    //          like a real cymbal instead of hissing; then a band of noise
+    //          sweeping down under it.
+    void renderImpact(Voice &v, float *l, float *r, float *low, int n, const Harmony &h, const float *duck) {
         const int from = startOf(v, n);
         if (from >= n)
             return;
         const float I = v.sInt;
         const float boomHz = rootHz(h, 40.0f);
+        float bodyHz = boomHz * 4.0f;
+        while (bodyHz > 320.0f)
+            bodyHz *= 0.5f;
         v.note = float(69.0 + 12.0 * std::log2(boomHz / 440.0));
         if (v.t == 0) {
             v.env = 1;    // boom
-            v.env2 = 1;   // thud
+            v.env2 = 1;   // body
             v.env3 = 1;   // crash
             v.env4 = 1;   // tail
             v.pitchEnv = 1;
-            v.aL.set(1800.0f, 0.7f, m_rate);
-            v.bL.set(3600.0f, 0.7f, m_rate);
-            v.bR.set(3900.0f, 0.7f, m_rate);
+            v.glideNote = 1; // the body's own pitch drop
+            v.aL.set(240.0f, 1.4f, m_rate);
+            v.aR.set(100.0f, 0.7f, m_rate);
+            v.pressPeak = 1; // the snap's envelope (a hit has no use for the pressure peak)
+            v.bL.set(2400.0f, 0.7f, m_rate);
+            v.bR.set(2600.0f, 0.7f, m_rate);
         }
+        constexpr float kickWindow = 0.04f, fadeIn = 0.03f, kHitDelay = 0.004f;
         const float dt = 1.0f / m_rate;
-        const float boomDecay = std::exp(-dt / (0.3f + 0.45f * I));
-        const float thudDecay = std::exp(-dt / 0.07f);
-        const float crashDecay = std::exp(-dt / (0.8f + 1.2f * I));
-        const float tailDecay = std::exp(-dt / 1.1f);
-        const float pitchDecay = std::exp(-dt / 0.035f);
-        // The tail sweeps down from bright to dark over a couple of beats.
-        const float tailHz = 9000.0f * std::exp2(-v.t * 2.2f * float(m_bpm) / 120.0f);
+        const float boomDecay = std::exp(-dt / (0.28f + 0.3f * I));
+        const float bodyDecay = std::exp(-dt / 0.085f), snapDecay = std::exp(-dt / 0.025f);
+        const float crashDecay = std::exp(-dt / (0.8f + 0.9f * I));
+        const float tailDecay = std::exp(-dt / 0.9f);
+        const float pitchDecay = std::exp(-dt / 0.06f), bodyPitchDecay = std::exp(-dt / 0.018f);
+        // The crash's top closes from 12 kHz to 4.5 kHz as it rings down.
+        const float top = 4500.0f + 7500.0f * v.env3 * v.env3;
+        v.oL.set(top, m_rate);
+        v.oR.set(top * 1.06f, m_rate);
+        const float tailHz = 7000.0f * std::exp2(-v.t * 2.2f * float(m_bpm) / 120.0f);
         v.cL.set(std::max(250.0f, tailHz), 2.2f, m_rate);
-        v.cR.set(std::max(250.0f, tailHz * 1.1f), 2.2f, m_rate);
-        const float vel = v.vel * (0.75f + 0.35f * I) * pressGain(v);
+        if (v.t == 0)
+            v.cR.set(1200.0f, 0.7f, m_rate);
+        static const float metal[6] = {1373.0f, 2035.0f, 2471.0f, 3496.0f, 3611.0f, 5355.0f};
+        // A layer under the kick, not over it: the drop's weight is the
+        // kick's, the impact is its size.
+        const float vel = v.vel * (0.75f + 0.35f * I) * pressGain(v) * 0.42f;
         float peak = 0;
         for (int i = from; i < n; ++i) {
-            v.pitchEnv *= pitchDecay;
-            v.ph[0] += boomHz * (1.0f + 3.0f * v.pitchEnv) / m_rate;
-            v.ph[0] -= std::floor(v.ph[0]);
-            const float attack = std::min(1.0f, v.t * 1500.0f);
-            const float boom = fastTanh((1.0f + 1.4f * v.env) * sin01(v.ph[0])) * v.env * attack;
+            // Body: on the sample.
+            v.glideNote *= bodyPitchDecay;
+            v.ph[1] += bodyHz * (1.0f + 1.2f * v.glideNote) / m_rate;
+            v.ph[1] -= std::floor(v.ph[1]);
             const float n0 = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
-            const float thud = v.aL.step(n0).low * v.env2 * 1.6f;
-            const float cl = v.bL.step(n1).high * v.env3, cr = v.bR.step(n2).high * v.env3;
-            const float tl = v.cL.step(n1).band * v.env4, tr = v.cR.step(n2).band * v.env4;
-            v.env *= boomDecay;
-            v.env2 *= thudDecay;
+            const float knock = v.aL.step(n0).band * 2.5f;
+            const float body = v.aR.step((sin01(v.ph[1]) + knock) * v.env2).high;
+            v.env2 *= bodyDecay;
+            // The snap: 25 ms of bright noise, the edge of the hit.
+            const float snap = v.cR.step(n2).high * v.pressPeak;
+            v.pressPeak *= snapDecay;
+            // Boom: after the kick's window, from phase zero.
+            float boom = 0;
+            if (v.t >= kickWindow && !v.quiet) {
+                v.pitchEnv *= pitchDecay;
+                v.ph[0] += boomHz * (1.0f + 0.5f * v.pitchEnv) / m_rate;
+                v.ph[0] -= std::floor(v.ph[0]);
+                const float in = std::min(1.0f, (v.t - kickWindow) / fadeIn);
+                boom = fastTanh((1.0f + 0.8f * v.env) * sin01(v.ph[0])) * v.env * in * (1.0f - 0.85f * duck[i]);
+                v.env *= boomDecay;
+            }
+            // Crash.
+            float m = 0;
+            for (int k = 0; k < 6; ++k) {
+                float &ph = v.ph[2 + k];
+                ph += metal[k] / m_rate;
+                ph -= std::floor(ph);
+                m += ph < 0.5f ? 1.0f : -1.0f;
+            }
+            const float cym = 0.09f * m;
+            const float cl = v.oL.step(v.bL.step(n1 * 0.7f + cym).high) * v.env3;
+            const float cr = v.oR.step(v.bR.step(n2 * 0.7f + cym).high) * v.env3;
+            const float tl = v.cL.step(n1).band * v.env4, tr = tl;
             v.env3 *= crashDecay;
             v.env4 *= tailDecay;
-            const float mono = 0.5f * boom + 0.3f * thud;
-            const float L = (mono + 0.28f * cl + 0.3f * tl) * vel;
-            const float R = (mono + 0.28f * cr + 0.3f * tr) * vel;
+            // The kick's own peak comes in its first few milliseconds: the
+            // impact blooms just after it, under it, so it adds weight to the
+            // ONE instead of a second peak for the limiter to fight.
+            const float attack = clampf((v.t - kHitDelay) * 400.0f, 0, 1);
+            const float L = (0.3f * body + 0.25f * snap + 0.3f * cl + 0.12f * tl) * vel * attack;
+            const float R = (0.3f * body - 0.25f * snap + 0.3f * cr + 0.12f * tr) * vel * attack;
             l[i] += L;
             r[i] += R;
-            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+            low[i] += 0.5f * boom * vel;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R) + std::fabs(boom));
             v.t += 1.0f / m_rate;
         }
         v.level = v.level * 0.8f + 0.2f * peak;
-        if (v.env < 1e-4f && v.env3 < 1e-4f && v.env4 < 1e-4f)
+        if (v.t > 0.2f && v.env < 1e-4f && v.env3 < 1e-4f && v.env4 < 1e-4f)
             v.active = false;
     }
 
-    void renderSub(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
+    // An 808 sub that dives an octave onto the root (or the degree slid to)
+    // in half a beat and is gone within about a beat, ducked under the
+    // kick. Armed onto a drop, it waits for the ONE and leaves the kick its
+    // first 40 ms.
+    void renderSub(Voice &v, float *low, int n, double b0, double bps, const Harmony &h, const float *duck) {
+        if (v.state == Waiting) {
+            const double b1 = b0 + bps * n;
+            if (v.start >= b1)
+                return;
+            v.delay = std::clamp(int((v.start - b0) / bps), 0, n - 1);
+            v.state = Running;
+            v.quiet = true; // started on a drop: mind the kick's window
+        }
         const int from = startOf(v, n);
         if (from >= n)
             return;
         const float I = v.sInt;
-        // Down an octave, onto the root (or the degree slid to), in about a
-        // beat; the deeper the finger sits in the cell, the longer.
         const int degree = int(std::lround(v.sTone * 4.0f));
         float endHz = midiToHz(h.midi(degree, -1));
         while (endHz < 36.0f)
             endHz *= 2.0f;
-        const float diveSec = float((0.6 + 0.8 * I) * 60.0 / m_bpm);
+        const float spb = float(60.0 / m_bpm);
+        const float diveSec = (0.35f + 0.3f * I) * spb;
         const float u = clampf(v.t / diveSec, 0, 1);
         const float semis = 12.0f * (1.0f - u) * (1.0f - u);
         const float hz = endHz * std::exp2(semis / 12.0f);
         v.note = float(69.0 + 12.0 * std::log2(hz / 440.0));
-        const bool sustaining = v.held || (v.releasedAt >= 0 && b0 < v.releasedAt) || v.t < diveSec;
-        const float decay = std::exp(-1.0f / ((sustaining ? 6.0f : 0.35f + 0.8f * I) * m_rate));
+        const bool sustaining = v.held || v.t < diveSec;
+        const float decay = std::exp(-1.0f / ((sustaining ? 4.0f : (0.18f + 0.25f * I) * spb / 0.47f) * m_rate));
         if (v.t == 0)
             v.env = 1.0f;
-        const float vel = v.vel * pressGain(v) * 0.4f;
+        const float vel = v.vel * pressGain(v) * 0.3f;
+        const float window = v.quiet ? 0.04f : 0.0f;
         float peak = 0;
         for (int i = from; i < n; ++i) {
-            v.ph[0] += hz / m_rate;
-            v.ph[0] -= std::floor(v.ph[0]);
-            const float attack = std::min(1.0f, v.t * 400.0f);
+            const float attack = clampf((v.t - window) * (v.quiet ? 40.0f : 400.0f), 0, 1);
+            if (attack > 0) {
+                v.ph[0] += hz / m_rate;
+                v.ph[0] -= std::floor(v.ph[0]);
+            }
             const float s = sin01(v.ph[0]);
             // A touch of second harmonic so small speakers hear it, centred
             // so it adds no offset.
-            const float o = fastTanh(1.6f * s + 0.25f * (s * s - 0.5f)) * v.env * attack * vel;
+            const float o = fastTanh(1.6f * s + 0.25f * (s * s - 0.5f)) * v.env * attack * vel * (1.0f - 0.85f * duck[i]);
             v.env *= decay;
-            l[i] += o;
-            r[i] += o;
+            low[i] += o;
             peak = std::max(peak, 2.0f * std::fabs(o));
             v.t += 1.0f / m_rate;
         }
-        (void)bps;
         v.level = v.level * 0.8f + 0.2f * peak;
         if (v.env < 2e-4f)
             v.active = false;
@@ -1245,14 +1360,15 @@ private:
         const float midi = float(h.midi(int(std::lround(v.sTone * 4.0f)), 1)) - 36.0f * u * u;
         v.note = midi;
         const float hz = midiToHz(midi);
-        v.aL.set(std::max(80.0f, 5000.0f * std::exp2(-5.0f * u)), 0.9f, m_rate);
+        v.aL.set(std::max(80.0f, 2500.0f * std::exp2(-4.0f * u)), 0.7f, m_rate);
         const float g0 = v.gain;
         const float g1 = v.state == Releasing ? 0.0f : (1.0f - u * u) * 0.12f * pressGain(v) * (0.7f + 0.5f * v.sInt);
         v.gain = g1;
         const float inc = std::min(hz / m_rate, 0.45f), inc2 = std::min(hz * 0.5f / m_rate, 0.45f);
         float peak = 0;
         for (int i = from; i < n; ++i) {
-            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * std::min(1.0f, v.t * 300.0f);
+            // Faded in over 20 ms: a saw switched on is a click.
+            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * std::min(1.0f, v.t * 50.0f);
             const float s = v.aL.step(v.saw[0].step(inc) + 0.7f * v.saw[1].step(inc2)).low * g;
             l[i] += s;
             r[i] += s;
@@ -1310,6 +1426,9 @@ private:
     float m_rate = 48000;
     float m_cutDecay = 0.99f;
     float m_busEnv = 0, m_busAttack = 0.005f, m_busRelease = 0.0001f;
+    Reverb m_room;
+    Svf m_roomHpL, m_roomHpR;
+    float m_roomIdle = 0;
     double m_beat = 0, m_bpm = 124, m_lastDrop = -1;
     float m_flash = 0;
     float m_hitFlash[kHits] = {};

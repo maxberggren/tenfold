@@ -47,6 +47,15 @@ std::vector<VoiceInfo> voicesOf(const StudioView &v) {
 
 double rmsDb(const testkit::Take &take, double from, double to) { return 20 * std::log10(take.rms(from, to) + 1e-9); }
 
+// Kick, snare, kick, snare half a second apart on the drums page, then Space
+// where the next kick would land: a one-bar loop at 120 BPM.
+const char *kBeat = "page 0 1\n"
+                    "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
+                    "key 2.5 Space\n";
+
+// The touch-clock time of a beat, from a view.
+double timeOfBeat(const StudioView &v, double beat) { return v.time + (beat - v.beat) * 60.0 / v.bpm; }
+
 }
 
 class RisersTests : public QObject {
@@ -61,114 +70,156 @@ private slots:
         QVERIFY(take.peak() < 1.0);
     }
 
-    // A two-bar noise riser landed just after a beat: it aims at the bar
-    // line nearest two bars on, grows into it, and is gone just after it,
-    // when the drop has fired on that beat.
-    void aRiserPeaksOnTheBarLine() {
-        // Landing at 0.5 s is beat 1.03; two bars on is 9.03, nearest bar 8.
-        const double drop = 8.0, tDrop = timeOf(drop);
+    // A build lands on the phrase grid: from beat 1, a two-bar noise riser
+    // aims at the 8-bar line (beat 32), always forward, and waits to come in
+    // two bars before it. It grows into the line, the drop fires on it, and
+    // the riser is gone after.
+    void aRiserPeaksOnThePhraseLine() {
+        const double drop = 32.0, tDrop = timeOf(drop);
+        const std::string land = fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nup 1.0 1\n", columnX(0), rowY(1));
         std::vector<VoiceInfo> during;
-        testkit::play(fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nup 1.0 1\nend %.3f\n", columnX(0), rowY(1), tDrop - 0.5),
-                      [&](Session &s) { during = voicesOf(s.view()); });
+        testkit::play(land + "end 3\n", [&](Session &s) { during = voicesOf(s.view()); });
         QCOMPARE(int(during.size()), 1);
         QCOMPARE(during[0].kind, int(risers::Noise));
         QCOMPARE(during[0].end, drop);
+        QCOMPARE(during[0].start, drop - 8);
+        QCOMPARE(during[0].state, int(risers::Waiting));
 
         StudioView after;
-        const auto take = testkit::play(
-            fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nup 1.0 1\nend %.3f\n", columnX(0), rowY(1), tDrop + 0.4),
-            [&](Session &s) { after = s.view(); });
+        const auto take = testkit::play(land + fmt("end %.3f\n", tDrop + 0.4), [&](Session &s) { after = s.view(); });
         QVERIFY(take.finite());
-        // It grows: the last sixteenth before the line is far louder than a
-        // bar before, and louder than any moment before it.
         const double last = rmsDb(take, tDrop - 0.06, tDrop - 0.003);
-        QVERIFY2(last > rmsDb(take, tDrop - 2.0, tDrop - 1.94) + 10, qPrintable(QString::number(last)));
-        for (double t = tDrop - 1.9; t < tDrop - 0.12; t += 0.06)
+        QVERIFY2(last > rmsDb(take, tDrop - 3.8, tDrop - 3.74) + 6, qPrintable(QString::number(last)));
+        for (double t = tDrop - 3.8; t < tDrop - 0.12; t += 0.06)
             QVERIFY2(rmsDb(take, t, t + 0.06) < last + 0.5, qPrintable(QString("louder at %1").arg(t)));
-        // The drop fired on the bar line and the riser is gone.
         QCOMPARE(double(after.parts[kFx].data[risers::pub::LastDrop]), drop);
         for (const VoiceInfo &v : voicesOf(after))
             QVERIFY(!risers::isRiser(v.kind));
     }
 
-    // The impact starts on the drop's very sample: nothing of it before.
+    // Long risers are heard from their first bar: every 8- and 16-bar riser
+    // is within 20 dB of its last beat a quarter of the way in.
+    void longRisersAreAudibleEarly() {
+        for (int row : {3, 4})
+            for (int kind = 0; kind < risers::kRisers; ++kind) {
+                if (row == 4 && kind != risers::Noise && kind != risers::Swell)
+                    continue;
+                // From beat 1, the 8-bar row aims at beat 32, the 16-bar row
+                // at beat 64; both start at once.
+                const double drop = row == 3 ? 32.0 : 64.0, start = timeOf(1.03), tDrop = timeOf(drop);
+                const auto take = testkit::play(
+                    fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nup 1.0 1\nend %.3f\n", columnX(kind), rowY(row), tDrop - 0.01));
+                const double quarter = start + 0.25 * (tDrop - start);
+                const double early = rmsDb(take, quarter - 0.5, quarter + 0.5);
+                const double peak = rmsDb(take, tDrop - timeOf(1.0), tDrop - 0.01);
+                QVERIFY2(early > peak - 20, qPrintable(QString("%1 row %2: %3 vs %4").arg(risers::kindName(kind)).arg(row).arg(early).arg(peak)));
+            }
+    }
+
+    // The ONE with the FX on it is louder than the beat's own ONE: the
+    // impact's body lands on the sample, its boom waits out the kick's first
+    // 40 ms and ducks under it, so nothing cancels the kick.
+    void theDropAddsToTheKick() {
+        // A beat at 120, then an 8-bar noise riser over it.
+        const std::string fx = std::string(kBeat) + fmt("page 3.0 7\ndown 3.1 1 %.3f %.3f p=0.6\nup 3.6 1\n", columnX(0), rowY(3));
+        std::vector<VoiceInfo> v;
+        StudioView view;
+        testkit::play(fx + "end 4\n", [&](Session &s) {
+            v = voicesOf(s.view());
+            view = s.view();
+        });
+        QCOMPARE(int(v.size()), 1);
+        const double tDrop = timeOfBeat(view, v[0].end);
+        const auto with = testkit::play(fx + fmt("end %.3f\n", tDrop + 1.0));
+        const auto without = testkit::play(std::string(kBeat) + fmt("end %.3f\n", tDrop + 1.0));
+        const double a = rmsDb(with, tDrop, tDrop + 0.04), b = rmsDb(without, tDrop, tDrop + 0.04);
+        QVERIFY2(a > b + 1.0, qPrintable(QString("with %1, beat alone %2 (drop at %3 s)").arg(a).arg(b).arg(tDrop)));
+        // And the beat after the ONE isn't dug out by boom and sub fighting.
+        QVERIFY2(rmsDb(with, tDrop + 0.3, tDrop + 0.45) > rmsDb(without, tDrop + 0.3, tDrop + 0.45) - 1.0,
+                 qPrintable(QString::number(rmsDb(with, tDrop + 0.3, tDrop + 0.45))));
+        QVERIFY(with.peak() < 1.0);
+    }
+
+    // The impact's body starts on the drop's very sample.
     void theImpactLandsOnTheSample() {
-        const double tDrop = timeOf(8.0);
-        // A two-bar swell: it is quiet long before the drop, so the impact
-        // is easy to see.
-        const auto take =
-            testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f\nend %.3f\n", columnX(4), rowY(1), tDrop + 0.5));
+        // A one-bar swell landed at beat 25.1 enters at 28 and drops at 32.
+        const double tDrop = timeOf(32.0);
+        const auto take = testkit::play(
+            fmt("page 0 7\ntap %.3f %.3f %.3f\nend %.3f\n", timeOf(25.1), columnX(4), rowY(0), tDrop + 0.5));
         const size_t at = size_t(tDrop * 48000);
         double before = 0, after = 0;
         for (size_t i = at - 480; i < at; ++i)
             before = std::max(before, double(std::fabs(take.left[i])));
         for (size_t i = at; i < at + 480; ++i)
             after = std::max(after, double(std::fabs(take.left[i])));
-        // The swell peaks into the line; the boom on it is bigger still.
         QVERIFY2(after > before * 1.2, qPrintable(QString("%1 %2").arg(before).arg(after)));
         QVERIFY(take.peak() < 1.0);
     }
 
-    // During a build the page owns the master filter and drive; on the ONE
-    // they are back where they were, exactly.
+    // During a build the page owns the master filter, drive and room; they
+    // are still held a moment before the ONE and back where they were, exactly,
+    // just after it. The lift on the ONE is back by the end of its bar.
     void theMasterIsHandedBack() {
-        const double tDrop = timeOf(8.0);
+        const double tDrop = timeOf(32.0);
         const std::string build =
-            fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nglide 0.6 3.0 1 %.3f 0.75\n", columnX(0), rowY(1), columnX(0));
-        StudioView mid, after;
-        testkit::play(build + fmt("end %.3f\n", tDrop - 0.3), [&](Session &s) { mid = s.view(); });
+            fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nglide 0.6 3.0 1 %.3f %.3f\n", columnX(0), rowY(3), columnX(0), rowY(3) + 0.12);
+        StudioView mid, late, after;
+        testkit::play(build + fmt("end %.3f\n", tDrop - 1.0), [&](Session &s) { mid = s.view(); });
         QVERIFY2(mid.master[MasterFilter] > 0.6f, qPrintable(QString::number(mid.master[MasterFilter])));
         QVERIFY(mid.master[MasterDrive] > 0.02f);
         QVERIFY(mid.master[RoomSize] > 0.4f);
-        testkit::play(build + fmt("up 3.5 1\nend %.3f\n", tDrop + 0.5), [&](Session &s) { after = s.view(); });
+        testkit::play(build + fmt("end %.3f\n", tDrop - 0.2), [&](Session &s) { late = s.view(); });
+        QVERIFY(late.master[MasterFilter] > 0.6f);
+        testkit::play(build + fmt("up 3.5 1\nend %.3f\n", tDrop + 0.3), [&](Session &s) { after = s.view(); });
         QCOMPARE(after.master[MasterFilter], 0.5f);
         QCOMPARE(after.master[MasterDrive], 0.0f);
         QCOMPARE(after.master[RoomSize], 0.35f);
+        // The drop comes in a notch up, and eases back over its bar.
+        QVERIFY(after.master[MasterGain] > 0.85f);
+        testkit::play(build + fmt("up 3.5 1\nend %.3f\n", tDrop + timeOf(4.0) + 0.2), [&](Session &s) { after = s.view(); });
         QCOMPARE(after.master[MasterGain], 0.8f);
     }
 
-    // The strip style takes drums and bass out for the build's last bar and
-    // brings them back on the ONE; the gap style silences everything for
-    // the last half beat.
+    // Strip takes drums and bass out for the build's last bar; gap mutes
+    // everything but the risers for the last half beat. Both bring the mix
+    // back on the ONE: the kick is there within 3 ms of the line.
     void dropStylesMuteAndHandBack() {
-        const double tDrop = timeOf(8.0);
-        const std::string strip =
-            fmt("page 0 7\nkey 0.1 Right\nkey 0.2 Right\ndown 0.5 1 %.3f %.3f\nup 1.0 1\n", columnX(1), rowY(1));
-        StudioView last, after;
-        testkit::play(strip + fmt("end %.3f\n", tDrop - 0.4), [&](Session &s) { last = s.view(); });
-        QCOMPARE(last.parts[0].channel.value[Mute], 1.0f);
-        QCOMPARE(last.parts[1].channel.value[Mute], 1.0f);
-        QCOMPARE(last.parts[2].channel.value[Mute], 0.0f);
-        testkit::play(strip + fmt("end %.3f\n", tDrop + 0.2), [&](Session &s) { after = s.view(); });
-        for (int p = 0; p < after.partCount; ++p)
-            QCOMPARE(after.parts[p].channel.value[Mute], 0.0f);
-
-        const std::string gap = fmt("page 0 7\nkey 0.1 Right\ndown 0.5 1 %.3f %.3f\nup 1.0 1\n", columnX(1), rowY(1));
-        const auto take = testkit::play(gap + fmt("end %.3f\n", tDrop + 0.3), [&](Session &s) { after = s.view(); });
-        // The half beat before the drop is quiet but for the room's tail.
-        QVERIFY2(rmsDb(take, tDrop - 0.2, tDrop - 0.02) < rmsDb(take, tDrop - 0.5, tDrop - 0.3) - 12,
-                 qPrintable(QString::number(rmsDb(take, tDrop - 0.2, tDrop - 0.02))));
-        QVERIFY(rmsDb(take, tDrop, tDrop + 0.2) > -30);
-        // And the drop after the gap is on time: loud within 3 ms of the line.
-        QVERIFY2(rmsDb(take, tDrop + 0.001, tDrop + 0.004) > -30,
-                 qPrintable(QString::number(rmsDb(take, tDrop + 0.001, tDrop + 0.004))));
-        for (int p = 0; p < after.partCount; ++p)
-            QCOMPARE(after.parts[p].channel.value[Mute], 0.0f);
+        for (int style : {1, 2}) {
+            std::string fx = std::string(kBeat) + "page 3.0 7\n";
+            for (int k = 0; k < style; ++k)
+                fx += fmt("key %.3f Right\n", 3.05 + 0.05 * k);
+            fx += fmt("down 3.3 1 %.3f %.3f\nup 3.8 1\n", columnX(1), rowY(3));
+            std::vector<VoiceInfo> v;
+            StudioView view, last, after;
+            testkit::play(fx + "end 4\n", [&](Session &s) {
+                v = voicesOf(s.view());
+                view = s.view();
+            });
+            const double tDrop = timeOfBeat(view, v[0].end);
+            testkit::play(fx + fmt("end %.3f\n", tDrop - 0.15), [&](Session &s) { last = s.view(); });
+            QCOMPARE(last.parts[0].channel.value[Mute], 1.0f);
+            QCOMPARE(last.parts[1].channel.value[Mute], 1.0f);
+            QCOMPARE(last.parts[2].channel.value[Mute], style == 1 ? 1.0f : 0.0f);
+            QCOMPARE(last.parts[kFx].channel.value[Mute], 0.0f);
+            const auto take = testkit::play(fx + fmt("end %.3f\n", tDrop + 0.3), [&](Session &s) { after = s.view(); });
+            for (int p = 0; p < after.partCount; ++p)
+                QCOMPARE(after.parts[p].channel.value[Mute], 0.0f);
+            QVERIFY2(rmsDb(take, tDrop + 0.001, tDrop + 0.004) > -30,
+                     qPrintable(QString::number(rmsDb(take, tDrop + 0.001, tDrop + 0.004))));
+        }
     }
 
     // A second finger joins the drop the first one set, and its row says
     // when it comes in: a one-bar layer enters one bar before.
     void layersJoinTheSameDrop() {
         std::vector<VoiceInfo> v;
-        // Four bars from beat 1.03: the drop is 16. The roll lands at beat
-        // 4.1 in the 1-bar row: it waits until 12.
-        testkit::play(fmt("page 0 7\ndown 0.5 1 %.3f %.3f\ndown 2.0 2 %.3f %.3f\nend 2.6\n", columnX(0), rowY(2),
+        testkit::play(fmt("page 0 7\ndown 0.5 1 %.3f %.3f\ndown 2.0 2 %.3f %.3f\nend 2.6\n", columnX(0), rowY(3),
                           columnX(3), rowY(0)),
                       [&](Session &s) { v = voicesOf(s.view()); });
         QCOMPARE(int(v.size()), 2);
-        QCOMPARE(v[0].end, 16.0);
-        QCOMPARE(v[1].end, 16.0);
-        QCOMPARE(v[1].start, 12.0);
+        QCOMPARE(v[0].end, 32.0);
+        QCOMPARE(v[1].end, 32.0);
+        QCOMPARE(v[1].start, 28.0);
         QCOMPARE(v[1].state, int(risers::Waiting));
     }
 
@@ -176,14 +227,11 @@ private slots:
     // rising gets there in time.
     void aClickDropsOnTheNextBar() {
         StudioView after;
-        // An 8-bar riser from beat 1 aims at 32; the click at beat 5.1 means
-        // the bar line at 8.
         const auto take = testkit::play(fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nup 1.0 1\nclick %.3f\nend %.3f\n",
                                             columnX(2), rowY(3), timeOf(5.1), timeOf(8.0) + 0.3),
                                         [&](Session &s) { after = s.view(); });
         QCOMPARE(double(after.parts[kFx].data[risers::pub::LastDrop]), 8.0);
         QVERIFY(after.parts[kFx].data[risers::pub::Drop] < 0);
-        // It rushed: the last beat before the drop is loud.
         QVERIFY(rmsDb(take, timeOf(7.6), timeOf(7.98)) > rmsDb(take, timeOf(4.5), timeOf(5.0)) + 6);
     }
 
@@ -196,29 +244,50 @@ private slots:
         QCOMPARE(double(after.parts[kFx].data[risers::pub::LastDrop]), 4.0);
     }
 
+    // The drop's sub is a choice: none unless SUB DROP is tapped during the
+    // build, which arms one onto the ONE.
+    void aSubIsArmedOntoTheDrop() {
+        const double tDrop = timeOf(32.0);
+        const std::string build = fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nup 1.0 1\n", columnX(0), rowY(3));
+        for (bool armed : {false, true}) {
+            std::string s = build;
+            if (armed)
+                s += fmt("tap 2.0 %.3f 0.1\n", hitX(1));
+            StudioView before, after;
+            testkit::play(s + fmt("end %.3f\n", tDrop - 0.5), [&](Session &se) { before = se.view(); });
+            QCOMPARE(before.parts[kFx].data[risers::pub::SubArmed] > 0, armed);
+            std::vector<VoiceInfo> v;
+            testkit::play(s + fmt("end %.3f\n", tDrop + 0.1), [&](Session &se) { v = voicesOf(se.view()); });
+            bool sub = false;
+            for (const VoiceInfo &x : v)
+                sub |= x.kind == risers::Sub;
+            QCOMPARE(sub, armed);
+        }
+    }
+
     // A finger flicked down as it leaves pulls its riser out: no drop, and
     // the mix comes home.
     void aFlickCallsTheDropOff() {
         StudioView after;
         const auto take = testkit::play(
-            fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nglide 2.0 2.06 1 %.3f %.3f\nup 2.07 1\n", columnX(0), rowY(1), columnX(0),
-                rowY(1) - 0.15) +
-                fmt("end %.3f\n", timeOf(8.0) + 0.5),
+            fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nglide 4.0 4.06 1 %.3f %.3f\nup 4.07 1\n", columnX(0), rowY(3), columnX(0),
+                rowY(3) - 0.15) +
+                fmt("end %.3f\n", timeOf(32.0) + 0.5),
             [&](Session &s) { after = s.view(); });
         QVERIFY(after.parts[kFx].data[risers::pub::LastDrop] < 0);
         QVERIFY(after.parts[kFx].data[risers::pub::Drop] < 0);
         QVERIFY(voicesOf(after).empty());
         QCOMPARE(after.master[MasterFilter], 0.5f);
-        QVERIFY(rmsDb(take, timeOf(8.0) - 0.2, timeOf(8.0) + 0.4) < -60);
+        QVERIFY(rmsDb(take, timeOf(32.0) - 0.2, timeOf(32.0) + 0.4) < -60);
     }
 
     // Q: every riser falls away at once, the drop is called off and the
     // mix comes home.
     void theWholeBuildFallsAway() {
         StudioView after;
-        const auto take = testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\ntap 0.7 %.3f %.3f len=0.2\nkey 2.5 Q\n", columnX(0),
-                                            rowY(1), columnX(2), rowY(1)) +
-                                            fmt("end %.3f\n", timeOf(8.0) + 0.5),
+        const auto take = testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\ntap 0.7 %.3f %.3f len=0.2\nkey 2.5 Q\n",
+                                            columnX(0), rowY(3), columnX(2), rowY(3)) +
+                                            fmt("end %.3f\n", timeOf(32.0) + 0.5),
                                         [&](Session &s) { after = s.view(); });
         QVERIFY(after.parts[kFx].data[risers::pub::LastDrop] < 0);
         QVERIFY(voicesOf(after).empty());
@@ -226,19 +295,19 @@ private slots:
         QCOMPARE(after.master[RoomSize], 0.35f);
         // It falls rather than stops: still sounding just after, quiet soon.
         QVERIFY(rmsDb(take, 2.52, 2.62) > -60);
-        QVERIFY(rmsDb(take, timeOf(8.0) - 0.2, timeOf(8.0) + 0.4) < -60);
+        QVERIFY(rmsDb(take, timeOf(32.0) - 0.2, timeOf(32.0) + 0.4) < -60);
     }
 
     // The pitch riser lands on the key's tonic two octaves up, and follows a
     // key change.
     void pitchedRisersLandInKey() {
-        const double tDrop = timeOf(8.0);
+        const double tDrop = timeOf(32.0);
         for (int fifths : {0, 1}) {
             std::vector<VoiceInfo> v;
             std::string s = "page 0 7\n";
             if (fifths)
                 s += "key 0.1 Ctrl+Right\n";
-            s += fmt("down 0.5 1 %.3f %.3f\nup 1.0 1\nend %.3f\n", columnX(1), rowY(1), tDrop - 0.04);
+            s += fmt("down 0.5 1 %.3f %.3f\nup 1.0 1\nend %.3f\n", columnX(1), rowY(3), tDrop - 0.04);
             int root = 0;
             testkit::play(s, [&](Session &se) {
                 v = voicesOf(se.view());
@@ -248,10 +317,9 @@ private slots:
             const double target = 36 + root + 24;
             QVERIFY2(std::fabs(v[0].note - target) < 0.8, qPrintable(QString("%1 vs %2").arg(v[0].note).arg(target)));
         }
-        // Slid sideways, it lands on another note of the scale.
         std::vector<VoiceInfo> v;
-        testkit::play(fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nglide 0.6 0.9 1 %.3f %.3f\n", columnX(1), rowY(1),
-                          columnX(1) + 0.15, rowY(1)) +
+        testkit::play(fmt("page 0 7\ndown 0.5 1 %.3f %.3f\nglide 0.6 0.9 1 %.3f %.3f\n", columnX(1), rowY(3),
+                          columnX(1) + 0.15, rowY(3)) +
                           fmt("end %.3f\n", tDrop - 0.04),
                       [&](Session &s) { v = voicesOf(s.view()); });
         QCOMPARE(int(v.size()), 1);
@@ -263,8 +331,8 @@ private slots:
         QVERIFY2(inKey && std::fabs(v[0].note - 69) > 1, qPrintable(QString::number(v[0].note)));
     }
 
-    // The keyboard: A to G start risers of the keys' length, Up makes it
-    // longer, Z fires the impact, Return drops.
+    // The keyboard: A to G start risers of the keys' length on the phrase
+    // grid, Up makes it longer, Z fires the impact, Return drops.
     void keysPlayRisersAndHits() {
         std::vector<VoiceInfo> v;
         testkit::play("page 0 7\nkey 0.3 Up\nkey 0.5 A\nkey 0.6 Z\nend 0.8\n",
@@ -273,7 +341,6 @@ private slots:
         for (const VoiceInfo &x : v) {
             if (x.kind == risers::Noise) {
                 riser = true;
-                // Eight bars from beat 1.03: 33, nearest bar line 32.
                 QCOMPARE(x.end, 32.0);
             }
             impact |= x.kind == risers::Impact;
@@ -288,23 +355,21 @@ private slots:
     // Throw and wash take every channel's sends and hand them back when
     // the finger leaves, or the page does.
     void sendsAreHandedBack() {
-        StudioView held, after;
+        StudioView fresh, held, after;
+        testkit::play("end 0.1\n", [&](Session &s) { fresh = s.view(); });
         const std::string wash = fmt("page 0 7\ndown 0.5 1 %.3f 0.12\n", hitX(6));
         testkit::play(wash + "end 1.5\n", [&](Session &s) { held = s.view(); });
         QVERIFY(held.parts[0].channel.value[ReverbSend] > 0.6f);
         QVERIFY(held.master[RoomSize] > 0.8f);
-        // Leaving the page lets go of the wash.
         testkit::play(wash + "page 1.5 1\nup 4.0 1\nend 4.0\n", [&](Session &s) { after = s.view(); });
-        QCOMPARE(after.parts[0].channel.value[ReverbSend], 0.12f);
-        QCOMPARE(after.parts[kFx].channel.value[ReverbSend], 0.32f);
+        for (int p = 0; p < after.partCount; ++p)
+            QCOMPARE(after.parts[p].channel.value[ReverbSend], fresh.parts[p].channel.value[ReverbSend]);
         QCOMPARE(after.master[RoomSize], 0.35f);
         QCOMPARE(after.master[RoomShimmer], 0.1f);
 
         testkit::play(fmt("page 0 7\ntap 0.5 %.3f 0.12\nend 0.8\n", hitX(5)), [&](Session &s) { held = s.view(); });
         QVERIFY(held.parts[1].channel.value[EchoSend] > 0.6f);
         testkit::play(fmt("page 0 7\ntap 0.5 %.3f 0.12\nend 3.5\n", hitX(5)), [&](Session &s) { after = s.view(); });
-        StudioView fresh;
-        testkit::play("end 0.1\n", [&](Session &s) { fresh = s.view(); });
         for (int p = 0; p < after.partCount; ++p)
             QCOMPARE(after.parts[p].channel.value[EchoSend], fresh.parts[p].channel.value[EchoSend]);
         QCOMPARE(after.master[EchoFeedback], 0.35f);
@@ -323,32 +388,43 @@ private slots:
         QCOMPARE(after.master[MasterGain], 0.8f);
     }
 
-    // Tapping a rhythm on the hit row and holding the next beat loops it.
-    void hitRhythmsLoop() {
+    // Holding a hit only holds it: taps and a hold in rhythm make no loop.
+    void holdingAHitNeverLoops() {
         StudioView after;
-        testkit::play(fmt("page 0 7\ntap 0.5 %.3f 0.1\ntap 0.75 %.3f 0.1\ntap 1.0 %.3f 0.1\ntap 1.25 %.3f 0.1\n", hitX(3),
-                          hitX(3), hitX(0), hitX(3)) +
-                          fmt("down 1.5 9 %.3f 0.1\nup 1.9 9\nend 3.0\n", hitX(3)),
+        testkit::play(fmt("page 0 7\ntap 0.5 %.3f 0.1\ntap 1.0 %.3f 0.1\ndown 1.5 9 %.3f 0.1\nup 2.4 9\nend 3.0\n", hitX(0),
+                          hitX(1), hitX(5)),
+                      [&](Session &s) { after = s.view(); });
+        QCOMPARE(after.parts[kFx].playing, -1);
+        for (const ClipView &c : after.parts[kFx].clips)
+            QCOMPARE(int(c.state), int(ClipView::Empty));
+    }
+
+    // Space loops what was just played on the hit row, as on every page.
+    void spaceLoopsTheHitRow() {
+        StudioView after;
+        testkit::play(fmt("page 0 7\ntap 0.5 %.3f 0.1\ntap 1.0 %.3f 0.1\ntap 1.5 %.3f 0.1\ntap 2.0 %.3f 0.1\n", hitX(3), hitX(3),
+                          hitX(0), hitX(3)) +
+                          "key 2.5 Space\nend 4.0\n",
                       [&](Session &s) { after = s.view(); });
         QCOMPARE(after.parts[kFx].playing, 0);
         QVERIFY(after.parts[kFx].clips[0].events >= 4);
     }
 
-    // A recorded build replays its drop: the clip's riser aims at its own
-    // bar line and moves the master as the live one did.
-    void aRecordedBuildReplaysItsDrop() {
-        StudioView mid;
-        // Record from bar 1 (beat 4) for two bars: a one-bar noise riser
-        // landed at beat 4.1 aims at beat 8, and the clip loops it.
-        const std::string rec = fmt("page 0 7\nkey 0.2 R\ndown %.3f 1 %.3f %.3f\nup %.3f 1\n", timeOf(4.1), columnX(0),
-                                    rowY(0), timeOf(4.5)) +
-                                fmt("key %.3f R\n", timeOf(9.0));
-        testkit::play(rec + fmt("end %.3f\n", timeOf(15.5)), [&](Session &s) { mid = s.view(); });
-        QCOMPARE(mid.parts[kFx].playing, 0);
-        QCOMPARE(int(mid.parts[kFx].clips[0].lengthBeats), 8);
-        // In the clip's second pass the riser (now a clip's) builds toward 16.
-        QCOMPARE(double(mid.parts[kFx].data[risers::pub::Drop]), 16.0);
-        QVERIFY(mid.master[MasterFilter] > 0.55f);
+    // A riser looped by Space replays from the clip and still aims at a
+    // drop the page can build the mix around.
+    void aLoopedRiserStillAimsAtADrop() {
+        StudioView after;
+        testkit::play(std::string(kBeat) + fmt("page 3.0 7\ntap 3.1 %.3f %.3f\nkey 4.2 Space\nend 9\n", columnX(0), rowY(3)),
+                      [&](Session &s) { after = s.view(); });
+        QVERIFY(after.parts[kFx].playing >= 0);
+        bool replayed = false;
+        const float *d = after.parts[kFx].data;
+        for (int k = 0; k < risers::pub::MaxVoices; ++k) {
+            const float *o = d + risers::pub::Voices + risers::pub::Stride * k;
+            replayed |= o[risers::pub::VKind] == risers::Noise && o[risers::pub::VWho] > 1.5f;
+        }
+        QVERIFY(replayed);
+        QVERIFY(d[risers::pub::Drop] > 0);
     }
 
     // Ten fingers on the busiest risers stay well inside the page's share of

@@ -36,7 +36,6 @@
 
 #include "console.h"
 #include "parts.h"
-#include "phrase.h"
 
 namespace tf {
 
@@ -68,7 +67,6 @@ class FxPage : public PartControl {
 public:
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
-        m_phrase.expire(f.t);
         const double beat = ctx.beatAt(f.t);
 
         // The click: the drop comes at the next bar line. A riser finger
@@ -108,17 +106,6 @@ public:
                 sendOn(*h, ctx);
             if (h->sent)
                 sendMove(*h, f.t, ctx);
-            if (!isRiser(h->kind) && !h->long_ && f.t - h->t0 >= 0.3) {
-                h->long_ = true;
-                double start = 0;
-                if (m_phrase.closes(h->t0, 0, &start)) {
-                    const int slot = std::max(0, ctx.freeSlot());
-                    ctx.capture(slot, start, h->t0);
-                    ctx.notice(QStringLiteral("FX loop in slot %1").arg(slot + 1));
-                    h->looped = true;
-                    m_phrase.clear();
-                }
-            }
         }
     }
 
@@ -171,16 +158,6 @@ public:
             m_buildMix = !m_buildMix;
             ctx.notice(m_buildMix ? QStringLiteral("Builds move the mix") : QStringLiteral("Builds leave the mix alone"));
             return true;
-        case Qt::Key_R:
-            if (ctx.studio().parts[ctx.part()].recording >= 0) {
-                ctx.stopRecording();
-                ctx.notice(QStringLiteral("Recording stops at the bar"));
-            } else {
-                const int slot = std::max(0, ctx.freeSlot());
-                ctx.record(slot, 8);
-                ctx.notice(QStringLiteral("Recording FX into slot %1 from the next bar").arg(slot + 1));
-            }
-            return true;
         default:
             break;
         }
@@ -224,7 +201,7 @@ public:
         const double t = ctx.now();
         for (Finger &h : m_fingers)
             if (h.id >= 0)
-                lift(h, t, ctx, false);
+                lift(h, t, ctx);
         m_frame = Frame{};
         m_button = false;
     }
@@ -233,23 +210,25 @@ public:
 
     QString help() const override {
         return QStringLiteral(
-            "land in the build field\ta riser: the column is the sound (noise, pitch, saw, roll, swell), "
-            "the row its length (1, 2, 4, 8, 16 bars up the pad); it peaks on the downbeat\n"
+            "land in the build field\ta riser: the column is the sound (noise, pitch, saw, roll, swell), the row its "
+            "length (1, 2, 4, 8, 16 bars up the pad); it peaks on the next phrase line (every 8 bars, 16 for the top "
+            "row) and comes in that many bars before it; the finger shows the bar\n"
             "more fingers\tstack layers on the same drop; each enters its row's length before it\n"
             "slide up / sideways\tbigger and brighter / pitch or voicing, always in the key\n"
             "press, twist, flatten\tswell it / set it moving / add grit\n"
             "flick down as you lift\tpull that riser out: it falls away\n"
-            "click the pad, Return\tdrop on the next bar line: everything rising rushes into it\n"
+            "click the pad, Return\tdrop on the next bar line instead: everything rising rushes into it\n"
             "bottom row\timpact, sub drop, downlifter, laser zap, power-down, echo throw, reverb wash, DJ sweep\n"
+            "sub drop during a build\tarms a sub onto the drop (the drop's boom gives way to it)\n"
             "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger\n"
             "hold the sweep\tslide left to close a low-pass on the whole mix, up to open a high-pass; press for drive\n"
-            "tap a rhythm on the bottom row, hold the next beat\tloops it into a free slot\n"
+            "Space\tloop what you just played (as on every page)\n"
             "A S D F G\tnoise, pitch, saw, roll, swell risers; Up / Down sets their length\n"
             "Z X C V B N M ,\tthe bottom row's hits, held as long as the key\n"
-            "Left / Right\tdrop style: clean, a half-beat gap, or drums and bass out for the last bar\n"
+            "Left / Right\tdrop style: clean, a half-beat gap with only the risers left in it, or drums and bass out "
+            "for the last bar\n"
             "Q\tthe whole build falls away\n"
             "W\tbuilds move the mix (high-pass, room, and drive when pushed) or leave it alone\n"
-            "R\trecord FX from the next bar (again to stop)\n"
             "F1–F8\tlaunch a slot at the next bar\n"
             "Backspace\tstop the FX clip at the next bar");
     }
@@ -274,6 +253,8 @@ public:
             s = QStringLiteral("land a riser to build; click to drop");
         if (m_style != Clean)
             s += QStringLiteral("  ·  %1").arg(QString::fromUtf8(styleName(m_style)));
+        if (m_take >= 0)
+            s += QStringLiteral("  ·  looping into slot %1").arg(m_take + 1);
         return s;
     }
 
@@ -286,7 +267,7 @@ private:
         float x = 0, y = 0, size = 1, press = 0.5f, angle = 0;
         float int0 = 0.6f, tone0 = 0;
         float tone = 0, intensity = 0.6f, motion = 0, grit = 0;
-        bool sent = false, dropFinger = false, long_ = false, looped = false, isKey = false;
+        bool sent = false, dropFinger = false, isKey = false;
         float last[5] = {-9, -9, -9, -9, -9};
         double lastSend = 0;
         double ht[8] = {};
@@ -344,17 +325,36 @@ private:
         // it; or, with none coming, at the bar line this many bars away,
         // which becomes the drop.
         const double pending = pendingDrop(ctx, beat + 0.25);
+        h.flags = FlagEnterLate;
         if (pending > 0) {
             h.drop = pending;
-            h.flags = FlagEnterLate;
         } else {
-            double d = nearestBar(beat + 4.0 * h.bars);
-            if (d < beat + 2.0)
-                d += kBeatsPerBar;
-            h.drop = d;
-            h.flags = 0;
-            m_localDrop = d;
+            h.drop = phraseDrop(ctx, beat, h.bars);
+            m_localDrop = h.drop;
         }
+    }
+
+    // Where a new build lands: the next phrase line (every 8 bars, or 16 for
+    // the 16-bar row) with room for the row's length, always forward. The
+    // phrase is counted from bar 0, or from the start of an 8-bar loop that
+    // is playing. The riser then enters its length before that line.
+    double phraseDrop(ControlContext &ctx, double beat, int bars) const {
+        const StudioView &sv = ctx.studio();
+        double origin = 0, longest = 0;
+        for (int p = 0; p < sv.partCount && p < kMaxParts; ++p) {
+            const PartView &pv = sv.parts[p];
+            if (pv.playing < 0)
+                continue;
+            const ClipView &c = pv.clips[pv.playing];
+            if (c.lengthBeats >= 32 && c.lengthBeats > longest) {
+                longest = c.lengthBeats;
+                origin = sv.beat - double(c.phase) * c.lengthBeats;
+            }
+        }
+        const double phrase = bars >= 16 ? 64.0 : 32.0;
+        const double earliest = beat + 4.0 * bars - 2.0;
+        double k = std::ceil((earliest - origin) / phrase - 1e-9);
+        return nearestBar(origin + k * phrase);
     }
 
     void track(Finger &h, const Touch &t, double time) {
@@ -428,7 +428,7 @@ private:
         h.lastSend = t;
     }
 
-    void lift(Finger &h, double t, ControlContext &ctx, bool phrase = true) {
+    void lift(Finger &h, double t, ControlContext &ctx) {
         if (h.dropFinger) {
             h.id = -1;
             return;
@@ -466,8 +466,6 @@ private:
             if (!others && data(ctx)[pub::Layers] <= 1)
                 m_localDrop = -1;
         }
-        if (phrase && !isRiser(h.kind) && !h.long_ && !h.isKey)
-            m_phrase.tap(h.t0, t - h.t0, 0);
         h.id = -1;
     }
 
@@ -489,16 +487,19 @@ private:
         bool owned = false;
         float base = 0, sent = -1;
         double released = -100;
+        double releaseAt = 0; // when the hand-back is due, if scheduled
+        double sendAt = 0;    // when this tick's value is due, if scheduled
         float w = 0, wt = 0;
     };
 
     static int ch(int part, int c) { return MasterCount + part * ChannelCount + c; }
 
-    void pull(int idx, float target, float weight) {
+    void pull(int idx, float target, float weight, double when = 0) {
         if (weight <= 1e-4f)
             return;
         m_mods[idx].w += weight;
         m_mods[idx].wt += weight * target;
+        m_mods[idx].sendAt = std::max(m_mods[idx].sendAt, when);
     }
 
     // Every moment, what the page wants of the mix, from what the engine
@@ -506,26 +507,38 @@ private:
     // the mix just as it did live.
     void automate(double t, ControlContext &ctx) {
         const StudioView &sv = ctx.studio();
+        // Nothing to go on until the studio has published a first view: its
+        // zeros are not the mix's settings.
+        if (sv.sample == 0)
+            return;
         const float *d = data(ctx);
         const double beat = ctx.beatAt(t);
         const double bps = sv.bpm / 60.0;
-        // The studio smooths every setting over 30 ms, so the filter and
-        // drive must start home a little before the ONE to be all the way
-        // there on it; a mute flips when its smoothed value crosses half,
-        // about 21 ms after it is sent, and this runs on ticks up to 8 ms
-        // apart.
-        const double lead = 0.075 * bps, muteLead = 0.032 * bps;
+        // Hand-backs at a drop are scheduled, not sent on a tick: once the
+        // ONE is closer than the next few ticks, what the build holds is
+        // released at a set moment. Mutes act at once, so they lift on the
+        // ONE itself; the studio still smooths the master over 30 ms, so the
+        // filter, drive and room go home 60 ms before it, to be there on it.
+        const double horizon = 0.12 * bps;
+        const double ease = 0.06;
         const int parts = std::min(sv.partCount, kMaxParts);
-        for (Mod &m : m_mods)
+        for (Mod &m : m_mods) {
             m.w = m.wt = 0;
+            m.sendAt = 0;
+        }
 
         const double drop = d[pub::Drop];
+        m_take = sv.parts[ctx.part()].recording;
         m_statusDrop = drop;
         m_statusBeat = beat;
         if (drop > 0) {
             const double start = d[pub::Start];
             const float I = d[pub::Intensity];
-            if (m_buildMix && beat < drop - lead && beat >= start) {
+            const double tDrop = ctx.timeAt(drop);
+            if (beat >= drop - horizon && beat < drop)
+                for (int idx : {int(MasterFilter), int(MasterDrive), int(RoomSize)})
+                    m_mods[idx].releaseAt = tDrop - ease;
+            if (m_buildMix && beat < drop - horizon && beat >= start) {
                 const float p = clampf(float((beat - start) / std::max(0.25, drop - start)), 0, 1);
                 // Longer and harder builds climb further: a one-bar build to
                 // about 130 Hz, four bars at full tilt to about 650.
@@ -540,19 +553,45 @@ private:
                 pull(MasterDrive, 0.1f + 0.12f * push, last * last * push);
                 pull(RoomSize, 0.72f, 0.6f * p * depth);
             }
-            if (beat < drop - muteLead) {
+            // The gap mutes everything but this page, so the risers hang
+            // alone in it; the strip takes out drums and bass.
+            for (int part = 0; part < parts; ++part)
+                if (beat >= drop - horizon && beat < drop)
+                    m_mods[ch(part, Mute)].releaseAt = tDrop;
+            if (beat < drop - horizon) {
                 if (m_style == Gap && beat >= drop - 0.5)
                     for (int part = 0; part < parts; ++part)
-                        pull(ch(part, Mute), 1, 1);
+                        if (part != ctx.part())
+                            pull(ch(part, Mute), 1, 1);
                 if (m_style == Strip && drop - start >= 4 && beat >= drop - kBeatsPerBar)
                     for (int part = 0; part < std::min(parts, 2); ++part)
                         pull(ch(part, Mute), 1, 1);
             }
         }
 
+        // The lift: the drop comes in a notch louder than the music before
+        // it, scheduled to arrive with the ONE (the studio smooths the master
+        // over 30 ms) and easing back over its bar. The studio's glue and
+        // limiter answer peaks, so no layer laid on a kick can make the ONE
+        // louder by itself; this does, and is handed back exactly.
+        if (m_buildMix) {
+            constexpr float lift = 0.898f; // +2 dB at unity (gain goes as the square)
+            if (drop > 0 && beat >= drop - horizon && beat < drop)
+                pull(MasterGain, lift, 1, ctx.timeAt(drop) - 0.05);
+            const double last = d[pub::LastDrop];
+            if (last > 0 && beat >= last && beat < last + kBeatsPerBar) {
+                const float u = float((beat - last) / kBeatsPerBar);
+                pull(MasterGain, lift, u < 0.25f ? 1.0f : 1.0f - smoothstep((u - 0.25f) / 0.75f));
+            }
+        }
+
         // The power-down: the mix darkens and sinks until its bar line.
         const double s0 = d[pub::StopStart], s1 = d[pub::StopEnd];
-        if (s1 > 0 && beat < s1 - lead && beat >= s0) {
+        if (s1 > 0 && beat >= s1 - horizon && beat < s1) {
+            m_mods[MasterFilter].releaseAt = ctx.timeAt(s1) - ease;
+            m_mods[MasterGain].releaseAt = ctx.timeAt(s1) - ease;
+        }
+        if (s1 > 0 && beat < s1 - horizon && beat >= s0) {
             const float u = clampf(float((beat - s0) / std::max(0.25, s1 - s0)), 0, 1);
             pull(MasterFilter, 0.03f, std::pow(u, 0.6f));
             pull(MasterGain, 0.12f, u * u);
@@ -595,14 +634,15 @@ private:
             const int c = master ? idx : (idx - MasterCount) % ChannelCount;
             if (!master && part >= sv.partCount)
                 continue;
-            auto send = [&](float v) {
+            auto send = [&](float v, double when = 0) {
                 if (master)
-                    ctx.setMaster(c, v);
+                    ctx.setMaster(c, v, when);
                 else
-                    ctx.setChannel(part, c, v);
+                    ctx.setChannel(part, c, v, when);
                 m.sent = v;
             };
             if (m.w > 1e-4f) {
+                m.releaseAt = 0;
                 if (!m.owned) {
                     // Just handed back, the studio's view may still show our
                     // own last value: keep the base we had.
@@ -616,18 +656,20 @@ private:
                     v = v >= 0.5f ? 1.0f : m.base;
                 v = clampf(v, 0, 1);
                 if (std::fabs(v - m.sent) > 0.0015f)
-                    send(v);
+                    send(v, m.sendAt > t ? m.sendAt : 0);
             } else if (m.owned) {
-                send(m.base);
+                // At a drop, on its scheduled moment; otherwise now.
+                const double when = m.releaseAt > t ? m.releaseAt : 0;
+                send(m.base, when);
                 m.owned = false;
-                m.released = t;
+                m.released = std::max(t, when);
+                m.releaseAt = 0;
             }
         }
     }
 
     std::array<Finger, 24> m_fingers{};
     Mod m_mods[kMods];
-    Phrase m_phrase;
     Frame m_frame;
     bool m_button = false;
     bool m_buildMix = true;
@@ -635,6 +677,7 @@ private:
     int m_keyRow = 2; // keys play 4-bar risers until Up or Down says otherwise
     double m_localDrop = -1;
     double m_statusDrop = -1, m_statusBeat = 0;
+    int m_take = -1;
 };
 
 // --- drawing -------------------------------------------------------------------
@@ -839,14 +882,17 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             label = QStringLiteral("%1 · %2").arg(bars).arg(
                 enter <= beat ? QStringLiteral("NOW") : QStringLiteral("IN %1").arg(std::ceil((enter - beat) / 4.0 - 1e-6)));
         }
-        c::text(p, QRectF(cell.left() + 8, cell.bottom() - 15, cell.width(), 13), label, c::alpha(col, 0.45f), 10, true);
+        c::text(p, QRectF(cell.left() + 8, cell.bottom() - 15, cell.width(), 13), label, c::alpha(col, 0.75f), 10, true);
     }
     for (int k = 0; k < kRisers; ++k) {
         const QRectF head = pc.rect(float(k) / kRisers, 1 - kRowH, float(k + 1) / kRisers, 1);
-        c::text(p, QRectF(head.left(), head.top() + 42, head.width(), 18), QString::fromUtf8(columns[k]),
-                c::alpha(col, 0.85f), 13, true, Qt::AlignCenter);
+        // On a black plate, so a riser climbing under it never hides it.
         const qreal gw = std::min<qreal>(84, head.width() * 0.6);
-        glyph(p, QRectF(head.center().x() - gw / 2, head.top() + 61, gw, 14), k, c::alpha(col, 0.55f));
+        const QRectF plate(head.center().x() - gw / 2 - 8, head.top() + 40, gw + 16, 40);
+        p.fillRect(plate, QColor(0, 0, 0, 220));
+        c::text(p, QRectF(head.left(), head.top() + 42, head.width(), 18), QString::fromUtf8(columns[k]), col, 13, true,
+                Qt::AlignCenter);
+        glyph(p, QRectF(head.center().x() - gw / 2, head.top() + 61, gw, 14), k, c::alpha(col, 0.8f));
     }
 
     // The hit row.
@@ -875,7 +921,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         const qreal gw = std::min<qreal>(56, cell.width() * 0.5);
         glyph(p, QRectF(cell.center().x() - gw / 2, cell.center().y() - 24, gw, 18), kRisers + k,
               lit > 0.5f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.6f));
-        c::text(p, QRectF(cell.left() + 6, cell.top() + 4, 30, 14), QString(QChar(kHitKeys[k])), c::alpha(col, 0.4f), 10, true);
+        c::text(p, QRectF(cell.left() + 6, cell.top() + 4, 30, 14), QString(QChar(kHitKeys[k])), c::alpha(col, 0.75f), 11, true);
     }
 
     // The top band: the drop style and the keys' length on the left, the
@@ -906,13 +952,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         const QString count = left >= 4 ? QStringLiteral("DROP IN %1 BARS").arg(left / 4.0, 0, 'f', 1)
                                         : QStringLiteral("DROP IN %1").arg(beatsLeft);
         c::tag(p, QPointF(band.center().x(), band.bottom() + 13), count, col, 13, true);
-        if (left < 4) {
-            // The last bar: the beats to the ONE, big.
-            const float within = float(left - std::floor(left));
-            const qreal size = unit * (0.16 + 0.06 * within);
-            c::text(p, QRectF(pc.pad.left(), pc.at(0, 0.58f).y() - size / 2, pc.pad.width(), size),
-                    QString::number(beatsLeft), c::alpha(col, 0.2f + 0.3f * within), int(size), true, Qt::AlignCenter);
-        }
+
     } else {
         p.setPen(QPen(c::alpha(col, 0.25f), 1, Qt::DotLine));
         p.setBrush(Qt::NoBrush);
@@ -942,18 +982,28 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     for (int i = 0; i < m_frame.count; ++i) {
         const Touch &t = m_frame.touches[i];
         QString label;
-        float glow = 0;
+        float glow = 0, intensity = -1;
         for (const Finger &h : m_fingers)
             if (h.id == t.id) {
                 if (h.dropFinger)
                     label = QStringLiteral("DROP");
                 else if (isRiser(h.kind))
-                    label = QStringLiteral("%1 %2B").arg(QString::fromUtf8(kindName(h.kind)).toUpper()).arg(h.bars);
+                    // Where it will land, before the finger lifts.
+                    label = QStringLiteral("%1 %2B → BAR %3")
+                                .arg(QString::fromUtf8(kindName(h.kind)).toUpper())
+                                .arg(h.bars)
+                                .arg(int(std::floor(h.drop / kBeatsPerBar + 0.5)) + 1);
                 else
                     label = QString::fromUtf8(kindName(h.kind)).toUpper();
                 glow = 0.3f + 0.7f * h.intensity;
+                intensity = h.intensity;
             }
         c::finger(p, pc, t, col, label, glow);
+        if (intensity >= 0) {
+            const QPointF at = pc.at(t.x, t.y);
+            const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
+            c::gauge(p, QRectF(at.x() + r + 6, at.y() - r * 0.6 + 12, 64, 5), intensity, col, 8);
+        }
     }
 
     // The ONE: the whole pad lights.
@@ -961,6 +1011,26 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         p.fillRect(pc.pad, c::alpha(col, 0.35f * flash));
         c::text(p, pc.rect(0, 0.35f, 1, 0.75f), QStringLiteral("DROP"), c::alpha(QColor(255, 255, 255), flash),
                 int(unit * 0.2), true, Qt::AlignCenter);
+    }
+    // The last bar: the beats to the ONE, big, in white on top of
+    // everything.
+    if (drop > beat && drop - beat < 4) {
+        const double left = drop - beat;
+        const float within = float(left - std::floor(left));
+        const qreal size = unit * (0.2 + 0.06 * within);
+        const QRectF box(pc.pad.left(), pc.at(0, 0.6f).y() - size / 2, pc.pad.width(), size);
+        const QString digit = QString::number(int(std::ceil(left - 1e-6)));
+        c::text(p, box.translated(3, 3), digit, QColor(0, 0, 0, 200), int(size), true, Qt::AlignCenter);
+        c::text(p, box, digit, QColor(255, 244, 236, int(150 + 105 * within)), int(size), true, Qt::AlignCenter);
+    }
+    // A loop waiting to be taken (Space).
+    if (pc.view->recording >= 0)
+        c::tag(p, QPointF(pc.pad.left() + 12, pc.pad.bottom() - kHitTop * pc.pad.height() - 14),
+               QStringLiteral("LOOPING INTO SLOT %1").arg(pc.view->recording + 1), c::red(), 11);
+    // A sub armed onto the drop.
+    if (d[pub::SubArmed] > 0) {
+        const QRectF cell = pc.rect(1.0f / kHits, 0, 2.0f / kHits, kHitTop);
+        c::tag(p, QPointF(cell.center().x(), cell.top() + 12), QStringLiteral("ON THE ONE"), col, 10, true);
     }
     c::beats(p, pc, col);
     c::clips(p, QRectF(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width(), 30), *pc.view, col, pc.time);

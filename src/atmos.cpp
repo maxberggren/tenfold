@@ -371,7 +371,7 @@ int bedPitches(const Bed &b, const Harmony &h, bool drone, float lo, float hi, f
 
 // --- the engine ---------------------------------------------------------------
 
-enum ParamId : int { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord };
+enum ParamId : int { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord, PChordToLoop };
 // The page marks the latched layers a loop is about to take, so the loop's
 // first round can take their voices over (never recorded).
 constexpr uint16_t kAdoptable = Command::User + 1;
@@ -424,7 +424,7 @@ struct Voice {
     float lfo1 = 0, lfo2 = 0, rate1 = 0.07f, rate2 = 0.13f, side = 1;
     float dropClock = 0;
     Slot notes[kSlots];
-    Svf lpL, lpR, fL[3], fR[3], rainL, rainR, crackle;
+    Svf lpL, lpR, fL[3], fR[3], bodyL, bodyR, rainL, rainR, crackle;
     OnePoleLp hissL, hissR;
     Rng rng;
 };
@@ -684,6 +684,38 @@ private:
     Rng m_rng{0xC10DDu};
 };
 
+// The choir's vowels: three formants (centre, gain) each, the body under
+// them (its top and its level), dark oo to open ee. The second formant is
+// narrow enough to name the vowel; the first is wide, so it colours the
+// whole voicing rather than singling out the one partial under it.
+const float kVowel[5][3][2] = {
+    {{330, 0.75f}, {760, 0.25f}, {2600, 0.04f}},  // oo
+    {{470, 1.0f}, {860, 0.55f}, {2750, 0.1f}},    // oh
+    {{760, 0.55f}, {1200, 0.75f}, {2800, 0.25f}}, // ah
+    {{560, 0.7f}, {1800, 1.0f}, {2650, 0.4f}},    // eh
+    {{320, 0.7f}, {2300, 1.6f}, {3100, 0.6f}},    // ee
+};
+const float kVowelBw[3] = {360, 140, 220};
+const float kBodyHz[5] = {600, 850, 1500, 2600, 4500};
+const float kBodyGain[5] = {0.7f, 0.85f, 1.1f, 1.4f, 1.7f};
+
+// How loud the vowel filter makes a note's fundamental at hz (vowel position
+// vv, 0 oo .. 4 ee): the magnitude of the body and the formants, roughly.
+float vowelResponse(float vv, float hz) {
+    const int a = std::min(3, int(vv));
+    const float f = vv - float(a);
+    const float bodyHz = std::exp(lerpf(std::log(kBodyHz[a]), std::log(kBodyHz[a + 1]), f));
+    const float r = hz / bodyHz, q = 0.6f;
+    float m = lerpf(kBodyGain[a], kBodyGain[a + 1], f) / std::sqrt((1 - r * r) * (1 - r * r) + (r / q) * (r / q));
+    for (int i = 0; i < 3; ++i) {
+        const float fc = std::exp(lerpf(std::log(kVowel[a][i][0]), std::log(kVowel[a + 1][i][0]), f));
+        const float g = lerpf(kVowel[a][i][1], kVowel[a + 1][i][1], f);
+        const float rr = hz / fc, qq = fc / kVowelBw[i];
+        m += g * (rr / qq) / std::sqrt((1 - rr * rr) * (1 - rr * rr) + (rr / qq) * (rr / qq));
+    }
+    return m;
+}
+
 class AtmosEngine : public PartEngine {
 public:
     void init(float rate) override {
@@ -763,6 +795,9 @@ public:
             case PPump: m_pump = std::clamp(int(std::lround(c.f[0])), 0, 2); break;
             case PSpace: m_space = clampf(c.f[0], 0.0f, 1.0f); break;
             case PSwell: m_swellOn = c.f[0] > 0.5f; break;
+            case PChordToLoop:
+                m_ownHand = false;
+                break;
             case PChord: {
                 // A loop can carry the bed's own progression; a chord key
                 // pressed by hand takes over from it until comma.
@@ -848,7 +883,7 @@ public:
         renderGlints(dryL, dryR, n);
         // Sheen: the top of the bed lifted a touch always, and a lot as it
         // swells.
-        const float sheen = 0.25f + 3.2f * m_swellE;
+        const float sheen = 0.25f + 4.5f * m_swellE;
         for (int i = 0; i < n; ++i) {
             dryL[i] += sheen * m_sheenL.step(dryL[i]).high;
             dryR[i] += sheen * m_sheenR.step(dryR[i]).high;
@@ -864,8 +899,8 @@ public:
         const float send = 0.45f + 0.35f * m_spaceS + 0.35f * m_swellE;
         const float wet = (0.35f + 0.8f * m_spaceS) * (1.0f + 0.1f * m_freezeAmt);
         // The swell thins the bottom as it rises, the way a build-up does: the
-        // bed's low cut climbs from 55 Hz to about 600.
-        const float lowCut = 55.0f * std::exp2(3.5f * m_swellE);
+        // bed's low cut climbs from 55 Hz to about 400, leaving the low mids their warmth.
+        const float lowCut = 55.0f * std::exp2(2.9f * m_swellE);
         if (std::fabs(lowCut - m_lowCutSet) > 0.5f) {
             m_lowCutSet = lowCut;
             m_hpL.set(lowCut, 0.7f, m_rate);
@@ -1172,7 +1207,7 @@ private:
         v.lfo3 -= std::floor(v.lfo3);
         const float drift = std::sin(kTwoPi * v.lfo3);
         const float height = v.cur[0], press = v.cur[2], motion = v.cur[3], width = v.cur[4];
-        const float colour = clampf(v.cur[1] + 0.15f * drift, 0.0f, 1.0f);
+        const float colour = clampf(v.cur[1] + (v.family == Choir ? 0.05f : 0.15f) * drift, 0.0f, 1.0f);
         const float P = fs.low + height * (fs.high - fs.low);
 
         // The voicing window: every chord tone between P and P + span, the
@@ -1188,6 +1223,13 @@ private:
         float wa, wb;
         timbres(v.family, colour, ta, tb, wa, wb);
         const float rootMidi = float(h.midi(m_bed.root, 0));
+        float resp[16] = {}, respMean = 1;
+        if (v.family == Choir && nc > 0) {
+            respMean = 0;
+            for (int k = 0; k < nc; ++k)
+                respMean += resp[k] = vowelResponse(colour * 4.0f, midiToHz(cand[k]));
+            respMean /= float(nc);
+        }
         float w2 = 0;
         constexpr float edge = 2.5f;
         for (int c = 0; c < nc; ++c) {
@@ -1229,6 +1271,11 @@ private:
                 slot->inc = uint32_t(std::llround(speed * double(1u << kFracBits)));
                 slot->phase = v.rng.next();
             }
+            // The choir: each note leveled against what the vowel does to
+            // it, so the voices sing the chord, not the note under the
+            // formant.
+            if (v.family == Choir)
+                w *= clampf(respMean / std::max(1e-3f, resp[c]), 0.35f, 3.0f);
             slot->target = w;
             slot->seen = true;
         }
@@ -1296,8 +1343,8 @@ private:
         const float evolve = std::max(0.0f, motion), pulse = std::max(0.0f, -motion);
         // Air breathes hardest: wind comes in gusts.
         const float gust = v.family == Air ? 2.5f : 1.0f;
-        const float breath = 1.0f + std::sqrt(gust) * ((0.07f + 0.08f * evolve) * b1 + 0.05f * b2);
-        float oct = 0.3f * gust * b2 + 0.9f * drift + 3.5f * m_swellE;
+        const float breath = 1.0f + std::sqrt(gust) * ((0.05f + 0.08f * evolve) * b1 + 0.035f * b2);
+        float oct = 0.3f * gust * b2 + 0.9f * drift + 4.2f * m_swellE;
         if (evolve > 0.04f) {
             // A slow filter sweep locked to the bars: four bars round at a
             // touch of twist, one bar at full.
@@ -1337,27 +1384,20 @@ private:
 
         // The choir sings through three formants, the vowel set by the
         // colour and drifting a little with the breath.
-        float fg[3] = {};
+        float fg[3] = {}, body = 1.1f;
         if (v.family == Choir) {
-            static const float vowel[5][3][2] = {
-                {{330, 1.0f}, {760, 0.35f}, {2600, 0.06f}},  // oo
-                {{470, 1.0f}, {860, 0.55f}, {2750, 0.1f}},   // oh
-                {{760, 1.0f}, {1200, 0.7f}, {2800, 0.25f}},  // ah
-                {{560, 1.0f}, {1800, 0.65f}, {2650, 0.32f}}, // eh
-                {{320, 1.0f}, {2300, 0.75f}, {3100, 0.4f}},  // ee
-            };
             const float vv = clampf(colour * 4.0f + 0.25f * b1 * (0.4f + evolve), 0.0f, 4.0f);
             const int a = std::min(3, int(vv));
             const float f = vv - float(a);
-            // Wide formants, so a vowel colours the whole voicing rather
-            // than singling out the one partial under it.
-            static const float bw[3] = {360, 300, 380};
             for (int i = 0; i < 3; ++i) {
-                const float hz = std::exp(lerpf(std::log(vowel[a][i][0]), std::log(vowel[a + 1][i][0]), f));
-                fg[i] = lerpf(vowel[a][i][1], vowel[a + 1][i][1], f);
-                v.fL[i].set(hz, hz / bw[i], m_rate);
+                const float hz = std::exp(lerpf(std::log(kVowel[a][i][0]), std::log(kVowel[a + 1][i][0]), f));
+                fg[i] = lerpf(kVowel[a][i][1], kVowel[a + 1][i][1], f);
+                v.fL[i].set(hz, hz / kVowelBw[i], m_rate);
                 copyCoefficients(v.fR[i], v.fL[i]);
             }
+            body = lerpf(kBodyGain[a], kBodyGain[a + 1], f);
+            v.bodyL.set(std::exp(lerpf(std::log(kBodyHz[a]), std::log(kBodyHz[a + 1]), f)) * std::exp2(2.5f * m_swellE), 0.6f, m_rate);
+            copyCoefficients(v.bodyR, v.bodyL);
         }
 
         // Glass twinkles on the sixteenths, and air's raindrops at random:
@@ -1446,8 +1486,8 @@ private:
             if (v.family == Choir) {
                 // Breath noise through the same formants keeps it airy.
                 const float nl = 0.02f * v.rng.bipolar(), nr = 0.02f * v.rng.bipolar();
-                L = 1.1f * oL.low;
-                R = 1.1f * oR.low;
+                L = body * v.bodyL.step(oL.low).low;
+                R = body * v.bodyR.step(oR.low).low;
                 for (int f = 0; f < 3; ++f) {
                     L += fg[f] * v.fL[f].k * v.fL[f].step(sL[i] + nl).band;
                     R += fg[f] * v.fR[f].k * v.fR[f].step(sR[i] + nr).band;
@@ -1616,6 +1656,27 @@ public:
         // A Space take: while it waits, remember its slot; once it closes,
         // the latched layers it took leave the page as soon as the loop has
         // taken their voices over. Called off, they are the hand's again.
+        if (m_pendingTake) {
+            if (pv.recording >= 0 && pv.takeBeats > 0) {
+                reassert(ctx, ctx.timeAt(pv.takeAt - pv.takeBeats), false);
+                m_pendingTake = false;
+            } else if (pv.recording < 0 && t - m_spaceAt > 0.2) {
+                m_pendingTake = false;
+            }
+        }
+        // A loop taken with Space starts playing: whatever chords it holds
+        // drive the bed from now on, until a chord key takes them back.
+        if (pv.playing >= 0 && pv.playing != m_lastPlaying && m_lastRecording == pv.playing) {
+            Command c;
+            c.type = Command::Param;
+            c.flags = Command::NoRecord;
+            c.i[0] = PChordToLoop;
+            c.t = t;
+            ctx.send(c);
+        }
+        m_lastPlaying = pv.playing;
+        if (pv.recording >= 0)
+            m_lastRecording = pv.recording;
         if (pv.recording >= 0) {
             m_takeSlot = pv.recording;
         } else if (m_takeSlot >= 0) {
@@ -1651,6 +1712,12 @@ public:
                 m_scene = -1;
         }
 
+        // A loop holding the bed, for the status line.
+        m_playing.clear();
+        if (pv.playing >= 0)
+            m_playing = QStringLiteral("loop %1 holds the bed%2").arg(pv.playing + 1)
+                            .arg(pv.data[PubOwnLoop] > 0.5f ? QStringLiteral(" and its chords") : QString());
+
         // What the freeze is holding, for the status line.
         m_frozen.clear();
         if (pv.data[PubFreeze] > 0.5f) {
@@ -1677,8 +1744,11 @@ public:
             // Space is the session's: it loops what was just played. Seeing
             // it first, the page says every layer still sounding again at the
             // start of the take, so the loop holds the whole bed.
-            if (k.down && !k.repeat && pv.recording < 0)
+            if (k.down && !k.repeat && pv.recording < 0) {
+                m_spaceAt = ctx.now();
+                m_lastRecording = ctx.freeSlot();
                 prepareTake(ctx);
+            }
             return false;
         }
         if (k.key == Qt::Key_S) {
@@ -1867,10 +1937,12 @@ private:
     void chord(int degree, ControlContext &ctx) {
         Command c;
         c.type = Command::Param;
+        c.flags = Command::Quantize; // a chord change is played, and Space hears it
         c.i[0] = PChord;
         c.f[0] = float(degree);
         c.t = ctx.now();
         ctx.send(c);
+        m_onsets[m_onsetHead++ % m_onsets.size()] = {c.t, true};
     }
     void sendOn(Layer &l, ControlContext &ctx, double t, uint16_t flags = 0) {
         Command c;
@@ -1886,10 +1958,9 @@ private:
         c.f[4] = l.width;
         c.f[5] = flags & Command::Continue ? 0.3f : l.attack;
         ctx.send(c);
-        if (!(flags & Command::Continue)) {
+        if (!(flags & Command::Continue))
             l.since = t;
-            m_onsets[m_onsetHead++ % m_onsets.size()] = t;
-        }
+        m_onsets[m_onsetHead++ % m_onsets.size()] = {t, !(flags & Command::Continue)};
     }
     void sendMove(const Layer &l, ControlContext &ctx, double t) {
         Command c;
@@ -1918,47 +1989,64 @@ private:
     // playing. Latched layers are marked for the loop to take over.
     void prepareTake(ControlContext &ctx) {
         const StudioView &v = ctx.studio();
+        const PartView &pv = v.parts[ctx.part()];
         const double nowT = ctx.now();
         const double spb = 60.0 / std::max(1.0, v.bpm);
-        std::vector<double> times;
+        if (ctx.freeSlot() < 0)
+            return;
+        std::vector<Onset> times;
         const size_t n = std::min(m_onsetHead, m_onsets.size());
         for (size_t i = 0; i < n; ++i)
             times.push_back(m_onsets[(m_onsetHead - 1 - i) % m_onsets.size()]);
-        std::sort(times.begin(), times.end());
-        double first = -1;
+        std::sort(times.begin(), times.end(), [](const Onset &a, const Onset &b) { return a.t < b.t; });
+        double first = -1, earliest = -1, last = -1;
         for (size_t i = times.size(); i-- > 0;) {
-            if (times[i] > nowT + 0.05)
+            const double t = times[i].t;
+            if (t > nowT + 0.05)
                 continue;
-            if (first >= 0 && first - times[i] > 8 * spb)
+            if (last < 0) {
+                if (nowT - t > 8 * spb)
+                    break;
+                last = t;
+            } else if (earliest - t > 8 * spb) {
                 break;
-            if (first < 0 && nowT - times[i] > 8 * spb)
-                break;
-            first = times[i];
+            }
+            earliest = t;
+            if (times[i].real)
+                first = t;
         }
-        if (first < 0 || ctx.freeSlot() < 0)
-            return;
+        if (first < 0)
+            first = earliest;
         bool anyPlaying = false;
         for (int p = 0; p < v.partCount; ++p)
             anyPlaying |= v.parts[p].playing >= 0 || v.parts[p].queued >= 0;
-        double t0 = first;
-        if (anyPlaying || v.metronome) {
-            const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first);
-            const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
-            const double end = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
+        const double beatNow = ctx.beatAt(nowT);
+        const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
+        const double nextEnd = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
+        double t0 = 0, end = 0;
+        bool stretch = false;
+        if (first < 0) {
+            if (pv.voices <= 0)
+                return;
+            end = nextEnd; // the bar going by, carried in whole
+            t0 = ctx.timeAt(end - kBeatsPerBar);
+        } else if (!anyPlaying && !v.metronome) {
+            if (nowT - first < 0.3)
+                return;
+            t0 = first;
+            stretch = true;
+        } else {
+            const double beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
+            end = std::ceil((beatLast + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+            end = std::min(end, nextEnd);
+            end = std::max(end, std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar + kBeatsPerBar);
             const double startBar = std::floor((beatFirst + 0.5) / kBeatsPerBar) * kBeatsPerBar;
-            int bars = 1;
-            while (bars < 8 && end - bars * kBeatsPerBar > startBar + 1e-6)
-                bars *= 2;
+            const double played = std::max(1.0, (end - startBar) / kBeatsPerBar);
+            const int bars = std::clamp(int(std::lround(std::exp2(std::round(std::log2(played))))), 1, 8);
             t0 = ctx.timeAt(end - bars * kBeatsPerBar);
-        } else if (nowT - first < 0.3) {
-            return;
         }
-        for (Held &h : m_held)
-            if (h.touch >= 0 && !h.cancelled && !h.grabbed && h.layer.since < t0 - 1e-4)
-                sendOn(h.layer, ctx, t0, Command::Continue);
-        for (Latched &l : m_latched) {
-            if (l.layer.since < t0 - 1e-4)
-                sendOn(l.layer, ctx, t0, Command::Continue);
+        // The loop is to take the latched layers over.
+        for (Latched &l : m_latched)
             if (!l.grabbed) {
                 Command c;
                 c.type = kAdoptable;
@@ -1968,7 +2056,33 @@ private:
                 l.handed = true;
                 m_takeSlot = ctx.freeSlot();
             }
+        // A take that waits for its bar is placed by the studio itself; the
+        // page says the bed again once it shows where (background()).
+        if (!stretch && end > beatNow + 1e-3) {
+            m_pendingTake = true;
+            return;
         }
+        reassert(ctx, t0, stretch);
+    }
+
+    // Every layer still sounding is said again right at the take's start,
+    // flagged Continue, so the loop holds it from its first moment to its
+    // last and never drops at the seam. In the studio's own time the take
+    // already carries in what began before its start; only what began
+    // inside it needs saying.
+    void reassert(ControlContext &ctx, double t0, bool stretch) {
+        const double eighth = 0.125 * 60.0 / std::max(1.0, ctx.studio().bpm);
+        auto needs = [&](const Layer &L) {
+            if (std::fabs(L.since - t0) < eighth)
+                return false; // it starts the take already
+            return stretch || L.since > t0;
+        };
+        for (Held &h : m_held)
+            if (h.touch >= 0 && !h.cancelled && !h.grabbed && needs(h.layer))
+                sendOn(h.layer, ctx, t0, Command::Continue);
+        for (Latched &l : m_latched)
+            if (needs(l.layer))
+                sendOn(l.layer, ctx, t0, Command::Continue);
     }
 
     int hitOrb(float x, float y, float aspect) const {
@@ -2144,12 +2258,18 @@ private:
 
     std::array<Held, 16> m_held{};
     std::vector<Latched> m_latched;
-    std::array<double, 128> m_onsets{};
+    struct Onset {
+        double t = 0;
+        bool real = true;
+    };
+    std::array<Onset, 256> m_onsets{};
+    bool m_pendingTake = false;
     size_t m_onsetHead = 0;
     Frame m_frame;
-    QString m_cue, m_frozen;
+    QString m_cue, m_frozen, m_playing;
     double m_buttonAt = 0, m_handUntil = 0;
-    int m_nextId = 0, m_scene = -1, m_takeSlot = -1;
+    int m_nextId = 0, m_scene = -1, m_takeSlot = -1, m_lastPlaying = -1, m_lastRecording = -1;
+    double m_spaceAt = 0;
     bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false;
 };
 
@@ -2167,7 +2287,7 @@ QString AtmosControl::help() const {
         "touch an orb\tpick a latched layer up and reshape it; a quick tap lets it go\n"
         "Space\tloop what was just played, latched bed and all; the pad shows the loop waiting for its bar; Space again calls it off\n"
         "Q W E R T Y U I\tscenes: dawn, ocean, cathedral, stardust, nostalgia, euphoria, night rain, pulse\n"
-        "Z X C V B N M\tthe bed's own chord on degrees I to VII (Atmos only; a loop records it)\n"
+        "Z X C V B N M\tthe bed's own chord on degrees I to VII (Atmos only); Space loops a progression with the bed, and a key pressed over the loop takes over until comma\n"
         "comma\tfollow the Chords page again\n"
         "H\thold: layers held a moment stay when lifted\n"
         "F\tfreeze: every layer sounding holds, lifted or not, and follows the chords; again to thaw\n"
@@ -2195,6 +2315,8 @@ QString AtmosControl::status() const {
         add(QString::fromUtf8(kScenes[m_scene].name));
     if (m_hold)
         add(QStringLiteral("hold"));
+    if (!m_playing.isEmpty())
+        add(m_playing);
     if (!m_frozen.isEmpty())
         add(m_frozen);
     if (!m_cue.isEmpty())

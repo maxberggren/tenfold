@@ -48,6 +48,26 @@ private slots:
         QCOMPARE(take.view.parts[0].playing, 0);         // the beat is untouched
     }
 
+    void aNewLoopPlaysItsFirstBeatOnTheFirstPass() {
+        // Space closes the phrase where the next kick would land: that kick
+        // comes from the loop at once, not a whole bar later.
+        const auto take = testkit::play(std::string(kBeat) + "end 3.5\n");
+        QVERIFY(take.rms(2.5, 2.62) > 0.02);
+    }
+
+    void aRootHeldAcrossTheBarIsInTheLoop() {
+        // Over the beat (bars at 2.5, 4.5, 6.5 s), a bass root lands a little
+        // before the bar at 4.5 and is held through it, then one more note;
+        // Space after the next bar loops that bar with the root on its one.
+        const auto take = testkit::play(std::string(kBeat) +
+                                        "page 3.0 2\n"
+                                        "down 4.425 1 0.05 0.5\nup 5.4 1\ntap 5.5 0.3 0.5\n"
+                                        "key 6.6 Space\nend 9\n");
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
+        QCOMPARE(take.view.parts[1].clips[0].events, 4);
+    }
+
     void spaceWithNothingPlayedMakesNoLoop() {
         const auto take = testkit::play("page 0 2\nkey 0.5 Space\nend 2\n");
         QCOMPARE(take.view.parts[1].playing, -1);

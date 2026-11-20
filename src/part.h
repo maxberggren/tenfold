@@ -267,6 +267,8 @@ public:
     virtual void stop(bool now = false) = 0;
     virtual void clear(int slot) = 0;
     int freeSlot() const {
+        if (part() < 0)
+            return -1;
         for (int s = 0; s < kClipSlots; ++s)
             if (studio().parts[part()].clips[s].state == ClipView::Empty)
                 return s;

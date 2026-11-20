@@ -18,23 +18,23 @@ key 5.766 Shift+D up
 key 5.816 Shift+A down
 key 7.702 Shift+A up
 key 6.871 Return
-# bars 5-8: the piano over the loop, tapped: stabs on 1, the and of 2, and 4
+# bars 5-8: the piano over the loop, tapped where its Charleston gate hits: 1, the and of 2, 3, the and of 4
 key 7.790 Right
 tap 7.742 0.5000 0.720 len=0.14 p=0.75
 tap 8.468 0.5000 0.720 len=0.14 p=0.55
-tap 9.194 0.5000 0.720 len=0.14 p=0.55
+tap 8.710 0.5000 0.720 len=0.14 p=0.55
 tap 9.435 0.5000 0.720 len=0.14 p=0.55
 tap 9.677 0.9286 0.720 len=0.14 p=0.75
 tap 10.403 0.9286 0.720 len=0.14 p=0.55
-tap 11.129 0.9286 0.720 len=0.14 p=0.55
+tap 10.645 0.9286 0.720 len=0.14 p=0.55
 tap 11.371 0.9286 0.720 len=0.14 p=0.55
 tap 11.613 0.3571 0.720 len=0.14 p=0.75
 tap 12.339 0.3571 0.720 len=0.14 p=0.55
-tap 13.065 0.3571 0.720 len=0.14 p=0.55
+tap 12.581 0.3571 0.720 len=0.14 p=0.55
 tap 13.306 0.3571 0.720 len=0.14 p=0.55
 tap 13.548 0.0714 0.720 len=0.14 p=0.75
 tap 14.274 0.0714 0.720 len=0.14 p=0.55
-tap 15.000 0.0714 0.720 len=0.14 p=0.55
+tap 14.516 0.0714 0.720 len=0.14 p=0.55
 tap 15.242 0.0714 0.720 len=0.14 p=0.55
 # bar 8, beats 3-4: hold the 16ths cell on the rail: everything stutters, the loop too
 down 14.516 1 0.8125 0.82

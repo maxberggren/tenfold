@@ -528,7 +528,7 @@ private slots:
         const auto take = testkit::play(over, [&](Session &s) { waiting = s.pageStatus(); });
         for (int c = 0; c < 8; ++c)
             filled += take.view.parts[kChords].clips[c].state != ClipView::Empty;
-        QVERIFY2(waiting.contains("loop at the bar line"), qPrintable(waiting));
+        QVERIFY2(waiting.contains("looping") && waiting.contains("space calls it off"), qPrintable(waiting));
         QCOMPARE(take.view.parts[kChords].recording, 1);
         QCOMPARE(filled, 2); // the loop and the waiting take: Return made nothing of its own
     }
@@ -603,6 +603,84 @@ private slots:
             off += take.rms(b * kBar + 2 * kBeat / 4 + 0.005, b * kBar + 2 * kBeat / 4 + 0.09);
         }
         QVERIFY2(down < 0.2 * off, qPrintable(QString("downbeat %1 offbeat %2").arg(down).arg(off)));
+    }
+
+    // A stab a little late for its hit still strikes at once: a key 60 or
+    // 90 ms after the organ's offbeat sounds within 10 ms of it.
+    void lateStabsStrikeAtOnce() {
+        for (double late : {0.0, 0.03, 0.06, 0.09}) {
+            const double key = 2 * kBar + 2 * kBeat / 4 + late; // the offbeat of bar 3's first beat, late
+            const auto take = testkit::play("page 0 3\nkey 0.05 Right\nkey 0.06 Right\nkey " + num(key) +
+                                            " A down\nkey " + num(key + 0.3) + " A up\nend " + num(key + 0.6) + "\n");
+            double onset = -1;
+            for (size_t i = size_t((key - 0.05) * 48000); i < take.left.size(); ++i)
+                if (std::fabs(take.left[i]) + std::fabs(take.right[i]) > 0.02) {
+                    onset = double(i) / 48000.0;
+                    break;
+                }
+            QVERIFY2(onset >= 0 && onset - key < 0.012 + 1.0 / 125.0,
+                     qPrintable(QString("key %1 ms late sounds %2 ms after it").arg(late * 1000).arg((onset - key) * 1000)));
+        }
+    }
+
+    // Layering the loop's own chords a little late never ducks the loop: it
+    // is still on the loop's last chord for a moment when the loop moves on.
+    void aLateLayerKeepsTheLoopWhole() {
+        std::string loop = recordedLoop({0, 5, 2, 6}, Triad, "key 0.05 Right\nkey 0.06 Right\nkey 0.07 Right\nkey 0.08 Right\n");
+        std::string layer;
+        int id = 90;
+        for (int bar = 3; bar < 6; ++bar)
+            for (int b = 0; b < 4; ++b) {
+                const double t = bar * kBar + b * kBeat + 0.045;
+                layer += "down " + num(t) + " " + std::to_string(id) + " " + cell(std::array<int, 4>{0, 5, 2, 6}[size_t(b)], Triad) +
+                         "\nup " + num(t + kBeat - 0.01) + " " + std::to_string(id) + "\n";
+                ++id;
+            }
+        const auto alone = testkit::play(loop + "end " + num(6 * kBar) + "\n");
+        const auto layered = testkit::play(loop + layer + "end " + num(6 * kBar) + "\n");
+        double a = 0, l = 0;
+        for (int bar = 3; bar < 6; ++bar)
+            for (int b = 0; b < 4; ++b) {
+                const double t = bar * kBar + b * kBeat;
+                a += alone.rms(t, t + 0.06);
+                l += layered.rms(t, t + 0.06);
+            }
+        QVERIFY2(l >= a, qPrintable(QString("layered %1 alone %2").arg(l).arg(a)));
+    }
+
+    // Once its finger lifts, a live chord stops being the page's chord: the
+    // loop's shows again at once.
+    void aLiftedChordGivesWayToTheLoop() {
+        int shown = -2;
+        playWatching(recordedLoop({0, 0, 0, 0}) + "down " + num(3 * kBar) + " 80 " + cell(6, Triad) + "\nup " +
+                         num(3 * kBar + 0.5) + " 80\nend " + num(3 * kBar + 0.8) + "\n",
+                     [&](double now, const StudioView &v) {
+                         if (now > 3 * kBar + 0.6) {
+                             const float *d = v.parts[kChords].data;
+                             shown = d[0] >= 0 ? 6 : int(d[16]);
+                         }
+                     });
+        QCOMPARE(shown, 0);
+    }
+
+    // Return pressed just after the bar line: the loop starts from the top
+    // at the next bar line, so no bar of it goes by without its first chord.
+    void lateReturnStartsFromTheTop() {
+        std::string s = "page 0 3\n";
+        for (int b = 1; b < 5; ++b)
+            s += "down " + num(b * kBar + 0.01) + " " + std::to_string(b) + " " + cell(std::array<int, 5>{0, 0, 5, 2, 6}[size_t(b)], Triad) +
+                 "\nup " + num((b + 1) * kBar - 0.15) + " " + std::to_string(b) + "\n";
+        s += "key " + num(5 * kBar + 0.5 * kBeat) + " Return\nend " + num(11 * kBar) + "\n";
+        std::vector<std::pair<double, int>> roots;
+        const auto take = playWatching(s, [&](double now, const StudioView &v) { roots.push_back({now, v.chordRoot}); });
+        // From the next bar line the loop plays from its first chord, I.
+        int at6 = -1;
+        for (auto &[t, r] : roots)
+            if (t > 6 * kBar + 0.1 && at6 < 0)
+                at6 = r;
+        QCOMPARE(at6, 0);
+        for (int b = 6; b < 11; ++b)
+            QVERIFY2(take.rms(b * kBar, (b + 1) * kBar) > 0.01, qPrintable(QString("bar %1 is silent").arg(b)));
     }
 
     // Clicking the pad holds, like L.

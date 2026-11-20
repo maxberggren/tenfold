@@ -186,13 +186,13 @@ public:
 
     void background(double t, ControlContext &ctx) override {
         m_beatNow = ctx.beatAt(t);
-        m_takeWaiting = ctx.studio().parts[ctx.part()].recording >= 0;
+        m_take = ctx.studio().parts[ctx.part()];
         // A loop of the last bars is taken just before the bar line it ends
         // on, so its first chord comes round on that downbeat.
         if (m_retroEnd >= 0 && ctx.beatAt(t) >= m_retroEnd - 0.06) {
             const double end = m_retroEnd;
             m_retroEnd = -1;
-            retroCapture(end, ctx);
+            retroCapture(end, false, ctx);
         }
         // The progression as it goes by, live or from a loop.
         const StudioView &s = ctx.studio();
@@ -352,8 +352,14 @@ private:
     void startChord(Held &h, float velocity, double t, ControlContext &ctx) {
         // A chord landed a hair before a beat (up to 30 ms) is meant for that
         // beat: it sounds there, and a loop taken from that beat keeps it.
+        // Only while a beat can be heard (a loop playing, the metronome):
+        // in free play the player's own timing is the music.
+        const StudioView &sv = ctx.studio();
+        bool audible = sv.metronome;
+        for (int p = 0; p < sv.partCount; ++p)
+            audible |= sv.parts[p].playing >= 0;
         const double beat = ctx.beatAt(t), whole = std::round(beat);
-        if (whole > beat && ctx.timeAt(whole) - t < 0.03)
+        if (audible && whole > beat && ctx.timeAt(whole) - t < 0.03)
             t = ctx.timeAt(whole);
         h.onAt = t;
         Command on;
@@ -540,20 +546,26 @@ private:
 
     // What is about to happen with loops, for the screen and the status
     // line; empty when nothing is pending.
-    QString loopCue(double beat, bool takeWaiting) const {
+    QString loopCue(double beat, const PartView &v) const {
         auto beats = [](double n) {
             const int b = std::max(1, int(std::ceil(n - 1e-6)));
-            return QStringLiteral("%1 beat%2").arg(b).arg(b > 1 ? "s" : "");
+            return QStringLiteral("%1 BEAT%2").arg(b).arg(b > 1 ? "S" : "");
+        };
+        auto bars = [](double lengthBeats) {
+            const int b = std::max(1, int(std::lround(lengthBeats / kBeatsPerBar)));
+            return QStringLiteral("%1 BAR%2").arg(b).arg(b > 1 ? "S" : "");
         };
         if (m_retroEnd >= 0)
-            return QStringLiteral("LOOPING THE LAST %1 BAR%2 IN %3 · RETURN CALLS IT OFF")
-                .arg(m_retroBars)
-                .arg(m_retroBars > 1 ? "S" : "")
-                .arg(beats(m_retroEnd - beat).toUpper());
-        if (takeWaiting) {
-            const double next = std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar;
-            return QStringLiteral("LOOP AT THE BAR LINE, %1 · SPACE CALLS IT OFF").arg(beats(next - beat).toUpper());
+            return QStringLiteral("LOOPING THE LAST %1 IN %2 · RETURN CALLS IT OFF")
+                .arg(bars(m_retroBars * kBeatsPerBar), beats(m_retroEnd - beat));
+        if (v.recording >= 0) {
+            const double at = v.takeBeats > 0 ? v.takeAt : std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar;
+            const QString what = v.takeBeats > 0 ? bars(v.takeBeats) : QStringLiteral("WHAT YOU PLAYED");
+            return QStringLiteral("LOOPING %1 IN %2 · SPACE CALLS IT OFF").arg(what, beats(at - beat));
         }
+        if (v.queued >= 0 && v.queued == v.playing)
+            return QStringLiteral("THE LOOP STARTS FROM THE TOP IN %1")
+                .arg(beats(std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar - beat));
         return {};
     }
 
@@ -714,7 +726,7 @@ private:
         const double beat = ctx.beatAt(t);
         const double bar = std::floor(beat / kBeatsPerBar) * kBeatsPerBar;
         if (beat - bar < 1.0) {
-            retroCapture(bar, ctx);
+            retroCapture(bar, true, ctx);
             return;
         }
         const int bars = retroBars(bar + kBeatsPerBar);
@@ -752,7 +764,10 @@ private:
         return bars;
     }
 
-    void retroCapture(double endBeat, ControlContext &ctx) {
+    // late: the bar line it ends on has passed, so the loop's first chord
+    // has too; it starts over from the top at the next bar line rather than
+    // play a bar without it.
+    void retroCapture(double endBeat, bool late, ControlContext &ctx) {
         const int bars = retroBars(endBeat);
         if (bars == 0) {
             ctx.notice(QStringLiteral("Play some chords first, then Return loops them"));
@@ -763,7 +778,13 @@ private:
             ctx.notice(QStringLiteral("Every slot is full: Shift+F1–F8 clears one"));
             return;
         }
-        ctx.capture(slot, ctx.timeAt(endBeat - bars * kBeatsPerBar), ctx.timeAt(endBeat), 0.6f);
+        // The window opens and closes a tenth of a beat early, as the studio's
+        // own takes do: a chord landed a hair before its bar belongs to that
+        // bar, and the quantiser pulls it onto the line.
+        constexpr double early = 0.1;
+        ctx.capture(slot, ctx.timeAt(endBeat - bars * kBeatsPerBar - early), ctx.timeAt(endBeat - early), 0.85f);
+        if (late)
+            ctx.launch(slot);
         ctx.notice(QStringLiteral("The last %1 bar%2 loop in slot %3").arg(bars).arg(bars > 1 ? "s" : "").arg(slot + 1));
         m_onsetCount = 0;
     }
@@ -775,7 +796,7 @@ private:
 
     std::array<Held, kHeldMax> m_held{};
     double m_beatNow = 0;
-    bool m_takeWaiting = false; // a Space loop waiting for its bar line
+    PartView m_take; // this part as the studio last showed it: a take waiting, a loop queued
     int m_retroBars = 0;
     Frame m_frame;
     bool m_button = false, m_heard = false;
@@ -898,7 +919,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
 
     // A loop on its way (Space's take or Return's) waiting for its bar line:
     // the pad framed in red, pulsing on the beat, and what is coming in amber.
-    const QString cue = loopCue(pc.beat, pc.view->recording >= 0);
+    const QString cue = loopCue(pc.beat, *pc.view);
     if (!cue.isEmpty()) {
         const float pulse = 1.0f - float(pc.beat - std::floor(pc.beat));
         p.setBrush(Qt::NoBrush);
@@ -1077,7 +1098,7 @@ QString Control::status() const {
         parts << QStringLiteral("hold");
     if (m_register != 0)
         parts << QStringLiteral("voicing %1%2").arg(m_register > 0 ? "+" : "").arg(m_register);
-    const QString cue = loopCue(m_beatNow, m_takeWaiting);
+    const QString cue = loopCue(m_beatNow, m_take);
     parts << (cue.isEmpty() ? QStringLiteral("Space loops what you just played") : cue.toLower());
     return parts.join(QStringLiteral(" · "));
 }

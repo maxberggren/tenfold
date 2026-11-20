@@ -481,6 +481,7 @@ struct ChordVoice {
     Note notes[kNotes];
     Env amp, filt;
     float strike = 0;   // the piano's hammer and FM brightness, the organ's percussion and click
+    bool strikeRise = false; // a ringing chord struck again: the strike climbs back in 2 ms, never jumps
     float clickEnv = 0;
     Ladder ladL, ladR;
     Svf svfL, svfR, clickBp;
@@ -628,15 +629,19 @@ public:
         // A different chord held live over a loop would sound two harmonies
         // at once while the studio announces one: the loop steps back
         // (−18 dB in about 30 ms) until the finger lifts. The same chord
-        // over the loop leaves it whole.
+        // over the loop leaves it whole, and so does a difference shorter
+        // than an eighth: a player layering the loop's chords a little late
+        // is still on the loop's chord when it moves on.
         bool loopSounding = false;
         for (const auto &v : m_voices)
             loopSounding |= v.active && v.lane == kReplayLane;
         const ChordVoice *live = current(m_lanes[kLiveLane]);
         const Shape &loopShape = m_lanes[kReplayLane].shape;
         auto column = [&](int d) { return ((d % m_count) + m_count) % m_count; };
-        const bool clash = live && loopSounding && loopShape.count > 0 &&
-                           column(live->degree) != column(loopShape.tones[0]);
+        const bool differ = live && loopSounding && loopShape.count > 0 &&
+                            column(live->degree) != column(loopShape.tones[0]);
+        m_differFor = differ ? m_differFor + double(n) * tr.beatsPerSample : 0.0;
+        const bool clash = m_differFor > 0.5;
         const float loop0 = m_loopGain;
         m_loopGain += ((clash ? 0.125f : 1.0f) - m_loopGain) * (1.0f - std::exp(-float(n) / (0.01f * m_rate)));
         float mixL[kBlock] = {}, mixR[kBlock] = {};
@@ -676,6 +681,11 @@ public:
             const Lane &L = m_lanes[k];
             const ChordVoice *v = L.shown >= 0 ? &m_voices[size_t(L.shown)] : nullptr;
             if (v && (!v->active || v->lane != k))
+                v = nullptr;
+            // A live chord let go is no longer the chord of the moment: the
+            // page falls back to the loop's as soon as the finger lifts,
+            // while its tail rings out.
+            if (v && k == kLiveLane && v->releasing)
                 v = nullptr;
             d[pub::Degree] = v ? float(v->degree) : -1.0f;
             d[pub::Colour] = v ? float(v->colour) : 0.0f;
@@ -807,7 +817,8 @@ private:
     // A struck sound under a gate speaks on the gate's hits: a chord landing
     // between them waits (in samples, returned) for the next one, so an
     // organ on the offbeat never stabs the downbeat because a finger moved
-    // there. Landing in the first part of a hit's step strikes at once.
+    // there. A chord up to about 100 ms late for a hit strikes at once:
+    // that is a player a little behind, not one aiming between the hits.
     int waitForHit(int style, const Transport &tr, int offset) const {
         const int pattern = effectivePattern(style);
         if (!styleDef(style).retrig || pattern == Hold)
@@ -816,7 +827,11 @@ private:
         const double stepsPerBeat = double(g.steps * m_globalRate) / kBeatsPerBar;
         const double pos = tr.beatAt(offset) * stepsPerBeat;
         const long k = long(std::floor(pos));
-        if (g.hits[k % g.steps] != '.' && pos - double(k) < 0.4)
+        long last = k;
+        while (g.hits[((last % g.steps) + g.steps) % g.steps] == '.' && last > k - g.steps)
+            --last;
+        const double lateSeconds = (pos - double(last)) / stepsPerBeat * tr.secondsPerBeat();
+        if (g.hits[((last % g.steps) + g.steps) % g.steps] != '.' && lateSeconds < 0.105)
             return 0;
         long next = k + 1;
         while (g.hits[next % g.steps] == '.' && next < k + g.steps)
@@ -854,7 +869,7 @@ private:
                 if (same) {
                     cur->amp.on();
                     cur->vel = e.vel;
-                    cur->strike = 1;
+                    cur->strikeRise = true;
                 }
                 cur->filt.on();
                 cur->graceEnv = 1;
@@ -936,6 +951,7 @@ private:
         v.filter = v.filterSm = e.filter;
         v.level = 0;
         v.strike = 1;
+        v.strikeRise = false;
         v.clickEnv = 1;
         v.graceEnv = 1;
         v.graceHold = int(0.06f * m_rate);
@@ -1184,6 +1200,29 @@ private:
             }
         }
 
+        // The strike, sample by sample: falling away as the chord rings,
+        // climbing back over 2 ms when it is struck again (a jump would
+        // click through the FM index and the percussion).
+        float strikeAt[kBlock] = {};
+        if (sd.osc != StyleDef::Saw) {
+            const float fall = std::exp(-1.0f / ((v.style == Piano ? 0.32f : 0.11f) * m_rate));
+            const float rise = 1.0f / (0.002f * m_rate);
+            float st = v.strike;
+            for (int i = from; i < n; ++i) {
+                if (v.strikeRise) {
+                    st += rise;
+                    if (st >= 1.0f) {
+                        st = 1.0f;
+                        v.strikeRise = false;
+                    }
+                } else {
+                    st *= fall;
+                }
+                strikeAt[i] = st;
+            }
+            v.strike = st;
+        }
+
         // Oscillators, before the envelope and the filter.
         float bL[kBlock] = {}, bR[kBlock] = {};
         const float invN = 1.0f / float(n);
@@ -1232,16 +1271,13 @@ private:
                 const float incL = hz * v.ratio[0] * invRate, incR = hz * v.ratio[1] * invRate;
                 const float incP = std::min(3.0f * hz * invRate, 0.45f);
                 float pl = nt.phase[0], pr = nt.phase[1], pp = nt.phase2[0];
-                float perc = v.strike * 0.38f;
-                const float percDecay = std::exp(-1.0f / (0.11f * m_rate));
                 const float side = kSide * sd.width;
                 for (int i = start; i < n; ++i) {
                     pl = wrap01(pl + incL);
                     pr = wrap01(pr + incR);
                     pp = wrap01(pp + incP);
-                    const float mid = (lut(tb.organ, pl) + lut(tb.sine, pp) * perc) * kMid;
+                    const float mid = (lut(tb.organ, pl) + lut(tb.sine, pp) * 0.38f * strikeAt[i]) * kMid;
                     const float sd2 = lut(tb.organ, pr) * side;
-                    perc *= percDecay;
                     nl[i] += mid + sd2;
                     nr[i] += mid - sd2;
                 }
@@ -1258,21 +1294,18 @@ private:
                 float pl = nt.phase[0], pr = nt.phase[1], pm = nt.phase2[0];
                 // High notes are less bright, as on the real thing.
                 const float bright = clampf(1.4f - (nt.midi - 60.0f) / 40.0f, 0.4f, 1.4f);
-                float strike = v.strike;
-                const float sDecay = std::exp(-1.0f / (0.32f * m_rate));
                 const float idx0 = (0.7f + 2.3f * v.vel) * bright / kTwoPi;
                 const float side = kSide * sd.width;
                 for (int i = start; i < n; ++i) {
                     pl = wrap01(pl + incL);
                     pr = wrap01(pr + incR);
                     pm = wrap01(pm + incM);
-                    const float idx = idx0 * (0.18f + strike);
-                    const float mod = lut(tb.sine, pm) * 0.35f * strike / kTwoPi;
+                    const float idx = idx0 * (0.18f + strikeAt[i]);
+                    const float mod = lut(tb.sine, pm) * 0.35f * strikeAt[i] / kTwoPi;
                     const float ml = lut(tb.sine, pl) * idx + mod, mr = lut(tb.sine, pr) * idx + mod;
                     const float mid = lut(tb.sine, wrap01(pl + ml)) * kMid, sd2 = lut(tb.sine, wrap01(pr + mr)) * side;
                     nl[i] += mid + sd2;
                     nr[i] += mid - sd2;
-                    strike *= sDecay;
                 }
                 nt.phase[0] = pl;
                 nt.phase[1] = pr;
@@ -1299,7 +1332,6 @@ private:
         const bool ladder = sd.osc == StyleDef::Saw;
         const bool click = sd.osc != StyleDef::Saw;
         const float graceDecay = std::exp(-1.0f / (0.008f * m_rate));
-        const float strikeDecay = std::exp(-1.0f / ((v.style == Piano ? 0.32f : 0.11f) * m_rate));
         const float clickDecay = std::exp(-1.0f / (0.0035f * m_rate));
         const float gain = sd.gain * (0.5f + 0.5f * v.vel) * (0.82f + 0.36f * v.pressureSm);
         v.leslie = wrap01(v.leslie + float(n) * 0.85f * invRate);
@@ -1315,7 +1347,7 @@ private:
                 if (G.hitOn[i]) {
                     v.amp.on();
                     v.filt.on();
-                    v.strike = 1;
+                    v.strikeRise = true;
                     v.clickEnv = 1;
                 }
                 if (v.minHold == 0 && G.hitOff[i]) {
@@ -1369,7 +1401,6 @@ private:
             outR[i] += xr;
             peak = std::max(peak, std::fabs(xl) + std::fabs(xr));
         }
-        v.strike *= std::pow(strikeDecay, float(n - from));
         v.level = v.level * 0.9f + 0.1f * peak;
         if (v.releasing && v.amp.stage == Env::Idle)
             v.active = false;
@@ -1387,6 +1418,7 @@ private:
     float m_pump[kBlock] = {};
     float m_pumpView = 0;
     float m_loopGain = 1;
+    double m_differFor = 0; // beats the live chord has differed from the loop's
     Svf m_hp1L, m_hp1R, m_hp2L, m_hp2R;
 };
 

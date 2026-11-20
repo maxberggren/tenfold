@@ -9,37 +9,88 @@ using namespace tf;
 
 namespace {
 
-// Kick, snare, kick, snare at 120 BPM on the drums page, then the next ONE
-// held: a beat that loops.
+// Kick, snare, kick, snare half a second apart on the drums page, then
+// Space where the next kick would land: a one-bar loop at 120 BPM.
 const char *kBeat = "page 0 1\n"
                     "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
-                    "down 2.5 1 0.05 0.5\nup 2.9 1\n";
+                    "key 2.5 Space\n";
 
 }
 
 class FrameworkTests : public QObject {
     Q_OBJECT
 private slots:
-    void theFirstLoopSetsTheTempoAndKeepsPlaying() {
+    void spaceLoopsWhatWasJustPlayedAndSetsTheTempo() {
         const auto take = testkit::play(std::string(kBeat) + "end 8\n");
         QVERIFY(take.error.empty());
         QCOMPARE(int(std::lround(take.view.bpm)), 120);
         QCOMPARE(take.view.parts[0].playing, 0);
         QCOMPARE(int(take.view.parts[0].clips[0].lengthBeats), 4);
+        QCOMPARE(take.view.parts[0].clips[0].events, 4);
         // Long after the fingers left, the beat goes on.
         QVERIFY(take.rms(5, 8) > 0.01);
         QVERIFY(take.finite());
         QVERIFY(take.peak() < 1.0);
     }
 
-    void aSecondLoopKeepsTheTempo() {
+    void overAPlayingLoopSpaceTakesTheBarsJustPlayed() {
+        // The beat plays; four bass notes go into the bar from 4.5 s (beat
+        // 8 at 120 BPM, counted from the loop's bar), and Space a little
+        // after the next bar line takes that bar.
         const auto take = testkit::play(std::string(kBeat) +
-                                        "page 3 2\n"
-                                        "tap 3.3 0.05 0.5\ntap 3.6 0.1 0.5\ntap 3.9 0.2 0.5\n"
-                                        "down 4.2 2 0.05 0.5\nup 4.6 2\nend 7\n");
+                                        "page 3.0 2\n"
+                                        "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                        "key 6.7 Space\nend 9\n");
         QCOMPARE(int(std::lround(take.view.bpm)), 120);
         QCOMPARE(take.view.parts[1].playing, 0);
-        QVERIFY(take.view.parts[1].clips[0].lengthBeats >= 1);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
+        QCOMPARE(take.view.parts[1].clips[0].events, 8); // four notes, on and off
+        QCOMPARE(take.view.parts[0].playing, 0);         // the beat is untouched
+    }
+
+    void spaceWithNothingPlayedMakesNoLoop() {
+        const auto take = testkit::play("page 0 2\nkey 0.5 Space\nend 2\n");
+        QCOMPARE(take.view.parts[1].playing, -1);
+        QVERIFY(take.view.parts[1].clips[0].state == ClipView::Empty);
+    }
+
+    void aCapturedFirstLoopSetsTheTempo() {
+        // Four hits half a second apart, captured from the first to the
+        // fifth beat's moment: a 4-beat loop at 120 BPM.
+        Studio studio;
+        Session session(&studio);
+        std::vector<float> buf(240 * 2);
+        double t = 0;
+        auto runTo = [&](double until) {
+            while (t < until) {
+                studio.render(buf.data(), 240);
+                t += 240.0 / 48000.0;
+            }
+        };
+        for (int i = 0; i < 4; ++i) {
+            runTo(0.5 + 0.5 * i);
+            StudioMsg m;
+            m.kind = StudioMsg::ToPart;
+            m.part = 0;
+            m.cmd.type = Command::User;
+            m.cmd.flags = Command::Quantize;
+            m.cmd.t = t;
+            studio.post(m);
+        }
+        runTo(2.8);
+        StudioMsg c;
+        c.kind = StudioMsg::Capture;
+        c.part = 0;
+        c.slot = 0;
+        c.d0 = 0.5;
+        c.d1 = 2.5;
+        c.f = 0.85f;
+        studio.post(c);
+        runTo(3.2);
+        studio.fetchView();
+        QCOMPARE(int(std::lround(studio.view().bpm)), 120);
+        QCOMPARE(studio.view().parts[0].playing, 0);
+        QCOMPARE(int(studio.view().parts[0].clips[0].lengthBeats), 4);
     }
 
     void numberKeysChangePages() {
@@ -69,7 +120,7 @@ private slots:
 
     void stoppingWaitsForTheBar() {
         // F1/Backspace on the starter pages: stop at the next bar.
-        const auto take = testkit::play(std::string(kBeat) + "key 3.2 Backspace\nend 6\n");
+        const auto take = testkit::play(std::string(kBeat) + "key 4.2 Backspace\nend 7\n");
         QCOMPARE(take.view.parts[0].playing, -1);
         QVERIFY(take.view.parts[0].clips[0].state == ClipView::Stopped);
     }

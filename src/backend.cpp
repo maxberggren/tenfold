@@ -119,6 +119,28 @@ QVariantList Backend::pagesPlaying() const {
     return l;
 }
 
+QVariantList Backend::pagesSilenced() const {
+    QVariantList l;
+    const StudioView &v = m_session->view();
+    bool anySolo = false;
+    for (int i = 0; i < v.partCount; ++i)
+        anySolo |= v.parts[i].channel.value[Solo] > 0.5f;
+    for (int i = 0; i < m_session->pageCount(); ++i) {
+        QString why;
+        if (i < v.partCount) {
+            const float *ch = v.parts[i].channel.value;
+            if (ch[Mute] > 0.5f)
+                why = tr("muted");
+            else if (anySolo && ch[Solo] < 0.5f)
+                why = tr("solo elsewhere");
+            else if (ch[Gain] < 0.02f)
+                why = tr("level down");
+        }
+        l << why;
+    }
+    return l;
+}
+
 QString Backend::key() const { return QString::fromUtf8(Tuning::noteName(m_session->view().root)); }
 
 QString Backend::mode() const {

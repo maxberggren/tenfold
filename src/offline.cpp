@@ -428,17 +428,17 @@ RenderStats renderScript(const std::string &script, const std::string &wavPath) 
 }
 
 RenderStats runBench(double seconds) {
-    // A loop on every part, then ten fingers held on the lead page.
+    // A recorded loop on every part (Space, eight hits, Space), then ten
+    // fingers held on the lead page.
     std::ostringstream s;
     double t = 0.1;
     for (int page = 1; page <= 7; ++page) {
         s << "page " << t << " " << page << "\n";
+        s << "key " << t + 0.02 << " Space\n";
         for (int i = 0; i < 8; ++i)
             s << "tap " << t + 0.05 + i * 0.25 << " " << 0.08f + 0.1f * float(i % 8) << " 0.5 p=0.8\n";
-        const double one = t + 0.05 + 8 * 0.25;
-        s << "down " << one << " " << page << " 0.08 0.5 p=0.8\n";
-        s << "up " << one + 0.6 << " " << page << "\n";
-        t = one + 0.8;
+        s << "key " << t + 2.2 << " Space\n";
+        t += 4.3;
     }
     s << "page " << t << " 4\n";
     for (int f = 0; f < 10; ++f) {

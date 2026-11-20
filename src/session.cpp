@@ -263,10 +263,20 @@ bool Session::key(const KeyEvent &k) {
         default: return false;
         }
     }
-    if (k.key == Qt::Key_Space || k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
+    if (k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
         return false;
     Page &p = *m_pages[size_t(m_page)];
-    return p.spec.control->key(k, *p.ctx);
+    if (p.spec.control->key(k, *p.ctx))
+        return true;
+    // Space records a loop on any part's page that doesn't record its own
+    // way: from the next bar into the next free slot, and Space again closes
+    // it at the bar after.
+    if (k.key == Qt::Key_Space) {
+        if (k.down && !k.repeat && p.part >= 0)
+            toggleRecording(*p.ctx);
+        return true;
+    }
+    return false;
 }
 
 void Session::refresh() {
@@ -296,6 +306,24 @@ QString Session::notice(uint32_t *seq) const {
     if (seq)
         *seq = m_noticeSeq;
     return m_notice;
+}
+
+void Session::toggleRecording(ControlContext &ctx) {
+    const PartView &v = m_view.parts[ctx.part()];
+    if (v.recording >= 0) {
+        ctx.stopRecording();
+        ctx.notice(QStringLiteral("Loop closes at the bar"));
+        return;
+    }
+    const int slot = ctx.freeSlot();
+    if (slot < 0) {
+        ctx.notice(QStringLiteral("Every slot is full: clear one first"));
+        return;
+    }
+    ctx.record(slot, 8);
+    // Shown at once, before the studio's next view says so.
+    m_view.parts[ctx.part()].recording = slot;
+    ctx.notice(QStringLiteral("Recording slot %1 from the next bar").arg(slot + 1));
 }
 
 void Session::shiftTempo(double delta) {

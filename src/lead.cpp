@@ -120,6 +120,7 @@ struct Voice {
     static constexpr int kBanks = 1 + kHarmSlots;
     bool active = false, releasing = false;
     int owner = -1; // the line driving it, or −1 once it's been left to ring out
+    int from = 0;   // the line it was started for: a tail keeps that line's gate and throw
     int sound = 0;
     uint64_t born = 0;
     Bank banks[kBanks];
@@ -136,7 +137,6 @@ struct Voice {
     Ladder fL, fR;
     Svf form[2][3];
     float level = 0;      // for the page
-    float leadSemis = 60; // for the page and the tests
     Rng rng;
 };
 
@@ -237,20 +237,6 @@ public:
         for (auto &v : m_voices)
             n += v.active;
         return n;
-    }
-
-    // For tests: a line's sounding pitch in MIDI (without vibrato), or 0.
-    float sounding(int line) const {
-        const Line &l = m_lines[size_t(line)];
-        if (l.voice < 0 || !m_voices[size_t(l.voice)].active || m_voices[size_t(l.voice)].owner != line)
-            return 0;
-        return m_voices[size_t(l.voice)].leadSemis;
-    }
-    float harmonyPitch(int line, int slot) const {
-        const Line &l = m_lines[size_t(line)];
-        if (l.voice < 0)
-            return 0;
-        return m_voices[size_t(l.voice)].banks[1 + slot].pitch;
     }
 
 private:
@@ -454,6 +440,7 @@ private:
         v.active = true;
         v.releasing = false;
         v.owner = li;
+        v.from = li;
         v.sound = snd;
         v.born = ++m_age;
         v.vel = n.vel;
@@ -489,7 +476,6 @@ private:
             k.car[0] = k.car[1] = k.mod[0] = k.mod[1] = 0;
             k.layer.phase = v.rng.unit();
         }
-        v.leadSemis = targets[0];
         v.cut = cutoffFor(v, s, 1.0f);
         strike(v, n.vel, true);
     }
@@ -580,9 +566,8 @@ private:
         return at(r0) + (at(r1) - at(r0)) * f;
     }
 
-public:
-    // Each bank's target pitch (MIDI) and level for a line's note. Public
-    // for the tests, which check the pitch logic without rendering.
+    // Each bank's target pitch (MIDI) and level for a line's note, and
+    // where the line and its harmony sing in degrees, for the page.
     struct Targets {
         float leadDegree = 0; // where the line sings, in degrees, for the page
         float harmDegree[kHarmSlots] = {};
@@ -608,7 +593,6 @@ public:
         return t;
     }
 
-private:
     static float cutoffFor(const Voice &v, const Sound &s, float fe) {
         const float note = v.banks[0].pitch;
         float c = s.cutoff + s.cutoffY * (2.0f * v.y - 1.0f) + 0.16f * (v.press - 0.5f) +
@@ -655,7 +639,7 @@ private:
         for (auto &v : m_voices)
             if (v.active) {
                 // The gate runs on the studio's beat, so it lands with the drums.
-                const int steps = v.owner >= 0 ? gateSteps(m_lines[size_t(v.owner)].gate) : 0;
+                const int steps = gateSteps(m_lines[size_t(v.from)].gate);
                 const double phase = tr.beatAt(at) * steps;
                 renderVoice(v, l + at, r + at, m_sendL + at, m_sendR + at, n, dt, float(phase - std::floor(phase)),
                             float(tr.beatsPerSample * steps), steps > 0);
@@ -724,7 +708,6 @@ private:
                 gain1[b] *= n1;
             }
         }
-        v.leadSemis = v.banks[0].pitch;
 
         // Unison: the outer saws furthest out in pitch and in the field. A
         // flatter finger detunes and spreads them further.
@@ -781,7 +764,7 @@ private:
         const float resComp = 1.0f + 0.8f * s.res * s.res;
         const float swell = 0.5f + 0.75f * v.press;
         const float outGain = s.gain * 0.3f * swell * (0.45f + 0.55f * v.vel);
-        const float send = s.echo + 0.9f * (v.owner >= 0 ? m_lines[size_t(v.owner)].throwAmt : 0.0f);
+        const float send = s.echo + 0.9f * m_lines[size_t(v.from)].throwAmt;
         const float inv = 1.0f / float(n);
         const float gateAttack = 1.0f - std::exp(-1.0f / (0.0015f * rate));
         const float gateRelease = 1.0f - std::exp(-1.0f / (0.004f * rate));
@@ -811,10 +794,11 @@ private:
                 if (s.pulse > 0) {
                     const float p0 = k.pulse[0].step(std::min(inc, 0.45f), pw);
                     const float p1 = k.pulse[1].step(std::min(inc * pulseDet, 0.45f), 1.0f - pw);
-                    // The second pulse comes up as the finger flattens: a chorus.
+                    // A second pulse, a few cents off and leaning right, comes
+                    // up as the finger flattens: a chorus.
                     const float w = 0.2f + 0.6f * v.fat;
-                    bl += s.pulse * 0.6f * (p0 + w * p1);
-                    br += s.pulse * 0.6f * (p0 - w * p1 * 0.3f + w * p1);
+                    bl += s.pulse * 0.6f * (p0 + 0.6f * w * p1);
+                    br += s.pulse * 0.6f * (0.8f * p0 + w * p1);
                 }
                 if (s.fm > 0) {
                     float fmo[2];
@@ -1135,33 +1119,28 @@ public:
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down:
+            if (k.modifiers & Qt::ShiftModifier) {
+                // Shift with ↑ ↓: the glide, from a quarter of the sound's own to four times it.
+                m_glide = std::clamp(m_glide + (k.key == Qt::Key_Up ? 1 : -1), -2, 2);
+                param(ctx, PGlide, 0, std::exp2(float(m_glide)), 0, ctx.now());
+                ctx.notice(QStringLiteral("Glide ×%1").arg(double(std::exp2(float(m_glide)))));
+                return true;
+            }
             m_shift = std::clamp(m_shift + (k.key == Qt::Key_Up ? 1 : -1), -1, 1);
             ctx.notice(m_shift == 0 ? QStringLiteral("Middle octave")
                                     : QStringLiteral("Octave %1%2").arg(m_shift > 0 ? "+" : "−").arg(std::abs(m_shift)));
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
+            if (k.modifiers & Qt::ShiftModifier)
+                return toggleLatch(ctx);
             m_follow = !m_follow;
             ctx.notice(m_follow ? QStringLiteral("Following the chord") : QStringLiteral("Free in the scale"));
             return true;
         case Qt::Key_Backslash:
-            m_latch = !m_latch;
-            if (!m_latch)
-                for (int s = 0; s < kHarmSlots; ++s)
-                    if (m_slots[s].on && !m_slots[s].held) {
-                        m_slots[s].on = false;
-                        param(ctx, PHarmony, s, m_slots[s].row, 0, ctx.now());
-                    }
-            ctx.notice(m_latch ? QStringLiteral("Harmony holds") : QStringLiteral("Harmony follows the fingers"));
-            return true;
-        case Qt::Key_Minus:
-        case Qt::Key_Equal: {
-            m_glide = std::clamp(m_glide + (k.key == Qt::Key_Equal ? 1 : -1), -2, 2);
-            param(ctx, PGlide, 0, std::exp2(float(m_glide)), 0, ctx.now());
-            ctx.notice(QStringLiteral("Glide ×%1").arg(double(std::exp2(float(m_glide)))));
-            return true;
-        }
+            return toggleLatch(ctx);
         case Qt::Key_QuoteLeft:
+        case Qt::Key_section: // the key left of 1: ` on a US keyboard, § on a Nordic one
             m_gate = (m_gate + 1) % kGates;
             {
                 Command c;
@@ -1195,6 +1174,18 @@ public:
         }
     }
 
+    bool toggleLatch(ControlContext &ctx) {
+        m_latch = !m_latch;
+        if (!m_latch)
+            for (int s = 0; s < kHarmSlots; ++s)
+                if (m_slots[s].on && !m_slots[s].held) {
+                    m_slots[s].on = false;
+                    param(ctx, PHarmony, s, m_slots[s].row, 0, ctx.now());
+                }
+        ctx.notice(m_latch ? QStringLiteral("Harmony holds") : QStringLiteral("Harmony follows the fingers"));
+        return true;
+    }
+
     void paint(QPainter &p, const PaintContext &pc) override;
 
     QString help() const override {
@@ -1212,13 +1203,13 @@ public:
             "BEND\ta pitch wheel: slide up or down, rests on whole steps\n"
             "THROW\tinto the echo; higher throws harder; lift and the repeats ring out\n"
             "tap a phrase, hold its first note\tloops it into the next free slot\n"
-            "Z X C … / A S D … / Q W E …\tthe scale on three rows; overlap keys for legato; Shift accents\n"
+            "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents\n"
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream\n"
-            "↑ ↓\toctave of the neck and keys\n"
+            "↑ ↓\toctave of the neck and the keys\n"
+            "Shift+↑ ↓\tglide longer, shorter\n"
             "Enter\tfollow the chord: notes and harmony land on chord tones\n"
-            "\\\tharmony holds after the fingers lift\n"
-            "- =\tglide shorter, longer\n"
-            "`\ttrance gate: off, 1/8, 1/16, 1/8 triplets, in time with the studio\n"
+            "Shift+Enter (or \\)\tharmony holds after the fingers lift\n"
+            "§ (or `)\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
             "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
             "F9 / F10\trecord from the next bar / overdub\n"
             "Backspace\tstop this part at the next bar");
@@ -1351,7 +1342,11 @@ private:
             return;
         }
         if (t.y >= kHarmBottom) {
+            // A free voice first; with the harmony held, a held-over one next.
             int slot = -1;
+            for (int s = 0; s < kHarmSlots && slot < 0; ++s)
+                if (!m_slots[s].on)
+                    slot = s;
             for (int s = 0; s < kHarmSlots && slot < 0; ++s)
                 if (!m_slots[s].held)
                     slot = s;
@@ -1536,6 +1531,9 @@ private:
     }
 
     // The piano rows: each a run of the scale from a root, an octave apart.
+    // The keys past L and P differ between layouts, so both the US ones and
+    // the Nordic ones (this is often played on a Swedish Mac keyboard) play
+    // the same notes.
     static int pianoIndex(int key) {
         static const int rows[3][12] = {
             {Qt::Key_Z, Qt::Key_X, Qt::Key_C, Qt::Key_V, Qt::Key_B, Qt::Key_N, Qt::Key_M, Qt::Key_Comma,
@@ -1544,9 +1542,13 @@ private:
              Qt::Key_Semicolon, Qt::Key_Apostrophe, 0},
             {Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R, Qt::Key_T, Qt::Key_Y, Qt::Key_U, Qt::Key_I, Qt::Key_O,
              Qt::Key_P, Qt::Key_BracketLeft, Qt::Key_BracketRight}};
+        static const int nordic[3][12] = {
+            {0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Minus, 0, 0},
+            {0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Odiaeresis, Qt::Key_Adiaeresis, 0},
+            {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Aring, 0}};
         for (int r = 0; r < 3; ++r)
             for (int i = 0; i < 12; ++i)
-                if (rows[r][i] && rows[r][i] == key)
+                if ((rows[r][i] && rows[r][i] == key) || (nordic[r][i] && nordic[r][i] == key))
                     return r * 12 + i;
         return -1;
     }

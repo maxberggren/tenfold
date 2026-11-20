@@ -171,25 +171,38 @@ public:
             m_closing = true;
             ctx.stopRecording();
         }
-        // Any take, Space's or this page's own: watch it while it waits, and
-        // when it ends say what it caught (a take called off says nothing:
-        // the session already did).
+        // Any take, Space's or this page's own. Space's land at once, so the
+        // studio's count of landed takes is the cue: say what was caught and
+        // light the LOOP button for a moment. A take that waits (REC, or
+        // Space looping what is sounding) shows while it waits.
+        if (!m_takesKnown) {
+            m_takesKnown = true;
+            m_takesSeen = pv.takes;
+        }
+        if (pv.takes != m_takesSeen) {
+            m_takesSeen = pv.takes;
+            const int slot = m_taking >= 0 ? m_taking : m_recSlot >= 0 ? m_recSlot : pv.playing;
+            if (slot >= 0 && slot < kClipSlots && pv.clips[slot].state != ClipView::Empty) {
+                const ClipView &cv = pv.clips[slot];
+                const int beats = int(std::lround(cv.lengthBeats));
+                m_landedText = beats >= 4 ? QStringLiteral("%1 %2").arg(beats / 4).arg(beats >= 8 ? "bars" : "bar")
+                                          : QStringLiteral("%1 beats").arg(beats);
+                m_landedSlot = slot;
+                m_landedAt = t;
+                ctx.notice(QStringLiteral("Bass loop in slot %1: %2, %3 events, playing")
+                               .arg(slot + 1)
+                               .arg(m_landedText)
+                               .arg(cv.events));
+            }
+            m_taking = -1;
+            m_recSlot = -1;
+            m_closing = m_closeEarly = false;
+        }
         if (pv.recording >= 0) {
             m_taking = pv.recording;
-            return;
-        }
-        if (m_taking < 0 && m_recSlot >= 0 && beat > m_recStart + 1)
-            m_taking = m_recSlot; // a take of ours the view never showed
-        if (m_taking >= 0) {
-            const ClipView &cv = pv.clips[m_taking];
-            if (cv.state != ClipView::Empty && cv.lengthBeats > 0)
-                ctx.notice(QStringLiteral("Bass loop in slot %1: %2 %3, %4 events, playing")
-                               .arg(m_taking + 1)
-                               .arg(cv.lengthBeats >= 4 ? int(cv.lengthBeats / 4) : int(cv.lengthBeats))
-                               .arg(cv.lengthBeats >= 4 ? (cv.lengthBeats >= 8 ? QStringLiteral("bars")
-                                                                               : QStringLiteral("bar"))
-                                                        : QStringLiteral("beats"))
-                               .arg(cv.events));
+        } else if (m_taking >= 0) {
+            // The view showed a take and now shows none, with nothing landed:
+            // it was called off (the session said so).
             m_taking = -1;
             m_recSlot = -1;
             m_closing = m_closeEarly = false;
@@ -773,6 +786,8 @@ private:
     QString loopState(double beat) const {
         if (m_taking >= 0 && m_taking != m_recSlot)
             return QStringLiteral("loop into slot %1 at the bar: Space calls it off").arg(m_taking + 1);
+        if (m_landedSlot >= 0 && m_recSlot < 0 && m_time - m_landedAt < 3.0)
+            return QStringLiteral("looped %1 into slot %2").arg(m_landedText).arg(m_landedSlot + 1);
         if (m_recSlot < 0)
             return {};
         if (beat < m_recStart) {
@@ -887,6 +902,11 @@ private:
     // whether it is closing.
     int m_recSlot = -1;
     int m_taking = -1;              // the slot any take is filling, as the studio shows it
+    uint32_t m_takesSeen = 0;       // the studio's count of landed takes, as last seen
+    bool m_takesKnown = false;
+    int m_landedSlot = -1;          // the last take that landed, when, and how long
+    double m_landedAt = -10, m_time = 0;
+    QString m_landedText;
     bool m_slotFull[kClipSlots] = {};
     double m_recStart = 0;
     bool m_closing = false, m_closeEarly = false;
@@ -923,6 +943,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     m_brightness = sv.brightness;
     m_chordRoot = sv.chordRoot;
     m_beat = pc.beat;
+    m_time = pc.time;
     Tuning tuning;
     tuning.set(sv.root, sv.family, sv.brightness, sv.just);
 
@@ -1120,7 +1141,12 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
         QString title = QStringLiteral("LOOP"), body = QStringLiteral("SPACE");
         QColor col = pc.color;
         bool lit = false;
-        if (taking >= 0) {
+        if (taking < 0 && m_landedSlot >= 0 && pc.time - m_landedAt < 2.0) {
+            // A take just landed: which slot, lit for a moment.
+            title = QStringLiteral("SLOT %1").arg(m_landedSlot + 1);
+            body = QStringLiteral("LOOPED");
+            lit = true;
+        } else if (taking >= 0) {
             col = c::red();
             const bool mine = taking == m_recSlot;
             if (mine && pc.beat < m_recStart) {

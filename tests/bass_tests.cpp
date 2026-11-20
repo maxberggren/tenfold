@@ -554,23 +554,50 @@ private slots:
         QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
     }
 
-    // A Space take shows on the page while it waits, whoever started it,
-    // and says what it caught when it lands.
+    // Space over a playing loop lands at once: the page says what it
+    // caught, and the LOOP button and the status line show which slot.
     void spaceTakesShowAndReport() {
         const std::string script = "page 0 2\ntempo 0 120\n"
-                                   "tap 0.2 0.05 0.9\n" // LOOP: the first loop, bar 2
-                                   "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.05 0.9\n"
+                                   "tap 0.2 0.04 0.9\n" // LOOP: the first loop, bar 2
+                                   "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.04 0.9\n"
                                    "tap 4.5 0.29 0.4\ntap 5.0 0.46 0.4\n"
-                                   "key 5.5 Space\n"; // three beats into bar 6: it loops at 6.0
-        QString waiting, notice;
-        testkit::play(script + "end 5.8\n", [&](Session &s) { waiting = s.pageStatus(); });
-        QVERIFY2(waiting.contains(QStringLiteral("slot 2 at the bar"), Qt::CaseInsensitive), qPrintable(waiting));
-        const auto take = testkit::play(script + "end 7.0\n", [&](Session &s) {
+                                   "key 5.5 Space\n";
+        QString status, notice;
+        const auto take = testkit::play(script + "end 5.8\n", [&](Session &s) {
+            status = s.pageStatus();
             uint32_t seq = 0;
             notice = s.notice(&seq);
         });
         QCOMPARE(int(take.view.parts[1].clips[1].state), int(ClipView::Playing));
-        QVERIFY2(notice.contains(QStringLiteral("slot 2")), qPrintable(notice));
+        QVERIFY2(status.contains(QStringLiteral("into slot 2"), Qt::CaseInsensitive), qPrintable(status));
+        QVERIFY2(notice.contains(QStringLiteral("Bass loop in slot 2")), qPrintable(notice));
+    }
+
+    // A riff that starts mid-bar, played twice over a playing loop, then
+    // Space: one bar of it loops at once, with no gap where the bar line
+    // would have been.
+    void aRiffPlayedTwiceLoopsOneBar() {
+        std::string script = "page 0 2\ntempo 0 120\n"
+                             "tap 0.2 0.04 0.9\ntap 2.1 0.37 0.4\ntap 3.0 0.04 0.9\n"; // a first loop
+        // Beats at 0.5 s; the riff starts on beat 10 (half way through a bar)
+        // and each note lasts until the next.
+        const double notes[4][3] = {{10, 0, 0.5}, {10.5, 2, 1}, {11.5, 4, 1}, {12.5, 6, 1.5}};
+        int id = 10;
+        for (int pass = 0; pass < 2; ++pass)
+            for (const auto &n : notes) {
+                const double t = (n[0] + 4 * pass) * 0.5;
+                const double x = (n[1] + 2 + 0.5) / 12.0;
+                ++id;
+                script += "down " + std::to_string(t) + " " + std::to_string(id) + " " + std::to_string(x) +
+                          " 0.4\nup " + std::to_string(t + n[2] * 0.5 - 0.01) + " " + std::to_string(id) + "\n";
+            }
+        script += "key 9.05 Space\nend 13.0\n";
+        const auto take = testkit::play(script);
+        const ClipView &clip = take.view.parts[1].clips[1];
+        QCOMPARE(int(clip.state), int(ClipView::Playing));
+        QCOMPARE(int(clip.lengthBeats), 4);
+        for (double t = 9.1; t < 12.9; t += 0.25)
+            QVERIFY2(take.rms(t, t + 0.25) > 0.015, qPrintable(QStringLiteral("a gap at %1 s").arg(t)));
     }
 
     // A root landed just before the bar and held through it is the loop's
@@ -597,7 +624,7 @@ private slots:
     // The same through Space over a playing loop, pressed before the bar.
     void spaceCarriesTheHeldRootToo() {
         const std::string take = "page 0 2\ntempo 0 120\n"
-                                 "tap 0.2 0.05 0.9\ntap 2.1 0.37 0.4\ntap 3.0 0.05 0.9\n" // a first loop
+                                 "tap 0.2 0.04 0.9\ntap 2.1 0.37 0.4\ntap 3.0 0.04 0.9\n" // a first loop
                                  "down 7.93 1 0.21 0.4 p=0.6\nup 9.4 1\n" // A1 from just before bar 8 s
                                  "key 9.0 Space\n";                        // loops 8-10 s at 10 s
         const auto t = testkit::play(take + "end 14.4\n");

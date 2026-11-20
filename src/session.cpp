@@ -379,6 +379,29 @@ void Session::toggleRecording(ControlContext &base) {
     }
     if (first < 0)
         first = earliest;
+    if (first < 0 && m_view.parts[part].voices > 0) {
+        // Nothing played lately, but the part is sounding (a bed latched a
+        // while ago, an arp left running): loop the bar that just went by,
+        // or the one now ending. The take carries in what was held across
+        // its start, so the loop is the sound as it is.
+        const double beatNow = ctx.beatAt(nowT);
+        const double barNow = std::floor(beatNow / kBeatsPerBar) * kBeatsPerBar;
+        const double end = beatNow - barNow < 1.0 ? barNow : barNow + kBeatsPerBar;
+        StudioMsg m;
+        m.kind = StudioMsg::TakeBars;
+        m.part = int8_t(part);
+        m.slot = int8_t(slot);
+        m.d0 = end - kBeatsPerBar;
+        m.d1 = end;
+        ctx.post(m);
+        m_view.parts[part].recording = slot;
+        ctx.notice(QStringLiteral("Looping what is sounding: 1 bar in slot %1").arg(slot + 1));
+        return;
+    }
+    if (first < 0) {
+        ctx.notice(QStringLiteral("Play something, then Space loops it"));
+        return;
+    }
     bool anyPlaying = false;
     for (int p = 0; p < m_view.partCount; ++p)
         anyPlaying |= m_view.parts[p].playing >= 0 || m_view.parts[p].queued >= 0;

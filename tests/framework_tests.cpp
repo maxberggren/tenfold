@@ -182,6 +182,76 @@ private slots:
         QCOMPARE(take.view.parts[1].clips[0].events, 16);
     }
 
+    void clipsCanBeCopiedLayeredAndChained() {
+        // Two drum clips made straight in the studio: one bar of four hits,
+        // two bars of two. Copy, layer, chain, and take the merge back.
+        Studio studio;
+        Session session(&studio);
+        std::vector<float> buf(240 * 2);
+        double t = 0;
+        auto runTo = [&](double until) {
+            while (t < until) {
+                studio.render(buf.data(), 240);
+                t += 240.0 / 48000.0;
+            }
+        };
+        auto hit = [&](int pad) {
+            StudioMsg m;
+            m.kind = StudioMsg::ToPart;
+            m.part = 0;
+            m.cmd.type = Command::User;
+            m.cmd.flags = Command::Quantize;
+            m.cmd.i[0] = pad;
+            m.cmd.t = t;
+            studio.post(m);
+        };
+        auto post = [&](StudioMsg::Kind k, int slot, int value, float f, double d0 = 0, double d1 = 0) {
+            StudioMsg m;
+            m.kind = k;
+            m.part = 0;
+            m.slot = int8_t(slot);
+            m.value = value;
+            m.f = f;
+            m.d0 = d0;
+            m.d1 = d1;
+            studio.post(m);
+        };
+        const double spb = 60.0 / 124.0;
+        // Bar 1 (beats 4–8): four hits; bars 2–3 (beats 8–16): two hits.
+        for (int i = 0; i < 4; ++i) {
+            runTo((4 + i) * spb);
+            hit(1);
+        }
+        runTo(9 * spb);
+        hit(2);
+        runTo(13 * spb);
+        hit(3);
+        runTo(16.2 * spb);
+        post(StudioMsg::TakeBars, 0, 0, 0, 4, 8);
+        runTo(16.4 * spb);
+        post(StudioMsg::TakeBars, 1, 0, 0, 8, 16);
+        runTo(17 * spb);
+        studio.fetchView();
+        QCOMPARE(studio.view().parts[0].clips[0].events, 4);
+        QCOMPARE(studio.view().parts[0].clips[1].events, 2);
+        post(StudioMsg::CopyClip, 0, 2, 0);
+        post(StudioMsg::MergeClips, 2, 1, 0); // layer: 2 bars, 4 hits twice + 2
+        post(StudioMsg::CopyClip, 0, 3, 0);
+        post(StudioMsg::MergeClips, 3, 1, 1); // chain: 3 bars, 4 + 2
+        runTo(17.2 * spb);
+        studio.fetchView();
+        const auto &c = studio.view().parts[0].clips;
+        QCOMPARE(int(c[2].lengthBeats), 8);
+        QCOMPARE(c[2].events, 10);
+        QCOMPARE(int(c[3].lengthBeats), 12);
+        QCOMPARE(c[3].events, 6);
+        post(StudioMsg::UndoTake, 0, 0, 0); // takes back the chain: slot 3 is the copy again
+        runTo(17.4 * spb);
+        studio.fetchView();
+        QCOMPARE(int(studio.view().parts[0].clips[3].lengthBeats), 4);
+        QCOMPARE(studio.view().parts[0].clips[3].events, 4);
+    }
+
     void spaceWithNothingPlayedMakesNoLoop() {
         const auto take = testkit::play("page 0 2\nkey 0.5 Space\nend 2\n");
         QCOMPARE(take.view.parts[1].playing, -1);

@@ -80,6 +80,7 @@ struct Studio::PartState {
     Clip clips[kClipSlots];
     int playing = -1;
     int queued = -1;
+    uint32_t takes = 0;       // clips made from what was played, ever
     bool catchUp = false;     // a new clip's first block also plays what it just passed
     bool catchUpHeld = false; // …only the sounds still held at that point, and settings
     double queuedAt = 0;
@@ -284,6 +285,8 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     // so the loop sounds the way the take did.
     if (!stretch) {
         Command held[32];
+        Command heldMove[32]; // the last Move of each held sound (a slide into the bar)
+        bool heldMoved[32] = {};
         int heldCount = 0;
         Command knobs[32];
         int knobCount = 0;
@@ -293,12 +296,23 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
                 break;
             const Command &c = lg.c;
             if (c.type == Command::On && !(c.flags & Command::Quantize)) {
-                if (heldCount < 32)
+                if (heldCount < 32) {
+                    heldMoved[heldCount] = false;
                     held[heldCount++] = c;
+                }
+            } else if (c.type == Command::Move) {
+                for (int i = 0; i < heldCount; ++i)
+                    if (held[i].id == c.id) {
+                        heldMove[i] = c;
+                        heldMoved[i] = true;
+                    }
             } else if (c.type == Command::Off) {
                 for (int i = 0; i < heldCount; ++i)
                     if (held[i].id == c.id) {
-                        held[i] = held[--heldCount];
+                        --heldCount;
+                        held[i] = held[heldCount];
+                        heldMove[i] = heldMove[heldCount];
+                        heldMoved[i] = heldMoved[heldCount];
                         break;
                     }
             } else if (c.type == Command::Param) {
@@ -315,6 +329,8 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             clip.events.push_back({0.0, knobs[i], -1e18});
         for (int i = 0; i < heldCount && openCount < 64; ++i) {
             clip.events.push_back({0.0, held[i], -1e18});
+            if (heldMoved[i])
+                clip.events.push_back({0.0, heldMove[i], -1e18});
             open[openCount++] = {held[i].id, 0.0, 0.0};
         }
     }
@@ -368,6 +384,7 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         std::fprintf(stderr, "\n");
     }
     startClip(p, s, slot, anchor);
+    ++p.takes;
     // A loop closed by a key rather than a note on its ONE (Space with nothing
     // playing) starts a moment after its downbeat: play what it just passed.
     p.catchUp = stretch && !playedOnTheOne;
@@ -694,12 +711,25 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 if (pos0 > 0 && pos0 < 0.25)
                     fireRange(0, pos0, 0);
             } else if (pos0 > 0) {
+                // Settings first: the latest of each Param and of each
+                // non-onset command a part uses for its state, so the bar
+                // plays the way the take sounded.
+                auto isSetting = [](const Command &c) {
+                    return c.type == Command::Param ||
+                           (c.type >= Command::User && (!(c.flags & Command::Quantize) || (c.flags & Command::Continue)));
+                };
+                for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
+                    if (!isSetting(it->c))
+                        continue;
+                    bool later = false;
+                    for (auto jt = it + 1; jt != clip.events.end() && jt->pos < pos0; ++jt)
+                        later |= isSetting(jt->c) && jt->c.type == it->c.type &&
+                                 (it->c.type != Command::Param || jt->c.i[0] == it->c.i[0]);
+                    if (!later)
+                        fire(*it, pos0);
+                }
                 for (auto it = clip.events.begin(); it != clip.events.end() && it->pos < pos0; ++it) {
                     const Command &c = it->c;
-                    if (c.type == Command::Param) {
-                        fire(*it, pos0);
-                        continue;
-                    }
                     if (c.type != Command::On)
                         continue;
                     bool ended = false;
@@ -974,6 +1004,7 @@ void Studio::publish() {
         o.queued = p.queued;
         o.overdub = p.overdub;
         o.recording = p.recording;
+        o.takes = p.takes;
         o.takeBeats = p.recording >= 0 && p.recEnd >= 0 ? float(p.recEnd - p.recStart) : 0.0f;
         o.takeAt = p.recording >= 0 && p.recEnd >= 0 ? p.recEnd : 0.0;
         for (int c = 0; c < ChannelCount; ++c)

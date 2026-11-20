@@ -136,6 +136,7 @@ struct Sound {
     float scoop = 0, scoopTime = 0.05f; // semitones below the note an attack starts from
     float vibRate = 5.5f, vibDepth = 0.15f, vibDelay = 0.4f; // the vibrato a held note grows
     bool retrig = false;   // legato notes strike the envelopes again (plucks, bells)
+    bool swoop = false;    // keeps a slow slur even across a step (trills smear on purpose)
     float echo = 0.15f, echoFb = 0.3f, echoBeats = 0.75f; // its own delay: send, feedback, time
     float gain = 1;
 };
@@ -155,10 +156,11 @@ inline const Sound &sound(int i) {
         {.name = "Pluck", .saw = 0.75f, .pulse = 0.45f, .unison = 3, .detune = 11.0f, .spread = 0.6f,
          .cutoff = 0.22f, .cutoffY = 0.32f, .res = 0.32f, .envAmt = 0.78f, .envDecay = 0.17f, .keyTrack = 0.7f,
          .drive = 0.1f, .a = 0.001f, .d = 0.38f, .s = 0.0f, .r = 0.3f, .glide = 0.025f, .vibDepth = 0.0f,
-         .retrig = true, .echo = 0.34f, .echoFb = 0.42f, .gain = 1.3f},
-        // An FM bell: a sine struck by a modulator at three and a half
-        // times its frequency, the strike fading to a glassy sine.
-        {.name = "Bell", .fm = 1.0f, .detune = 7.0f, .spread = 0.7f, .fmRatio = 3.5f, .fmIndex = 2.6f,
+         .retrig = true, .echo = 0.34f, .echoFb = 0.42f, .gain = 1.73f},
+        // An FM bell: a sine struck by a modulator at three times its
+        // frequency (every partial on a harmonic, so it sits in the key and
+        // its strike is heard at its own pitch), fading to a glassy sine.
+        {.name = "Bell", .fm = 1.0f, .detune = 7.0f, .spread = 0.7f, .fmRatio = 3.0f, .fmIndex = 2.3f,
          .fmDecay = 0.45f, .fmFloor = 0.18f, .cutoff = 0.95f, .cutoffY = 0.08f, .a = 0.001f, .d = 1.4f, .s = 0.22f,
          .r = 0.9f, .glide = 0.035f, .vibRate = 4.8f, .vibDepth = 0.07f, .vibDelay = 0.6f, .retrig = true,
          .echo = 0.24f, .echoFb = 0.38f, .gain = 0.85f},
@@ -167,20 +169,20 @@ inline const Sound &sound(int i) {
         {.name = "Chip", .pulse = 1.0f, .detune = 4.0f, .spread = 0.4f, .pw = 0.25f, .pwm = 0.12f,
          .cutoff = 0.92f, .cutoffY = 0.10f, .a = 0.001f, .d = 0.25f, .s = 0.8f, .r = 0.07f, .glide = 0.03f,
          .porta = 0.04f, .vibRate = 6.4f, .vibDepth = 0.28f, .vibDelay = 0.22f, .echo = 0.2f, .echoBeats = 0.5f,
-         .gain = 0.85f},
+         .gain = 0.92f},
         // A vocal lead: saws through three vowel formants, the finger's
         // height going oo, oh, ah, eh, ee; notes scoop into pitch like a voice.
         {.name = "Vox", .saw = 0.85f, .pulse = 0.3f, .unison = 3, .detune = 9.0f, .spread = 0.55f,
          .formant = true, .cutoff = 0.85f, .cutoffY = 0.05f, .res = 0.05f, .envAmt = 0.08f, .envDecay = 0.5f,
          .drive = 0.18f, .a = 0.025f, .d = 0.6f, .s = 0.9f, .r = 0.28f, .glide = 0.07f, .scoop = 0.7f,
-         .scoopTime = 0.045f, .vibRate = 5.4f, .vibDepth = 0.24f, .vibDelay = 0.32f, .echo = 0.14f, .gain = 0.5f},
+         .scoopTime = 0.045f, .vibRate = 5.4f, .vibDepth = 0.24f, .vibDelay = 0.32f, .echo = 0.14f, .gain = 0.76f},
         // A screaming saw: driven hard into a resonant filter, always
         // gliding, every attack bent up into the note.
         {.name = "Scream", .saw = 1.0f, .pulse = 0.4f, .unison = 3, .detune = 13.0f, .cutoff = 0.48f,
          .cutoffY = 0.36f, .res = 0.42f, .envAmt = 0.32f, .envDecay = 0.45f, .keyTrack = 0.6f, .drive = 0.85f,
          .a = 0.004f, .d = 0.5f, .s = 0.92f, .r = 0.22f, .glide = 0.08f, .porta = 0.08f, .scoop = 1.4f,
-         .scoopTime = 0.055f, .vibRate = 5.9f, .vibDepth = 0.3f, .vibDelay = 0.3f, .echo = 0.2f, .echoFb = 0.36f,
-         .gain = 0.9f},
+         .scoopTime = 0.055f, .vibRate = 5.9f, .vibDepth = 0.3f, .vibDelay = 0.3f, .swoop = true, .echo = 0.2f, .echoFb = 0.36f,
+         .gain = 1.17f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

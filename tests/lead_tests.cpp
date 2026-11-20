@@ -234,6 +234,62 @@ private slots:
         QVERIFY(std::fabs(midiOf(pitchHz(tr.take, 1.8, 1.95)) - 60.0) < 0.15);
     }
 
+    void aStepLandsQuicklyALeapSwoops() {
+        // On Anthem, a hammer-on a whole step up (A4 to B4) is within about
+        // ten cents of B4 by 30 ms; a leap of an octave (to A5) is still on
+        // its way there at the same moment.
+        const std::string s = "page 0 4\n" + fmt("down 0.3 1 %.4f 0.5\ndown 1.0 2 %.4f 0.5\nup 1.4 2\n", cellX(7), cellX(8)) +
+                              fmt("down 1.8 3 %.4f 0.5\nup 2.6 3\nup 2.6 1\nend 2.8\n", cellX(14));
+        const auto take = testkit::play(s);
+        // A frame lands up to 8 ms after its script time; measure 38–60 ms on.
+        QVERIFY(std::fabs(midiOf(pitchHz(take, 1.038, 1.065)) - 71.0) < 0.12);
+        QVERIFY(midiOf(pitchHz(take, 1.838, 1.865)) < 80.0);
+    }
+
+    void harmonyMakesTheLineBiggerNotQuieter() {
+        // Two harmony rows under a held note: louder by one to three
+        // decibels, never quieter.
+        auto play = [](bool harmony) {
+            std::string s = "page 0 4\n" + fmt("down 0.3 1 %.4f 0.6\nup 2.0 1\n", cellX(7));
+            if (harmony)
+                s += fmt("down 0.3 2 0.08 %.4f\ndown 0.3 3 0.15 %.4f\nup 2.0 2\nup 2.0 3\n", rowY(1), rowY(2));
+            return testkit::play(s + "end 2.1\n");
+        };
+        const double alone = play(false).rms(0.8, 1.8), full = play(true).rms(0.8, 1.8);
+        const double gain = 20 * std::log10(full / alone);
+        QVERIFY2(gain > 0.5 && gain < 3.0, qPrintable(QString::number(gain)));
+    }
+
+    void anthemIsWideUnderANormalTouch() {
+        const auto take = testkit::play("page 0 4\n" + fmt("down 0.3 1 %.4f 0.6\nup 2.0 1\nend 2.1\n", cellX(7)));
+        double lr = 0, ll = 0, rr = 0;
+        for (size_t i = size_t(0.8 * 48000); i < size_t(1.8 * 48000); ++i) {
+            lr += double(take.left[i]) * take.right[i];
+            ll += double(take.left[i]) * take.left[i];
+            rr += double(take.right[i]) * take.right[i];
+        }
+        const double corr = lr / std::sqrt(ll * rr);
+        QVERIFY2(corr < 0.75 && corr > 0.2, qPrintable(QString::number(corr)));
+    }
+
+    void aVowelSweepKeepsItsLevel() {
+        // Vox, A4, the five vowels from the bottom of the pad to the top:
+        // within three decibels of each other.
+        std::string s = "page 0 4\nkey 0.05 Left\nkey 0.1 Left\n";
+        const float ys[5] = {0.02f, 0.25f, 0.5f, 0.75f, 0.98f};
+        for (int i = 0; i < 5; ++i)
+            s += fmt("down %.1f %.0f %.4f %.2f\n", 0.3 + 1.2 * i, 1 + i, cellX(7), ys[i]) +
+                 fmt("up %.1f %.0f\n", 1.3 + 1.2 * i, 1 + i);
+        const auto take = testkit::play(s + "end 6.4\n");
+        double lo = 1e9, hi = 0;
+        for (int i = 0; i < 5; ++i) {
+            const double r = take.rms(0.6 + 1.2 * i, 1.2 + 1.2 * i);
+            lo = std::min(lo, r);
+            hi = std::max(hi, r);
+        }
+        QVERIFY2(20 * std::log10(hi / lo) < 3.0, qPrintable(QString::number(20 * std::log10(hi / lo))));
+    }
+
     void aSlideGlidesAndRestsInTune() {
         // Slide from A3 to D4 and stay: on the way the pitch passes between
         // the notes, at rest it settles exactly on D4.

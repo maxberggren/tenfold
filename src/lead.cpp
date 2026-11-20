@@ -79,6 +79,9 @@ struct PulseOsc {
     }
 };
 
+// How much dry saw a vowel keeps under its formants.
+constexpr float kFormDry = 0.2f;
+
 // Vowel formants (Hz) from dark to bright: oo, oh, ah, eh, ee.
 constexpr float kVowels[5][3] = {
     {320, 800, 2300}, {450, 830, 2600}, {760, 1150, 2500}, {550, 1800, 2550}, {290, 2250, 3000}};
@@ -160,7 +163,7 @@ struct Bank {
     SawOsc saw[kUni];
     PulseOsc pulse[2];
     float car[2] = {}, mod[2] = {};
-    SawOsc layer;
+    SawOsc layer, layer2;
     Oversampler2x osL, osR;
 };
 
@@ -181,6 +184,7 @@ struct Voice {
     float vibPhase = 0, held = 0; // seconds since the note began, for the vibrato's delay
     float pwmPhase = 0;
     float gateEnv = 1;
+    float formNorm = 1; // the vowel's level made up
     float cut = 4;                // smoothed cutoff, in octaves above 60 Hz
     Ladder fL, fR;
     Svf form[2][3];
@@ -445,7 +449,12 @@ private:
         float pitch[Voice::kBanks], level[Voice::kBanks];
         targetsFor(line, to, ctx.harmony(), pitch, level);
         const float interval = std::fabs(pitch[0] - v.banks[0].pitch);
-        return base * line.glideScale * clampf(std::sqrt(interval / 5.0f), 0.4f, 1.6f);
+        // A step (one or two semitones) takes about a sixth of the sound's
+        // glide, so it lands within ten cents in thirty milliseconds; a
+        // fifth takes all of it, an octave more. A swooping sound (Scream)
+        // keeps its slur even across steps.
+        const float shape = std::pow(interval / 7.0f, 1.4f);
+        return base * line.glideScale * clampf(shape, sound(v.sound).swoop ? 0.45f : 0.15f, 1.6f);
     }
 
     static bool removeNote(Line &line, int id) {
@@ -531,6 +540,7 @@ private:
             k.pulse[1].phase = v.rng.unit();
             k.car[0] = k.car[1] = k.mod[0] = k.mod[1] = 0;
             k.layer.phase = v.rng.unit();
+            k.layer2.phase = v.rng.unit();
         }
         v.cut = cutoffFor(v, s, 1.0f);
         strike(v, n.vel, true);
@@ -739,22 +749,24 @@ private:
             k.level += (k.want - k.level) * (1.0f - std::exp(-dt / 0.035f));
             if (k.want <= 0 && k.level < 1e-3f)
                 k.level = 0;
-            // Harmony voices sit just under the melody.
-            const float hg = b == 0 ? 1.0f : 0.62f;
+            // Harmony voices sit about five decibels under the melody.
+            const float hg = b == 0 ? 1.0f : 0.65f;
             gain0[b] = l0 * hg;
             gain1[b] = k.level * hg;
             live[b] = b == 0 || l0 > 0 || k.level > 0;
         }
-        // Harmony makes the line bigger, not three times as loud.
+        // Harmony makes the line bigger: each voice adds about a decibel,
+        // while the melody gives up only a fraction of one and stays on top.
         {
             float h0 = 0, h1 = 0;
             for (int b = 1; b < Voice::kBanks; ++b) {
-                h0 += gain0[b];
-                h1 += gain1[b];
+                h0 += v.banks[b].level;
+                h1 += v.banks[b].level;
             }
-            const float n0 = 1.0f / (1.0f + 0.55f * h0), n1 = 1.0f / (1.0f + 0.55f * h1);
+            (void)h0;
+            const float n1 = 1.0f / (1.0f + 0.04f * h1);
             for (int b = 0; b < Voice::kBanks; ++b) {
-                gain0[b] *= n0;
+                gain0[b] *= n1;
                 gain1[b] *= n1;
             }
         }
@@ -762,19 +774,24 @@ private:
         // Unison: the outer saws furthest out in pitch and in the field. A
         // flatter finger detunes and spreads them further.
         static const float det7[Bank::kUni] = {0.0f, -1.0f, 1.0f, -0.46f, 0.46f, -0.15f, 0.15f};
+        // Where each saw stands: the outer pair at the edges, the next pair
+        // crossed over to the opposite sides, the inner pair half out, so
+        // even a light touch is wide and no side is just the flat saws.
+        static const float pan7[Bank::kUni] = {0.0f, -1.0f, 1.0f, 0.8f, -0.8f, -0.55f, 0.55f};
         static const float det2[2] = {-0.5f, 0.5f};
         const int U = std::clamp(s.unison, 1, Bank::kUni);
         const float cents = s.detune * (0.55f + 1.0f * v.fat);
-        const float spread = clampf(s.spread * (0.75f + 0.4f * v.fat), 0.0f, 1.0f);
+        const float spread = clampf(s.spread * (0.85f + 0.3f * v.fat), 0.0f, 1.0f);
         float uniRatio[Bank::kUni], uniL[Bank::kUni], uniR[Bank::kUni];
         for (int u = 0; u < U; ++u) {
             const float d = U == 2 ? det2[u] : det7[u];
             uniRatio[u] = std::exp2(d * cents / 1200.0f);
-            const float pan = clampf(d * spread, -1.0f, 1.0f);
+            const float pan = clampf((U == 2 ? d * 2.0f : U >= 5 ? pan7[u] : d) * spread, -1.0f, 1.0f);
             uniL[u] = std::sqrt(0.5f * (1.0f - pan));
             uniR[u] = std::sqrt(0.5f * (1.0f + pan));
         }
         const float uniGain = s.saw * 1.2f / std::sqrt(float(U));
+        const float layerDet = std::exp2((4.0f + 6.0f * v.fat) / 1200.0f);
         const float pulseDet = std::exp2((2.0f + 6.0f * v.fat) / 1200.0f);
         const float fmDet = std::exp2((s.detune * (0.25f + 0.75f * v.fat)) / 1200.0f);
         v.pwmPhase += 0.37f * dt;
@@ -799,14 +816,38 @@ private:
             const float pos = clampf(v.y, 0.0f, 1.0f) * 3.999f;
             const int a = int(pos);
             const float f = pos - float(a);
-            static const float q[3] = {7.0f, 9.0f, 11.0f};
-            static const float gk[3] = {1.0f, 0.7f, 0.42f};
+            // F1 wide, the upper two narrower; each band at unity on its peak.
+            static const float q[3] = {4.0f, 7.0f, 9.0f};
+            static const float gk[3] = {1.0f, 0.7f, 0.45f};
+            float hz[3];
             for (int k = 0; k < 3; ++k) {
-                const float hz = std::exp(lerpf(std::log(kVowels[a][k]), std::log(kVowels[a + 1][k]), f));
-                formGain[k] = gk[k];
-                v.form[0][k].set(hz, q[k], rate);
-                v.form[1][k].set(hz, q[k], rate);
+                hz[k] = std::exp(lerpf(std::log(kVowels[a][k]), std::log(kVowels[a + 1][k]), f));
+                formGain[k] = gk[k] / q[k];
+                v.form[0][k].set(hz[k], q[k], rate);
+                v.form[1][k].set(hz[k], q[k], rate);
             }
+            // Each vowel passes a different share of a saw's energy, so a
+            // sweep would jump in level: work out that share for this note
+            // (harmonic by harmonic, the upper ones weighted up the way
+            // the ear weighs them) and make it up, with a little of the
+            // dry saw blended in so no vowel is ever thin.
+            const float f0 = std::max(inc1[0] * rate, 40.0f);
+            float pDry = 0, pForm = 0;
+            const int harmonics = std::min(48, int(6000.0f / f0));
+            for (int h = 1; h <= harmonics; ++h) {
+                const float fh = f0 * float(h);
+                const float w = (fh > 1500.0f ? 2.0f : 1.0f) / float(h * h);
+                float g = 0;
+                for (int k = 0; k < 3; ++k) {
+                    const float r = fh / hz[k], bw = r / q[k];
+                    const float mag = bw / std::sqrt((1.0f - r * r) * (1.0f - r * r) + bw * bw);
+                    g += gk[k] * gk[k] * mag * mag;
+                }
+                pDry += w;
+                pForm += w * g;
+            }
+            const float want = clampf(std::sqrt(pDry / (pForm + kFormDry * kFormDry * pDry)), 0.25f, 6.0f);
+            v.formNorm += (want - v.formNorm) * (1.0f - std::exp(-dt / 0.02f));
         }
         const float drive = s.drive;
         const float driveGain = 1.0f + 6.0f * drive;
@@ -865,9 +906,9 @@ private:
                     br += s.fm * 0.8f * (0.8f * fmo[1] + 0.2f * fmo[0]);
                 }
                 if (s.layer > 0) {
-                    const float o = k.layer.step(std::min(inc * 2.0f, 0.45f)) * s.layer;
-                    bl += o;
-                    br += o;
+                    // Two saws an octave up, a few cents apart, one each side.
+                    bl += k.layer.step(std::min(inc * 2.0f * layerDet, 0.45f)) * s.layer;
+                    br += k.layer2.step(std::min(inc * 2.0f / layerDet, 0.45f)) * s.layer;
                 }
                 // Each voice is driven on its own: driven together, a third
                 // and its melody would grind out difference tones down in
@@ -891,8 +932,8 @@ private:
                     fl += v.form[0][k].step(sl).band * formGain[k];
                     fr += v.form[1][k].step(sr).band * formGain[k];
                 }
-                sl = fl;
-                sr = fr;
+                sl = (fl + kFormDry * sl) * v.formNorm;
+                sr = (fr + kFormDry * sr) * v.formNorm;
             }
             // Into the ladder at half level: its own soft clip stays a
             // colour, not a distortion that would smear a bell's partials.
@@ -1074,7 +1115,7 @@ public:
         if (m_loopText.isEmpty())
             m_lastPlan = spacePlan(ctx);
         m_loopHint = !m_lastPlan.any ? QString()
-                     : m_lastPlan.sets ? QStringLiteral("space on the next one: loop it, set the tempo")
+                     : m_lastPlan.sets ? QStringLiteral("space on the next one loops it")
                                        : QStringLiteral("space: loop %1 bar%2").arg(m_lastPlan.bars).arg(m_lastPlan.bars > 1 ? "s" : "");
         m_status = describe();
         // The trail: what the lines sang, sampled for the page to draw as
@@ -1605,7 +1646,7 @@ private:
         c.f[1] = t.y;
         c.f[2] = pos - float(h.q);
         c.f[3] = motion;
-        c.f[4] = clampf((t.size - 1.0f) / 0.8f, 0.0f, 1.0f);
+        c.f[4] = clampf((t.size - 0.8f) / 1.0f, 0.0f, 1.0f); // a normal touch is 0.2
         c.f[5] = twist;
         c.f[6] = t.pressure;
     }
@@ -1938,7 +1979,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
             c::tag(p, at, QStringLiteral("● ") + m_loopText, rec ? (blink ? c::red() : c::alpha(c::red(), 0.6f)) : col,
                    int(13 * unit + 1), true);
         } else if (!m_loopHint.isEmpty()) {
-            c::text(p, QRectF(at.x() - 120 * unit, at.y() - 9 * unit, 240 * unit, 18 * unit), m_loopHint,
+            c::text(p, QRectF(at.x() - 180 * unit, at.y() - 9 * unit, 360 * unit, 18 * unit), m_loopHint,
                     c::alpha(col, 0.5f), int(11 * unit + 1), true, Qt::AlignCenter);
         }
     }
@@ -2083,7 +2124,7 @@ PartSpec makeLead() {
     s.engine = std::make_unique<lead::LeadEngine>();
     s.control = std::make_unique<lead::LeadControl>();
     // The lead has its own echo; the room's tape echo only adds a little air.
-    const float channel[ChannelCount] = {0.75f, 0.5f, 0.5f, 0.28f, 0.08f, 0.35f, 0.0f, 0.0f};
+    const float channel[ChannelCount] = {0.69f, 0.5f, 0.5f, 0.28f, 0.08f, 0.35f, 0.0f, 0.0f};
     std::copy(channel, channel + ChannelCount, s.channel);
     return s;
 }

@@ -131,7 +131,8 @@ struct Bench : AudioContext {
 };
 
 enum { Drone, Pad, Choir, Glass, Air };
-enum { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord };
+enum { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord, PChordToLoop, PTone };
+constexpr int kPubTone = 19;
 constexpr int A = 9, C = 0, D = 2, E = 4, F = 5, G = 7, B = 11;
 
 }
@@ -326,6 +327,26 @@ private slots:
         const double up = 10 * std::log10(above(t1 - 1.5, t1) / above(1.5, 3));
         QVERIFY2(c1 > 1.8 * c0, qPrintable(QStringLiteral("%1 -> %2 Hz").arg(c0).arg(c1)));
         QVERIFY2(up > 6, qPrintable(QString::number(up)));
+    }
+
+    void theToneDarkensAndBrightens() {
+        // The same bed at the tone's three places: - closes a low-pass over
+        // it, = lifts its top, and the middle is the bed as it was built.
+        auto above = [](float tone) {
+            Bench b;
+            b.param(PTone, tone);
+            b.on(1, Pad, 0.4f);
+            b.on(2, Choir, 0.4f, 0.5f);
+            b.run(3);
+            double e = 0;
+            for (double hz = 2000; hz < 12000; hz *= 1.02)
+                e += b.energyAt(hz, 1.5, 3);
+            return e;
+        };
+        const double mid = above(0.5f);
+        const double dark = 10 * std::log10(above(0.0f) / mid), bright = 10 * std::log10(above(1.0f) / mid);
+        QVERIFY2(dark < -10, qPrintable(QString::number(dark)));
+        QVERIFY2(bright > 2, qPrintable(QString::number(bright)));
     }
 
     void theLowEndIsMono() {
@@ -579,6 +600,99 @@ private slots:
         // The scene's three layers keep sounding; the finger's ended.
         QCOMPARE(take.view.parts[kAtmos].voices, 3);
         QVERIFY(take.rms(12, 14) > 0.02);
+    }
+
+    // The keys every part page shares (PARTS.md 4b), and the band under
+    // the pad that gives the mouse all of them (4c).
+    void theSharedKeysReachTheBed() {
+        // ← → step the scenes, from either end.
+        testkit::play("page 0 6\nkey 0.2 Right\nkey 0.5 Right\nend 1\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("Ocean")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 6\nkey 0.2 Left\nend 1\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("Pulse")), qPrintable(s.pageStatus()));
+        });
+        // Shift+← the pump down (from the kick to off), + the tone up a
+        // step, and § (the key left of 1) follows the Chords page again
+        // after the bed's own chord.
+        const auto take = testkit::play("page 0 6\nkey 0.2 Shift+Left\nkey 0.3 +\nkey 0.4 V\nkey 0.6 §\nend 1\n");
+        const float *d = take.view.parts[kAtmos].data;
+        QCOMPARE(int(d[2]), 0);
+        QCOMPARE(d[kPubTone], 0.625f);
+        QCOMPARE(int(d[5]), -1);
+        // The second keys: ] and Shift+→ the pump back up, = and - the tone,
+        // ` (left of 1 on US keyboards) and the backslash to follow.
+        const auto second = testkit::play("page 0 6\nkey 0.2 ]\nkey 0.25 Shift+Right\nkey 0.3 =\nkey 0.35 =\n"
+                                          "key 0.4 -\nkey 0.45 V\nkey 0.6 `\nend 1\n");
+        d = second.view.parts[kAtmos].data;
+        QCOMPARE(int(d[2]), 0); // kick, beat, then round to off
+        QCOMPARE(d[kPubTone], 0.625f);
+        QCOMPARE(int(d[5]), -1);
+        const auto slash = testkit::play("page 0 6\nkey 0.2 V\nkey 0.6 \\\nend 1\n");
+        QCOMPARE(int(slash.view.parts[kAtmos].data[5]), -1);
+    }
+
+    void returnLatchesWhatIsHeldOrHolds() {
+        // With a finger down, Return latches it, as the click does.
+        const auto take = testkit::play("page 0 6\ndown 0.2 1 0.3 0.5 p=0.7\nkey 1.0 Return\nup 2.0 1\nend 8\n",
+                                        [](Session &s) { QCOMPARE(s.probe(kAtmos, QStringLiteral("latched")), 1.0f); });
+        QVERIFY(take.rms(6, 8) > 0.02);
+        // With none, it turns hold on: a layer held a moment stays.
+        testkit::play("page 0 6\nkey 0.2 Return\ndown 0.5 1 0.3 0.5 p=0.7\nup 1.5 1\nend 3\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("hold")), qPrintable(s.pageStatus()));
+            QCOMPARE(s.probe(kAtmos, QStringLiteral("latched")), 1.0f);
+        });
+        // Shift+Return is overdub.
+        const auto dub = testkit::play("page 0 6\nkey 0.2 Shift+Return\nend 0.5\n");
+        QVERIFY(dub.view.parts[kAtmos].overdub);
+    }
+
+    void theBandUnderThePadIsClickable() {
+        // On the scripts' window the pad is 900 by 562.5 px. Row 0 of the
+        // band: the clips to 0.42 of the width, then the scenes in two thin
+        // rows of four (centres 0.034 and 0.062 under the pad). Row 1 in two
+        // thin rows (0.105 and 0.133 under): the switches, then the steppers
+        // and the chords.
+        testkit::play("page 0 6\nbutton 0.2 0.65 -0.034\nend 1\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("Ocean")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 6\nbutton 0.2 0.93 -0.062\nend 1\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("Pulse")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 6\nbutton 0.2 0.03 -0.105\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("hold")), qPrintable(s.pageStatus()));
+        });
+        // Freeze; the space stepper's right half twice and its left half
+        // once; the chord IV.
+        const auto take = testkit::play("page 0 6\nbutton 0.2 0.18 -0.105\n"
+                                        "button 0.3 0.11 -0.133\nbutton 0.4 0.11 -0.133\nbutton 0.5 0.02 -0.133\n"
+                                        "button 0.6 0.69 -0.133\nend 1\n");
+        const float *d = take.view.parts[kAtmos].data;
+        QCOMPARE(d[0], 1.0f);
+        QCOMPARE(d[3], 0.75f);
+        QCOMPARE(int(d[5]), 3);
+    }
+
+    void theSwellChipIsAToggleThatEndsByItself() {
+        // A click has no release: the swell chip turns the swell on, and
+        // it ends by itself once it has risen all the way (eight bars).
+        const std::string on = "page 0 6\nkey 0.1 Q\nbutton 0.2 0.45 -0.105\n";
+        testkit::play(on + "end 6\n", [](Session &s) {
+            QVERIFY(s.view().parts[kAtmos].data[4] > 0.2f);
+            QCOMPARE(s.probe(kAtmos, QStringLiteral("swells")), 1.0f);
+        });
+        const auto ended = testkit::play(on + "end 20\n");
+        QCOMPARE(ended.view.parts[kAtmos].data[4], 0.0f);
+        // A second click lets it fall at once.
+        const auto off = testkit::play(on + "button 3 0.45 -0.105\nend 6\n");
+        QCOMPARE(off.view.parts[kAtmos].data[4], 0.0f);
+    }
+
+    void aClickOnAClipStopsIt() {
+        const auto take = testkit::play("page 0 6\nkey 0.05 Ctrl+M\nkey 0.2 R\nkey 3.5 Space\n"
+                                        "button 9 0.026 -0.048\nend 14\n");
+        QCOMPARE(take.view.parts[kAtmos].playing, -1);
+        QVERIFY(take.view.parts[kAtmos].clips[0].state != ClipView::Empty);
     }
 
     void tenFingersAtOnceAreFullNotLoud() {

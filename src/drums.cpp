@@ -1642,7 +1642,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ]"), false,
             &m_spots, SpotSwingUp);
     c::chips(p, pc, c::bandRow(pc, 1, 0.57, 1),
-             {QStringLiteral("OVERDUB  ⇧⏎"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,
+             {QStringLiteral("OVERDUB  ⇧↵"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,
              SpotOverdub);
 }
 

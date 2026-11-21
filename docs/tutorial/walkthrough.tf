@@ -190,43 +190,48 @@ key 118.065 S down
 key 120.565 S up
 key 121.985 Space
 
-# 7 FX. NOISE in the 2-bar row: a riser; a click drops on the next bar.
+# 7 FX. NOISE in the 2-bar row: a riser; a click drops on the next bar (67).
 key 123.871 7
 tap 125.806 0.1000 0.4400 p=0.60 len=0.20
 click 128.242
 
+# Space in the bar after the drop: the build and its drop loop (bars 65-67). Backspace keeps it for the track.
+key 131.913 Space
+key 134.048 Backspace
+
 # 0 Arrange. The mouse clicks the bass loop: it stops on the bar; again: back.
-key 131.613 0
-mouse 133.548 0.1581 0.6954 down
-mouse 133.648 0.1581 0.6954 up
-mouse 137.419 0.1581 0.6954 down
-mouse 137.519 0.1581 0.6954 up
+key 139.355 0
+mouse 141.290 0.1581 0.6954 down
+mouse 141.390 0.1581 0.6954 up
+mouse 145.161 0.1581 0.6954 down
+mouse 145.261 0.1581 0.6954 up
 
 # Q mutes the drums; Q again brings them back.
-key 141.290 Q
-key 143.226 Q
+key 149.032 Q
+key 150.968 Q
 
 # N: a breakdown; N again: back.
-key 145.661 N
-key 151.468 N
+key 153.403 N
+key 159.210 N
 
 # B: build to the end of the phrase, and the drop.
-key 157.274 B
+key 165.016 B
 
-# Space records the song from the next bar: a groove, a breakdown, back; Space stops.
-key 172.758 Space
-key 180.500 N
+# Space records the song from the next bar: a groove, a breakdown, back; Space stops; P plays it back.
+key 180.500 Space
 key 188.242 N
-key 195.984 Space
+key 195.984 N
+key 203.726 Space
+key 205.661 P
 
-# Ctrl+R records the mix; I, I writes the whole track and plays it.
-key 201.290 Ctrl+R
-key 201.790 I
-key 202.190 I
+# Ctrl+R records the mix; I, I writes the whole track over the take and plays it from bar 109.
+key 209.032 Ctrl+R
+key 209.532 I
+key 209.932 I
 
-# The track plays to its end (74 bars from the next bar); Ctrl+R saves it.
-key 348.387 Ctrl+R
+# The track plays to its end (76 bars, to bar 185); Ctrl+R saves it.
+key 358.565 Ctrl+R
 
 # The end: Ctrl+Return finishes the tutorial.
-key 350.887 Ctrl+Return
-end 351.887
+key 361.065 Ctrl+Return
+end 362.065

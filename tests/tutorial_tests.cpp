@@ -22,6 +22,7 @@ namespace {
 constexpr double kBpm = 124;
 double beat(double b) { return b * 60.0 / kBpm; }
 double bar(double n) { return beat(n * 4); }
+constexpr int kTrack = 109; // the bar the written track starts on
 
 // A script, line by line.
 struct Script {
@@ -169,48 +170,52 @@ std::string walkthrough() {
     s.add("key %.3f S up", bar(61) + 2.5);
     s.key(bar(63) + 0.05, "Space");
 
-    s.comment("7 FX. NOISE in the 2-bar row: a riser; a click drops on the next bar.");
+    s.comment("7 FX. NOISE in the 2-bar row: a riser; a click drops on the next bar (67).");
     s.key(bar(64), "7");
     s.tap(bar(65), 0.10, 0.44, 0.6, 0.2);
     s.add("click %.3f", bar(66) + 0.5);
+    s.comment("Space in the bar after the drop: the build and its drop loop (bars 65-67). Backspace keeps it for the track.");
+    s.key(bar(68) + 0.3, "Space");
+    s.key(bar(69) + 0.5, "Backspace");
 
     s.comment("0 Arrange. The mouse clicks the bass loop: it stops on the bar; again: back.");
-    s.key(bar(68), "0");
+    s.key(bar(72), "0");
     const double laneH = 0.885 / 7;
     const double bassY = 0.885 - 1.5 * laneH, clipX = 0.12 + 0.07625 / 2;
-    s.add("mouse %.3f %.4f %.4f down", bar(69), clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f up", bar(69) + 0.1, clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f down", bar(71), clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f up", bar(71) + 0.1, clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f down", bar(73), clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f up", bar(73) + 0.1, clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f down", bar(75), clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f up", bar(75) + 0.1, clipX, bassY);
 
     s.comment("Q mutes the drums; Q again brings them back.");
-    s.key(bar(73), "Q");
-    s.key(bar(74), "Q");
+    s.key(bar(77), "Q");
+    s.key(bar(78), "Q");
 
     s.comment("N: a breakdown; N again: back.");
-    s.key(bar(75) + 0.5, "N");
-    s.key(bar(78) + 0.5, "N");
+    s.key(bar(79) + 0.5, "N");
+    s.key(bar(82) + 0.5, "N");
 
     s.comment("B: build to the end of the phrase, and the drop.");
-    s.key(bar(81) + 0.5, "B");
+    s.key(bar(85) + 0.5, "B");
 
-    s.comment("Space records the song from the next bar: a groove, a breakdown, back; Space stops.");
-    s.key(bar(89) + 0.5, "Space");
-    s.key(bar(93) + 0.5, "N");
+    s.comment("Space records the song from the next bar: a groove, a breakdown, back; Space stops; P plays it back.");
+    s.key(bar(93) + 0.5, "Space");
     s.key(bar(97) + 0.5, "N");
-    s.key(bar(101) + 0.5, "Space");
+    s.key(bar(101) + 0.5, "N");
+    s.key(bar(105) + 0.5, "Space");
+    s.key(bar(106) + 0.5, "P");
 
-    s.comment("Ctrl+R records the mix; I, I writes the whole track and plays it.");
-    s.key(bar(104), "Ctrl+R");
-    s.key(bar(104) + 0.5, "I");
-    s.key(bar(104) + 0.9, "I");
+    s.comment("Ctrl+R records the mix; I, I writes the whole track over the take and plays it from bar 109.");
+    s.key(bar(108), "Ctrl+R");
+    s.key(bar(108) + 0.5, "I");
+    s.key(bar(108) + 0.9, "I");
 
-    s.comment("The track plays to its end (74 bars from the next bar); Ctrl+R saves it.");
-    s.key(bar(105 + 75), "Ctrl+R");
+    s.comment("The track plays to its end (76 bars, to bar 185); Ctrl+R saves it.");
+    s.key(bar(kTrack + 76) + 0.5, "Ctrl+R");
 
     s.comment("The end: Ctrl+Return finishes the tutorial.");
-    s.key(bar(105 + 75) + 2.5, "Ctrl+Return");
-    s.add("end %.3f", bar(105 + 75) + 3.5);
+    s.key(bar(kTrack + 76) + 3.0, "Ctrl+Return");
+    s.add("end %.3f", bar(kTrack + 76) + 4.0);
     return s.text;
 }
 
@@ -223,13 +228,11 @@ struct Walk {
     int songBars = 0;          // the longest song the arrange page played
     std::set<int> bassNotes;   // what the bass loop played while the lead was being made
     std::set<int> chordRoots;  // the chords the chord loop played meanwhile
+    std::set<int> fxDrops;     // the beats the FX loop dropped on during the written track
+    std::vector<int> songDrops; // the beats the written track's drops began on
+    int lastSection = 0;
+    float dropFilter = 0;       // how far from open the bus was in the track's drops
 };
-
-int songBarsOf(const QString &status) {
-    static const QRegularExpression re(QStringLiteral("song \\d+/(\\d+)"));
-    const auto m = re.match(status);
-    return m.hasMatch() ? m.captured(1).toInt() : 0;
-}
 
 // Plays the walk through a real session, watching the tutorial each tick.
 Walk walk(const std::string &script) {
@@ -272,8 +275,24 @@ Walk walk(const std::string &script) {
                 w.bassNotes.insert(int(std::lround(bass.data[9])) % 12);
             w.chordRoots.insert(session.view().chordRoot);
         }
-        if (tick % 25 == 0)
-            w.songBars = std::max(w.songBars, songBarsOf(session.pageStatus(session.arrangePage())));
+        if (tick % 25 == 0 && session.probe(session.arrangePage(), QStringLiteral("songPlaying")) > 0.5f)
+            w.songBars = std::max(w.songBars, int(session.probe(session.arrangePage(), QStringLiteral("songBars"))));
+        // The FX loop's drops while the written track plays.
+        if (t > bar(kTrack)) {
+            const float last = session.view().parts[6].data[14];
+            if (last > 0)
+                w.fxDrops.insert(int(std::lround(last)));
+            // And the bars the song's drops begin on, in the studio's beats
+            // (the first loop set the clock, so they aren't the script's).
+            const int sec = int(session.probe(session.arrangePage(), QStringLiteral("songSection")));
+            // In the drops the bus is open: the FX loop's build handed back
+            // what it took over, not this page's own build's high-pass.
+            if (sec == 4)
+                w.dropFilter = std::max(w.dropFilter, std::fabs(session.view().master[MasterFilter] - 0.5f));
+            if (sec == 4 && w.lastSection != 4)
+                w.songDrops.push_back(int(std::floor(session.view().beat / 4.0 + 0.01)) * 4);
+            w.lastSection = sec;
+        }
     }
     session.refresh();
     w.take.view = session.view();
@@ -411,6 +430,34 @@ private slots:
         QCOMPARE(int(w.take.view.parts[3].clips[0].lengthBeats), 16);
         // The written track, the full form.
         QVERIFY(w.songBars >= 70);
+        // The FX loop, a build and its drop, leads into both of its drops
+        // (bars 20 and 48), its drop on the ONE.
+        QVERIFY(w.take.view.parts[6].clips[0].state != ClipView::Empty);
+        if (std::getenv("TENFOLD_WALKTHROUGH_LOG")) {
+            std::printf("fx loop %.1f beats; drops at beats", double(w.take.view.parts[6].clips[0].lengthBeats));
+            for (int d : w.fxDrops)
+                std::printf(" %d (bar %.2f)", d, d / 4.0);
+            std::printf("; the song's at");
+            for (int d : w.songDrops)
+                std::printf(" %d", d);
+            std::printf("\n");
+        }
+        QCOMPARE(int(w.songDrops.size()), 2);
+        for (int b : w.songDrops)
+            QVERIFY2(w.fxDrops.count(b), qPrintable(QStringLiteral("no FX drop on beat %1").arg(b)));
+        // The track ends in silence: its echo has died away and no part
+        // holds a note (a lead note left on by its loop sang on for ever).
+        for (int p = 0; p < 7; ++p)
+            QVERIFY2(w.take.view.parts[p].voices == 0,
+                     qPrintable(QStringLiteral("part %1 holds %2 voices").arg(p).arg(w.take.view.parts[p].voices)));
+        const double seconds = double(w.take.left.size()) / 48000.0;
+        QVERIFY2(w.take.rms(seconds - 1.5, seconds - 0.5) < 0.001, qPrintable(QString::number(w.take.rms(seconds - 1.5, seconds - 0.5))));
+        QVERIFY2(w.dropFilter < 0.05f, qPrintable(QString::number(w.dropFilter)));
+        // After the track's echo-out, the sends are home again: what is
+        // played next is not drowned in echo.
+        for (int p = 0; p < 7; ++p)
+            QVERIFY2(w.take.view.parts[p].channel.value[EchoSend] < 0.5f,
+                     qPrintable(QStringLiteral("part %1 echo %2").arg(p).arg(w.take.view.parts[p].channel.value[EchoSend])));
         if (std::getenv("TENFOLD_WALKTHROUGH_LOG"))
             for (int p = 0; p < 7; ++p)
                 std::printf("part %d gain %.2f echo %.2f verb %.2f filter %.2f mute %.0f\n", p,

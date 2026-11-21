@@ -34,8 +34,9 @@ pick a page with its number:
 
 **New here?** Ctrl+T (or the Tutorial button) walks you from silence to a
 finished, recorded track: a beat, chords, a bassline that follows them, a
-melody, an arp, an atmosphere, a riser and a drop, then the mix, a song and
-the whole track, every feature met when the song needs it. Each step lights
+melody, an arp, an atmosphere, a build and its drop looped for the track,
+then the mix, a song of your own and the whole written track, heard through
+to its echo and saved, every feature met when the song needs it. Each step lights
 where the fingers go and moves on by itself once you've done it;
 Ctrl+Return skips ahead, Ctrl+Shift+Return goes back, Esc leaves.
 

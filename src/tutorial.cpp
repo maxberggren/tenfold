@@ -2,7 +2,6 @@
 
 #include <QPainter>
 #include <QPainterPath>
-#include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -22,7 +21,7 @@ enum Page { Drums = 0, Bass, Chords, Lead, Arp, Atmos, FX, Arrange };
 const Tutorial::Probe kProbes[] = {
     {Drums, "hits"},     {Drums, "rolls"},      {Drums, "grooves"}, {Drums, "keeps"},
     {Chords, "chords"},  {Lead, "glides"},      {Lead, "wiggles"},  {Lead, "harmonized"},
-    {Atmos, "swells"},
+    {Atmos, "swells"},   {FX, "drops"},         {Arrange, "drops"},
 };
 constexpr int kProbeCount = int(sizeof(kProbes) / sizeof(kProbes[0]));
 
@@ -79,11 +78,15 @@ public:
         return (uint32_t(probe(page, name)) & bits) != 0;
     }
     bool playing(int part) const { return view().parts[part].playing >= 0; }
+    bool hasClip(int part) const {
+        for (const auto &c : view().parts[part].clips)
+            if (c.state != ClipView::Empty)
+                return true;
+        return false;
+    }
     int takesSince(int part) const { return int(view().parts[part].takes - base.parts[part].takes); }
     float data(int part, int i) const { return view().parts[part].data[i]; }
-    float dataAtStart(int part, int i) const { return base.parts[part].data[i]; }
     bool muted(int part) const { return view().parts[part].channel.value[Mute] > 0.5f; }
-    QString status(int page) const { return s->pageStatus(page); }
     int undosSince() const { return s->undos() - baseUndos; }
     bool recording() const { return s->mixRecording(); }
     // True once cond has held for secs on end (accumulator i).
@@ -93,11 +96,32 @@ public:
     }
     bool &flag(int i) { return flags[i]; }
     bool checked(int i) const { return i < int(checks->size()) && (*checks)[size_t(i)]; }
-    // The song the arrange page plays, from its status: "▶ song 3/74".
-    int songBars() const {
-        static const QRegularExpression re(QStringLiteral("song \\d+/(\\d+)"));
-        const auto m = re.match(status(Arrange));
-        return m.hasMatch() ? m.captured(1).toInt() : 0;
+    // The arrange page's song: its length, whether it plays, and the
+    // section of the bar it is in.
+    int songBars() const { return int(probe(Arrange, "songBars")); }
+    bool songPlaying() const { return probe(Arrange, "songPlaying") > 0.5f; }
+    int songSection() const { return int(probe(Arrange, "songSection")); }
+    // How far through a written track the step has heard it: 1 the intro
+    // (or anything before the first drop), 2 the drop, 3 the breakdown, 4
+    // the last drop (or the outro), 5 the end. Joined late, it starts where
+    // the song is; it never goes back.
+    int songHeard() {
+        enum { LIntro = 1, LGroove, LBuild, LDrop, LBreak, LOutro, LEnd };
+        double &m = acc[2];
+        const int sec = songSection();
+        if (songPlaying()) {
+            if ((sec == LIntro || sec == LGroove || sec == LBuild) && m < 1)
+                m = 1;
+            else if (sec == LDrop && m < 2)
+                m = 2;
+            else if (sec == LBreak && m < 3)
+                m = 3;
+            else if ((sec == LDrop && m >= 3) || sec == LOutro || sec == LEnd)
+                m = std::max(m, 4.0);
+        } else if (m >= 1) {
+            m = 5;
+        }
+        return int(m);
     }
 };
 
@@ -117,9 +141,9 @@ void Tutorial::build() {
     const Spot hat = spot(0.75f, 0.06f, 1.0f, 0.25f, QStringLiteral("HAT"));
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Tap the kick"),
-         QStringLiteral("Every track here starts from a kick. Tap the bottom-left pad, KICK: the harder you press, "
-                        "the louder it hits. Take pad hands the whole trackpad to tenfold; the mouse plays too."),
-         QStringLiteral("Each pad shows its drum and the keys that play it: Z is the kick."),
+         QStringLiteral("Every track here starts from a kick. Tap KICK, the bottom-left pad: the harder you press, the "
+                        "louder it hits. TAKE PAD gives tenfold the trackpad; the mouse and the keys play too."),
+         QStringLiteral("Each pad shows the keys that play it: Z is the kick."),
          QStringLiteral("Boom. That's your first sound."),
          {},
          QStringLiteral("pad"),
@@ -127,9 +151,9 @@ void Tutorial::build() {
          {{QStringLiteral("Kick"), [](Look &l) { return l.has(Drums, "pads", 1u); }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Play a beat by hand"),
-         QStringLiteral("Kick on every count, CLAP on two and four, HAT in between: boom, tss, CLAP, tss. "
-                        "It doesn't need to be perfect; you're getting a feel for the pads."),
-         QStringLiteral("Z X C V play this row from the keyboard; Shift accents."),
+         QStringLiteral("Kick on every beat, CLAP on two and four, HAT in between: boom, tss, CLAP, tss. Near enough is "
+                        "fine: you're getting a feel for the pads."),
+         QStringLiteral("Z X C V play this row from the keyboard; Shift accents. Ctrl+M ticks a metronome."),
          QStringLiteral("That's a beat."),
          {},
          {},
@@ -141,55 +165,57 @@ void Tutorial::build() {
           {QStringLiteral("A bar of it: eight hits"), [](Look &l) { return l.since(Drums, "hits") >= 8; }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Hold for a roll"),
-         QStringLiteral("Hold a finger on HAT and keep it there: it rolls, locked to the tempo. Slide up while "
-                        "you hold and it rolls faster, from eighths to thirty-seconds: that's how fills and "
-                        "build-ups are played."),
+         QStringLiteral("Hold a finger on HAT (or hold V): it rolls, locked to the tempo. Slide up as you hold and it "
+                        "rolls faster, eighths to thirty-seconds: that's how fills and build-ups are played."),
          QStringLiteral("Sideways bends the drum's pitch; a twist opens it."),
          QStringLiteral("Rolling. Fills are yours now."),
          {},
          {},
-         {spot(0.75f, 0.06f, 1.0f, 0.5f, QStringLiteral("HOLD · SLIDE UP"), A::Up)},
+         {spot(0.75f, 0.06f, 1.0f, 0.25f, QStringLiteral("HOLD · SLIDE UP"), A::Up)},
          {{QStringLiteral("A roll, held for a second"),
            [](Look &l) { return l.lasted(0, 1.0, l.probe(Drums, "rolling") >= 1); }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Three fingers: a groove"),
-         QStringLiteral("Land three fingers together on KICK, CLAP and HAT and leave them down (or hold Z, C and V). "
-                        "Each drum plays its part of a house groove, in time. Slide one finger up for a busier part."),
+         QStringLiteral("Land three fingers together on KICK, CLAP and HAT and leave them down (or hold Z, C and V). Each "
+                        "drum plays its part of a house groove, in time. Slide one up for a busier part."),
          QStringLiteral("Left and right arrows change the kit: house, techno, trap, breaks, garage."),
          QStringLiteral("Now it grooves by itself."),
          {},
          {},
-         {spot(0.0f, 0.06f, 0.25f, 0.25f, QStringLiteral("KICK")), spot(0.5f, 0.06f, 0.75f, 0.25f, QStringLiteral("CLAP")),
-          spot(0.75f, 0.06f, 1.0f, 0.25f, QStringLiteral("HAT"))},
+         {kick, clap, hat},
          {{QStringLiteral("Fingers grooving together"),
            [](Look &l) { return l.probe(Drums, "grooving") >= 2 || l.since(Drums, "grooves") >= 2 || l.playing(Drums); }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Click to keep it"),
-         QStringLiteral("While the groove plays under your fingers, press the pad down until it clicks (or press "
-                        "Space). At the next bar line the groove becomes a loop and plays on by itself: lift your "
-                        "fingers and listen. Your loops are what the song is built from."),
-         QStringLiteral("F1 relaunches slot 1 and Backspace stops it. Ctrl+↑ and Ctrl+↓ change the tempo of everything."),
-         QStringLiteral("Your first loop! It plays until you stop it."),
+         QStringLiteral("With the groove under your fingers, press the pad until it clicks (or press Space). At the next "
+                        "bar line it becomes a loop that plays on by itself: lift your fingers and listen."),
+         QStringLiteral("Backspace stops a page's loop and F1 starts it again; Ctrl+↑ and Ctrl+↓ set the tempo."),
+         QStringLiteral("Your first loop! Loops are what the song is built from."),
          {QStringLiteral("click"), QStringLiteral("Space")},
          {},
          {spot(0.0f, 0.06f, 1.0f, 0.25f, QStringLiteral("HOLD THE GROOVE · CLICK"))},
          {{QStringLiteral("A drum loop plays"), [](Look &l) { return l.playing(Drums); }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Layer on top: Shift+Space"),
-         QStringLiteral("Over the loop, play something extra: OPEN hat on the off-beats, or a few SHAKER hits. "
-                        "Then Shift+Space: what you just played joins the loop, as one loop."),
-         QStringLiteral("Plain Space would make it a loop of its own instead."),
+         QStringLiteral("Over the loop, play something extra: OPEN on the off-beats, or a few SHAKER hits. Then "
+                        "Shift+Space: what you just played joins this loop, as one loop."),
+         QStringLiteral("Plain Space would make a new loop in its place; Ctrl+Z takes a loop back."),
          QStringLiteral("Thicker. Loops grow by layers."),
          {QStringLiteral("Shift Space")},
          {},
          {spot(0.5f, 0.25f, 0.75f, 0.5f, QStringLiteral("SHAKER")), spot(0.75f, 0.25f, 1.0f, 0.5f, QStringLiteral("OPEN"))},
-         {{QStringLiteral("Layered into the drum loop"),
-           [](Look &l) { return l.takesSince(Drums) >= 1 && l.playing(Drums); }}}});
+         // The same slot plays on, with a take more in it: layered, not
+         // replaced by a loop of the extra hits alone.
+         {{QStringLiteral("Layered into the same loop"),
+           [](Look &l) {
+               return l.takesSince(Drums) >= 1 && l.playing(Drums) &&
+                      l.view().parts[Drums].playing == l.base.parts[Drums].playing;
+           }}}});
 
     // --- Chords: the progression everything else follows --------------------
     add({QStringLiteral("Chords"), Chords, QStringLiteral("Four chords"),
-         QStringLiteral("Each column is a chord of the key, A minor. Play Am, F, C, G, one per bar, holding each until "
-                        "the next lands: the song's progression. Bass, lead, arp and atmosphere will all follow it."),
+         QStringLiteral("Each column is a chord of the key, A minor. Play Am, F, C, G (or the keys A, H, D, J), one per "
+                        "bar, holding each until the next lands. Bass, lead, arp and atmosphere will all follow them."),
          QStringLiteral("Higher in a column is a richer colour: power, sus, triad, add9, seventh. Slide while it sounds."),
          QStringLiteral("That's the heart of the song."),
          {},
@@ -202,11 +228,10 @@ void Tutorial::build() {
           {QStringLiteral("G"), [](Look &l) { return l.has(Chords, "columns", 1u << kG); }}}});
 
     add({QStringLiteral("Chords"), Chords, QStringLiteral("Space loops what you played"),
-         QStringLiteral("Play the four chords again over the beat, and press Space just after the last one. Space "
-                        "loops what you just played, on every page: the bars you played become a loop that carries "
-                        "on in time."),
-         QStringLiteral("Ctrl+← and Ctrl+→ move the key; every part follows."),
-         QStringLiteral("The progression loops. Watch CHORD in the transport change with it."),
+         QStringLiteral("Play the four chords again over the beat and press Space just after the last one. Space loops "
+                        "what you just played, on every page: those bars become a loop, in time."),
+         QStringLiteral("Ctrl+← and Ctrl+→ move the key, Ctrl+[ and Ctrl+] darken or brighten it; every part follows."),
+         QStringLiteral("The progression loops. CHORD in the transport follows it."),
          {QStringLiteral("Space")},
          {},
          {chordColumn(kAm, QStringLiteral("1")), chordColumn(kF, QStringLiteral("2")), chordColumn(kC, QStringLiteral("3")),
@@ -218,8 +243,8 @@ void Tutorial::build() {
     // the third column (x 2/12 to 3/12) is always the root.
     const Spot root = spot(2.0f / 12.0f, 0.0f, 3.0f / 12.0f, 0.76f, QStringLiteral("ROOT"));
     add({QStringLiteral("Bass"), Bass, QStringLiteral("The bass follows the chords"),
-         QStringLiteral("Press O: the bass follows the chords. Its columns now count from the chord that plays, so "
-                        "the lit column is always the root, whichever chord comes round."),
+         QStringLiteral("Press O: the bass follows the chords. Its columns now count from the chord playing, so the "
+                        "column marked ROOT is always that chord's root, whichever comes round."),
          QStringLiteral("Q W E R T Y U I pick the sound: R is acid, Y a growl."),
          QStringLiteral("Bass and chords are locked together."),
          {QStringLiteral("O")},
@@ -228,8 +253,8 @@ void Tutorial::build() {
          {{QStringLiteral("O: follows the chords"), [](Look &l) { return l.probe(Bass, "follow") > 0.5f; }}}});
 
     add({QStringLiteral("Bass"), Bass, QStringLiteral("A bassline in one finger"),
-         QStringLiteral("Tap the ROOT on the off-beats, between the kicks: dum-DUM, dum-DUM. Play a bar or two, "
-                        "then Space. The loop walks with the chords as they change."),
+         QStringLiteral("Tap ROOT on the off-beats, between the kicks: dum-DUM, dum-DUM. A bar or two, then Space. The "
+                        "loop walks with the chords as they change."),
          QStringLiteral("Higher in the column is brighter; press harder for an accent."),
          QStringLiteral("Now it bounces."),
          {QStringLiteral("Space")},
@@ -238,9 +263,8 @@ void Tutorial::build() {
          {{QStringLiteral("A bass loop plays"), [](Look &l) { return l.playing(Bass); }}}});
 
     add({QStringLiteral("Bass"), Bass, QStringLiteral("Try a variation"),
-         QStringLiteral("Hold the ROOT with one finger and touch OFFBEAT or GALLOP on the ROLL rail with another: "
-                        "the bass plays that pattern by itself. Slide up on FILTER to open it. Space loops the "
-                        "new line."),
+         QStringLiteral("Hold ROOT with one finger and touch OFFBEAT or GALLOP on the ROLL rail with another: the bass "
+                        "plays that pattern by itself. Slide up on FILTER to open it, then Space loops the new line."),
          QStringLiteral("FILTER rides whatever the bass plays, its loop too."),
          QStringLiteral("A second bassline. Which one's better?"),
          {QStringLiteral("Space")},
@@ -250,8 +274,8 @@ void Tutorial::build() {
          {{QStringLiteral("A new bass loop"), [](Look &l) { return l.takesSince(Bass) >= 1; }}}});
 
     add({QStringLiteral("Bass"), Bass, QStringLiteral("Changed your mind? Ctrl+Z"),
-         QStringLiteral("Ctrl+Z takes back the newest loop on any page, and what played before plays again. Press it "
-                        "now and the first bassline comes back. Nothing you try can spoil the song."),
+         QStringLiteral("Ctrl+Z takes back the newest loop, on any page, and what played before plays again. Press it: "
+                        "the first bassline is back. Nothing you try can spoil the song."),
          QStringLiteral("Ctrl+N twice clears every loop, for when you want a fresh start."),
          QStringLiteral("Taken back. Experiment freely."),
          {QStringLiteral("Ctrl Z")},
@@ -264,10 +288,9 @@ void Tutorial::build() {
     // harmony rows (from y 0.4 up: −oct, 3rd, 5th, 6th, +oct) over BEND and THROW.
     const Spot neck = spot(0.22f, 0.0f, 1.0f, 1.0f, QStringLiteral("NECK"));
     add({QStringLiteral("Lead"), Lead, QStringLiteral("Sing one note"),
-         QStringLiteral("The neck is the scale, low to high. Hold a finger on it and keep still: after a moment the "
-                        "note blooms with vibrato. Rock the finger to and fro for your own. Higher on the pad is "
-                        "brighter."),
-         QStringLiteral("← and → change the sound: anthem, pluck, bell, chip, vox, scream, hoover, big room."),
+         QStringLiteral("The neck is the scale, low to high. Hold a finger still on it: after a moment the note blooms "
+                        "with vibrato. Rock the finger for your own. Higher on the pad is brighter."),
+         QStringLiteral("← and → change the sound: anthem, pluck, bell, vox, hoover…; Z X C … play the scale."),
          QStringLiteral("It sings."),
          {},
          {},
@@ -275,8 +298,8 @@ void Tutorial::build() {
          {{QStringLiteral("Vibrato"), [](Look &l) { return l.data(Lead, 14) > 0.03f || l.since(Lead, "wiggles") >= 1; }}}});
 
     add({QStringLiteral("Lead"), Lead, QStringLiteral("Glide between notes"),
-         QStringLiteral("Slide along the neck and the note glides through the scale. Or hold one note and land a "
-                        "second finger further up: it glides there without a new attack. Lift it and it falls back."),
+         QStringLiteral("Slide along the neck and the note glides through the scale. Or hold one note and land a second "
+                        "finger further up: it glides there without a new attack. Lift it and it falls back."),
          QStringLiteral("Shift+↑ and Shift+↓ make the glides longer or shorter."),
          QStringLiteral("Smooth."),
          {},
@@ -285,8 +308,8 @@ void Tutorial::build() {
          {{QStringLiteral("Three glides"), [](Look &l) { return l.since(Lead, "glides") >= 3; }}}});
 
     add({QStringLiteral("Lead"), Lead, QStringLiteral("Add a harmony"),
-         QStringLiteral("While a note sings, put a finger of your other hand on 3RD in the left column: a second "
-                        "voice sings a third above, always in the key. 5TH, 6TH and the octaves are there too."),
+         QStringLiteral("While a note sings, rest a finger of your other hand on 3RD in the left column: a second voice "
+                        "sings a third above, always in the key. 5TH, 6TH and the octaves are there too."),
          QStringLiteral("Press harder on the harmony finger to bring it out."),
          QStringLiteral("Two voices. Lush."),
          {},
@@ -295,10 +318,9 @@ void Tutorial::build() {
          {{QStringLiteral("A note with a harmony"), [](Look &l) { return l.probe(Lead, "harmonized") >= 1; }}}});
 
     add({QStringLiteral("Lead"), Lead, QStringLiteral("Your melody"),
-         QStringLiteral("Press Enter: the lead lands on the notes of the chord playing, so nothing clashes. Play a "
-                        "melody across the four chords, then play it once more and press Space as it ends: one "
-                        "round of it loops."),
-         QStringLiteral("Space keeps the round you repeated, not the tries before it."),
+         QStringLiteral("Press Enter: the lead now lands on the chord's notes, so nothing clashes. Play a melody across "
+                        "the four chords, play it once more, and press Space as it ends: one round of it loops."),
+         QStringLiteral("No tune in mind? Three notes rising on each chord, the last one held."),
          QStringLiteral("That's the hook."),
          {QStringLiteral("Enter"), QStringLiteral("Space")},
          {},
@@ -308,31 +330,31 @@ void Tutorial::build() {
 
     // --- Arp --------------------------------------------------------------------
     add({QStringLiteral("Arp"), Arp, QStringLiteral("Notes that run"),
-         QStringLiteral("Press M so the arp follows the chords. Then hold two fingers on the grid: the notes run "
-                        "up and down in time, through the chord that plays."),
+         QStringLiteral("Press M so the arp follows the chords. Then hold two fingers on the grid: the notes run up and "
+                        "down in time, through the chord that plays."),
          QStringLiteral("Twist the first finger: the chord under it grows, fifth, triad, seventh."),
          QStringLiteral("Sparkling."),
          {QStringLiteral("M")},
          {},
          {spot(0.0f, 0.135f, 0.58f, 0.865f, QStringLiteral("HOLD NOTES"))},
-         {{QStringLiteral("M: follows the chords"),
-           [](Look &l) { return l.status(Arp).contains(QLatin1String("following the chords")); }},
-          {QStringLiteral("The arp runs"), [](Look &l) { return l.data(Arp, 6) > 0.5f || l.playing(Arp); }}}});
+         {{QStringLiteral("M: follows the chords"), [](Look &l) { return l.probe(Arp, "follow") > 0.5f; }},
+          {QStringLiteral("The arp runs"), [](Look &l) { return l.probe(Arp, "running") > 0.5f || l.playing(Arp); }}}});
 
     add({QStringLiteral("Arp"), Arp, QStringLiteral("Pick a pattern, latch, loop"),
-         QStringLiteral("Tap a pattern along the top, UP·DN or CONV. Click the pad while notes run (or press "
-                        "Return): they latch and keep running when you lift. Then Space loops it."),
+         QStringLiteral("Tap a pattern along the top, UP·DN or CONV. Click while the notes run (or press Return): they "
+                        "latch and run on when you lift. Then Space: the loop takes them over and the latch lets go."),
          QStringLiteral("The pads on the right shape it: RATE, RHYTHM, RANGE, TONE, GROOVE, ECHO."),
          QStringLiteral("The arp runs on its own."),
          {QStringLiteral("click"), QStringLiteral("Space")},
          {},
          {spot(0.0f, 0.865f, 0.58f, 1.0f, QStringLiteral("PATTERN")),
           spot(0.0f, 0.135f, 0.58f, 0.865f, QStringLiteral("NOTES · CLICK"))},
-         {{QStringLiteral("An arp loop plays"), [](Look &l) { return l.playing(Arp); }}}});
+         {{QStringLiteral("Latched"), [](Look &l) { return l.probe(Arp, "latched") > 0.5f || l.playing(Arp); }},
+          {QStringLiteral("An arp loop plays"), [](Look &l) { return l.playing(Arp); }}}});
 
     // --- Atmosphere ---------------------------------------------------------------
     add({QStringLiteral("Atmos"), Atmos, QStringLiteral("A bed of sound"),
-         QStringLiteral("Lay three fingers: DRONE, PAD and CHOIR. They sing the chord of the moment, wide and soft. "
+         QStringLiteral("Lay three fingers on DRONE, PAD and CHOIR: they sing the chord of the moment, wide and soft. "
                         "Click while they're down: they latch and stay when you lift."),
          QStringLiteral("Q to I are whole scenes at a key: dawn, ocean, cathedral, stardust…"),
          QStringLiteral("Space opens up."),
@@ -353,37 +375,49 @@ void Tutorial::build() {
          {{QStringLiteral("S: a swell"), [](Look &l) { return l.since(Atmos, "swells") >= 1; }},
           {QStringLiteral("An atmos loop plays"), [](Look &l) { return l.playing(Atmos); }}}});
 
-    // --- FX: a riser and a drop ---------------------------------------------------
+    // --- FX: a build, its drop, looped for the track --------------------------------
     add({QStringLiteral("FX"), FX, QStringLiteral("A riser"),
-         QStringLiteral("Touch NOISE in the 2-BAR row. A riser waits, then climbs for two bars to peak on the next "
-                        "phrase line, in time with everything. Stack more columns for a bigger build."),
-         QStringLiteral("Higher rows are longer risers, up to sixteen bars."),
+         QStringLiteral("Touch NOISE in the 2-BAR row. A riser waits for its moment (IN n BARS counts down), then climbs "
+                        "for two bars to peak on the next phrase line. More columns stack a bigger build."),
+         QStringLiteral("Higher rows are longer risers, up to sixteen bars; A S D F G play them from the keys."),
          QStringLiteral("Tension's building…"),
          {},
          {},
          {spot(0.0f, 0.36f, 0.2f, 0.52f, QStringLiteral("NOISE · 2 BARS"))},
          {{QStringLiteral("A riser on its way"),
-           [](Look &l) { return l.data(FX, 4) >= 1 || l.data(FX, 0) >= 0 || l.data(FX, 14) != l.dataAtStart(FX, 14); }}}});
+           [](Look &l) { return l.probe(FX, "risers") >= 1 || l.since(FX, "drops") >= 1; }}}});
 
-    add({QStringLiteral("FX"), FX, QStringLiteral("Drop!"),
-         QStringLiteral("Don't wait for it: click the pad (or press Return). Everything rising rushes into a drop "
-                        "on the next bar, with an impact on the ONE."),
-         QStringLiteral("The bottom row has impacts, sub drops and sweeps: X is the sub drop."),
-         QStringLiteral("DROP."),
-         {QStringLiteral("click")},
+    add({QStringLiteral("FX"), FX, QStringLiteral("Drop, and loop it"),
+         QStringLiteral("Let it peak, or click the pad (or Return) to drop on the next bar: an impact on the ONE. Then, "
+                        "in the bar after the drop, press Space: the build and its drop become one loop."),
+         QStringLiteral("Missed the bar? Land another riser and go again. X is the sub drop."),
+         QStringLiteral("DROP. And it comes round again."),
+         {QStringLiteral("click"), QStringLiteral("Space")},
          {},
          {spot(0.0f, 0.2f, 1.0f, 1.0f, QStringLiteral("CLICK"))},
-         {{QStringLiteral("A drop"), [](Look &l) { return l.data(FX, 14) != l.dataAtStart(FX, 14) && l.data(FX, 14) >= 0; }}}});
+         {{QStringLiteral("A drop"), [](Look &l) { return l.since(FX, "drops") >= 1; }},
+          {QStringLiteral("Space: the build loops"), [](Look &l) { return l.checked(0) && l.playing(FX); }}}});
+
+    add({QStringLiteral("FX"), FX, QStringLiteral("Keep it for the track"),
+         QStringLiteral("A drop every few bars is too much for now. Press Backspace: the loop stops at the bar and waits "
+                        "in its slot. The track you'll write uses it to lead into every drop."),
+         QStringLiteral("F1 would start it again. Ctrl+Backspace stops every page's loop at once."),
+         QStringLiteral("Saved for the big moments."),
+         {QStringLiteral("Backspace")},
+         {},
+         {},
+         {{QStringLiteral("Backspace: stopped, kept"),
+           [](Look &l) { return !l.playing(FX) && l.view().parts[FX].queued < 0 && l.hasClip(FX); }}}});
 
     // --- Arrange: the mix and the song -----------------------------------------
     // Lanes run down from the scene strip (y 0.885), one per part; a lane's
     // clips sit between x 0.12 and 0.73. The bass is the second lane.
     const float lane = 0.885f / 7.0f;
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Point and tap"),
-         QStringLiteral("Every part has a lane here with its loops. One finger moves a pointer, like a cursor; a "
-                        "second finger's tap, anywhere, does what it points at. Point at the bass loop and tap: it "
-                        "stops on the bar. Tap again and it's back. The mouse just clicks."),
-         QStringLiteral("Hold the second finger on a loop to pick it: then D copies it, M layers two."),
+         QStringLiteral("Every part has a lane here, with its loops. One finger moves a pointer; a second finger's tap, "
+                        "anywhere, does what it points at (the mouse just clicks). Tap the bass loop: it stops on the "
+                        "bar. Tap again: it's back."),
+         QStringLiteral("Shift+F1 stores what plays as a scene and F1 brings it back; Tab steps through the pages."),
          QStringLiteral("Every loop is in your hands here."),
          {},
          {},
@@ -401,9 +435,9 @@ void Tutorial::build() {
            }},
           {QStringLiteral("…and comes back"), [](Look &l) { return l.checked(0) && l.playing(int(l.acc[1])); }}}});
 
-
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Mute and back"),
-         QStringLiteral("Q W E R T Y U mute a part at once, in page order, and the tab says so. Mute the drums with Q, hear the space it leaves, and bring them back with Q."),
+         QStringLiteral("Q W E R T Y U mute a part at once, in page order, and its tab says so. Mute the drums with Q, "
+                        "hear the space they leave, and bring them back with Q."),
          QStringLiteral("A finger on a lane's LVL FLT ECH VRB rides it: up and down its level, sideways its filter. "
                         "Hold A S D F G H J to hear one part alone."),
          QStringLiteral("Taking things away is half of arranging."),
@@ -414,70 +448,69 @@ void Tutorial::build() {
           {QStringLiteral("Q again: back"), [](Look &l) { return l.checked(0) && !l.muted(Drums); }}}});
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("A breakdown"),
-         QStringLiteral("Press N: from the next bar the beat drops out and the chords and atmosphere breathe alone. "
-                        "Wait a few bars, then N again brings everything back on the bar."),
+         QStringLiteral("Press N: from the next bar the beat drops out and the chords and atmosphere breathe alone. Wait "
+                        "a few bars, then N again brings everything back on the bar."),
          QStringLiteral("X echoes the last bar out; Z filters the whole mix out and back."),
          QStringLiteral("Hear how much bigger it feels when it comes back?"),
          {QStringLiteral("N")},
          {},
          {spot(0.73f, 0.885f, 0.87f, 1.0f, QStringLiteral("N"))},
-         {{QStringLiteral("N: breakdown"), [](Look &l) { return l.status(Arrange).contains(QLatin1String("breakdown")); }},
-          {QStringLiteral("N again: back"),
-           [](Look &l) { return l.checked(0) && !l.status(Arrange).contains(QLatin1String("breakdown")); }}}});
+         {{QStringLiteral("N: breakdown"), [](Look &l) { return l.probe(Arrange, "breakdown") > 0.5f; }},
+          {QStringLiteral("N again: back"), [](Look &l) { return l.checked(0) && l.probe(Arrange, "breakdown") < 0.5f; }}}});
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Build and drop"),
-         QStringLiteral("Press B: the whole mix builds to the end of the phrase, filter rising, an echo roll, a "
-                        "breath, then the drop on the ONE. Return drops at once, on the next bar."),
+         QStringLiteral("Press B: the whole mix builds to the end of the phrase, filter rising, an echo roll, a breath, "
+                        "then the drop on the ONE. Return drops sooner, on the next bar."),
          QStringLiteral("The tension fader on the right does it by hand: push up, let go high to drop."),
          QStringLiteral("That's the moment people wait for."),
          {QStringLiteral("B"), QStringLiteral("Return")},
          {},
          {spot(0.0f, 0.885f, 0.12f, 1.0f, QStringLiteral("B")), spot(0.87f, 0.885f, 1.0f, 1.0f, QStringLiteral("RETURN"))},
-         {{QStringLiteral("B: a build"), [](Look &l) { return l.status(Arrange).contains(QLatin1String("build")); }},
-          {QStringLiteral("The drop"), [](Look &l) { return l.checked(0) && !l.status(Arrange).contains(QLatin1String("build")); }}}});
+         {{QStringLiteral("B: a build"), [](Look &l) { return l.probe(Arrange, "building") > 0.5f; }},
+          {QStringLiteral("The drop"), [](Look &l) { return l.checked(0) && l.since(Arrange, "drops") >= 1; }}}});
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Record your song"),
-         QStringLiteral("Press Space: from the next bar the song records everything you do here. Let it groove, N "
-                        "for a breakdown, N to come back, B to build and drop. Space again stops. That's a song, "
-                        "played by you."),
-         QStringLiteral("P plays the song back; Shift+O takes back the last take."),
-         QStringLiteral("Recorded. A song, played by hand."),
-         {QStringLiteral("Space"), QStringLiteral("N"), QStringLiteral("B")},
+         QStringLiteral("Press Space: the pad counts down, and from the next bar the song records what you do here. Let "
+                        "it groove, N for a breakdown, N to come back. Space again stops; then P plays your song back."),
+         QStringLiteral("Shift+O takes a take back; Left and Right jump between sections while it plays."),
+         QStringLiteral("A song, played by you."),
+         {QStringLiteral("Space"), QStringLiteral("N"), QStringLiteral("P")},
          {},
          {},
-         {{QStringLiteral("Space: the song records"),
-           [](Look &l) {
-               const QString st = l.status(Arrange);
-               return st.contains(QLatin1String("recording the song")) || st.contains(QLatin1String("punch"));
-           }},
+         {{QStringLiteral("Space: recording"), [](Look &l) { return l.probe(Arrange, "songRecording") > 0.5f; }},
           {QStringLiteral("Space: stopped"),
            [](Look &l) {
-               const QString st = l.status(Arrange);
-               return l.checked(0) && !st.contains(QLatin1String("recording the song")) && !st.contains(QLatin1String("punch"));
-           }}}});
+               return l.checked(0) && l.probe(Arrange, "songRecording") < 0.5f && l.probe(Arrange, "songArmed") < 0.5f;
+           }},
+          {QStringLiteral("P: it plays back"), [](Look &l) { return l.checked(1) && l.songPlaying(); }}}});
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Write the whole track"),
-         QStringLiteral("Ctrl+R records everything you hear to a file. Start it, then press I, and I again to "
-                        "confirm: tenfold writes a whole track from your loops, intro, groove, builds, drops, a "
-                        "breakdown and an outro, and plays it from the next bar."),
-         QStringLiteral("Shift+I writes a short one."),
+         QStringLiteral("tenfold writes a whole track from your loops: intro, builds, drops, a breakdown, an outro. "
+                        "Ctrl+R to record it to a file, then I, and I again: it plays from the next bar."),
+         QStringLiteral("It takes your take's place; Shift+O brings yours back. Shift+I writes a short one."),
          QStringLiteral("Your track is playing, and recording."),
          {QStringLiteral("Ctrl R"), QStringLiteral("I"), QStringLiteral("I")},
          QStringLiteral("record"),
          {},
          {{QStringLiteral("Ctrl+R: recording"), [](Look &l) { return l.recording(); }},
-          {QStringLiteral("I, I: the track plays"), [](Look &l) { return l.songBars() >= 30; }}}});
+          {QStringLiteral("I, I: the track plays"), [](Look &l) { return l.songBars() >= 30 && l.songPlaying(); }}}});
 
+    // The track, heard through: its sections tick off as they come, the end
+    // once the echo has died away, and the file once Ctrl+R saves it.
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Listen, then save"),
-         QStringLiteral("This is your track: every part you played, arranged. It ends by itself in about two and a "
-                        "half minutes, with an echo-out. When it's over, Ctrl+R stops the recording and saves it in "
-                        "Music/tenfold."),
+         QStringLiteral("Your track: everything you played, arranged, two and a half minutes. The strip under the pad "
+                        "shows where it is. When its echo has died away, Ctrl+R saves it in Music/tenfold."),
          {},
          QStringLiteral("Saved. You made a track."),
          {QStringLiteral("Ctrl R")},
          QStringLiteral("record"),
          {},
-         {{QStringLiteral("Ctrl+R: saved"),
+         {{QStringLiteral("Intro"), [](Look &l) { return l.songHeard() >= 1; }},
+          {QStringLiteral("Drop"), [](Look &l) { return l.songHeard() >= 2; }},
+          {QStringLiteral("Breakdown"), [](Look &l) { return l.songHeard() >= 3; }},
+          {QStringLiteral("Last drop"), [](Look &l) { return l.songHeard() >= 4; }},
+          {QStringLiteral("The end"), [](Look &l) { return l.songHeard() >= 5; }},
+          {QStringLiteral("Ctrl+R: saved"),
            [](Look &l) {
                if (l.recording())
                    l.flag(0) = true;
@@ -485,9 +518,9 @@ void Tutorial::build() {
            }}}});
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("You made a track"),
-         QStringLiteral("Drums, bass, chords, lead, arp, atmosphere, a riser and a drop, mixed, arranged and "
-                        "recorded, all with your fingers. Keep playing: ? shows everything each page can do. Ctrl+N "
-                        "twice clears the loops for the next one."),
+         QStringLiteral("Drums, bass, chords, lead, arp, atmosphere, risers and drops: played, arranged and recorded, all "
+                        "with your fingers. Keep going: ? shows everything a page can do, and Ctrl+N twice clears the "
+                        "loops for the next track."),
          QStringLiteral("Esc or Ctrl+T leaves the tutorial."),
          {},
          {QStringLiteral("?"), QStringLiteral("Ctrl N")},

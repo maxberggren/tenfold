@@ -269,8 +269,8 @@ Item {
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
-            Layout.topMargin: 10
-            spacing: 14
+            Layout.topMargin: 8
+            spacing: 12
             Repeater {
                 model: backend.tutorialChecks
                 delegate: Row {
@@ -307,11 +307,11 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 10
+            Layout.margins: 8
             spacing: 8
             PanelButton {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: panel.height < 380 ? 34 : 44
                 label: qsTr("Back")
                 key: "Ctrl ⇧ ↵"
                 color: panel.amber
@@ -321,7 +321,7 @@ Item {
             }
             PanelButton {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: panel.height < 380 ? 34 : 44
                 label: panel.last ? qsTr("Finish") : panel.state === 0 ? qsTr("Skip") : qsTr("Next")
                 key: "Ctrl ↵"
                 color: panel.state === 0 ? panel.amber : panel.green
@@ -331,7 +331,7 @@ Item {
             }
             PanelButton {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: panel.height < 380 ? 34 : 44
                 label: qsTr("Leave")
                 key: "Esc"
                 color: "#FF4136"

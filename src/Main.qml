@@ -356,6 +356,7 @@ ApplicationWindow {
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // Ctrl+N twice still works; the tutorial needs the room
                             label: qsTr("Start over"); key: "Ctrl N ×2"; color: win.red
                             onClicked: backend.startOver()
                         }
@@ -367,6 +368,8 @@ ApplicationWindow {
                         PanelButton {
                             Layout.columnSpan: 2
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            // While it runs, the tutorial's own panel has Leave: the room goes to its text.
+                            visible: !backend.tutorialActive
                             label: backend.tutorialActive ? qsTr("Leave tutorial") : qsTr("Tutorial: make a track")
                             key: "Ctrl T"; color: win.green; active: backend.tutorialActive
                             onClicked: backend.toggleTutorial()

@@ -1190,15 +1190,15 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         bool lit;
     };
     const Setting settings[] = {
-        {"HOLD", "⏎", SpotHold, m_hold},
+        {"HOLD", "↵", SpotHold, m_hold},
         {"LET GO", "DEL", SpotLetGo, false},
-        {"GATE −", "⇧←", SpotGateDown, false},
-        {"GATE +", "⇧→", SpotGateUp, false},
-        {"VOICE −", "↓", SpotVoicingDown, false},
-        {"VOICE +", "↑", SpotVoicingUp, false},
-        {"DARKER", "-", SpotDarker, false},
-        {"BRIGHTER", "+", SpotBrighter, false},
-        {"OVERDUB", "⇧⏎", SpotOverdub, m_overdub},
+        {"GATE", "⇧←", SpotGateDown, false},
+        {"GATE", "⇧→", SpotGateUp, false},
+        {"VOICE", "↓", SpotVoicingDown, false},
+        {"VOICE", "↑", SpotVoicingUp, false},
+        {"DARK", "-", SpotDarker, false},
+        {"BRIGHT", "+", SpotBrighter, false},
+        {"OVERDUB", "⇧↵", SpotOverdub, m_overdub},
     };
     const QRectF bottom = c::bandRow(pc, 1);
     // On a narrow window the space between a setting and its key closes up.

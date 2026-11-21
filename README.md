@@ -44,7 +44,11 @@ Ctrl+Return skips ahead, Ctrl+Shift+Return goes back, Esc leaves.
 press it where your phrase would start again: that loop sets the tempo. Over
 something playing, Space finds the bars you repeated and loops them from the
 bar line, leaving out whatever you tried before. F1–F8 launch a page's eight
-slots and Backspace stops it.
+slots and Backspace stops it. Right after Space, ↑ and ↓ make the loop longer or shorter (1, 2,
+4, 8 or 16 bars, ending where it ended); once the arrows rest for three
+seconds it stays. With nothing else playing, a loop sets the tempo only when
+you played a pattern or pressed Space in its flow; after a wait, the tempo
+stays.
 
 **Layers.** Over a page's own playing loop, Space puts what you just played on
 top of it, as one loop. Shift+Space makes a new loop in its place instead. On

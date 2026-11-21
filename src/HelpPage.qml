@@ -22,6 +22,7 @@ Rectangle {
         "Ctrl [ ]\t" + qsTr("mode, darker or brighter"),
         "Ctrl M\t" + qsTr("metronome"),
         "Ctrl ⌫\t" + qsTr("stop every clip at the next bar"),
+        "↑ ↓ after Space\t" + qsTr("for three seconds, the loop just made longer or shorter (1, 2, 4, 8, 16 bars); it stays once you stop"),
         "Shift Space\t" + qsTr("a new loop of what you just played, in place of this part's playing loop"),
         "Ctrl Shift Z\t" + qsTr("bring back what Ctrl Z took back, on the same page"),
         "Ctrl Z\t" + qsTr("take back this page's newest loop change (a loop, a layer, a pass played into it), up to 16 back; on the Song page, the newest anywhere"),

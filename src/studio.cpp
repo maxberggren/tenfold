@@ -113,6 +113,7 @@ struct Studio::PartState {
     double recStart = 0, recEnd = -1, recOrigin = 0;
     int recLayerInto = -1; // a take that lands layered into this slot's clip
     double recFrom = -1e18; // a layer leaves out what was played before this beat
+    bool recRecount = false; // a retake of a take already counted: its landing isn't a new one
     int recMaxBars = 16;
     int held[kReplayHeld] = {};
     int heldCount = 0;
@@ -691,6 +692,7 @@ void Studio::apply(const StudioMsg &m) {
         p->recEnd = m.d1;
         p->recLayerInto = m.value > 0 ? m.value - 1 : -1;
         p->recFrom = p->recLayerInto >= 0 ? m.d2 : -1e18;
+        p->recRecount = false;
         {
             // The clip's anchor: the window's start rounded down to the grid
             // its length lives on (the bar, or the beat for shorter loops).
@@ -700,6 +702,28 @@ void Studio::apply(const StudioMsg &m) {
         }
         p->recMaxBars = 16;
         break;
+    case StudioMsg::Retake: {
+        // The take just made, again with another window (↑↓ after Space).
+        // Still waiting: only its window changes. Landed: it is taken back
+        // as Ctrl+Z would, and the new one lands in its place, counted as
+        // the same take, so one Ctrl+Z still takes it all back.
+        if (!p || m.slot < 0 || m.slot >= kClipSlots || m.d1 <= m.d0)
+            return;
+        const int into = m.value > 0 ? m.value - 1 : -1;
+        const int undoSlot = into >= 0 ? into : m.slot;
+        bool landed = false;
+        if (p->recording != m.slot && p->undoCount > 0 && p->undo[p->undoCount - 1].slot == undoSlot) {
+            StudioMsg u = m;
+            u.kind = StudioMsg::UndoTake;
+            apply(u);
+            landed = true;
+        }
+        StudioMsg t = m;
+        t.kind = StudioMsg::TakeBars;
+        apply(t);
+        p->recRecount = landed;
+        break;
+    }
     case StudioMsg::CancelRecord:
         if (p)
             p->recording = -1;
@@ -987,8 +1011,12 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             if (end < b1) {
                 const int slot = p.recording;
                 p.recording = -1;
+                const uint32_t takesBefore = p.takes;
                 makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false, p.recFrom);
                 p.recFrom = -1e18;
+                if (p.recRecount && p.takes > takesBefore)
+                    --p.takes; // the take it replaces was counted already
+                p.recRecount = false;
                 debugClip(s, pi, p, slot, p.recStart, end);
                 // Layered onto the loop that was playing: the take goes into
                 // that clip, which plays on with both, and its own slot is

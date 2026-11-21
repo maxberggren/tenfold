@@ -189,6 +189,44 @@ private slots:
         QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 16);
     }
 
+    void arrowsJustAfterSpaceSetTheLoopsLength() {
+        // Over the beat (bars every 2 s from 4.5 s), six bars of bass that
+        // never repeat, then Space: the last four loop. ↑ makes it the last
+        // eight, ↓ ↓ ↓ two bars, then one; once the arrows rest it stays,
+        // and one Ctrl+Z takes the whole take back.
+        std::string s = std::string(kBeat) + "page 3.0 2\n";
+        const double xs[6] = {0.21, 0.37, 0.29, 0.46, 0.54, 0.62};
+        for (int b = 0; b < 6; ++b)
+            for (int k = 0; k < 4; ++k)
+                s += "tap " + std::to_string(4.55 + 2.0 * b + 0.5 * k) + " " + std::to_string(xs[(b + k) % 6]) + " 0.4\n";
+        s += "key 16.6 Space\n";
+        QCOMPARE(int(testkit::play(s + "end 17.5\n").view.parts[1].clips[0].lengthBeats), 16);
+        QCOMPARE(int(testkit::play(s + "key 17.0 Up\nend 18\n").view.parts[1].clips[0].lengthBeats), 32);
+        const std::string down = s + "key 17.0 Up\nkey 17.4 Down\nkey 17.8 Down\nkey 18.2 Down\n";
+        const auto shortest = testkit::play(down + "end 19\n");
+        QCOMPARE(shortest.view.parts[1].playing, 0);
+        QCOMPARE(int(shortest.view.parts[1].clips[0].lengthBeats), 4);
+        // Long after, the arrows are the page's again: the loop stays.
+        QCOMPARE(int(testkit::play(down + "key 23.0 Up\nend 24\n").view.parts[1].clips[0].lengthBeats), 4);
+        // One take, one step: Ctrl+Z leaves no bass, and the drums play on.
+        const auto undone = testkit::play(down + "key 19.0 Ctrl+Z\nkey 19.5 Ctrl+Z\nend 20\n");
+        QCOMPARE(undone.view.parts[1].playing, -1);
+        QCOMPARE(undone.view.parts[0].playing, 0);
+    }
+
+    void aWaitBeforeSpaceKeepsTheTempo() {
+        // Nothing playing: a few chords tried at no steady pace, then a long
+        // wait, then Space. No pattern, not in the flow: the tempo stays at
+        // 124 and the playing loops in whole bars of it, four at most.
+        const auto take = testkit::play("page 0 3\n"
+                                        "tap 0.5 0.1 0.4 len=0.6\ntap 1.7 0.4 0.4 len=0.4\ntap 2.3 0.7 0.4 len=0.9\n"
+                                        "tap 4.1 0.25 0.4 len=0.5\n"
+                                        "key 9.0 Space\nend 11\n");
+        QCOMPARE(int(std::lround(take.view.bpm)), 124);
+        QCOMPARE(take.view.parts[2].playing, 0);
+        QVERIFY(take.view.parts[2].clips[0].lengthBeats <= 16);
+    }
+
     void startingOverSetsTheMixBack() {
         // Drums looped, then muted on the Song page with Q: Ctrl+N twice
         // clears the loop and unmutes them, so the next beat is heard.

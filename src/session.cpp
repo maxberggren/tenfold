@@ -499,6 +499,14 @@ bool Session::key(const KeyEvent &k) {
     if (k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
         return false;
     Page &p = *m_pages[size_t(m_page)];
+    // Just after Space, ↑ and ↓ make the loop longer or shorter (the page
+    // gets them back once they rest).
+    if ((k.key == Qt::Key_Up || k.key == Qt::Key_Down) && !(k.modifiers & Qt::ControlModifier) &&
+        m_lastTake.part >= 0 && m_lastTake.part == p.part && now() - m_lastTake.at <= kRetakeSecs) {
+        if (k.down)
+            adjustTake(k.key == Qt::Key_Up ? 1 : -1);
+        return true;
+    }
     if (p.spec.control->key(k, *p.ctx))
         return true;
     // Space loops what was just played. Over this part's own playing loop it
@@ -937,6 +945,27 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
             dlog("  cycle: period=%.4f s, %d cycle(s) %.4f..%.4f, %d hits repeat", cycle.period, cycle.cycles,
                  cycle.start, cycle.end, cycle.matched);
         }
+        // Without a pattern, the loop only sets the tempo when Space came in
+        // the flow of the playing, about where the next note would have
+        // come: the phrase then ends there. After a wait, or tinkering that
+        // never settled, the tempo stays and the playing is taken in bars
+        // of it, as over a loop (↑↓ then set how many).
+        bool inFlow = false;
+        if (!settled && hits.size() >= 2) {
+            std::vector<double> gaps;
+            for (size_t i = 1; i < hits.size(); ++i)
+                if (hits[i].x - hits[i - 1].x > 0.05)
+                    gaps.push_back(hits[i].x - hits[i - 1].x);
+            if (!gaps.empty()) {
+                std::nth_element(gaps.begin(), gaps.begin() + gaps.size() / 2, gaps.end());
+                const double gap = gaps[gaps.size() / 2];
+                inFlow = nowT - hits.back().x <= 1.6 * gap + 0.1;
+            }
+        }
+        if (!settled && !inFlow) {
+            dlog("  no pattern and Space after a wait: the tempo stays, bars of it");
+            goto bars;
+        }
         dlog("  decided (free, sets the tempo): first=%.4f start=%.4f end=%.4f -> capture %.4f s (%.4f beats at the old "
              "tempo) settled=%d hits=%d slot=%d",
              first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
@@ -946,12 +975,16 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
                            : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
         return;
     }
+bars:
     // Sound that went on after the last note (a riser building into its
     // drop, an impact ringing out) is part of what was played.
     bool carried = clocked; // sound that carries itself on (a riser, a running arp)
     {
-        // A note's own release isn't that: only sound going on well past it.
-        const double sounding = lastSounding(part, last);
+        // A note's own release isn't that: only sound going on well past it,
+        // on a page that says its sound carries on by itself (it sends
+        // Continue: a riser, a running arp). A chord's long tail is just its
+        // tail, not more playing.
+        const double sounding = clocked ? lastSounding(part, last) : -1;
         if (sounding > last + 2 * spb) {
             last = std::min(sounding, nowT);
             carried = true;
@@ -1011,12 +1044,13 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     const bool settled = length > 0;
     if (!settled) {
         // Played once: the phrase, in whole bars, with no bars of silence
-        // added to round it, and no more than its last eight bars. Longer
+        // added to round it, and no more than its last four bars (↑ just
+        // after Space takes more). Longer
         // playing that never repeated is a performance, not a loop; a loop
         // already playing that is longer still sets the length below. Sound
         // that carries itself (a build into its drop) stays whole.
         const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
-        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 8.0);
+        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 4.0);
     }
     // Over loops already playing, a take long enough to cover the longest
     // of them takes its length: a bass line over a four-bar progression
@@ -1048,13 +1082,54 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     }
     ctx.post(m);
     m_view.parts[part].recording = slot;
+    m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now()};
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
     if (layer && into >= 0)
-        ctx.notice(QStringLiteral("Layered %1 onto slot %2 · Ctrl+Z takes it off").arg(what).arg(into + 1));
+        ctx.notice(QStringLiteral("Layered %1 onto slot %2 · ↑↓ longer, shorter").arg(what).arg(into + 1));
     else
-        ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
+        ctx.notice(QStringLiteral("Looping %1 in slot %2 · ↑↓ longer, shorter").arg(what).arg(slot + 1));
+}
+
+bool Session::adjustTake(int dir) {
+    LastTake &lt = m_lastTake;
+    const double t = now();
+    if (lt.part < 0 || lt.part != m_pages[size_t(m_page)]->part || t - lt.at > kRetakeSecs)
+        return false;
+    // Whole bars, by doubling and halving, through the length Space chose.
+    std::vector<double> lengths{4, 8, 16, 32, 64};
+    if (std::find(lengths.begin(), lengths.end(), lt.length) == lengths.end())
+        lengths.push_back(lt.length);
+    std::sort(lengths.begin(), lengths.end());
+    const auto at = std::find(lengths.begin(), lengths.end(), lt.length);
+    const long i = std::clamp(long(at - lengths.begin()) + dir, 0L, long(lengths.size()) - 1);
+    const double length = lengths[size_t(i)];
+    lt.at = t; // each press keeps the window open
+    Context &ctx = context(m_page);
+    const int bars = int(std::lround(length / kBeatsPerBar));
+    const QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
+    if (length == lt.length) {
+        ctx.notice(QStringLiteral("Loop: %1, as %2 as it goes").arg(what, dir > 0 ? QStringLiteral("long")
+                                                                                   : QStringLiteral("short")));
+        return true;
+    }
+    StudioMsg m;
+    m.kind = StudioMsg::Retake;
+    m.part = int8_t(lt.part);
+    m.slot = int8_t(lt.slot);
+    m.d0 = lt.end - length;
+    m.d1 = lt.end;
+    if (lt.into >= 0) {
+        m.value = lt.into + 1;
+        m.d2 = lt.since;
+    }
+    ctx.post(m);
+    m_view.parts[lt.part].recording = lt.slot;
+    lt.length = length;
+    dlog("RETAKE part=%d slot=%d %.4f..%.4f (%d bars)", lt.part, lt.slot + 1, m.d0, m.d1, bars);
+    ctx.notice(QStringLiteral("Loop: %1 · ↑↓").arg(what));
+    return true;
 }
 
 void Session::undoTake() {
@@ -1081,6 +1156,8 @@ void Session::undoTake() {
         return;
     }
     const int part = *it;
+    if (part == m_lastTake.part)
+        m_lastTake = {}; // what ↑↓ would change is gone
     Page *owner = nullptr;
     for (auto &pg : m_pages)
         if (pg->part == part)
@@ -1155,6 +1232,7 @@ void Session::clearEverything() {
         }
     m_takeOrder.clear();
     m_redoOrder.clear();
+    m_lastTake = {};
     for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
         m_view.parts[p].playing = -1;
         for (auto &c : m_view.parts[p].clips)

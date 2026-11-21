@@ -159,6 +159,14 @@ private:
     void clearEverything(); // every loop, the mix home, each page's song state
     int m_undos = 0;
     std::vector<int> m_redoOrder; // parts, as Ctrl+Z took their steps back
+    // The take Space just made, for ↑↓ to make it longer or shorter while
+    // the player listens; it locks in once the arrows rest.
+    struct LastTake {
+        int part = -1, slot = -1, into = -1;
+        double end = 0, length = 0, since = -1e18, at = -1e9;
+    } m_lastTake;
+    static constexpr double kRetakeSecs = 3.0;
+    bool adjustTake(int dir); // ↑ (+1) longer, ↓ (−1) shorter; false when there's nothing to adjust
     bool m_mixRecording = false;
     Tutorial m_tutorial;
     Frame m_last;            // the last frame, as the pad sent it

@@ -29,6 +29,8 @@
 // optional grain cloud of the bed itself in octaves.
 
 #include <QFontMetricsF>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -45,6 +47,7 @@
 #include "part.h"
 #include "parts.h"
 #include "phrase.h"
+#include "songfile.h"
 
 namespace tf {
 
@@ -1707,6 +1710,20 @@ public:
         const PartView &pv = ctx.studio().parts[ctx.part()];
         m_cue = loopCue(ctx.beatAt(t), pv);
 
+        // The bed's settings as the engine has them, for save(): a thaw or
+        // a loop taking the chords changes them without a key. Only a view
+        // published after the page's last setting went out, so a save just
+        // after a key never reads the setting from before it.
+        const StudioView &sv = ctx.studio();
+        if (sv.sample > 0 && sv.time > m_settingsSentAt) {
+            m_settings.freeze = pv.data[PubFreeze] > 0.5f;
+            m_settings.cloud = pv.data[PubCloud] > 0.5f;
+            m_settings.pump = std::clamp(int(std::lround(pv.data[PubPump])), 0, 2);
+            m_settings.space = clampf(pv.data[PubSpace], 0.0f, 1.0f);
+            m_settings.tone = clampf(pv.data[PubTone], 0.0f, 1.0f);
+            m_settings.chord = pv.data[PubOwnHand] > 0.5f ? std::clamp(int(std::lround(pv.data[PubOwn])), -1, 6) : -1;
+        }
+
         // A loop that stopped (Backspace, another slot, Ctrl+Z) lets go of
         // the layers it was carrying over its seam.
         if (m_lastPlaying >= 0 && pv.playing != m_lastPlaying) {
@@ -2008,6 +2025,137 @@ public:
         m_frame = Frame{};
     }
 
+    // Ctrl+N, or a song opening: the studio lets every voice go, the
+    // latched bed's among them, so the page forgets the old song's bed, its
+    // scene and a take it was waiting for. The settings (space, tone, pump,
+    // cloud, hold, the bed's own chord) stay as the player left them, as on
+    // every page; only the freeze thaws, as the engine does.
+    void startOver(ControlContext &ctx) override {
+        (void)ctx;
+        m_latched.clear();
+        m_scene = -1;
+        m_takeSlot = -1;
+        m_handUntil = 0;
+        m_lastPlaying = -1;
+        m_swellClicked = false;
+        m_settings.freeze = false;
+    }
+
+    // The bed as it was left: its settings, and the layers latched on it.
+    // A latched bed is sound the player chose to leave on with no hand on
+    // the page, like a held drone under the song, so it comes back latched:
+    // a song saved over a bed would otherwise open without its floor. A
+    // layer a loop is taking over is the loop's (its clip brings it back),
+    // and what fingers hold now is the hand's moment, so neither is saved.
+    // A layer only the freeze holds isn't on the page's books, so only the
+    // freeze itself comes back. Choices from lists go by name (the layer's
+    // sound, the scene, the pump), so a list reordered later still opens.
+    void save(QJsonObject &out) const override {
+        static const char *pumps[3] = {"off", "kick", "beat"};
+        out[QStringLiteral("space")] = tidyFloat(m_settings.space);
+        out[QStringLiteral("tone")] = tidyFloat(m_settings.tone);
+        out[QStringLiteral("pump")] = QLatin1String(pumps[std::clamp(m_settings.pump, 0, 2)]);
+        out[QStringLiteral("cloud")] = m_settings.cloud;
+        out[QStringLiteral("freeze")] = m_settings.freeze;
+        out[QStringLiteral("hold")] = m_hold;
+        // The degree of the bed's own chord (0 is I), or -1 to follow the
+        // Chords page.
+        out[QStringLiteral("chord")] = m_settings.chord;
+        if (m_scene >= 0)
+            out[QStringLiteral("scene")] = QString::fromUtf8(kScenes[m_scene].name);
+        QJsonArray bed;
+        for (const Latched &l : m_latched) {
+            if (l.handed)
+                continue;
+            // An orb being reshaped is saved as it sounds now.
+            Layer L = l.layer;
+            for (const Held &h : m_held)
+                if (l.grabbed && h.touch >= 0 && h.grabbed && h.layer.id == L.id)
+                    L = h.layer;
+            QJsonObject o;
+            o[QStringLiteral("sound")] = QString::fromUtf8(kShape[std::clamp(L.family, 0, kFamilies - 1)].name);
+            o[QStringLiteral("colour")] = tidyFloat(L.colour);
+            o[QStringLiteral("height")] = tidyFloat(L.height);
+            o[QStringLiteral("press")] = tidyFloat(L.press);
+            o[QStringLiteral("motion")] = tidyFloat(L.motion);
+            o[QStringLiteral("width")] = tidyFloat(L.width);
+            if (l.scene >= 0)
+                o[QStringLiteral("scene")] = true;
+            bed.append(o);
+        }
+        out[QStringLiteral("bed")] = bed;
+    }
+
+    // After startOver(): every setting is sent through the page's own
+    // setter, the file's or the default, since the engine still has the
+    // old song's. The latched layers sound again as Ons that carry on a
+    // sound already heard, so Space never takes the opening for playing,
+    // and the freeze goes out a moment after them, to hold them as it did.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        auto number = [](const QJsonObject &o, const char *key, float lo, float hi, float home) {
+            const QJsonValue v = o.value(QLatin1String(key));
+            if (!v.isDouble() || !std::isfinite(v.toDouble()))
+                return home;
+            return float(std::clamp(v.toDouble(), double(lo), double(hi)));
+        };
+        auto flag = [](const QJsonObject &o, const char *key, bool home) {
+            const QJsonValue v = o.value(QLatin1String(key));
+            return v.isBool() ? v.toBool() : home;
+        };
+        auto same = [](const QJsonValue &v, const char *name) {
+            return v.isString() && v.toString().compare(QString::fromUtf8(name), Qt::CaseInsensitive) == 0;
+        };
+
+        static const char *pumps[3] = {"off", "kick", "beat"};
+        int pump = PumpKick;
+        for (int i = 0; i < 3; ++i)
+            if (same(in.value(QStringLiteral("pump")), pumps[i]))
+                pump = i;
+        param(PSpace, number(in, "space", 0, 1, 0.5f), ctx);
+        param(PTone, number(in, "tone", 0, 1, 0.5f), ctx);
+        param(PPump, float(pump), ctx);
+        param(PCloud, flag(in, "cloud", false) ? 1.0f : 0.0f, ctx);
+        // Unrecorded, unlike a chord key: opening a song isn't playing.
+        param(PChord, float(std::lround(number(in, "chord", -1, 6, -1))), ctx);
+        m_hold = flag(in, "hold", false);
+
+        int scene = -1;
+        for (int s = 0; s < 8; ++s)
+            if (same(in.value(QStringLiteral("scene")), kScenes[s].name))
+                scene = s;
+        const double now = ctx.now();
+        int count = 0;
+        for (const QJsonValue &v : in.value(QStringLiteral("bed")).toArray()) {
+            // No more layers than the engine has voices.
+            if (!v.isObject() || count >= kVoices)
+                continue;
+            const QJsonObject o = v.toObject();
+            int family = -1;
+            for (int f = 0; f < kFamilies; ++f)
+                if (same(o.value(QStringLiteral("sound")), kShape[f].name))
+                    family = f;
+            if (family < 0)
+                continue; // a sound this tenfold doesn't have
+            Layer L;
+            L.id = nextId();
+            L.family = family;
+            L.colour = number(o, "colour", 0, 1, L.colour);
+            L.height = number(o, "height", 0, 1, L.height);
+            L.press = number(o, "press", 0, 1, L.press);
+            L.motion = number(o, "motion", -1, 1, L.motion);
+            L.width = number(o, "width", 0.35f, 1, L.width);
+            const int from = scene >= 0 && flag(o, "scene", false) ? scene : -1;
+            sendOn(L, ctx, now, Command::Continue);
+            m_latched.push_back({L, xOf(L.family, L.colour), L.height, from, false, false});
+            ++count;
+        }
+        // The scene shows lit only if some of its layers came back, so its
+        // key fades them as it would have.
+        if (std::any_of(m_latched.begin(), m_latched.end(), [](const Latched &l) { return l.scene >= 0; }))
+            m_scene = m_lastScene = scene;
+        param(PFreeze, flag(in, "freeze", false) ? 1.0f : 0.0f, ctx, now + 0.05);
+    }
+
     void paint(QPainter &p, const PaintContext &pc) override;
     QString help() const override;
     QString status() const override;
@@ -2083,14 +2231,29 @@ private:
     }
 
     // Global settings are the hand's, never a loop's: they go unrecorded.
-    void param(int which, float value, ControlContext &ctx) {
+    // The page keeps what it sent, for save() (t: when, if not now).
+    void param(int which, float value, ControlContext &ctx, double t = 0) {
         Command c;
         c.type = Command::Param;
         c.flags = Command::NoRecord;
         c.i[0] = which;
         c.f[0] = value;
-        c.t = ctx.now();
+        c.t = t > 0 ? t : ctx.now();
         ctx.send(c);
+        remember(which, value, c.t);
+    }
+    void remember(int which, float value, double t) {
+        switch (which) {
+        case PFreeze: m_settings.freeze = value > 0.5f; break;
+        case PCloud: m_settings.cloud = value > 0.5f; break;
+        case PPump: m_settings.pump = std::clamp(int(std::lround(value)), 0, 2); break;
+        case PSpace: m_settings.space = clampf(value, 0.0f, 1.0f); break;
+        case PTone: m_settings.tone = clampf(value, 0.0f, 1.0f); break;
+        case PChord: m_settings.chord = std::clamp(int(std::lround(value)), -1, 6); break;
+        case PChordToLoop: m_settings.chord = -1; break;
+        default: return;
+        }
+        m_settingsSentAt = std::max(m_settingsSentAt, t);
     }
     // The bed's own chord is recorded, so a loop can carry a progression.
     void chord(int degree, ControlContext &ctx) {
@@ -2101,6 +2264,7 @@ private:
         c.f[0] = float(degree);
         c.t = ctx.now();
         ctx.send(c);
+        remember(PChord, c.f[0], c.t);
         m_onsets[m_onsetHead++ % m_onsets.size()] = {c.t, true};
     }
     void sendOn(Layer &l, ControlContext &ctx, double t, uint16_t flags = 0) {
@@ -2428,6 +2592,14 @@ private:
     bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false, m_swellClicked = false;
     console::Hotspots m_spots; // what paint() drew to be clicked
     uint32_t m_swells = 0; // for the tutorial
+    // The bed's settings as last sent or seen in the engine, for save().
+    struct Settings {
+        bool freeze = false, cloud = false;
+        int pump = PumpKick;
+        float space = 0.5f, tone = 0.5f;
+        int chord = -1; // the bed's own chord by hand, or -1 to follow
+    } m_settings;
+    double m_settingsSentAt = 0;
 };
 
 QString AtmosControl::help() const {

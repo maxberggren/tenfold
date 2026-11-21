@@ -94,9 +94,9 @@ std::string walkthrough() {
     s.key(bar(24) + 0.05, "Space");
     s.add("up %.3f 17", bar(24) + 0.3);
 
-    s.comment("2 Bass. O follows the chords; the root on the off-beats; Space.");
+    s.comment("2 Bass. § follows the chords; the root on the off-beats; Space.");
     s.key(bar(25), "2");
-    s.key(bar(25) + 0.3, "O");
+    s.key(bar(25) + 0.3, "§");
     for (int b = 108; b < 116; ++b)
         s.tap(beat(b + 0.5), 0.2083, 0.3, 0.7, 0.2);
     s.key(beat(116) + 0.05, "Space");
@@ -144,7 +144,7 @@ std::string walkthrough() {
 
     s.comment("5 Arp. M follows the chords; two notes held run.");
     s.key(bar(53), "5");
-    s.key(bar(53) + 0.2, "M");
+    s.key(bar(53) + 0.2, "§");
     s.add("down %.3f 40 0.0360 0.32 p=0.6", bar(54));
     s.add("down %.3f 41 0.3260 0.70 p=0.5", bar(54) + 0.01);
 

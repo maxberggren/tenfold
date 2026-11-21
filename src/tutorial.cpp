@@ -243,11 +243,13 @@ void Tutorial::build() {
     // the third column (x 2/12 to 3/12) is always the root.
     const Spot root = spot(2.0f / 12.0f, 0.0f, 3.0f / 12.0f, 0.76f, QStringLiteral("ROOT"));
     add({QStringLiteral("Bass"), Bass, QStringLiteral("The bass follows the chords"),
-         QStringLiteral("Press O: the bass follows the chords. Its columns now count from the chord playing, so the "
-                        "column marked ROOT is always that chord's root, whichever comes round."),
-         QStringLiteral("Q W E R T Y U I pick the sound: R is acid, Y a growl."),
+         QStringLiteral("Press § (the key left of 1) or click FOLLOW under the pad: the bass follows the chords. Its "
+                        "columns now count from the chord playing, so the column marked ROOT is always that chord's "
+                        "root, whichever comes round."),
+         QStringLiteral("← → pick the sound (R is acid, Y a growl). The same keys do the same on every page, and "
+                        "each has a button under the pad."),
          QStringLiteral("Bass and chords are locked together."),
-         {QStringLiteral("O")},
+         {QStringLiteral("§")},
          {},
          {root},
          {{QStringLiteral("O: follows the chords"), [](Look &l) { return l.probe(Bass, "follow") > 0.5f; }}}});
@@ -332,11 +334,11 @@ void Tutorial::build() {
 
     // --- Arp --------------------------------------------------------------------
     add({QStringLiteral("Arp"), Arp, QStringLiteral("Notes that run"),
-         QStringLiteral("Press M so the arp follows the chords. Then hold two fingers on the grid: the notes run up and "
-                        "down in time, through the chord that plays."),
+         QStringLiteral("Press § (or click FOLLOW) so the arp follows the chords. Then hold two fingers on the grid: "
+                        "the notes run up and down in time, through the chord that plays."),
          QStringLiteral("Twist the first finger: the chord under it grows, fifth, triad, seventh."),
          QStringLiteral("Sparkling."),
-         {QStringLiteral("M")},
+         {QStringLiteral("§")},
          {},
          {spot(0.0f, 0.135f, 0.58f, 0.865f, QStringLiteral("HOLD NOTES"))},
          {{QStringLiteral("M: follows the chords"), [](Look &l) { return l.probe(Arp, "follow") > 0.5f; }},

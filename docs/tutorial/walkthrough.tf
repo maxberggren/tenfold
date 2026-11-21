@@ -72,9 +72,9 @@ up 44.536 16
 key 46.502 Space
 up 46.752 17
 
-# 2 Bass. O follows the chords; the root on the off-beats; Space.
+# 2 Bass. § follows the chords; the root on the off-beats; Space.
 key 48.387 2
-key 48.687 O
+key 48.687 §
 tap 52.500 0.2083 0.3000 p=0.70 len=0.20
 tap 52.984 0.2083 0.3000 p=0.70 len=0.20
 tap 53.468 0.2083 0.3000 p=0.70 len=0.20
@@ -110,8 +110,8 @@ down 77.919 33 0.1100 0.58 p=0.6
 up 79.019 32
 up 79.019 33
 
-# Enter: on the chords. A melody across the four chords, twice round; Space.
-key 79.855 Return
+# §: on the chords. A melody across the four chords, twice round; Space.
+key 79.855 §
 down 85.161 34 0.6100 0.6 p=0.65
 up 85.597 34
 down 85.645 34 0.7140 0.6 p=0.65
@@ -164,7 +164,7 @@ key 100.695 Space
 
 # 5 Arp. M follows the chords; two notes held run.
 key 102.581 5
-key 102.781 M
+key 102.781 §
 down 104.516 40 0.0360 0.32 p=0.6
 down 104.526 41 0.3260 0.70 p=0.5
 

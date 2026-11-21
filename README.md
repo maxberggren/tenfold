@@ -55,6 +55,25 @@ top of it, as one loop. Shift+Space makes a new loop in its place instead. On
 Arrange, pick two loops of a part and press M to layer
 them, Shift+M to chain them.
 
+**The same keys on every page.** Letters are each page's own (pads, notes,
+chords, scenes); the rest means the same everywhere, and every one of them
+also has a button in the band under the pad, so the mouse alone can play:
+
+| Key | Does |
+|---|---|
+| ← → | the sound: kit, preset, scene, drop style |
+| ↑ ↓ | octave or register (Drums: roll speed, FX: riser length) |
+| Shift ← → | the rhythm: swing, gate, arp rate |
+| - + | tone: darker, brighter |
+| Return | hold or latch (FX: drop; Drums: keep the roll) |
+| Shift Return | overdub |
+| § (the key left of 1) | follow the Chords page |
+| Delete | let go, or sounds back |
+| F1–F8 · Shift F1–F8 · Backspace | launch a slot · clear it · stop |
+
+Older keys ([ ] \ = and each page's letters) still work too. The clip
+slots under the pad launch or stop with a click.
+
 **Changed your mind?** Ctrl+Z takes back the newest change to the page's
 loops (a loop, a layer, a pass played into one), up to 16 back, and what
 was playing before comes back. On the Song page it takes back the newest

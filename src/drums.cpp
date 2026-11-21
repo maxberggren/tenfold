@@ -234,7 +234,11 @@ public:
         switch (k.key) {
         case Qt::Key_Left:
         case Qt::Key_Right:
-            setKit((m_kit + (k.key == Qt::Key_Right ? 1 : KitCount - 1)) % KitCount, ctx);
+            // Shift: the rhythm, as on every page (here the swing).
+            if (shift)
+                shiftSwing(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            else
+                setKit((m_kit + (k.key == Qt::Key_Right ? 1 : KitCount - 1)) % KitCount, ctx);
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down: {
@@ -347,7 +351,7 @@ public:
             "hold to roll, Shift for an accent, hold several together for a groove\n"
             "Up / Down\tfaster or slower key rolls\n"
             "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
-            "[ / ]\tless or more swing\n"
+            "Shift+Left / Right (or [ ])\tless or more swing\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, overdub, sounds back\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
             "Shift+Enter\toverdub on or off: what you play joins the loop\n"
@@ -1633,13 +1637,13 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), kits, m_kit, &m_spots, SpotKit);
     const QRectF row = c::bandRow(pc, 1, 0, 0.55);
     const double w = row.width() / 4;
-    c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SWING −  ["), false, &m_spots,
+    c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SWING −  ⇧←"), false, &m_spots,
             SpotSwingDown);
     const QRectF gauge(row.left() + w, row.top(), w - 4, row.height());
     c::text(p, gauge.adjusted(0, 0, 0, -12), QStringLiteral("SWING %1%").arg(int(std::lround(m_swing * 100))), col, 11,
             true, Qt::AlignCenter);
     c::gauge(p, QRectF(gauge.left() + 6, gauge.bottom() - 10, gauge.width() - 12, 7), (m_swing - 0.5f) / 0.2f, col, 10);
-    c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ]"), false,
+    c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ⇧→"), false,
             &m_spots, SpotSwingUp);
     c::chips(p, pc, c::bandRow(pc, 1, 0.57, 1),
              {QStringLiteral("OVERDUB  ⇧↵"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,

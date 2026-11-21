@@ -513,7 +513,13 @@ private slots:
             // Long enough for the loop to come round twice more.
             const double end = timeOfBeat(view, drop + 4.0 + 2 * length + 1.0);
             StudioView after;
-            testkit::play(fx + fmt("end %.3f\n", end), [&](Session &s) { after = s.view(); });
+            float drops = 0;
+            testkit::play(fx + fmt("end %.3f\n", end), [&](Session &s) {
+                after = s.view();
+                drops = s.probe(kFx, QStringLiteral("drops"));
+            });
+            // The tutorial's count: the live drop and two passes of the loop.
+            QVERIFY2(drops >= 3, qPrintable(QString::number(drops)));
             const PartView &fxv = after.parts[kFx];
             QVERIFY2(fxv.playing >= 0, rush ? "rush" : "build");
             QCOMPARE(double(fxv.clips[fxv.playing].lengthBeats), length);

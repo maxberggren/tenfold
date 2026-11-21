@@ -237,6 +237,14 @@ public:
             "Backspace\tstop the FX clip at the next bar");
     }
 
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("risers"))
+            return float(m_risers);
+        if (name == QLatin1String("drops"))
+            return float(m_drops);
+        return PartControl::tutorialProbe(name);
+    }
+
     QString status() const override {
         QStringList parts;
         for (const Finger &h : m_fingers)
@@ -528,6 +536,16 @@ private:
         const float *d = data(ctx);
         const double beat = ctx.beatAt(t);
         const double bps = sv.bpm / 60.0;
+        // For the tutorial: risers on their way (rising or waiting) and the
+        // drops that have fired, live or from a loop.
+        m_risers = int(d[pub::Layers]);
+        if (d[pub::LastDrop] >= 0 && d[pub::LastDrop] != m_lastDropSeen) {
+            if (m_lastDropSeen != -2)
+                ++m_drops;
+            m_lastDropSeen = d[pub::LastDrop];
+        } else if (m_lastDropSeen == -2) {
+            m_lastDropSeen = d[pub::LastDrop];
+        }
         // Hand-backs at a drop are scheduled, not sent on a tick: once the
         // ONE is closer than the next few ticks, what the build holds is
         // released at a set moment. Mutes act at once, so they lift on the
@@ -733,6 +751,8 @@ private:
     int m_keyRow = 2; // keys play 4-bar risers until Up or Down says otherwise
     double m_localDrop = -1;
     double m_liveDrop = -1; // the drop a build played live is aiming at
+    int m_risers = 0, m_drops = 0;
+    float m_lastDropSeen = -2; // −2 until the first view has been seen
     double m_statusDrop = -1, m_statusBeat = 0;
     int m_take = -1;
     double m_liftDrop = -1;

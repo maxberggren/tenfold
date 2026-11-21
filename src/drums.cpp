@@ -255,8 +255,19 @@ public:
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down: {
-            // Held keys roll faster or slower, and so will the next ones.
+            // The drums have no octave, so the arrows are the loop's length,
+            // at any time, as the Loop longer / Loop shorter buttons: the
+            // loop Space last made here, re-taken from what was played. Only
+            // while keys hold a roll do they set its rate instead (and the
+            // next held keys').
             const int step = k.key == Qt::Key_Up ? 1 : -1;
+            bool keyRolls = false;
+            for (const auto &h : m_holders)
+                keyRolls |= h.used && h.key && h.gen >= 0 && !m_gens[size_t(h.gen)].groove;
+            if (!keyRolls) {
+                loopStep(step, ctx);
+                return true;
+            }
             m_keyRate = std::clamp(m_keyRate + step, -3, 3);
             for (auto &h : m_holders)
                 if (h.used && h.key && h.gen >= 0 && !m_gens[size_t(h.gen)].groove) {
@@ -367,10 +378,12 @@ public:
             "hold the 808\tsustains; slide sideways to glide through the scale\n"
             "Z X C V · A S D F · Q W E R · U I O P\tthe pads, row by row from the bottom (M , . / and J K L ; too); "
             "hold to roll, Shift for an accent, hold several together for a groove\n"
-            "Up / Down\tfaster or slower key rolls\n"
+            "Up / Down\tthe loop longer or shorter, any time (as the Loop longer / shorter buttons: the loop Space "
+            "last made here, in whole bars); with keys held rolling, their roll faster or slower\n"
             "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
-            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, overdub, sounds back\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, the loop shorter or longer, "
+            "overdub, sounds back\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
             "Shift+Enter\toverdub on or off: what you play joins the loop\n"
             "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in); with no loop, only its "
@@ -1314,6 +1327,12 @@ private:
         ctx.send(c);
     }
 
+    // ↑ ↓ and their chips: the loop a step longer or shorter.
+    void loopStep(int dir, ControlContext &ctx) {
+        if (!ctx.resizeLoop(dir))
+            ctx.notice(QStringLiteral("No loop to make longer or shorter: Space makes one"));
+    }
+
     void shiftSwing(int dir, ControlContext &ctx) {
         m_swing = clampf(m_swing + 0.02f * float(dir), 0.5f, 0.7f);
         ctx.notice(QStringLiteral("Swing %1%").arg(int(std::lround(m_swing * 100))));
@@ -1336,7 +1355,7 @@ private:
     }
 
     // The mouse on the band under the pad.
-    enum Spot { SpotKit = 100, SpotSwingDown = 200, SpotSwingUp, SpotOverdub, SpotReset };
+    enum Spot { SpotKit = 100, SpotSwingDown = 200, SpotSwingUp, SpotOverdub, SpotReset, SpotLoopShorter, SpotLoopLonger };
     bool click(QPointF at, ControlContext &ctx) override {
         const int id = m_spots.at(at);
         if (id < 0)
@@ -1353,6 +1372,8 @@ private:
         case SpotSwingUp: shiftSwing(1, ctx); return true;
         case SpotOverdub: toggleOverdub(ctx); return true;
         case SpotReset: resetSounds(ctx); return true;
+        case SpotLoopShorter: loopStep(-1, ctx); return true;
+        case SpotLoopLonger: loopStep(1, ctx); return true;
         default: return false;
         }
     }
@@ -1647,7 +1668,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f), 13, true);
     c::beats(p, pc, col);
     // Below the pad, every one clickable: the clips and the kits, then the
-    // swing, overdub and the drums' own sounds back.
+    // swing, the loop's length (↑ ↓), overdub and the drums' own sounds back.
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
     QStringList kits;
@@ -1655,7 +1676,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         kits << QString::fromUtf8(kitName(k)).toUpper();
     c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), kits, m_kit, &m_spots, SpotKit);
     const QRectF row = c::bandRow(pc, 1, 0, 0.55);
-    const double w = row.width() / 4;
+    const double w = row.width() / 5;
     c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SWING −  ⇧←"), false, &m_spots,
             SpotSwingDown);
     const QRectF gauge(row.left() + w, row.top(), w - 4, row.height());
@@ -1664,6 +1685,11 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::gauge(p, QRectF(gauge.left() + 6, gauge.bottom() - 10, gauge.width() - 12, 7), (m_swing - 0.5f) / 0.2f, col, 10);
     c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ⇧→"), false,
             &m_spots, SpotSwingUp);
+    // The arrows: the loop Space last made, shorter or longer.
+    c::chip(p, pc, QRectF(row.left() + 3 * w, row.top(), w - 4, row.height()), QStringLiteral("LOOP −  ↓"), false,
+            &m_spots, SpotLoopShorter);
+    c::chip(p, pc, QRectF(row.left() + 4 * w, row.top(), w - 4, row.height()), QStringLiteral("LOOP +  ↑"), false,
+            &m_spots, SpotLoopLonger);
     c::chips(p, pc, c::bandRow(pc, 1, 0.57, 1),
              {QStringLiteral("OVERDUB  ⇧↵"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,
              SpotOverdub);

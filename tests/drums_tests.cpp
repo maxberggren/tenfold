@@ -521,6 +521,45 @@ private slots:
         QCOMPARE(undone.view.parts[0].playing, -1);
     }
 
+    // The drums have no octave: ↑ and ↓ make the loop longer or shorter at
+    // any time, as the Loop longer / Loop shorter buttons do, not only in
+    // the moments after Space.
+    void arrowsResizeTheLoopLongAfterSpace() {
+        std::string script = "page 0 1\n";
+        const double kicks[] = {1.0, 1.94, 2.86, 3.8, 4.73, 5.66};
+        for (double t : kicks)
+            script += "tap " + std::to_string(t) + " " + at(drums::Kick) + "\n";
+        const double space = 6.6;
+        script += "key " + std::to_string(space) + " Space\n";
+        const auto made = testkit::play(script + "end 14\n");
+        const int beats = int(made.view.parts[0].clips[0].lengthBeats);
+        QVERIFY(beats > 0);
+        const double bpm = made.view.bpm;
+        // Five seconds on, well past the moment after Space.
+        const auto longer = testkit::play(script + "key " + std::to_string(space + 5) + " Up\nend 14\n");
+        QCOMPARE(int(longer.view.parts[0].clips[0].lengthBeats), 2 * beats);
+        QVERIFY2(std::fabs(longer.view.bpm - bpm) <= 3, qPrintable(QString("%1 then %2").arg(bpm).arg(longer.view.bpm)));
+        const auto shorter = testkit::play(script + "key " + std::to_string(space + 5) + " Up\nkey " +
+                                           std::to_string(space + 6) + " Down\nkey " + std::to_string(space + 7) +
+                                           " Down\nend 14\n");
+        QCOMPARE(int(shorter.view.parts[0].clips[0].lengthBeats), beats / 2);
+        // The chips under the pad do the same: LOOP + is the last of the
+        // five in row 1 of the band, LOOP − the one before it.
+        const auto clicked = testkit::play(script + "button " + std::to_string(space + 5) + " 0.495 -0.119\nend 14\n");
+        QCOMPARE(int(clicked.view.parts[0].clips[0].lengthBeats), 2 * beats);
+        const auto clickedShorter =
+            testkit::play(script + "button " + std::to_string(space + 5) + " 0.385 -0.119\nend 14\n");
+        QCOMPARE(int(clickedShorter.view.parts[0].clips[0].lengthBeats), beats / 2);
+    }
+
+    // Held keys that roll still take the arrows for their rate.
+    void arrowsSpeedUpAHeldKeyRoll() {
+        const std::string held = "page 0 1\nkey 0.1 Right\nkey 1.0 V down\n";
+        const auto plain = testkit::play(held + "key 3.0 V up\nend 3.2\n");
+        const auto faster = testkit::play(held + "key 1.5 Up\nkey 3.0 V up\nend 3.2\n");
+        QVERIFY(onsets(faster, 1.7, 2.9, 0.02).size() > onsets(plain, 1.7, 2.9, 0.02).size());
+    }
+
     // Space while a groove plays under the fingers keeps it the way a click
     // does: whole bars of the groove on the clock, the tempo unchanged, and
     // none of the taps and rolls tried before it.
@@ -576,11 +615,12 @@ private slots:
     void theBandUnderThePadIsClickable() {
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
         // is 0.048 of it under the pad, row 1 0.119. The kits fill row 0
-        // from 0.57 of the width, five across.
+        // from 0.57 of the width, five across; row 1 starts with five chips
+        // across 0.55 of it (swing −, the swing, swing +, loop −, loop +).
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 1\nbutton 0.2 0.35 -0.119\nbutton 0.3 0.35 -0.119\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 1\nbutton 0.2 0.275 -0.119\nbutton 0.3 0.275 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
         });
     }

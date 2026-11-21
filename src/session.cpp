@@ -98,6 +98,8 @@ public:
     void launch(int slot, bool now) override { launchPart(m_part, slot, now); }
     void stop(bool now) override { stopPart(m_part, now); }
     void clear(int slot) override { clearPart(m_part, slot); }
+    bool resizeLoop(int dir) override { return m_s->retakeLength(0) > 0 && m_s->adjustTake(dir); }
+    int loopStep(int dir) const override { return int(std::lround(m_s->retakeLength(dir))); }
 
     void launchPart(int part, int slot, bool now) override { simple(StudioMsg::Launch, part, slot, now); }
     void copyClip(int part, int from, int to) override { simple(StudioMsg::CopyClip, part, from, to); }

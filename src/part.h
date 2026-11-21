@@ -293,6 +293,12 @@ public:
     virtual void launch(int slot, bool now = false) = 0;
     virtual void stop(bool now = false) = 0;
     virtual void clear(int slot) = 0;
+    // The loop Space last made on this page, a step longer (dir +1) or
+    // shorter (−1), as the Loop longer / Loop shorter buttons do; false when
+    // there is no such loop to change. loopStep(dir) is the length in beats
+    // that step would give, or 0.
+    virtual bool resizeLoop(int dir) { (void)dir; return false; }
+    virtual int loopStep(int dir) const { (void)dir; return 0; }
     int freeSlot() const {
         if (part() < 0)
             return -1;

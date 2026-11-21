@@ -382,7 +382,8 @@ ApplicationWindow {
                         }
                         // The loop Space last made on this page, longer or
                         // shorter, until another loop of its part is made:
-                        // ↑ ↓ do the same for three seconds after Space.
+                        // ↑ ↓ do the same for three seconds after Space (on
+                        // Drums, at any time).
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             visible: backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room

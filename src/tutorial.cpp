@@ -252,7 +252,7 @@ void Tutorial::build() {
          {QStringLiteral("§")},
          {},
          {root},
-         {{QStringLiteral("O: follows the chords"), [](Look &l) { return l.probe(Bass, "follow") > 0.5f; }}}});
+         {{QStringLiteral("§: follows the chords"), [](Look &l) { return l.probe(Bass, "follow") > 0.5f; }}}});
 
     add({QStringLiteral("Bass"), Bass, QStringLiteral("A bassline in one finger"),
          QStringLiteral("Tap ROOT on the off-beats, between the kicks: dum-DUM, dum-DUM. A bar or two, then Space. The "

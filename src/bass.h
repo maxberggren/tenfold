@@ -7,9 +7,10 @@
 // with character (saws, squares, FM, a ladder and a vowel filter, drive
 // that is oversampled and level-matched), so the weight under 100 Hz is
 // always one sine in phase with the note, however hard the top is pushed.
-// Eight sounds share that one voice and differ only in their recipe: a
+// Ten sounds share that one voice and differ only in their recipe: a
 // clean sub, a rolling pluck, a reese, an acid line, a wobble, a growl, an
-// 808 and a bouncing house bass.
+// 808, a bouncing house bass, a Minimoog-style ladder bass and an upright,
+// whose top is a plucked string (Karplus–Strong) in a wooden body.
 //
 // There are two lanes, each a mono synth with its own note stack: the
 // player's fingers and keys, and the clip that is looping. While the
@@ -28,7 +29,7 @@ namespace tf::bass {
 
 // --- the vocabulary -----------------------------------------------------------
 
-enum Sound : int { Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, SoundCount };
+enum Sound : int { Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, Moog, Upright, SoundCount };
 
 // Commands, besides the studio's own:
 //   On     id; i[0] degree, i[1] octave, i[2] NoteFlags, i[3] Sound;
@@ -120,6 +121,7 @@ struct Recipe {
     // Oscillators, all locked in phase to the sub: a sine, a unison of
     // saws, a square, a phase-modulated sine and a saw an octave up.
     float sine = 0, saw = 0, square = 0, fm = 0, octSaw = 0;
+    float subSquare = 0;     // a square an octave down, under the top only
     int unison = 1;          // saws, 1–3
     float detune = 0;        // cents the outer saws sit from the centre
     float fmRatio = 1, fmIndex = 0, fmTone = 0; // fmTone: the height adds this much index
@@ -143,6 +145,28 @@ struct Recipe {
     // What morph (the twist, [ and ]) does.
     float mSquare = 0, mDetune = 0, mFm = 0, mVowel = 0, mDrive = 0;
     float mRes = 0, mEnv = 0, mDecay = 0; // the squelch: resonance, envelope depth, its decay (× 1 + this)
+    // How hot the ladder is fed. At 1 it is fed gently, so a resonant
+    // squelch keeps its peak; hotter, its own input stage saturates and
+    // rounds every note into the thick, compressed body of a Minimoog.
+    float heat = 1;
+    // A plucked string in place of (or beside) the oscillators: its level,
+    // how long the string itself rings (seconds to fall 60 dB), and how much
+    // of a wooden body it sounds through. The amp envelope's decay is then
+    // how long the note lasts, and morph scales it by 2^(mRing × (morph − 0.3)).
+    float string = 0, ring = 6, body = 0, mRing = 0;
+    // How much of the top's own fundamental comes through the crossover,
+    // as a sine in phase with the sub at the level the top has it: a ladder
+    // driven hard thickens its fundamental, and this lets that be heard
+    // without the low end ever leaving the sub's phase.
+    float lowThrough = 0;
+    // A broad lift in the low mids after the filter (+6 dB at 1, at 240 Hz): the
+    // throaty voice a Minimoog keeps while a note is held.
+    float lowMid = 0;
+    // A contour: the twist scales the filter envelope's decay by
+    // 2^(contour × (morph − 0.3)), so the usual twist is envDecay itself,
+    // and the finger's height shortens it by up to toneDecay, so higher
+    // notes snap.
+    float contour = 0, toneDecay = 0;
     float level = 1;
     // How far the kick ducks it, on top of the channel's light pump: the
     // whole sound, and the sub a little more. A house bass breathes with the
@@ -322,6 +346,58 @@ inline const Recipe &recipe(int sound) {
             s.level = 1.75f;
             s.pump = 0.5f;
         }
+        {
+            // The Minimoog's bass: a saw and a square in tune and a third
+            // oscillator an octave down, fed hot into a 24 dB ladder with
+            // some emphasis, its envelope opening it wide on every note and
+            // closing it in a tenth of a second (less higher up): "bwow",
+            // and a staccato sixteenth still says "pew". Where ACID
+            // squelches, this is throaty in the low mids even held, and some
+            // of the driven ladder's own fundamental comes through under the
+            // sub: funk, disco, synthwave. Mono, as the instrument was; the
+            // twist is the contour, from a snap to a slow wah.
+            Recipe &s = r[Moog];
+            s.name = "MOOG";
+            s.what = "ladder bwow, funk, synthwave";
+            s.saw = 0.8f, s.square = 0.55f, s.subSquare = 0.4f;
+            s.sub = 0.65f;
+            s.cutLo = 0.06f, s.cutHi = 0.46f, s.res = 0.45f, s.lowMid = 2;
+            s.envAmt = 0.5f, s.envDecay = 0.1f, s.contour = 1.6f, s.toneDecay = 0.35f;
+            s.mEnv = 0.15f;
+            s.heat = 2.5f;
+            s.lowThrough = 0.32f;
+            s.attack = 0.002f, s.decay = 0.7f, s.sustain = 0.85f, s.release = 0.1f;
+            s.drive = 0.22f, s.character = 0.1f;
+            s.glide = 0.075f;
+            s.accent = 0.55f;
+            s.level = 0.42f;
+            s.pump = 0.3f, s.subPump = 0.2f;
+        }
+        {
+            // A double bass played pizzicato: a string plucked by a soft
+            // finger, ringing through a wooden body, dying away on its own
+            // while held and stopped by the hand when let go. Its pitch
+            // starts a hair sharp and settles, as a plucked string's does.
+            // Height plucks nearer the bridge with a harder finger (from a
+            // dub thud to a jazz twang); the twist is how long it rings.
+            // Pressed lightly it is a ghost note; Shift+P palm-mutes it to a
+            // dead thud. Jazz, lo-fi hip-hop, dub.
+            Recipe &s = r[Upright];
+            s.name = "UPRIGHT";
+            s.what = "plucked string, jazz, lo-fi, dub";
+            s.string = 1, s.ring = 7, s.body = 1, s.mRing = 2.2f;
+            s.lowThrough = 0.32f;
+            s.sub = 0.72f;
+            s.cutLo = 0.5f, s.cutHi = 0.85f, s.res = 0;
+            s.envAmt = 0.15f, s.envDecay = 0.12f;
+            s.attack = 0.002f, s.decay = 0.5f, s.sustain = 0, s.release = 0.07f;
+            s.drive = 0.15f, s.character = 0.35f;
+            s.drop = 0.22f, s.dropTime = 0.06f;
+            s.glide = 0.06f;
+            s.accent = 0.5f;
+            s.level = 1.7f;
+            s.pump = 0.25f, s.subPump = 0.2f;
+        }
         return r;
     }();
     return recipes[size_t(std::clamp(sound, 0, SoundCount - 1))];
@@ -468,6 +544,22 @@ public:
         m_sideHp.set(300.0f, 0.7f, rate);
         m_preLp.set(4500.0f, rate);
         m_preLp2.set(4500.0f, rate);
+        // The upright's body: a broad wooden resonance where the box is
+        // loudest and a narrower one higher up, the hollow knock in a
+        // plucked note.
+        m_body[0].set(190.0f, 1.4f, rate);
+        m_body[1].set(520.0f, 2.6f, rate);
+        // A stopped string is gone in about 20 ms.
+        m_stopCoef = std::exp(-1.0f / (0.003f * rate));
+        // The finger's thump on the string, and its knock on the
+        // fingerboard as it stops a note.
+        m_thumpBp.set(230.0f, 1.2f, rate);
+        m_knockBp.set(320.0f, 1.4f, rate);
+        m_fingerLp.set(800.0f, rate);
+        m_lowMid.set(240.0f, 1.0f, rate);
+        // The top's fundamental, read against the sub's own phase, settles
+        // in about 15 ms.
+        m_demod = 1.0f - std::exp(-kTwoPi * 11.0f / rate);
         m_tone.reset(0.5f);
         m_morph.reset(0.3f);
         m_fat.reset(0);
@@ -561,6 +653,9 @@ public:
             m_ladder.reset();
             m_os.reset();
             m_os4.reset();
+            stopStrings();
+            m_noiseLeft = 0;
+            m_fundI = m_fundQ = m_fundI2 = m_fundQ2 = 0;
         } else {
             release();
         }
@@ -628,10 +723,17 @@ public:
         float bendTarget = sh.bend;
         if (sh.bendSettled && sh.bend != 0)
             bendTarget = float(nearestInKey(h, m_target + double(sh.bend)) - m_target);
-        const float decayCoef = std::exp(-1.0f / (std::max(0.01f, R.decay) * rate));
+        // A string's twist is how long it rings; muted by the palm, or
+        // played as a ghost, it is a dead thud of 40 ms.
+        float ampDecay = R.mRing != 0 ? R.decay * std::exp2(R.mRing * (morph - 0.3f)) : R.decay;
+        const float dead = R.string > 0 ? deadness() : 0.0f;
+        ampDecay = lerpf(ampDecay, 0.04f, dead);
+        const float decayCoef = std::exp(-1.0f / (std::max(0.01f, ampDecay) * rate));
         const float releaseCoef = std::exp(-1.0f / (std::max(0.004f, R.release) * rate));
         const float attackInc = 1.0f / (std::max(0.0005f, R.attack) * rate);
-        const float envDecay = R.envDecay * (1.0f + morph * R.mDecay) * (1.0f - 0.35f * m_accent);
+        const float envDecay = R.envDecay * (1.0f + morph * R.mDecay) * (1.0f - 0.35f * m_accent) *
+                               (R.contour != 0 ? std::exp2(R.contour * (morph - 0.3f)) : 1.0f) *
+                               (1.0f - R.toneDecay * tone);
         const float fenvCoef = std::exp(-1.0f / (std::max(0.01f, envDecay) * rate));
         const float dropCoef = std::exp(-1.0f / (std::max(0.005f, R.dropTime) * rate));
         const float sustain = R.sustain;
@@ -652,8 +754,11 @@ public:
         const float fmL = R.fm + grit * sh.gritChar * 0.5f;
         // A held note sits about 14 dB under full scale, the sub's peak near
         // −10 dB: room for the kick it pumps with, and for the bus.
-        const float topGain = R.level * (0.5f + 0.5f * m_vel) * 0.42f;
-        const float subGain = R.sub * (0.86f + 0.14f * m_vel) * (1.0f + 0.25f * fat) * 0.235f;
+        // A ghost note is mostly the finger: the note itself 15 dB down.
+        const float ghost = R.string > 0 ? ghostness() : 0.0f;
+        const float fingerGain = R.level * (0.5f + 0.5f * m_vel) * 0.42f;
+        const float topGain = fingerGain * (1.0f - 0.82f * ghost);
+        const float subGain = R.sub * (0.86f + 0.14f * m_vel) * (1.0f + 0.25f * fat) * 0.235f * (1.0f - 0.82f * ghost);
         const float width = std::min(1.0f, R.width + 0.4f * fat);
         const int unison = R.unison;
         const float uniNorm = 1.0f / std::sqrt(float(unison));
@@ -756,6 +861,8 @@ public:
                     d2 = std::exp2(cents / 1200.0f);
                     d3 = std::exp2(-cents * 1.07f / 1200.0f);
                 }
+                if (R.string > 0)
+                    tuneString(midiToHz(m_midi + double(m_bend + R.drop * m_drop)), tone, R.ring, dead);
             }
 
             // Envelopes.
@@ -791,6 +898,7 @@ public:
             m_phase += inc;
             if (m_phase >= 1.0f) {
                 m_phase -= 1.0f;
+                m_halfCycle = !m_halfCycle;
                 if (wraps)
                     wraps[i] = 1;
             }
@@ -825,6 +933,20 @@ public:
                 q -= polyBlep(t2, inc);
                 osc += sqL * 0.8f * q;
             }
+            if (R.subSquare > 0) {
+                // An octave down: high for one cycle of the note, low for
+                // the next, its edges where the note's phase wraps. The
+                // crossover keeps its own fundamental out of the low end,
+                // so what it adds is the growl of its odd harmonics.
+                const float hp = 0.5f * (ph + (m_halfCycle ? 1.0f : 0.0f));
+                float q = m_halfCycle ? -1.0f : 1.0f;
+                q += polyBlep(hp, 0.5f * inc);
+                float t2 = hp + 0.5f;
+                if (t2 >= 1.0f)
+                    t2 -= 1.0f;
+                q -= polyBlep(t2, 0.5f * inc);
+                osc += R.subSquare * 0.8f * q;
+            }
             if (R.octSaw > 0) {
                 float p2 = ph * 2.0f;
                 if (p2 >= 1.0f)
@@ -841,6 +963,8 @@ public:
                     c = std::sin(c * (1.0f + 3.0f * R.foldPre * hiScale) * 1.5707963f);
                 osc += fmL * c;
             }
+            if (R.string > 0)
+                osc += R.string * pluckedString(R.body);
 
             // Filters (the ladder, and the vowel bank beside it) and drive,
             // the drive at twice the rate so its harmonics don't fold back.
@@ -863,15 +987,30 @@ public:
                 // Four times the rate: a drive this hard folds and clips into
                 // corners whose harmonics would pass twice the rate.
                 auto inner = [&](float v) { return m_os4.process(v, shapeFn); };
-                y = ladder(m_os.process(x * g, inner) * comp);
+                y = ladder(m_os.process(x * g, inner) * comp, R.heat);
             }
             else if (character > 0.5f) // folding: four times the rate here too
-                y = m_os.process(ladder(x) * g, [&](float v) { return m_os4.process(v, shapeFn); }) * comp;
+                y = m_os.process(ladder(x, R.heat) * g, [&](float v) { return m_os4.process(v, shapeFn); }) * comp;
             else
-                y = m_os.process(ladder(x) * g, shapeFn) * comp;
+                y = m_os.process(ladder(x, R.heat) * g, shapeFn) * comp;
             y = m_post.step(y).low;
+            if (R.lowMid > 0)
+                y += R.lowMid * m_lowMid.k * m_lowMid.step(y).band;
             if (m_djOn)
                 y = m_dj.step(y).low;
+            // The top's own fundamental, before the crossover takes it: its
+            // level, read against the sub's phase (both quadratures, twice
+            // smoothed), comes back as a sine in that phase, so the drive's
+            // weight is heard and the low end stays one signal.
+            float fund = 0;
+            if (R.lowThrough > 0) {
+                const float c1 = std::cos(kTwoPi * ph);
+                m_fundI += m_demod * (y * s1 - m_fundI);
+                m_fundQ += m_demod * (y * c1 - m_fundQ);
+                m_fundI2 += m_demod * (m_fundI - m_fundI2);
+                m_fundQ2 += m_demod * (m_fundQ - m_fundQ2);
+                fund = 2.0f * R.lowThrough * std::sqrt(m_fundI2 * m_fundI2 + m_fundQ2 * m_fundQ2) * s1;
+            }
             // The crossover: two 2-pole high-passes, a 24 dB slope.
             y = m_hp2.step(m_hp1.step(y).high).high;
 
@@ -879,10 +1018,15 @@ public:
             const float mute = m_mute.step(muteTarget);
             const float dk = duck[std::min(off0 + i, kBlock - 1)];
             const float pumped = 1.0f - R.pump * dk;
-            const float top = y * amp * topGain * (1.0f + 0.8f * m_accent * R.accent) * pumped;
+            const float topScale = amp * topGain * (1.0f + 0.8f * m_accent * R.accent) * pumped;
+            const float top = y * topScale;
             // The sub ducks under the kick harder than the top does.
             const float sub = s1 * amp * subGain * pumped * (1.0f - R.subPump * dk);
-            float mono = (top + sub) * mute;
+            float mono = (top + fund * topScale + sub) * mute;
+            // The finger's own sounds, which don't follow the note's
+            // envelope: the thump of a pluck and the knock of a stop.
+            if (m_noiseLeft > 0)
+                mono += fingerNoise() * fingerGain * pumped * mute;
             float side = 0;
             if (width > 0.01f) {
                 m_chorus.push(m_sideHp.step(top * mute).high);
@@ -911,7 +1055,7 @@ public:
         m_lfo = wobDepth > 0.001f ? lfo : -1.0f;
         m_lfoDepth = wobDepth;
         m_level = std::max(peak, m_level * 0.97f);
-        if (m_stage == Idle && m_count == 0)
+        if (m_stage == Idle && m_count == 0 && m_noiseLeft <= 0)
             m_active = false;
     }
 
@@ -953,14 +1097,18 @@ private:
             // From silence, start every cycle at zero: each note's first
             // swing of the sub is the same, so it punches the same.
             m_phase = m_fmPhase = 0;
+            m_halfCycle = false;
             m_saw2 = m_rng.unit();
             m_saw3 = m_rng.unit();
+            m_fundI = m_fundQ = m_fundI2 = m_fundQ2 = 0;
         }
         m_vel = clampf(m_cur.vel * velScale, 0.05f, 1.0f);
         m_accent = accent || m_cur.vel > 0.9f ? 1.0f : 0.0f;
         m_stage = Attack;
         m_fenv = 1;
         m_drop = 1;
+        if (recipe(m_cur.sound).string > 0)
+            pluckString();
         m_gate = true;
         m_active = true;
     }
@@ -970,6 +1118,13 @@ private:
             m_stage = Release;
     }
     void release() {
+        // The hand that lets a string go stops it: a soft knock, as loud
+        // as what is still ringing.
+        if (m_active && m_stage != Idle && recipe(m_cur.sound).string > 0) {
+            m_knockT = 0;
+            m_knockAmp = 0.0175f * (0.6f + 0.4f * m_vel) * m_amp;
+            m_noiseLeft = int(0.03f * m_rate);
+        }
         closeGate();
         m_rolling = false;
     }
@@ -995,9 +1150,134 @@ private:
     // The ladder fed gently: its input clips ahead of the resonance, so a
     // hot signal flattens the very peak a squelch is made of. In at a level
     // that falls as the resonance rises, out at the level it came in.
-    float ladder(float x) {
-        const float trim = 0.45f / (1.0f + 0.5f * m_ladder.k);
+    // Fed hot (heat above 1), the input clips harder and the ladder
+    // compresses: the Minimoog's roundness.
+    float ladder(float x, float heat) {
+        const float trim = heat * 0.45f / (1.0f + 0.5f * m_ladder.k);
         return m_ladder.step(x * trim) / trim;
+    }
+
+    // --- the plucked string ------------------------------------------------
+    //
+    // Karplus–Strong: a delay line one period long, fed back through a loss
+    // filter, so every harmonic rings and the high ones die first, as on a
+    // real string. The delay is read between samples (four-point Lagrange)
+    // and the loss filter's own delay at the note is taken off it, so the
+    // string is in tune with the sub and slides with it, a fretless glide.
+
+    // Every eight samples: the delay for the pitch now, and the loss. The
+    // loss is set by how fast a kilohertz dies (an eighth of a second low
+    // on the field, a dark gut thud, to half a second high, a brighter
+    // ring), whatever the note: a low string passes its loss filter fewer
+    // times a second, so it gets a stronger one, and every note has the
+    // same thump and bloom.
+    void tuneString(float hz, float tone, float ring, float dead) {
+        hz = clampf(hz, m_rate / float(kString - 8), m_rate / 16.0f);
+        const float w = kTwoPi * hz / m_rate;
+        {
+            const float t60 = lerpf(0.12f, 0.5f, tone) * (1.0f - 0.6f * dead);
+            // The gain each pass at 1 kHz for that, and the one-pole with
+            // that gain there: (1 − a)² = g²(1 − 2a cos ω + a²), its smaller root.
+            const float g = std::exp2(-9.966f / (hz * t60));
+            const float c = std::cos(kTwoPi * 1000.0f / m_rate);
+            const float u = 1.0f - g * g, b = 1.0f - g * g * c;
+            m_strA = u > 1e-6f ? clampf((b - std::sqrt(std::max(0.0f, b * b - u * u))) / u, 0.0f, 0.95f) : 0.0f;
+        }
+        // The one-pole's phase delay at the fundamental, in samples.
+        const float pd = std::atan2(m_strA * std::sin(w), 1.0f - m_strA * std::cos(w)) / w;
+        m_strD = m_rate / hz - pd;
+        // The loop loses 60 dB at the fundamental over ring seconds; the
+        // amp envelope decides how long the note is heard.
+        m_strG = std::exp2(-9.966f / (hz * ring));
+    }
+
+    // A pluck: a soft finger's bump of displacement, and the same bump
+    // inverted a little later, its reflection from the near end; where the
+    // finger is along the string sets the gap, so the harmonics with a node
+    // there go missing. Height plucks harder and nearer the bridge.
+    //
+    // A string still ringing is stopped by the finger that plucks it again:
+    // it fades out over a few milliseconds while the pluck starts on the
+    // other of the lane's two strings, so a repeated note never clicks.
+    void pluckString() {
+        // Not two plucks alike: a little louder or softer, the finger a
+        // little wider or nearer the bridge.
+        const float vary = std::exp2(0.25f * m_rng.bipolar());
+        const float wider = 1.0f + 0.1f * m_rng.bipolar(), nearer = 1.0f + 0.1f * m_rng.bipolar();
+        if (m_amp >= 0.02f) {
+            String &was = m_strings[m_string];
+            was.level = 1;
+            was.d = m_strD;
+            m_string ^= 1;
+        }
+        String &s = m_strings[m_string];
+        std::fill(std::begin(s.buf), std::end(s.buf), 0.0f);
+        s.lp = 0;
+        s.level = 0;
+        const float period = m_rate / std::max(20.0f, midiToHz(m_target));
+        const float tone = clampf(m_cur.tone + 0.2f * m_accent - 0.3f * deadness(), 0.0f, 1.0f);
+        m_excW = std::min(m_rate / lerpf(330.0f, 2600.0f, tone * tone) * wider, 0.6f * period);
+        m_excGap = lerpf(0.25f, 0.13f, tone) * period * nearer;
+        m_excT = 0;
+        // A narrower bump carries less of the low harmonics; a harder,
+        // sharper pluck keeps most of the body and adds the snap on top.
+        m_excAmp = 0.55f * std::pow(m_rate / 330.0f / m_excW, 0.6f) * vary;
+        // An accent plucks hard enough that the string slaps the
+        // fingerboard: its swing is clipped there until it has settled.
+        m_buzz = m_accent > 0 ? 0.55f * m_excAmp : 0.0f;
+        // The finger on the string: a short thump, louder for a ghost.
+        m_thumpT = 0;
+        m_thumpAmp = (0.06f + 0.06f * m_accent + 0.1f * ghostness()) * vary;
+        m_noiseLeft = int(0.03f * m_rate);
+    }
+    // How much a note is a ghost (pressed lightly), and how dead it is
+    // (a ghost, or palm-muted with Shift and its letter).
+    float ghostness() const { return clampf((0.6f - m_cur.vel) / 0.15f, 0.0f, 1.0f); }
+    float deadness() const { return (m_cur.flags & Square) ? 1.0f : ghostness(); }
+
+    // The thump and the knock: noise through a Hann window, each through
+    // its own band-pass, so they start and end without a click.
+    float fingerNoise() {
+        float t = 0, k = 0;
+        const float thumpLen = 0.007f * m_rate, knockLen = 0.005f * m_rate;
+        if (m_thumpT < thumpLen) {
+            const float w = std::sin(kPi * m_thumpT / thumpLen);
+            t = m_thumpAmp * w * w * m_rng.bipolar();
+            m_thumpT += 1;
+        }
+        if (m_knockT < knockLen) {
+            const float w = std::sin(kPi * m_knockT / knockLen);
+            k = m_knockAmp * w * w * m_rng.bipolar();
+            m_knockT += 1;
+        }
+        --m_noiseLeft;
+        // A gentle low-pass after them both: a finger is soft, and noise
+        // would otherwise leave a hiss on the band-passes' skirts.
+        return m_fingerLp.step(m_thumpBp.k * 3.0f * m_thumpBp.step(t).band + m_knockBp.k * 3.0f * m_knockBp.step(k).band);
+    }
+    void stopStrings() {
+        for (String &s : m_strings) {
+            std::fill(std::begin(s.buf), std::end(s.buf), 0.0f);
+            s.lp = s.level = 0;
+        }
+    }
+    inline float pluckedString(float body) {
+        float e = 0;
+        if (m_excT < m_excW + m_excGap) {
+            auto bump = [this](float t) {
+                return t >= 0 && t < m_excW ? 0.5f - 0.5f * std::cos(kTwoPi * t / m_excW) : 0.0f;
+            };
+            e = m_excAmp * (bump(m_excT) - bump(m_excT - m_excGap));
+            m_excT += 1;
+        }
+        float v = m_strings[m_string].step(m_strD, m_strA, m_strG, e, m_buzz);
+        String &was = m_strings[m_string ^ 1];
+        if (was.level > 1e-4f) {
+            was.level *= m_stopCoef;
+            v += was.level * was.step(was.d, m_strA, m_strG, 0, 0);
+        }
+        // Through the body: the string's own sound and the box's.
+        return v + body * (0.9f * m_body[0].k * m_body[0].step(v).band + 0.6f * m_body[1].k * m_body[1].step(v).band);
     }
 
     // Steps from a lit step to the next: the gate is a share of that, so an
@@ -1038,6 +1318,7 @@ private:
     uint32_t m_chordSeq = 0;
     long m_step = 0;
     double m_gateEnd = 0;
+    bool m_halfCycle = false; // which half of the octave-down square
     float m_phase = 0, m_saw2 = 0, m_saw3 = 0, m_fmPhase = 0, m_drift = 0, m_chorusPhase = 0;
     Smooth m_tone, m_morph, m_fat, m_press, m_mute;
     Ladder m_ladder;
@@ -1050,6 +1331,47 @@ private:
     bool m_djOn = false;
     Delay m_chorus;
     float m_cutNow = 0, m_lfo = -1, m_lfoDepth = 0, m_level = 0;
+    // The plucked string, two of them so one can be stopped while the next
+    // pluck starts: each a delay line long enough for a note bent two
+    // octaves under the bottom of the pad, read d samples back through a
+    // one-pole loss.
+    static constexpr int kString = 4096;
+    struct String {
+        float buf[kString] = {};
+        int w = 0;
+        float d = 100, lp = 0, level = 0; // level: how far a stopped string has faded
+        inline float step(float delay, float a, float g, float in, float buzz) {
+            const float pos = float(w + kString) - delay;
+            const int i0 = int(pos);
+            const float f = pos - float(i0);
+            const float p = f + 1, q = f - 1, r = f - 2;
+            const float z = -f * q * r * (1.0f / 6.0f) * buf[(i0 - 1) & (kString - 1)] +
+                            p * q * r * 0.5f * buf[i0 & (kString - 1)] -
+                            p * f * r * 0.5f * buf[(i0 + 1) & (kString - 1)] +
+                            p * f * q * (1.0f / 6.0f) * buf[(i0 + 2) & (kString - 1)];
+            lp += (1.0f - a) * (z - lp);
+            float v = g * lp + in;
+            // Against the fingerboard: past it, the swing gives way.
+            if (buzz > 0 && std::fabs(v) > buzz)
+                v = std::copysign(buzz + 0.3f * (std::fabs(v) - buzz), v);
+            buf[w] = v;
+            w = (w + 1) & (kString - 1);
+            return v;
+        }
+    };
+    String m_strings[2];
+    int m_string = 0; // the one plucked last
+    float m_strD = 100, m_strA = 0.5f, m_strG = 0.99f, m_stopCoef = 0.99f;
+    float m_excT = 1e9f, m_excW = 1, m_excGap = 0, m_excAmp = 0, m_buzz = 0;
+    Svf m_body[2];
+    // The finger's thump and knock, and how long their filters still ring.
+    float m_thumpT = 1e9f, m_thumpAmp = 0, m_knockT = 1e9f, m_knockAmp = 0;
+    int m_noiseLeft = 0;
+    Svf m_thumpBp, m_knockBp;
+    OnePoleLp m_fingerLp;
+    Svf m_lowMid;
+    // The top's fundamental against the sub's phase, in quadrature.
+    float m_fundI = 0, m_fundQ = 0, m_fundI2 = 0, m_fundQ2 = 0, m_demod = 0.001f;
 };
 
 class Engine : public PartEngine {

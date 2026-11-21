@@ -24,12 +24,13 @@
 // accent, or, with only shapers down, latches them so they stay.
 //
 // The keyboard is a second way in: two rows of the scale (Z to / and A to '
-// an octave up; Ö Ä on a Nordic keyboard), the eight sounds on Q to I
+// an octave up; Ö Ä on a Nordic keyboard), the ten sounds on Q to P
 // (Shift: square), and the keys every part page shares (docs/PARTS.md 4b):
 // ← → the sound, ↑ ↓ the octave, Shift+← → the roll, - + the tone, Return
 // latch, Shift+Return overdub, the key left of 1 (§ or `) follow the chords,
 // Delete free the shapers, F1–F8 and Backspace the clips. Shift+↑ ↓ is the
-// slide. The older keys ([ ] = \ O P F9 F10, Enter for LOOP) still work.
+// slide. The older keys ([ ] = \ F9 F10, Enter for LOOP) still work; O and
+// P, once follow and let go, are the ninth and tenth sounds now.
 // Everything a key does, the band under the pad does for the mouse.
 
 #include <QFontMetricsF>
@@ -103,6 +104,16 @@ Shaper shaperOf(Role r) {
 }
 Role roleOf(Shaper s) {
     return s == ShapeRoll ? RollRole : s == ShapeWob ? WobRole : s == ShapeGrit ? GritRole : s == ShapeFilter ? FiltRole : OctRole;
+}
+
+// What the twist does on a sound, as its readouts name it.
+QString morphName(int sound) {
+    switch (sound) {
+    case Acid: return QStringLiteral("SQUELCH");
+    case Moog: return QStringLiteral("CONTOUR");
+    case Upright: return QStringLiteral("RING");
+    default: return QStringLiteral("MORPH");
+    }
 }
 
 // Twist from where the finger landed, folded to ±90° (a contact ellipse
@@ -497,17 +508,15 @@ public:
         case Qt::Key_section:
         case Qt::Key_QuoteLeft:
         case Qt::Key_Backslash:
-        case Qt::Key_O:
             toggleFollow(ctx);
             return true;
         case Qt::Key_Delete:
-        case Qt::Key_P:
             freeShapers(ctx);
             return true;
-        case Qt::Key_Q: case Qt::Key_W: case Qt::Key_E: case Qt::Key_R:
-        case Qt::Key_T: case Qt::Key_Y: case Qt::Key_U: case Qt::Key_I: {
-            static const int order[] = {Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R,
-                                        Qt::Key_T, Qt::Key_Y, Qt::Key_U, Qt::Key_I};
+        case Qt::Key_Q: case Qt::Key_W: case Qt::Key_E: case Qt::Key_R: case Qt::Key_T:
+        case Qt::Key_Y: case Qt::Key_U: case Qt::Key_I: case Qt::Key_O: case Qt::Key_P: {
+            static const int order[SoundCount] = {Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R, Qt::Key_T,
+                                                  Qt::Key_Y, Qt::Key_U, Qt::Key_I, Qt::Key_O, Qt::Key_P};
             // Shift with a sound's letter: that sound, its saw turned square
             // (or back), the same keys on every layout.
             for (int s = 0; s < SoundCount; ++s)
@@ -573,18 +582,22 @@ public:
 
     void stepMorph(int dir, ControlContext &ctx) {
         m_morph[m_sound] = clampf(m_morph[m_sound] + 0.1f * float(dir), 0, 1);
-        ctx.notice(QStringLiteral("%1 morph %2%").arg(QString::fromUtf8(recipe(m_sound).name))
+        ctx.notice(QStringLiteral("%1 %2 %3%").arg(QString::fromUtf8(recipe(m_sound).name), morphName(m_sound).toLower())
                        .arg(int(std::lround(m_morph[m_sound] * 100))));
     }
 
     void toggleSquare(ControlContext &ctx) {
-        if (recipe(m_sound).saw <= 0) {
+        // On a string the same switch is the palm: muted, every note a
+        // dead thud.
+        const bool string = recipe(m_sound).string > 0;
+        if (recipe(m_sound).saw <= 0 && !string) {
             ctx.notice(QStringLiteral("%1 has no saw to turn square").arg(QString::fromUtf8(recipe(m_sound).name)));
             return;
         }
         m_square[m_sound] = !m_square[m_sound];
         ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(recipe(m_sound).name),
-                                           m_square[m_sound] ? QStringLiteral("square") : QStringLiteral("saw")));
+                                           string ? (m_square[m_sound] ? QStringLiteral("muted") : QStringLiteral("open"))
+                                                  : (m_square[m_sound] ? QStringLiteral("square") : QStringLiteral("saw"))));
     }
 
     void toggleFollow(ControlContext &ctx) {
@@ -676,21 +689,21 @@ public:
 
     QString help() const override {
         return QStringLiteral(
-            "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce (or Q W E R T Y U I)\n"
+            "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce, moog, upright (or Q W E R T Y U I O P)\n"
             "↑ ↓\tthe pad's octave\n"
             "Shift+← → (or [ ])\tthe roll: off, then OFFBEAT … 8THS, latched on whatever plays\n"
             "- + (or =)\tdarker, brighter: the tone of notes played on the keys\n"
             "Return\twith shapers down, latch them (as a click does); with none, LOOP\n"
             "Shift+Return\toverdub on or off (F10 too)\n"
-            "§ (` on US, or \\ or O)\tfollow the chords, on or off\n"
-            "Delete\tlet the latched shapers go (P too)\n"
+            "§ (` on US, or \\)\tfollow the chords, on or off\n"
+            "Delete\tlet the latched shapers go\n"
             "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · clear it · stop the loop\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds, and every setting "
             "the keys reach; LATCH with nothing held: the next shaper you let go stays\n"
             "play, then Space\tloops what you just played (Space again calls a waiting loop off)\n"
             "touch the lower field\ta note in the key: higher is brighter (clean sub to biting), harder accents\n"
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back\n"
-            "twist / flatten the finger\tmorph the sound / fatten it\n"
+            "twist / flatten the finger\tmorph the sound (ACID squelch, MOOG contour, UPRIGHT ring) / fatten it\n"
             "OCT: +12 row / BEND row\tup an octave while held (two fingers, two): tap to pump; any finger there bends with its height\n"
             "ROLL\tland on a pattern: the held note strikes it on the bar; slide along the row, up/down the gate\n"
             "WOB\tland on a rate (straight on top, triplets below): a wobble on the tempo; up/down the depth\n"
@@ -699,7 +712,8 @@ public:
             "click\twith a note down, strike it again accented; with only shapers down, latch them\n"
             "LOOP (rail, far left), Enter or F9\talso: record the coming bars from the next bar line; tap again to close\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
-            "Shift+↑ ↓   Shift+[ ]   Shift+Q … I\tslide time   morph   that sound with a square for its saw");
+            "Shift+↑ ↓   Shift+[ ]   Shift+Q … P\tslide time   morph   that sound with a square for its saw (UPRIGHT: palm-muted)\n"
+            "UPRIGHT pressed lightly\ta ghost note: mostly the finger");
     }
 
     // For the tutorial: whether the bass follows the chords, and its sound.
@@ -1438,8 +1452,8 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
     const QPointF at = pc.at(0.012f, kField - 0.045f);
     const QRectF tagR = c::tag(p, at, QString::fromUtf8(R.name), pc.color, 16);
     c::text(p, QRectF(tagR.right() + 10, tagR.top(), pc.pad.width() * 0.6, tagR.height()),
-            QStringLiteral("%1 · morph %2% · slide %3 ms")
-                .arg(QString::fromUtf8(R.what))
+            QStringLiteral("%1 · %2 %3% · slide %4 ms")
+                .arg(QString::fromUtf8(R.what), morphName(m_sound).toLower())
                 .arg(int(std::lround(m_morph[m_sound] * 100)))
                 .arg(int(std::lround(1000 * glideSeconds()))),
             c::alpha(pc.color, 0.75f), 11);
@@ -1613,7 +1627,7 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
             c::gauge(p, QRectF(body.left(), body.top() + 13, body.width(), body.height() * 0.28),
                      clampf(0.5f + 0.5f * cut / 0.7f, 0, 1), amber, 10, true);
             c::text(p, QRectF(body.left(), body.top() + body.height() * 0.5, body.width(), 12),
-                    m_sound == Acid ? QStringLiteral("↔ SQUELCH") : QStringLiteral("↔ MORPH"), c::alpha(amber, 0.7f), 9, true);
+                    QStringLiteral("↔ ") + morphName(m_sound), c::alpha(amber, 0.7f), 9, true);
             c::gauge(p, QRectF(body.left(), body.top() + body.height() * 0.5 + 13, body.width(), body.height() * 0.28),
                      clampf(0.5f + 0.5f * mo, 0, 1), amber, 10, true);
         } else {
@@ -1687,7 +1701,8 @@ void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QStrin
 void Control::paintBand(QPainter &p, const PaintContext &pc) {
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.36), *pc.view, pc.color, pc.time, &m_spots);
-    static const char keys[] = "QWERTYUI";
+    static const char keys[] = "QWERTYUIOP";
+    static_assert(sizeof(keys) - 1 == SoundCount, "a key for every sound");
     {
         const QRectF row = c::bandRow(pc, 0, 0.38, 1);
         const qreal w = (row.width() + 4) / double(SoundCount);
@@ -1713,7 +1728,7 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
             QStringLiteral("−"), QStringLiteral("+"), SpotToneDown);
     stepper(0.12, QStringLiteral("SLIDE"), QStringLiteral("%1MS").arg(int(std::lround(1000 * glideSeconds()))),
             QStringLiteral("⇧↓"), QStringLiteral("⇧↑"), SpotSlideDown);
-    stepper(0.12, QStringLiteral("MORPH"), QStringLiteral("%1%").arg(int(std::lround(m_morph[m_sound] * 100))),
+    stepper(0.12, morphName(m_sound), QStringLiteral("%1%").arg(int(std::lround(m_morph[m_sound] * 100))),
             QStringLiteral("⇧["), QStringLiteral("⇧]"), SpotMorphDown);
 
     // The switches, lit when on; LATCH blinks while armed.
@@ -1725,7 +1740,7 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
     auto toggle = [&](int i, const QString &name, const QString &key, bool lit, int id) {
         keyChip(p, pc, QRectF(x + i * w, row.top(), w - 4, row.height()), name, key, lit, m_spots, id);
     };
-    toggle(0, m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
+    toggle(0, recipe(m_sound).string > 0 ? QStringLiteral("MUTE") : m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
            QStringLiteral("⇧%1").arg(QChar(keys[m_sound])), m_square[m_sound], SpotSquare);
     toggle(1, QStringLiteral("FOLLOW"), QStringLiteral("§"), m_follow, SpotFollow);
     toggle(2, QStringLiteral("LATCH"), QStringLiteral("⏎"), m_latchNext ? blink : latched, SpotLatch);
@@ -1738,7 +1753,7 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
 PartSpec makeBass() {
     PartSpec s;
     s.name = QStringLiteral("Bass");
-    s.blurb = QStringLiteral("sub, reese, acid, wobble, 808");
+    s.blurb = QStringLiteral("sub, reese, acid, 808, moog, upright");
     s.color = QColor("#FF4FD8");
     s.engine = std::make_unique<bass::Engine>();
     s.control = std::make_unique<Control>();

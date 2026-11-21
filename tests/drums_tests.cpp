@@ -356,6 +356,51 @@ private slots:
         QVERIFY(take.rms(7, 9) > 0.02);
     }
 
+    // Taps from a real session: a few rounds of a pattern, a pause, then
+    // five rounds of A A B about every 0.94 s, and Space just after the
+    // last B (before the next round would start). The loop is the pattern
+    // as last played, two rounds of it, and the tempo comes from it.
+    void spaceFindsTheTappedPatternWhereverItComes() {
+        const std::pair<double, bool> taps[] = {
+            {1.000, true},
+            {1.483, true},
+            {1.499, false},
+            {1.939, true},
+            {2.175, true},
+            {2.412, false},
+            {2.860, true},
+            {3.080, true},
+            {3.340, true},
+            {3.365, false},
+            {6.098, true},
+            {6.329, true},
+            {6.549, false},
+            {6.997, true},
+            {7.257, true},
+            {7.469, false},
+            {7.942, true},
+            {8.162, true},
+            {8.398, false},
+            {8.858, true},
+            {9.086, true},
+            {9.322, false},
+            {9.795, true},
+            {9.999, true},
+            {10.235, false},
+        };
+        std::string script = "page 0 1\n";
+        for (const auto &[t, a] : taps)
+            script += "tap " + std::to_string(t) + " " + at(a ? drums::Kick : drums::Clap) + "\n";
+        script += "key " + std::to_string(taps[std::size(taps) - 1].first + 0.34) + " Space\nend 16\n";
+        const auto take = testkit::play(script);
+        const auto &part = take.view.parts[0];
+        QCOMPARE(part.playing, 0);
+        QCOMPARE(int(part.clips[0].lengthBeats), 4);
+        QCOMPARE(part.clips[0].events, 6);
+        // Two rounds of about 0.93 s make a bar at about 129 BPM.
+        QVERIFY2(std::fabs(take.view.bpm - 129) <= 3, qPrintable(QString::number(take.view.bpm)));
+    }
+
     // Space while a groove plays under the fingers keeps it the way a click
     // does: whole bars of the groove on the clock, the tempo unchanged, and
     // none of the taps and rolls tried before it.

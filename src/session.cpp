@@ -222,8 +222,18 @@ void Session::setDebugLog(const QString &path) {
     std::lock_guard lock(m_lock);
     if (m_debugLog)
         std::fclose(m_debugLog);
-    m_debugLog = std::fopen(path.toLocal8Bit().constData(), "w");
-    dlog("tenfold debug log: ON = a hit a part heard (src live, or the slot it replayed from); TAKE = a loop made");
+    // Kept across runs (a restart mid-session loses nothing), started over
+    // once it grows past a few megabytes.
+    const QByteArray file = path.toLocal8Bit();
+    std::FILE *old = std::fopen(file.constData(), "r");
+    long size = 0;
+    if (old) {
+        std::fseek(old, 0, SEEK_END);
+        size = std::ftell(old);
+        std::fclose(old);
+    }
+    m_debugLog = std::fopen(file.constData(), size > 8 * 1024 * 1024 ? "w" : "a");
+    dlog("=== tenfold started. ON = a hit a part heard (src live, or the slot it replayed from); TAKE = a loop made");
 }
 
 void Session::dlog(const char *fmt, ...) {
@@ -594,6 +604,139 @@ double repeats(const std::vector<Hit> &hits, double a, double b, double period, 
 // the tinkering before the pattern settled stays out. Periods are the
 // candidates given, longest stretch at most `longest`; returns the loop's
 // length (a whole number of periods), or 0 when nothing repeats.
+// The pattern the player settled into, found from the hits alone (times in
+// seconds), so it doesn't matter when Space comes: the period that the
+// latest playing repeats with, the run of repeats back to where it began,
+// and the cycles of it to loop, from a cycle's first hit to where the next
+// cycle starts (or would, if Space came early).
+struct Cycle {
+    double period = 0, start = 0, end = 0;
+    int cycles = 0, matched = 0;
+};
+
+Cycle findCycle(const std::vector<Hit> &hits) {
+    const int n = int(hits.size());
+    if (n < 4)
+        return {};
+    // Candidates: the gaps between a recent hit and an earlier one of the
+    // same sound.
+    std::vector<double> cands;
+    for (int j = std::max(0, n - 24); j < n; ++j)
+        for (int i = j - 1; i >= 0; --i) {
+            const double d = hits[size_t(j)].x - hits[size_t(i)].x;
+            if (d > 8.0)
+                break;
+            if (d >= 0.25 && hits[size_t(i)].key == hits[size_t(j)].key)
+                cands.push_back(d);
+        }
+    std::sort(cands.begin(), cands.end());
+    std::vector<double> periods;
+    for (double d : cands)
+        if (periods.empty() || d > periods.back() * 1.03)
+            periods.push_back(d);
+    auto twinOf = [&](int j, double p, double tol) {
+        int best = -1;
+        double bestD = tol;
+        for (int i = j - 1; i >= 0; --i) {
+            const double d = std::fabs(hits[size_t(j)].x - p - hits[size_t(i)].x);
+            if (hits[size_t(i)].x < hits[size_t(j)].x - p - tol)
+                break;
+            if (hits[size_t(i)].key == hits[size_t(j)].key && d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
+    };
+    std::vector<Cycle> found;
+    for (double p0 : periods) {
+        const double tol = 0.05 + 0.04 * p0;
+        // From the latest hit back: each with its twin a period earlier.
+        // One stray hit is forgiven; two end the run.
+        int matched = 0, misses = 0, k = -1;
+        std::vector<double> gaps;
+        for (int j = n - 1; j >= 0; --j) {
+            const int t = twinOf(j, p0, tol);
+            if (t < 0) {
+                if (++misses > 1)
+                    break;
+                continue;
+            }
+            ++matched;
+            k = j;
+            gaps.push_back(hits[size_t(j)].x - hits[size_t(t)].x);
+        }
+        if (matched < 2 || k < 0)
+            continue;
+        std::nth_element(gaps.begin(), gaps.begin() + gaps.size() / 2, gaps.end());
+        const double p = gaps[gaps.size() / 2];
+        // The run's first cycle starts at the twin of its earliest repeat;
+        // follow that hit forward a period at a time: each is a cycle's
+        // first hit.
+        std::vector<int> chain{twinOf(k, p0, tol)};
+        if (chain[0] < 0)
+            continue;
+        for (;;) {
+            const double want = hits[size_t(chain.back())].x + p;
+            int next = -1;
+            double bestD = tol;
+            for (int i = chain.back() + 1; i < n; ++i) {
+                const double d = std::fabs(hits[size_t(i)].x - want);
+                if (hits[size_t(i)].key == hits[size_t(chain[0])].key && d < bestD) {
+                    bestD = d;
+                    next = i;
+                }
+            }
+            if (next < 0)
+                break;
+            chain.push_back(next);
+        }
+        if (chain.size() < 2)
+            continue;
+        Cycle c;
+        c.period = p;
+        c.matched = matched;
+        // A cycle only begun (its first hit played, then Space) ends the
+        // loop there; a whole one ends a period after its first hit.
+        const double lastStart = hits[size_t(chain.back())].x;
+        int inLast = 0, inPrev = 0;
+        for (const Hit &h : hits) {
+            if (h.x >= lastStart - tol / 2)
+                ++inLast;
+            else if (h.x >= lastStart - p - tol / 2)
+                ++inPrev;
+        }
+        // One hit a cycle is a pulse, not a pattern: the phrase decides.
+        if (inPrev <= 1 && inLast <= 1)
+            continue;
+        if (inLast < 0.6 * inPrev) {
+            c.end = lastStart;
+            chain.pop_back();
+        } else {
+            c.end = lastStart + p;
+        }
+        if (chain.empty())
+            continue;
+        // Two cycles of it when they are short, so the loop keeps the
+        // hand's own feel; one when it is long already.
+        const int take = chain.size() >= 2 && 2 * p <= 6.0 ? 2 : 1;
+        c.cycles = take;
+        c.start = hits[size_t(chain[chain.size() - size_t(take)])].x;
+        found.push_back(c);
+    }
+    if (found.empty())
+        return {};
+    // The shortest period that explains nearly as much as the best one: the
+    // pattern itself, not two or four of it.
+    int most = 0;
+    for (const Cycle &c : found)
+        most = std::max(most, c.matched);
+    for (const Cycle &c : found)
+        if (c.matched >= 0.85 * most)
+            return c;
+    return found.front();
+}
+
 double settledLoop(const std::vector<Hit> &hits, double end, double earliest, const std::vector<double> &periods,
                    double longest, double tol, double minScore, double edge) {
     for (double p : periods) {
@@ -744,34 +887,20 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
         for (const auto &o : times)
             if (o.real && o.t >= first - 0.01 && o.t <= nowT + 0.05)
                 hits.push_back({o.t, o.key});
-        std::vector<double> periods;
-        for (size_t i = hits.size(); i-- > 0;) {
-            const double p = nowT - hits[i].x;
-            if (p >= 0.3)
-                periods.push_back(p);
-        }
-        double start = first;
+        double start = first, stop = nowT;
         bool settled = false;
-        for (double p : periods) {
-            const double tol = 0.06 + 0.03 * p;
-            const double length = settledLoop(hits, nowT, first, {p}, 16.0, tol, 0.8, tol / 2);
-            if (length > 0) {
-                // Start on the hit nearest the found start: the player's own time.
-                const double want = nowT - length;
-                double bestD = 1e9;
-                for (const Hit &h : hits)
-                    if (std::fabs(h.x - want) < bestD) {
-                        bestD = std::fabs(h.x - want);
-                        start = h.x;
-                    }
-                settled = start > first + 0.05;
-                break;
-            }
+        const Cycle cycle = findCycle(hits);
+        if (cycle.cycles > 0) {
+            start = cycle.start;
+            stop = cycle.end;
+            settled = true;
+            dlog("  cycle: period=%.4f s, %d cycle(s) %.4f..%.4f, %d hits repeat", cycle.period, cycle.cycles,
+                 cycle.start, cycle.end, cycle.matched);
         }
-        dlog("  decided (free, sets the tempo): first=%.4f start=%.4f now=%.4f -> capture %.4f s (%.4f beats at the old "
+        dlog("  decided (free, sets the tempo): first=%.4f start=%.4f end=%.4f -> capture %.4f s (%.4f beats at the old "
              "tempo) settled=%d hits=%d slot=%d",
-             first, start, nowT, nowT - start, (nowT - start) / spb, int(settled), int(hits.size()), slot + 1);
-        ctx.capture(slot, start, nowT, 0.85f);
+             first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
+        ctx.capture(slot, start, stop, 0.85f);
         m_view.parts[part].recording = slot;
         ctx.notice(settled ? QStringLiteral("Loop of what you repeated, slot %1: it sets the tempo").arg(slot + 1)
                            : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
@@ -779,11 +908,14 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     }
     // Sound that went on after the last note (a riser building into its
     // drop, an impact ringing out) is part of what was played.
+    bool carried = clocked; // sound that carries itself on (a riser, a running arp)
     {
         // A note's own release isn't that: only sound going on well past it.
         const double sounding = lastSounding(part, last);
-        if (sounding > last + 2 * spb)
+        if (sounding > last + 2 * spb) {
             last = std::min(sounding, nowT);
+            carried = true;
+        }
     }
     const double beatNow = ctx.beatAt(nowT), beatFirst = ctx.beatAt(first), beatLast = ctx.beatAt(last);
     // The loop ends where the playing did: now, or a beat after the last
@@ -798,6 +930,10 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
         const double bar = std::ceil((ctx.beatAt(lastReal) + 0.5) / kBeatsPerBar) * kBeatsPerBar;
         end = std::min(bar, std::round(beatNow * 4.0) / 4.0);
     }
+    // Whatever the rounding, the last note played is in the take: Space
+    // right after a note loops it too.
+    if (lastReal >= 0)
+        end = std::max(end, std::ceil((ctx.beatAt(lastReal) + 0.13) * 4.0) / 4.0);
     // Did the player settle into a pattern? The shortest whole number of
     // bars that what was just played repeats with, stretched back over
     // every repeat, leaving out what came before it.
@@ -829,10 +965,13 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     }
     const bool settled = length > 0;
     if (!settled) {
-        // Played once: the whole phrase, in whole bars, with no bars of
-        // silence added to round it.
+        // Played once: the phrase, in whole bars, with no bars of silence
+        // added to round it, and no more than its last four bars. Longer
+        // playing that never repeated is a performance, not a loop; a loop
+        // already playing that is longer still sets the length below. Sound
+        // that carries itself (a build into its drop) stays whole.
         const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
-        length = kBeatsPerBar * std::clamp(played, 1.0, 16.0);
+        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 4.0);
     }
     // Over loops already playing, a take long enough to cover the longest
     // of them takes its length: a bass line over a four-bar progression
@@ -904,6 +1043,12 @@ void Session::startOver() {
     StudioMsg m;
     m.kind = StudioMsg::ClearAll;
     m_studio->post(m);
+    // A fresh start: what was played before it is no phrase for Space.
+    for (auto &page : m_pages)
+        if (page->ctx) {
+            page->ctx->onsetHead = 0;
+            page->ctx->heldCount = 0;
+        }
     m_takeOrder.clear();
     for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
         m_view.parts[p].playing = -1;

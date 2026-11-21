@@ -81,9 +81,9 @@ private slots:
     }
 
     void spaceLeavesOutTheTinkeringBeforeARepeatedBeat() {
-        // A few stray pads while finding the groove, then kick-snare-kick-
-        // snare twice, then Space on the next kick: the loop is the eight
-        // hits that repeat (two bars at 120 BPM), not the noodling.
+        // A few stray pads while finding the groove, then kick-snare four
+        // times round, then Space on the next kick: the loop is the groove
+        // (two rounds of it, a bar at 120 BPM), not the noodling.
         const auto take = testkit::play("page 0 1\n"
                                         "tap 0.3 0.38 0.38\ntap 0.55 0.62 0.62\ntap 0.8 0.88 0.38\n"
                                         "tap 1.5 0.12 0.12\ntap 2.0 0.38 0.12\ntap 2.5 0.12 0.12\ntap 3.0 0.38 0.12\n"
@@ -91,7 +91,7 @@ private slots:
                                         "key 5.5 Space\nend 8\n");
         QCOMPARE(int(std::lround(take.view.bpm)), 120);
         QCOMPARE(take.view.parts[0].playing, 0);
-        QCOMPARE(take.view.parts[0].clips[0].events, 8);
+        QCOMPARE(take.view.parts[0].clips[0].events, 4);
     }
 
     void overABeatSpaceLoopsTheBarsThatRepeat() {

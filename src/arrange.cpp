@@ -505,6 +505,8 @@ public:
             "fader). While the song plays, Space punches in: the bars you play over are replaced. Again to stop\n"
             "P\tplay the song from the top (Shift: loop it); again to stop. Ctrl+P pauses everything and plays it on\n"
             "Left, Right\tplaying: jump a section back or on, on the bar; stopped: pick a section\n"
+            "picked section: tap a lane's loop\tthe lanes show what plays in it (IN, or OUT OF THIS SECTION): a tap "
+            "plays that loop there, or takes the part out; a lane's name brings it back in (Shift+O takes each back)\n"
             "picked section: Delete · D · M · Shift+← →\tremove it · double it · join it with the next · swap it with a "
             "neighbour (Shift+O takes each back)\n"
             "Shift+O\tback to the song before the last take, write, clear or edit (eight deep)\n"
@@ -1296,14 +1298,27 @@ private:
     // What a tap (a second finger's, the click's, the mouse's) does.
     void activate(const Target &t, ControlContext &ctx) {
         switch (t.kind) {
-        case Target::Clip: toggleClip(t.a, t.b, ctx); break;
+        // With a song section picked, the lanes are that section: a tap puts
+        // a loop in it (or takes the part out), a name brings a part back in.
+        case Target::Clip:
+            if (sectionPicked())
+                setSectionClip(t.a, t.b, ctx);
+            else
+                toggleClip(t.a, t.b, ctx);
+            break;
         case Target::Scene: launchScene(t.a, ctx); break;
-        case Target::Name: toggleMute(t.a); break;
+        case Target::Name:
+            if (sectionPicked())
+                setSectionClip(t.a, sectionSlot(t.a) < 0 ? -2 : sectionSlot(t.a), ctx);
+            else
+                toggleMute(t.a);
+            break;
         case Target::Button: t.a == BBuild ? build(4, ctx) : t.a == BBreak ? breakdown(ctx) : drop(ctx); break;
         case Target::Section:
             m_selSection = t.a;
             m_selSlots.clear();
-            ctx.notice(QStringLiteral("%1 picked: Delete removes it, D doubles it, M joins the next, Shift+← → move it")
+            ctx.notice(QStringLiteral("%1 picked: tap a lane's loop to put it in or take it out; Delete removes "
+                                      "the section, D doubles it, M joins the next, Shift+← → move it")
                            .arg(sectionName(t.a)));
             break;
         case Target::Strip:
@@ -1754,6 +1769,69 @@ private:
         if (bar <= m_plannedBar)
             planBar(bar, ctx, true);
         ctx.notice(QStringLiteral("%1 plays from the bar").arg(sectionName(i)));
+    }
+
+    bool sectionPicked() const {
+        return m_selSection >= 0 && m_selSection < int(m_sections.size()) && m_rec != &m_take && !m_recording;
+    }
+    // The loop a part plays in the picked section (the one most of its bars
+    // have), or −1 when it is out of most of it.
+    int sectionSlot(int p) const {
+        if (!sectionPicked() || p < 0 || p >= m_parts)
+            return -1;
+        const Section &sec = m_sections[size_t(m_selSection)];
+        int count[kClipSlots + 1] = {};
+        for (int b = sec.bar0; b < sec.bar0 + sec.bars && b < m_song.length(); ++b) {
+            const int s = m_song.bars[size_t(b)].slot[p];
+            ++count[s >= 0 && s < kClipSlots ? s + 1 : 0];
+        }
+        int best = 0;
+        for (int k = 1; k <= kClipSlots; ++k)
+            if (count[k] > count[best])
+                best = k;
+        return best - 1;
+    }
+    // A part's loop for every bar of the picked section: `slot`, or out
+    // when it already plays that one; −2 brings it back in on the loop it
+    // last had in the song (or its first).
+    void setSectionClip(int p, int slot, ControlContext &ctx) {
+        if (!sectionPicked() || p < 0 || p >= m_parts)
+            return;
+        const StudioView &v = ctx.studio();
+        const Section sec = m_sections[size_t(m_selSection)];
+        if (slot == -2) {
+            slot = -1;
+            for (int b = 0; b < m_song.length() && slot < 0; ++b)
+                if (m_song.bars[size_t(b)].slot[p] >= 0)
+                    slot = m_song.bars[size_t(b)].slot[p];
+            for (int k = 0; k < kClipSlots && slot < 0; ++k)
+                if (v.parts[p].clips[k].state != ClipView::Empty)
+                    slot = k;
+            if (slot < 0) {
+                ctx.notice(QStringLiteral("%1 has no loops yet: make one on page %2").arg(m_names.value(p)).arg(p + 1));
+                return;
+            }
+        } else if (slot >= 0 && v.parts[p].clips[slot].state == ClipView::Empty) {
+            ctx.notice(QStringLiteral("%1 slot %2 is empty: make a loop on page %3").arg(m_names.value(p)).arg(slot + 1).arg(p + 1));
+            return;
+        }
+        const bool out = slot >= 0 && sectionSlot(p) == slot;
+        keepSong();
+        for (int b = sec.bar0; b < sec.bar0 + sec.bars && b < m_song.length(); ++b) {
+            SongBar &sb = m_song.bars[size_t(b)];
+            sb.slot[p] = int8_t(out ? -1 : slot);
+            // In from the section's top, from the top of the loop.
+            if (b == sec.bar0 && !out)
+                sb.relaunch |= uint8_t(1 << p);
+            else
+                sb.relaunch &= uint8_t(~(1 << p));
+        }
+        const QString name = QString::fromUtf8(labelName(sec.label)).toUpper();
+        ctx.notice(out ? QStringLiteral("%1 is out of this %2 (Shift+O takes it back)").arg(m_names.value(p), name)
+                       : QStringLiteral("%1 plays loop %2 in this %3 (Shift+O takes it back)")
+                             .arg(m_names.value(p))
+                             .arg(slot + 1)
+                             .arg(name));
     }
 
     void toggleClip(int p, int slot, ControlContext &ctx) {
@@ -3652,12 +3730,21 @@ QString ArrangeControl::targetHint(const Target &t, bool mouse) const {
     const QString tap = mouse ? QStringLiteral("CLICK") : QStringLiteral("TAP");
     switch (t.kind) {
     case Target::Clip: {
+        if (sectionPicked()) {
+            const QString sec = QString::fromUtf8(labelName(m_sections[size_t(m_selSection)].label)).toUpper();
+            return sectionSlot(t.a) == t.b ? QStringLiteral("%1 · %2: OUT OF THIS %3").arg(clipName(t.a, t.b).toUpper(), tap, sec)
+                                           : QStringLiteral("%1 · %2: PLAY IT IN THIS %3").arg(clipName(t.a, t.b).toUpper(), tap, sec);
+        }
         const bool picked = t.a == m_selPart && std::find(m_selSlots.begin(), m_selSlots.end(), t.b) != m_selSlots.end();
         return QStringLiteral("%1 · %2: START / STOP · HOLD: %3")
             .arg(clipName(t.a, t.b).toUpper(), tap, picked ? QStringLiteral("UNPICK") : QStringLiteral("PICK"));
     }
     case Target::Scene: return QStringLiteral("%1: LAUNCH SCENE %2 · HOLD: STORE").arg(tap).arg(t.a + 1);
-    case Target::Name: return QStringLiteral("%1 · %2: MUTE · HOLD: SOLO").arg(m_names.value(t.a).toUpper(), tap);
+    case Target::Name:
+        if (sectionPicked())
+            return QStringLiteral("%1 · %2: %3 THIS SECTION")
+                .arg(m_names.value(t.a).toUpper(), tap, sectionSlot(t.a) < 0 ? QStringLiteral("INTO") : QStringLiteral("OUT OF"));
+        return QStringLiteral("%1 · %2: MUTE · HOLD: SOLO").arg(m_names.value(t.a).toUpper(), tap);
     case Target::Button:
         return QStringLiteral("%1: %2").arg(tap, t.a == BBuild ? QStringLiteral("BUILD") : t.a == BBreak ? QStringLiteral("BREAKDOWN")
                                                                                                          : QStringLiteral("DROP"));
@@ -3758,6 +3845,8 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
                  std::min(1.0f, pv.channel.peak * 1.4f), audible ? col : c::alpha(col, 0.4f), 12);
 
         // The clips.
+        const int secSlot = sectionSlot(i);
+        const bool outOfSection = sectionPicked() && secSlot < 0;
         for (int s = 0; s < kClipSlots; ++s) {
             const float x0 = kNameW + (kCellsR - kNameW) * float(s) / kClipSlots;
             const float x1 = kNameW + (kCellsR - kNameW) * float(s + 1) / kClipSlots;
@@ -3853,10 +3942,24 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
                            Qt::white, 9, true);
                 }
             }
+            // In the picked song section: the loop this part plays there.
+            if (secSlot == s) {
+                p.setBrush(Qt::NoBrush);
+                p.setPen(QPen(Qt::white, 3));
+                p.drawRect(cell.adjusted(-2, -2, 2, 2));
+                c::tag(p, QPointF(cell.left() + 3, cell.bottom() - 14), QStringLiteral("IN"), Qt::white, 9, false);
+            }
             // Where the plan sends this part on the next bar.
             if (m_posted[i].bar == next && m_posted[i].slot == s && cv.state != ClipView::Queued && m_posted[i].relaunch)
                 c::text(p, cell.adjusted(2, 2, -4, -3), QStringLiteral("↺"), ink, px + 2, true,
                         Qt::AlignRight | Qt::AlignTop);
+        }
+        // Out of the picked section: its loops dimmed, and the lane says so
+        // under its name.
+        if (outOfSection) {
+            p.fillRect(pc.rect(kNameW, y0, kCellsR, y1), QColor(0, 0, 0, 140));
+            const QRectF cells = pc.rect(kNameW, y0, kCellsR, y1);
+            c::tag(p, QPointF(cells.left() + 6, cells.center().y() - 7), QStringLiteral("OUT OF THIS SECTION"), Qt::white, 9, false);
         }
 
         // The lane's mix: level, filter, echo, reverb.
@@ -4413,7 +4516,8 @@ QString ArrangeControl::status() const {
         parts << QStringLiteral("picked %1: %2").arg(pickText(), m_selSlots.size() > 1 ? QStringLiteral("M layers, Shift+M chains")
                                                                                        : QStringLiteral("D doubles, Shift+← → move, Delete clears"));
     else if (m_selSection >= 0)
-        parts << QStringLiteral("picked %1: Delete removes, D doubles, M joins, Shift+← → move").arg(sectionName(m_selSection).toLower());
+        parts << QStringLiteral("picked %1: tap a lane's loop to put it in or out · Delete removes, D doubles, M joins, Shift+← → move")
+                     .arg(sectionName(m_selSection).toLower());
     if (m_tensionHeld)
         parts << (m_tensionLive >= 0.6f ? QStringLiteral("tension %1: let go to drop").arg(int(m_tensionLive * 100))
                                         : QStringLiteral("tension %1").arg(int(m_tensionLive * 100)));

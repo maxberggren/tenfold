@@ -483,8 +483,8 @@ void Tutorial::build() {
          QStringLiteral("A song is a row of sections: intro, groove, builds, drops, a breakdown, an outro. I writes one "
                         "from your loops (the first I asks, the second writes) and it plays from the next bar; the band "
                         "under the lanes shows its sections and where it is. Ctrl+R first, to record it to a file."),
-         QStringLiteral("Shift+I writes a short one. Stopped, Left and Right pick a section: D doubles it, Delete "
-                        "removes it, Shift+O takes an edit back."),
+         QStringLiteral("Shift+I writes a short one. Stopped, Left and Right pick a section: tap a lane's loop to put it "
+                        "in or take it out, D doubles it, Delete removes it; Shift+O takes an edit back."),
          QStringLiteral("Your track is playing, and recording."),
          {QStringLiteral("Ctrl R"), QStringLiteral("I"), QStringLiteral("I")},
          QStringLiteral("record"),

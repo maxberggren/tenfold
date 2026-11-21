@@ -62,14 +62,25 @@ the loop. Each layer plays on its own: its own voice on Bass and Lead, its
 own chords on Chords (a different chord steps the other back), its own
 pattern on Arp, so layers sound together instead of cutting each other off.
 
-**Editing loops on Arrange.** Hold a clip (a second finger, or the mouse
+**The Song page (0).** A song is a row of sections (intro, groove, build,
+drop, breakdown, outro) in the band under the lanes. I writes one from your
+loops and plays it; Space records one as you play here (clips, mutes, the
+moves, the fader), and while a song plays Space punches in, replacing the bars
+you play over. P plays it from the top, Ctrl+P pauses. The moves work live on
+whatever plays: B builds to the end of the phrase with your FX loop leading
+in, Return drops (everything back on the ONE; the payoff of a build or a
+breakdown), N breaks down, X echoes out. Pick a section (← → while stopped,
+or tap it in the band) and the lanes show what plays in it: tap a loop to
+play it there or take the part out, D doubles the section, Delete removes it,
+Shift+O takes each edit back.
+
+**Editing loops on the Song page.** Hold a clip (a second finger, or the mouse
 button) or right-click it to pick it; right-click opens a menu of what can be
 done to it, and the same actions show as buttons under the song while
 something is picked. D doubles a loop into a free slot, Shift+← → (or [ ])
 move it, Delete clears it. Pick a second loop of the same part (hold or
 right-click it too) and M layers it into the first, Shift+M chains it after.
-Ctrl+Z takes back each edit. A song section is picked the same way: D doubles
-it, M joins it with the next, Shift+← → move it, Delete removes it.
+Ctrl+Z takes back each edit.
 
 **The same keys on every page.** Letters are each page's own (pads, notes,
 chords, scenes); the rest means the same everywhere, and every one of them

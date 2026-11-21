@@ -634,6 +634,36 @@ private slots:
         QCOMPARE(dropping, 0.0f);
     }
 
+    // With a song section picked, the lanes are that section: clicking the
+    // bass's loop takes the bass out of it, and only of it.
+    void aPickedSectionIsEditedInTheLanes() {
+        // The written track plays from 16.5; P at 18 stops it; → → picks its
+        // GROOVE (bars 9–16); a click on the bass's loop takes it out. P at
+        // 21 plays it from 22.5: the groove is 38.5–54.5.
+        const double laneH = 0.885 / kMaxParts, bassY = 0.885 - 1.5 * laneH, clipX = 0.12 + 0.07625 / 2;
+        const QString click = QString("mouse 20.0 %1 %2 down\nmouse 20.1 %1 %2 up\n").arg(clipX).arg(bassY);
+        auto bassAt = [&](const std::string &edit, double when) {
+            int bass = -2;
+            QString notice;
+            watch(loops("key 15.2 I\nkey 15.4 I\nkey 18.0 P\nkey 19.0 Right\nkey 19.3 Right\n" + edit + "key 21.0 P\nend " +
+                        std::to_string(when + 0.1) + "\n"),
+                  [&](double t, Session &s) {
+                      if (bass == -2 && t >= when)
+                          bass = s.view().parts[1].playing;
+                      if (t > 20.05 && t < 20.3)
+                          notice = s.notice(nullptr);
+                  });
+            return std::make_pair(bass, notice);
+        };
+        QVERIFY(bassAt("", 46.0).first >= 0);                   // the groove has the bass
+        const auto out = bassAt(click.toStdString(), 46.0);
+        QCOMPARE(out.first, -1);                                 // …not any more
+        QVERIFY2(out.second.contains(QStringLiteral("out of this GROOVE")), qPrintable(out.second));
+        QVERIFY(bassAt(click.toStdString(), 60.0).first >= 0);  // and back after it
+        // Shift+O takes the edit back.
+        QVERIFY(bassAt(click.toStdString() + "key 20.5 Shift+O\n", 46.0).first >= 0);
+    }
+
     void aRecordedBuildReplays() {
         // A build recorded into the song comes back with its drop on the same bar.
         //   15.3 O → take from 16.5; 16.7 B → a build from 18.5 to the end of

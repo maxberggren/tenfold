@@ -2397,9 +2397,15 @@ private:
                 // song keeps the sections it had.
                 if (punched) {
                     const int from = m_recStartBar - m_origin, to = b - m_origin;
-                    for (int k = 0; k < int(kept.size()) && k < m_song.length(); ++k)
-                        if (k < from || k >= to)
-                            m_song.bars[size_t(k)].label = kept[size_t(k)];
+                    for (int k = 0; k < int(kept.size()) && k < m_song.length(); ++k) {
+                        uint8_t &l = m_song.bars[size_t(k)].label;
+                        // Inside it too, unless something happened there (a
+                        // build, a drop, a breakdown, an echo-out): a mute
+                        // ridden in an intro doesn't make a groove of it.
+                        const bool event = l == LBuild || l == LDrop || l == LBreak || l == LOutro || l == LEnd;
+                        if (k < from || k >= to || !event)
+                            l = kept[size_t(k)];
+                    }
                     sections();
                 }
                 ctx.notice(m_playing ? QStringLiteral("Song: %1 bars, punched in").arg(m_song.length())
@@ -4183,7 +4189,9 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
         path.closeSubpath();
         p.fillPath(path, c::alpha(m_recording ? c::red() : pc.color, m_recording ? 0.3f : 0.08f));
     }
-    if (!m_sections.empty() && !m_recording && m_rec != &m_take) {
+    // A punch-in keeps the sections in view (where am I, in what): the bars
+    // it is replacing are framed in red.
+    if (!m_sections.empty() && m_rec != &m_take) {
         for (const auto &s : m_sections) {
             const QRectF r(xAt(s.bar0) + 1, band.top(), xAt(s.bar0 + s.bars) - xAt(s.bar0) - 2, band.height());
             const QColor col = labelColor(s.label, pc.color);
@@ -4201,6 +4209,15 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
             const QRectF r(xAt(s.bar0) - 1, band.top() - 2, xAt(s.bar0 + s.bars) - xAt(s.bar0) + 2, band.height() + 4);
             p.setBrush(Qt::NoBrush);
             p.setPen(QPen(Qt::white, 2, Qt::DashLine));
+            p.drawRect(r);
+        }
+        if (m_recording) {
+            const double from = std::max(0, m_recStartBar - m_origin);
+            const double to = std::clamp(pc.beat / kBeatsPerBar - m_origin, from, double(span));
+            const QRectF r(xAt(from), band.top() - 1, xAt(to) - xAt(from), band.height() + 2);
+            p.fillRect(r, c::alpha(c::red(), 0.18f));
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::red(), 2));
             p.drawRect(r);
         }
     } else {

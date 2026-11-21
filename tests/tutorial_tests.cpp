@@ -231,6 +231,7 @@ struct Walk {
     std::vector<int> songDrops; // the beats the written track's drops began on
     int lastSection = 0;
     float dropFilter = 0;       // how far from open the bus was in the track's drops
+    std::vector<std::pair<int, int>> sections; // the song's sections at the end: label, bars
 };
 
 // Plays the walk through a real session, watching the tutorial each tick.
@@ -294,6 +295,10 @@ Walk walk(const std::string &script) {
         }
     }
     session.refresh();
+    const int arrange = session.arrangePage();
+    for (int i = 0; i < int(session.probe(arrange, QStringLiteral("sectionCount"))); ++i)
+        w.sections.push_back({int(session.probe(arrange, QStringLiteral("sectionLabel%1").arg(i))),
+                              int(session.probe(arrange, QStringLiteral("sectionBars%1").arg(i)))});
     w.take.view = session.view();
     w.finishes = session.tutorial().finishes();
     w.activeAtEnd = session.tutorial().active();
@@ -464,6 +469,14 @@ private slots:
             std::printf("\n");
         }
         QCOMPARE(int(w.songDrops.size()), 2);
+        // The punch-in rode a mute through the intro: the intro is still one
+        // section, first, not slivers of intro and groove.
+        QVERIFY(!w.sections.empty());
+        QCOMPARE(w.sections[0].first, 1); // Intro
+        int intros = 0;
+        for (auto [label, bars] : w.sections)
+            intros += label == 1;
+        QCOMPARE(intros, 1);
         for (int b : w.songDrops)
             QVERIFY2(w.fxDrops.count(b), qPrintable(QStringLiteral("no FX drop on beat %1").arg(b)));
         // The track ends in silence: its echo has died away and no part

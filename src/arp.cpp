@@ -4,7 +4,7 @@
 // The left hand says WHAT: it holds notes on a grid of the scale (two rows,
 // an octave apart), and the first note grows into a chord, so one finger is
 // already a running triad. Above the grid sit the eight patterns, below it
-// the five sounds and the follow and latch switches.
+// the ten sounds in two rows and the follow and latch switches.
 //
 // The right hand says HOW, on six pads: rate and gate (twist for swing),
 // euclidean rhythm (press for rolls), range, tone (twist for resonance,
@@ -46,9 +46,12 @@ float u10(int v) { return float(v & 1023) / 1023.0f; }
 }
 
 void Settings::pack(Command &c) const {
+    // The sound had three bits when there were five; the fourth sits in the
+    // spare bit 30, so loops saved before there were ten unpack unchanged.
     c.i[0] = (pattern & 15) | (rate & 7) << 4 | ((octaves - 1) & 3) << 7 | (reg & 3) << 9 | (sound & 7) << 11 |
-             (echoTime & 7) << 14 | (accent & 15) << 17 | (stack & 7) << 21 | int(follow) << 24 | (rotate & 31) << 25;
-    c.i[1] = int(seed & 0xFFFFFF);
+             (echoTime & 7) << 14 | (accent & 15) << 17 | (stack & 7) << 21 | int(follow) << 24 | (rotate & 31) << 25 |
+             (sound >> 3 & 1) << 30;
+    c.i[1] = int(seed & 0xFFFFFF) | int(alt) << 24;
     c.i[2] = q10(accentDepth) | q10(ratchet) << 10 | q10(envBoost) << 20;
     c.i[3] = (c.i[3] & ~1023) | q10(throwFb);
     c.f[0] = gate;
@@ -67,13 +70,14 @@ void Settings::unpack(const Command &c) {
     rate = std::clamp(a >> 4 & 7, 0, RateCount - 1);
     octaves = (a >> 7 & 3) + 1;
     reg = a >> 9 & 3;
-    sound = std::clamp(a >> 11 & 7, 0, SoundCount - 1);
+    sound = std::clamp((a >> 11 & 7) | (a >> 30 & 1) << 3, 0, SoundCount - 1);
     echoTime = std::clamp(a >> 14 & 7, 0, kEchoTimes - 1);
     accent = std::clamp(a >> 17 & 15, 0, kAccentChoices - 1);
     stack = std::clamp(a >> 21 & 7, 0, kStacks - 1);
     follow = a >> 24 & 1;
     rotate = a >> 25 & 31;
     seed = uint32_t(c.i[1]) & 0xFFFFFF;
+    alt = c.i[1] >> 24 & 1;
     accentDepth = u10(c.i[2]);
     ratchet = u10(c.i[2] >> 10);
     envBoost = u10(c.i[2] >> 20);
@@ -279,7 +283,7 @@ constexpr double kTopMidi = 100.0; // E7: arps climb no higher
 constexpr float kOutGain = 1.6f;
 constexpr int kSoftVoices = 18; // past this, the oldest notes are faded out to make room
 
-// One arp note. Five sounds, all through the same ladder filter so the
+// One arp note. Ten sounds, all through the same ladder filter so the
 // tone pad means the same thing for each:
 //   pluck     two saws a few cents apart (blending to square), a snappy
 //             filter envelope: the trance pluck.
@@ -287,8 +291,35 @@ constexpr int kSoftVoices = 18; // past this, the oldest notes are faded out to 
 //   supersaw  seven saws in unison spread wide: the anthem arp.
 //   pulse     two pulse waves with slow width modulation: synthwave.
 //   acid      one saw (blending to square), resonance pushed, accents bite.
+//   marimba   three modal partials tuned 1 : 4 : 10 like a rosewood bar,
+//             the upper ones dying first, a fourth high up that is gone in
+//             milliseconds (the bar's top click) and a woody knock tuned
+//             to the note; colour is the mallet, soft yarn to hard rubber.
+//   harp      a Karplus-Strong string: the shape of the plucked string
+//             circulating in a delay one period long; colour is the pluck,
+//             fingertip to nail. Strings are not damped when the arp lets
+//             go: they ring on through the pattern until they fade (or the
+//             voice cap takes the oldest). Low strings left, high right.
+//   rhodes    a tine electric piano: a 1:1 FM pair whose index (the bark)
+//             grows with how hard the key is hit, the pickup's lopsided
+//             response (even harmonics, the growl), a brief, slightly
+//             inharmonic tine on the attack, and the suitcase's tremolo.
+//   juno      one oscillator, a width-modulated pulse (blending back to a
+//             saw at low colour), a square an octave below, the Juno's
+//             high-pass thinning the oscillator above the sub as colour
+//             rises, a resonant four-pole sweep and the bus's BBD chorus.
+//   organ     five drawbars of sines (16', 8', 4', 2 2/3', 2'), the third
+//             harmonic's percussion and a key click, through the bus's
+//             Leslie: a horn and a drum spinning slow or fast.
+// The new five are mono at the source and panned after the filter, so each
+// costs one ladder; the chorus and the Leslie are one each for the bus, not
+// one per note.
+constexpr int kString = 2048; // the harp's delay: periods up to 2047 samples (23 Hz)
+
 struct Voice {
     bool on = false, released = false, fading = false;
+    bool mono = false;   // one source, panned after the filter
+    int bus = 0;         // 0 dry, 1 through the chorus (juno), 2 the Leslie (organ)
     int lane = 0, sound = Pluck;
     uint64_t born = 0;
     int gate = 0;
@@ -307,18 +338,45 @@ struct Voice {
     Ladder fl, fr;
     int coefIn = 0;
     float level = 0;
+    // How far a sound that dies away by itself (the marimba, the harp) has
+    // gone: once it and the envelope together are inaudible, the note is over.
+    float tail = 1, tailMul = 1;
+    // Marimba: each partial a two-pole recursion, y = c·y1 − r²·y2, set
+    // going so it rings as a decaying sine from zero (no click). In double:
+    // a low bar's coefficient sits so close to 2 that a float's rounding
+    // would pull it a few cents flat.
+    static constexpr int kModes = 4;
+    double my1[kModes] = {}, my2[kModes] = {}, mc[kModes] = {}, mr2[kModes] = {};
+    // A burst of noise: the marimba's knock, the organ's key click.
+    float burst = 0, burstMul = 0, burstLp = 0, burstA = 1;
+    Rng noise;
+    // Harp: the string, its length in whole samples, the loop's damping
+    // (a two-point weighted average), the allpass that tunes the fraction,
+    // and the loss per pass.
+    float str[kString] = {};
+    int sw = 0, sN = 1;
+    float sS = 0.4f, sC = 0, sRho = 1, apX = 0, apY = 0;
+    // Rhodes: the tine's index, the tremolo's depth. Organ: drawbars and
+    // percussion.
+    float tine = 0, tineMul = 0, trem = 0, growl = 0;
+    // Juno: the high-pass's coefficient (0: flat) and its two poles.
+    float hpA = 0, hp1 = 0, hp2 = 0;
+    float draw[5] = {}, perc = 0, percMul = 0;
 
     struct Start {
         int sound = Pluck;
         float midi = 60, vel = 0.8f, accent = 0, envBoost = 0, color = 0.3f, gateSec = 0.1f, stepSec = 0.12f,
               rate = 48000;
         uint32_t seed = 1;
+        double clock = 0; // seconds since the engine started: one LFO for every note
     };
 
     void start(const Start &s) {
         on = true;
         released = fading = false;
         sound = s.sound;
+        mono = sound >= Marimba;
+        bus = sound == Juno ? 1 : sound == Organ ? 2 : 0;
         vel = clampf(s.vel, 0.05f, 1.3f);
         stage = 0;
         amp = 0;
@@ -336,6 +394,8 @@ struct Voice {
         fr.reset();
         coefIn = 0;
         fenv = 1;
+        tail = 1;
+        tailMul = 1;
         // Cutoff follows the note half way, so a high run is not duller
         // than a low one.
         keyTrack = std::exp2((s.midi - 60.0f) / 24.0f);
@@ -431,6 +491,212 @@ struct Voice {
             release = 0.025f;
             break;
         }
+        case Marimba: {
+            // Low bars left, high bars right, as the player sees them.
+            const float c[1] = {0}, p[1] = {clampf((s.midi - 66.0f) / 40.0f, -0.45f, 0.45f)};
+            setUnits(1, c, p);
+            const float hard = clampf(0.2f + 1.0f * s.color + 0.35f * s.accent + 0.25f * s.envBoost, 0.1f, 1.5f);
+            // A low bar rings longer than a high one; the overtones die
+            // first, which is what makes it wood and not a bell.
+            const float ring = clampf(0.5f * std::sqrt(261.6f / hz), 0.18f, 1.0f);
+            tailMul = mulFor(ring);
+            // The fourth is the bar's top click: far up, gone within ten
+            // milliseconds, louder the harder the mallet.
+            static const float ratio[kModes] = {1.0f, 3.98f, 9.88f, 17.3f};
+            const float amp[kModes] = {1.0f, 0.5f * hard, 0.28f * hard * hard, 1.1f * hard};
+            const float tau[kModes] = {ring, ring * 0.3f, ring * 0.09f, 0.003f};
+            for (int k = 0; k < kModes; ++k) {
+                const double w = 2.0 * 3.14159265358979 * double(hz) * ratio[k] / double(s.rate);
+                const double r = w < 2.6 ? std::exp(-1.0 / (double(tau[k]) * double(s.rate))) : 0.0;
+                mc[k] = 2.0 * r * std::cos(w);
+                mr2[k] = r * r;
+                my2[k] = 0;
+                my1[k] = double(amp[k]) * r * std::sin(w);
+            }
+            // The knock: the mallet's thud, its brightness following the
+            // note (a few times its pitch), so a high bar clicks and a low
+            // one thumps.
+            noise = Rng(s.seed * 2654435761u | 1u);
+            burst = 0.9f * hard;
+            burstMul = mulFor(0.004f);
+            burstA = 1.0f - std::exp(-kTwoPi * clampf(4.0f * hz, 1500.0f, 10000.0f) / s.rate);
+            burstLp = 0;
+            attack = 0.0006f;
+            sustain = 1.0f;
+            release = 0.35f + 0.3f * g;
+            envOct = 1.0f;
+            fdecay = 0.05f;
+            cutBias = 2.6f;
+            resBias = -0.25f;
+            gain = 0.17f;
+            break;
+        }
+        case Harp: {
+            const float c[1] = {0}, p[1] = {clampf((s.midi - 66.0f) / 30.0f, -0.6f, 0.6f)};
+            setUnits(1, c, p);
+            const float bright = clampf(s.color + 0.3f * s.accent + 0.3f * s.envBoost, 0.0f, 1.0f);
+            // The loop is N whole samples, the damping's S, and the
+            // allpass's fraction d: N + S + d is the period, to the cent.
+            const double period = clampf(s.rate / hz, 8.0f, float(kString - 4));
+            // Strings ring four or five seconds low, a second or two high:
+            // the fundamental's loss per pass, g, is what that asks for.
+            const float t60 = clampf(3.6f * std::sqrt(196.0f / hz), 1.0f, 5.0f);
+            tailMul = mulFor(t60 / 6.9f);
+            const float g1 = std::exp(-6.9f * float(period) / (t60 * s.rate));
+            // The damping average loses some of the fundamental every pass,
+            // which on a high string (few samples a period, many passes a
+            // second) would cut the ring to a fraction. So the damping is
+            // held to what the ring allows, |H| ≥ g at the fundamental, and
+            // the loss makes up the rest: the fundamental rings as long as
+            // asked at every pitch, and nothing in the loop ever gains.
+            const float half = std::sin(kPi / float(period));
+            const float room = (1.0f - g1 * g1) / (4.0f * half * half);
+            sS = 0.46f - 0.3f * bright;
+            if (room < 0.25f)
+                sS = std::min(sS, 0.5f * (1.0f - std::sqrt(1.0f - 4.0f * room)));
+            const float H = std::sqrt(std::max(1.0f - 4.0f * sS * (1.0f - sS) * half * half, 1e-6f));
+            sRho = std::min(1.0f, g1 / H);
+            sN = int(std::floor(period - double(sS) - 0.1));
+            const double d = period - double(sS) - double(sN);
+            sC = float((1.0 - d) / (1.0 + d));
+            apX = apY = 0;
+            // The pluck: the string's shape at the moment it is let go, a
+            // triangle peaked where the finger held it (near the middle for
+            // a harp's soft tone, towards the end for a nail's twang), with a
+            // little noise for the finger itself. Its mean is taken away and
+            // it is scaled to the same strength every time.
+            Rng rn(s.seed | 1u);
+            const float at = 0.38f - 0.28f * bright;
+            const float rough = 0.06f + 0.4f * bright * bright;
+            const int peak = std::clamp(int(at * float(sN)), 1, sN - 1);
+            const int mask = kString - 1;
+            float lp = 0;
+            sw = 0;
+            for (int k = 0; k < sN; ++k) {
+                lp += 0.5f * (rn.bipolar() - lp);
+                const float shape = k < peak ? float(k) / float(peak) : float(sN - k) / float(sN - peak);
+                str[(k - sN) & mask] = shape + rough * lp;
+            }
+            str[(-sN - 1) & mask] = 0;
+            float sum = 0, sq = 0;
+            for (int k = 0; k < sN; ++k) {
+                sum += str[(k - sN) & mask];
+                sq += str[(k - sN) & mask] * str[(k - sN) & mask];
+            }
+            const float mean = sum / float(sN);
+            const float norm = 0.55f / std::sqrt(std::max(sq / float(sN) - mean * mean, 1e-9f));
+            for (int k = 0; k < sN; ++k)
+                str[(k - sN) & mask] = (str[(k - sN) & mask] - mean) * norm;
+            attack = 0.0004f;
+            sustain = 1.0f;
+            release = 0; // none: the string rings on after the arp lets go
+            envOct = 0.8f;
+            fdecay = 0.08f;
+            cutBias = 2.4f;
+            resBias = -0.3f;
+            gain = 0.15f;
+            break;
+        }
+        case Rhodes: {
+            const float c[1] = {0}, p[1] = {0};
+            setUnits(1, c, p);
+            const float v = clampf(s.vel, 0, 1.2f);
+            // Hit harder, the tine swings closer to the pickup and the note
+            // barks: the index grows with velocity, more so with colour. It
+            // stops at 1.3, where the fundamental still leads; past it the
+            // note hollows into a DX's honk, not a Mark I's bark.
+            fmIdx = std::min(1.3f, 0.3f + (0.4f + 0.9f * s.color) * v + 0.4f * s.accent + 0.3f * s.envBoost);
+            fmSus = 0.15f + 0.25f * s.color;
+            fmMul = mulFor(0.22f);
+            // The pickup hears the tine lopsided, nearer on one swing than
+            // the other: even harmonics, the growl, more the harder it is hit.
+            growl = 0.08f + 0.3f * v * (0.5f + s.color) + 0.15f * s.accent;
+            // The tine's ping: a little over fourteen times up (a tine is
+            // not quite in tune with its own overtones), gone in a few
+            // milliseconds; seven for notes where fourteen would alias.
+            const float tr = hz * 14.2f < 0.42f * s.rate ? 14.13f : hz * 7.1f < 0.42f * s.rate ? 7.06f : 0.0f;
+            minc = hz * tr / s.rate;
+            mph = 0;
+            tine = tr > 0 ? 0.9f + 0.8f * v : 0.0f;
+            tineMul = mulFor(0.009f);
+            // The suitcase's tremolo, one LFO for every note.
+            lfoInc = 4.6f / s.rate;
+            lfo = float(s.clock * 4.6 - std::floor(s.clock * 4.6));
+            trem = 0.42f;
+            attack = 0.0012f;
+            sustain = 0.0f;
+            decay = clampf(3.2f * std::pow(261.6f / hz, 0.3f), 1.2f, 4.5f);
+            release = 0.09f;
+            envOct = 0.6f;
+            fdecay = 0.12f;
+            cutBias = 2.8f;
+            resBias = -0.3f;
+            gain = 0.205f;
+            break;
+        }
+        case Juno: {
+            const float c[1] = {0}, p[1] = {0};
+            setUnits(1, c, p);
+            inc[1] = 0.5f * inc[0]; // the sub, an octave down
+            ph[1] = 0;
+            // Colour: up to 0.6 the saw blends into the pulse; from there it
+            // is all pulse, and the whole way the width LFO speeds up, from
+            // a slow 0.15 Hz drift to 3.4 Hz shimmer (1.3 Hz at the start).
+            blend = clampf(1.65f * s.color, 0, 1);
+            pwmDepth = 0.36f;
+            const double pwmHz = 0.15 * std::exp2(4.5 * double(s.color));
+            lfoInc = float(pwmHz) / s.rate;
+            lfo = float(s.clock * pwmHz - std::floor(s.clock * pwmHz));
+            // The Juno's HPF slider, folded into the top of the colour: flat
+            // up to 0.45, then rising to 700 Hz (about 270 Hz at the start),
+            // the thin, glassy arp the Juno is known for. It thins the
+            // oscillator only; the sub stays under it as the floor.
+            const float thin = clampf((s.color - 0.45f) / 0.55f, 0, 1);
+            const float hpHz = 700.0f * std::pow(thin, 1.2f);
+            hpA = hpHz > 1.0f ? 1.0f - std::exp(-kTwoPi * hpHz / s.rate) : 0.0f;
+            hp1 = hp2 = 0;
+            attack = 0.002f;
+            sustain = 0.4f;
+            envOct = 3.2f;
+            resBias = 0.2f;
+            cutBias = -0.2f;
+            gain = 0.36f;
+            release = 0.06f + 0.35f * g;
+            break;
+        }
+        case Organ: {
+            const float c[1] = {0}, p[1] = {0};
+            setUnits(1, c, p);
+            inc[1] = 0.5f * inc[0]; // 16'
+            ph[1] = 0;
+            ph[0] = 0;
+            // Colour pulls the drawbars from a soft jazz registration to
+            // nearly all out; the parts above the ear's top are left in.
+            static const float soft[5] = {0.35f, 1.0f, 0.45f, 0.0f, 0.15f};
+            static const float full[5] = {0.75f, 1.0f, 0.8f, 0.6f, 0.65f};
+            float sum = 0;
+            for (int k = 0; k < 5; ++k) {
+                draw[k] = lerpf(soft[k], full[k], s.color);
+                sum += draw[k];
+            }
+            for (float &d : draw)
+                d *= 1.5f / sum;
+            perc = 0.7f + 0.4f * s.accent;
+            percMul = mulFor(0.16f);
+            noise = Rng(s.seed * 2654435761u | 1u);
+            burst = 0.12f;
+            burstMul = mulFor(0.0015f);
+            burstA = 1.0f - std::exp(-kTwoPi * 5000.0f / s.rate);
+            burstLp = 0;
+            attack = 0.0015f;
+            sustain = 1.0f;
+            release = 0.035f;
+            envOct = 0.0f;
+            cutBias = 2.3f;
+            resBias = -0.3f;
+            gain = 0.245f;
+            break;
+        }
         default:
             break;
         }
@@ -438,7 +704,7 @@ struct Voice {
         envOct += 1.4f * s.accent + 2.2f * s.envBoost;
         attackInc = 1.0f / (attack * s.rate);
         decayMul = mulFor(decay * 0.45f);
-        releaseMul = mulFor(release * 0.45f);
+        releaseMul = release > 0 ? mulFor(release * 0.45f) : 1.0f;
         fenvMul = mulFor(fdecay * 0.45f);
     }
 
@@ -463,6 +729,16 @@ struct Voice {
         fadeMul = std::exp(-1.0f / (0.003f * rate));
     }
 
+    // The marimba's knock or the organ's click: a burst of noise, darkened,
+    // falling away within milliseconds, and then nothing at all.
+    float knock() {
+        if (burst < 1e-5f && std::fabs(burstLp) < 1e-6f)
+            return burst = burstLp = 0.0f;
+        burst *= burstMul;
+        burstLp += burstA * (noise.bipolar() * burst - burstLp);
+        return burstLp;
+    }
+
     // Adds samples [from, to) to the dry and echo buses.
     void render(float *l, float *r, float *el, float *er, int from, int to, float cutHz, float res, float send,
                 float rate) {
@@ -484,7 +760,10 @@ struct Voice {
             }
             if (!released && --gate <= 0)
                 release();
-            fenv *= fenvMul;
+            // Envelopes that only fall stop at zero rather than creep on
+            // into denormals while a long note holds.
+            fenv = fenv > 1e-6f ? fenv * fenvMul : 0.0f;
+            tail = tail > 1e-6f ? tail * tailMul : 0.0f;
             if (--coefIn <= 0) {
                 if (midiNow != midiTo) {
                     midiNow += (midiTo - midiNow) * glide;
@@ -499,6 +778,7 @@ struct Voice {
                     fr.set(fc, resonance, rate);
             }
             float sl = 0, sr = 0;
+            float panL = gl[0], panR = gr[0]; // the mono sounds' place, the rhodes's moving
             switch (sound) {
             case Pluck:
             case Acid:
@@ -556,6 +836,87 @@ struct Voice {
                 }
                 break;
             }
+            case Marimba: {
+                double m = 0;
+                for (int k = 0; k < kModes; ++k) {
+                    const double y = mc[k] * my1[k] - mr2[k] * my2[k];
+                    my2[k] = my1[k];
+                    my1[k] = y;
+                    m += y;
+                }
+                sl = float(m) + knock();
+                break;
+            }
+            case Harp: {
+                constexpr int mask = kString - 1;
+                const float x0 = str[(sw - sN) & mask], x1 = str[(sw - sN - 1) & mask];
+                const float lp = x0 + sS * (x1 - x0);
+                const float ap = sC * (lp - apY) + apX;
+                apX = lp;
+                apY = ap;
+                str[sw] = ap * sRho;
+                sw = (sw + 1) & mask;
+                sl = x0;
+                break;
+            }
+            case Rhodes: {
+                float &p = ph[0];
+                p += inc[0];
+                if (p >= 1.0f)
+                    p -= 1.0f;
+                mph += minc;
+                if (mph >= 1.0f)
+                    mph -= 1.0f;
+                fmIdx = fmSus + (fmIdx - fmSus) * fmMul;
+                tine = tine > 1e-5f ? tine * tineMul : 0.0f;
+                const float m = 0.159155f * (fmIdx * sin2pi(p) + tine * sin2pi(mph));
+                const float x = sin2pi(frac(p + m));
+                sl = x + growl * (x * x - 0.5f); // a sine's square averages a half: no DC
+                lfo += lfoInc;
+                if (lfo >= 1.0f)
+                    lfo -= 1.0f;
+                const float pan = trem * sin2pi(lfo);
+                panL = gl[0] * (1.0f - pan);
+                panR = gr[0] * (1.0f + pan);
+                break;
+            }
+            case Juno: {
+                float &p = ph[0], &q = ph[1];
+                p += inc[0];
+                if (p >= 1.0f)
+                    p -= 1.0f;
+                q += inc[1];
+                if (q >= 1.0f)
+                    q -= 1.0f;
+                lfo += lfoInc;
+                if (lfo >= 1.0f)
+                    lfo -= 1.0f;
+                const float w = 0.5f - pwmDepth * (0.5f + 0.5f * sin2pi(lfo));
+                const float saw = sawBlep(p, inc[0]);
+                const float pulse = saw - sawBlep(frac(p + w), inc[0]); // ±1 swing, no DC
+                float top = (1.0f - blend) * saw + blend * 0.9f * pulse;
+                if (hpA > 0) {
+                    hp1 += hpA * (top - hp1);
+                    top -= hp1;
+                    hp2 += hpA * (top - hp2);
+                    top -= hp2;
+                }
+                sl = top + 0.5f * squareBlep(q, inc[1]);
+                break;
+            }
+            case Organ: {
+                float &p = ph[0], &q = ph[1];
+                p += inc[0];
+                if (p >= 1.0f)
+                    p -= 1.0f;
+                q += inc[1];
+                if (q >= 1.0f)
+                    q -= 1.0f;
+                perc = perc > 1e-5f ? perc * percMul : 0.0f;
+                sl = knock() + draw[0] * sin2pi(q) + draw[1] * sin2pi(p) + draw[2] * sin2pi(frac(2.0f * p)) +
+                     (draw[3] + perc) * sin2pi(frac(3.0f * p)) + draw[4] * sin2pi(frac(4.0f * p));
+                break;
+            }
             default:
                 break;
             }
@@ -563,6 +924,10 @@ struct Voice {
             if (units > 1) {
                 yl = fl.step(sl * 0.7f);
                 yr = fr.step(sr * 0.7f);
+            } else if (mono) {
+                const float y = fl.step(sl * 0.7f);
+                yl = y * panL;
+                yr = y * panR;
             } else {
                 yl = yr = fl.step(sl * 0.7f) * 0.707f;
             }
@@ -576,7 +941,7 @@ struct Voice {
             peak = std::max(peak, std::fabs(yl) + std::fabs(yr));
         }
         level = std::max(peak, level * 0.9f);
-        if (stage == 2 && amp < 2e-4f)
+        if (stage == 2 && amp * tail < 2e-4f)
             on = false;
     }
 };
@@ -618,6 +983,126 @@ struct Echo {
             pk = std::max(pk, std::fabs(a) + std::fabs(b));
         }
         level = std::max(pk * wet, level * 0.95f);
+    }
+};
+
+// The bus's chorus, after the Juno's: one bucket-brigade line read by two
+// taps a few milliseconds long, swept by one triangle in opposite
+// directions, one to each side, and darkened like a BBD. Chorus I sweeps at
+// 0.5 Hz, II at 0.83 Hz and deeper. Only what is above 300 Hz (two poles) goes into
+// the line, so the sub stays dry and in the middle rather than swinging
+// from side to side and thinning in mono. One for the bus costs what one
+// voice's filter does.
+struct Chorus {
+    static constexpr int kLen = 2048;
+    float buf[kLen] = {};
+    int w = 0;
+    float rate = 48000, tri = 0, triInc = 0, base = 0, depth = 0, depthTo = 0, glide = 0;
+    OnePoleLp lpL, lpR;
+    Svf low;
+    void init(float r) {
+        rate = r;
+        std::fill(buf, buf + kLen, 0.0f);
+        base = 0.0036f * rate;
+        glide = 1.0f - std::exp(-1.0f / (0.05f * rate));
+        set(false);
+        depth = depthTo;
+        lpL.set(7500.0f, rate);
+        lpR.set(7500.0f, rate);
+        low.set(300.0f, 0.6f, rate);
+    }
+    // The mode: I (true) or II. The depth glides, so a switch mid-note
+    // bends the pitch a moment rather than clicking.
+    void set(bool one) {
+        triInc = (one ? 0.5f : 0.83f) / rate;
+        depthTo = (one ? 0.0013f : 0.0019f) * rate;
+    }
+    float read(float d) const {
+        const int i = int(d);
+        const float t = d - float(i);
+        const float a = buf[(w - i) & (kLen - 1)], b = buf[(w - i - 1) & (kLen - 1)];
+        return a + t * (b - a);
+    }
+    void process(const float *inL, const float *inR, float *outL, float *outR, int n) {
+        for (int i = 0; i < n; ++i) {
+            const float x = 0.5f * (inL[i] + inR[i]);
+            buf[w] = low.step(x).high;
+            depth += glide * (depthTo - depth);
+            tri += triInc;
+            if (tri >= 1.0f)
+                tri -= 1.0f;
+            const float sweep = 4.0f * std::fabs(tri - 0.5f) - 1.0f;
+            const float a = lpL.step(read(base + depth * sweep)), b = lpR.step(read(base - depth * sweep));
+            w = (w + 1) & (kLen - 1);
+            outL[i] += 0.82f * (inL[i] + 0.8f * a);
+            outR[i] += 0.82f * (inR[i] + 0.8f * b);
+        }
+    }
+};
+
+// The organ's Leslie: the bus split at 800 Hz, the top into a spinning horn
+// and the bottom into a spinning drum. Each rotor is a short delay swung
+// ±0.25 ms (the Doppler, the pitch going round) and a level swung by a
+// third a quarter turn later (the horn facing you, then away). The right
+// side hears the rotor's level a hundred degrees further round than the
+// left, as two microphones on a real cabinet do: wide, but not opposite. The
+// horn's pitch swing is one for both sides (two delays swung apart would
+// comb the top away in mono), and a quarter of it reaches both unswung, the
+// room and the horn's own spill, so summed to mono the throb stays. Slow, the horn turns at 0.8 Hz and the
+// drum at 0.7; fast, 6.7 and 5.9. The light horn gets there in about a
+// second, the heavy drum in about four, so a switch is heard as the two
+// rotors pulling apart and settling.
+struct Leslie {
+    static constexpr int kLen = 512;
+    float horn[kLen] = {}, drum[kLen] = {};
+    int w = 0;
+    float rate = 48000, hornPh = 0, drumPh = 0.3f, hornHz = 0.8f, drumHz = 0.7f, hornA = 0, drumA = 0;
+    float base = 0, wobble = 0;
+    OnePoleLp split;
+    void init(float r) {
+        rate = r;
+        std::fill(horn, horn + kLen, 0.0f);
+        std::fill(drum, drum + kLen, 0.0f);
+        hornA = 1.0f - std::exp(-1.0f / (0.33f * rate));
+        drumA = 1.0f - std::exp(-1.0f / (1.3f * rate));
+        base = 0.0012f * rate;
+        wobble = 0.00025f * rate;
+        split.set(800.0f, rate);
+    }
+    float read(const float *buf, float d) const {
+        const int i = int(d);
+        const float t = d - float(i);
+        const float a = buf[(w - i) & (kLen - 1)], b = buf[(w - i - 1) & (kLen - 1)];
+        return a + t * (b - a);
+    }
+    void process(const float *inL, const float *inR, float *outL, float *outR, int n, bool fast) {
+        const float hornTo = fast ? 6.7f : 0.8f, drumTo = fast ? 5.9f : 0.7f;
+        for (int i = 0; i < n; ++i) {
+            const float x = 0.5f * (inL[i] + inR[i]);
+            const float lo = split.step(x);
+            horn[w] = x - lo;
+            drum[w] = lo;
+            hornHz += hornA * (hornTo - hornHz);
+            drumHz += drumA * (drumTo - drumHz);
+            hornPh += hornHz / rate;
+            if (hornPh >= 1.0f)
+                hornPh -= 1.0f;
+            drumPh += drumHz / rate;
+            if (drumPh >= 1.0f)
+                drumPh -= 1.0f;
+            constexpr float kApart = 100.0f / 360.0f;
+            constexpr float kSpill = 0.25f;
+            const float still = kSpill * read(horn, base);
+            const float swung = (1.0f - kSpill) * read(horn, base + wobble * sin2pi(hornPh));
+            const float hl = still + (1.0f + 0.35f * sin2pi(frac(hornPh + 0.25f))) * swung;
+            const float hr = still + (1.0f + 0.35f * sin2pi(frac(hornPh + kApart + 0.25f))) * swung;
+            const float dl = (1.0f + 0.3f * sin2pi(frac(drumPh + 0.25f))) * read(drum, base + wobble * sin2pi(drumPh));
+            const float dr = (1.0f + 0.3f * sin2pi(frac(drumPh + kApart + 0.25f))) *
+                             read(drum, base + wobble * sin2pi(frac(drumPh + kApart)));
+            w = (w + 1) & (kLen - 1);
+            outL[i] += hl + dl;
+            outR[i] += hr + dr;
+        }
     }
 };
 
@@ -681,6 +1166,9 @@ struct Engine::Impl {
     Voice voices[kVoices];
     uint64_t age = 0;
     Echo echo;
+    Chorus chorus;
+    Leslie leslie;
+    bool chorusOne = false, leslieFast = false; // the switches, from the lane that last played each sound
     Svf hpL, hpR;
     Pending pending[256];
     int pendingCount = 0;
@@ -725,6 +1213,7 @@ struct Engine::Impl {
                 e.reg = o.reg;
             }
             if (overlayMask & kPadTone) {
+                e.alt = o.alt;
                 e.cutoff = o.cutoff;
                 e.res = o.res;
                 e.color = o.color;
@@ -1182,6 +1671,17 @@ struct Engine::Impl {
                     continue;
                 }
             }
+            // A harp string or a marimba bar struck again is the same
+            // string or bar: what still rings of the last stroke is damped
+            // in a few milliseconds as the new one starts, instead of a
+            // second voice piling up on the same note (up and down patterns
+            // hit each note twice), which would crowd the low strings out of
+            // the voice cap long before they had finished ringing.
+            if (s.sound == Harp || s.sound == Marimba)
+                for (Voice &w : voices)
+                    if (w.on && !w.fading && w.lane == lane && w.sound == s.sound &&
+                        std::fabs(w.midiNow - float(midi)) < 0.01f)
+                        w.fade(rate);
             Voice &v = alloc();
             Voice::Start st;
             st.sound = s.sound;
@@ -1195,6 +1695,7 @@ struct Engine::Impl {
             st.rate = rate;
             noteSeed = hash(noteSeed, uint32_t(age));
             st.seed = noteSeed;
+            st.clock = double(rendered + uint64_t(cursor)) / double(rate);
             v.start(st);
             v.lane = lane;
             v.born = ++age;
@@ -1209,6 +1710,8 @@ Engine::~Engine() { delete d; }
 void Engine::init(float rate) {
     d->rate = rate;
     d->echo.init(rate);
+    d->chorus.init(rate);
+    d->leslie.init(rate);
     d->hpL.set(95.0f, 0.7f, rate);
     d->hpR.set(95.0f, 0.7f, rate);
     for (auto &L : d->lanes) {
@@ -1269,6 +1772,9 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
         send[k] = 0.9f * s.eff[k].echo;
     }
     float dryL[kBlock] = {}, dryR[kBlock] = {}, sendL[kBlock] = {}, sendR[kBlock] = {};
+    float chL[kBlock] = {}, chR[kBlock] = {}; // the voices that go through the chorus
+    float rotL[kBlock] = {}, rotR[kBlock] = {}; // and through the Leslie
+    float *busL[3] = {dryL, chL, rotL}, *busR[3] = {dryR, chR, rotR};
     auto offsetOfBeat = [&](double beat) {
         const double o = std::ceil((beat - b0) / bps - 1e-7);
         return o <= 0 ? 0 : o >= double(n) ? n : int(o);
@@ -1278,7 +1784,8 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
             return;
         for (Voice &v : s.voices)
             if (v.on)
-                v.render(dryL, dryR, sendL, sendR, from, to, cutHz[v.lane], res[v.lane], send[v.lane], s.rate);
+                v.render(busL[v.bus], busR[v.bus], sendL, sendR, from, to, cutHz[v.lane], res[v.lane],
+                         send[v.lane], s.rate);
     };
     int pos = 0;
     double barLine = std::ceil(b0 / kBeatsPerBar - 1e-9) * kBeatsPerBar;
@@ -1321,6 +1828,21 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
         }
     }
     renderVoices(pos, n);
+    // The chorus's mode and the Leslie's speed follow the switch of a lane
+    // playing that sound (the live one first); with none, they stay put, so
+    // a Leslie spun up keeps spinning down after the notes stop.
+    for (int k = Impl::kLanes - 1; k >= 0; --k) {
+        const auto &L = s.lanes[k];
+        if (!(k == 0 ? L.running || L.count > 0 : L.running))
+            continue;
+        if (s.eff[k].sound == Juno)
+            s.chorusOne = s.eff[k].alt;
+        if (s.eff[k].sound == Organ)
+            s.leslieFast = s.eff[k].alt;
+    }
+    s.chorus.set(s.chorusOne);
+    s.chorus.process(chL, chR, dryL, dryR, n);
+    s.leslie.process(rotL, rotR, dryL, dryR, n, s.leslieFast);
     // The echo, from whichever lane is playing (the live one first).
     const int lead = s.lanes[0].running ? 0 : s.clipShown();
     const Settings &e = s.eff[lead];
@@ -1434,9 +1956,22 @@ namespace {
 // Where things are on the pad, in pad units (0..1, y up).
 constexpr float kSplit = 0.58f;      // the notes left of this, the six pads right of it
 constexpr float kChipsTop = 0.865f;  // pattern chips above
-constexpr float kChipsLow = 0.135f;  // sound and switch chips below
+constexpr float kChipsLow = 0.15f;   // sound and switch chips below
 constexpr int kColumns = 8;
-constexpr int kBottomChips = 7;      // five sounds, follow, latch
+// Below the grid, seven columns: the sounds two rows deep in the first five
+// (the dance floor's on top, the wider world's under them, as Z X C V B and
+// Shift+Z X C V B), then follow and latch the height of both. Ten in one row
+// would be too thin to read or hit.
+constexpr int kBottomChips = 7;
+constexpr int kSoundCols = 5;
+static_assert(2 * kSoundCols == SoundCount);
+// The sound chip under a point of the band, or −1 (follow, latch).
+int soundChip(float u, float y) {
+    const int col = std::clamp(int(u * kBottomChips), 0, kBottomChips - 1);
+    if (col >= kSoundCols)
+        return -1;
+    return col + (y > 0.5f * kChipsLow ? 0 : kSoundCols);
+}
 constexpr float kPadW = (1.0f - kSplit) / 2.0f;
 
 enum PadId { PadRate, PadRhythm, PadRange, PadTone, PadGroove, PadEcho, PadCount };
@@ -1658,10 +2193,12 @@ public:
                 flush(t, ctx, true);
                 return true;
             }
+        // Z X C V B the first five sounds, with Shift the second five: the
+        // same keys as the two rows of chips.
         static const int sounds[] = {Qt::Key_Z, Qt::Key_X, Qt::Key_C, Qt::Key_V, Qt::Key_B};
-        for (int i = 0; i < SoundCount; ++i)
+        for (int i = 0; i < 5; ++i)
             if (k.key == sounds[i]) {
-                setSound(i, ctx);
+                setSound((k.modifiers & Qt::ShiftModifier) ? i + 5 : i, ctx);
                 flush(t, ctx, true);
                 return true;
             }
@@ -1728,6 +2265,9 @@ public:
             break;
         case Qt::Key_N:
             newDice(t, ctx);
+            break;
+        case Qt::Key_Slash:
+            flipSwitch(ctx);
             break;
         case Qt::Key_O:
         case Qt::Key_P: {
@@ -1835,6 +2375,8 @@ public:
         out[QStringLiteral("octaves")] = s.octaves;
         out[QStringLiteral("firstNote")] = QString::fromUtf8(stackName(s.stack));
         out[QStringLiteral("follow")] = s.follow;
+        // The sound's own switch: the organ's Leslie fast, the juno's chorus I.
+        out[QStringLiteral("switch")] = s.alt;
         out[QStringLiteral("tone")] = tidyFloat(s.cutoff);
         out[QStringLiteral("resonance")] = tidyFloat(s.res);
         out[QStringLiteral("accentEvery")] = accentCycle(s.accent);
@@ -1887,6 +2429,7 @@ public:
         whole("octaves", 1, kMaxOctaves, s.octaves);
         choice("firstNote", kStacks, stackName, s.stack);
         flag("follow", s.follow);
+        flag("switch", s.alt);
         number("tone", 0.04, 1, s.cutoff);
         number("resonance", 0, 1, s.res);
         int every = -1;
@@ -1934,7 +2477,8 @@ public:
 
     QString help() const override {
         return QStringLiteral(
-            "← →\tthe sound: pluck, glass, supersaw, pulse, acid (Z X C V B pick one)\n"
+            "← →\tthe sound: pluck, glass, supersaw, pulse, acid, marimba, harp, rhodes, juno, organ (Z X C V B pick "
+            "one of the first five, Shift+Z X C V B of the second)\n"
             "↑ ↓ · Shift+↑ ↓\tregister: where the grid starts · range: how many octaves the pattern climbs\n"
             "Shift+← → (or [ ])\tthe rate: 1/8 to 1/32, with triplets\n"
             "- +\ttone: darker, brighter\n"
@@ -1948,11 +2492,15 @@ public:
             "first finger\tgrows into a chord; twist it: single, fifth, triad, seventh, ninth\n"
             "more fingers\tadd their notes; slide one sideways to walk it along the scale\n"
             "top chips\tpattern: up, down, up·down, converge, as played, random, chord stabs, pedal\n"
-            "bottom chips\tsound: pluck, glass, supersaw, pulse, acid · FOLLOW the chords page · LATCH\n"
+            "bottom chips\tsound, two rows: pluck, glass, supersaw, pulse, acid · marimba, harp, rhodes, juno, organ · "
+            "FOLLOW the chords page · LATCH\n"
             "RATE · GATE\tup: 1/8 to 1/32 with triplets · across: short to legato · twist: swing\n"
             "RHYTHM\tacross: euclidean hits per bar · up: turn the rhythm · press hard: rolls\n"
             "RANGE\tacross: register · up: one to four octaves\n"
-            "TONE\tup: cutoff · across: the sound's colour · twist: resonance · press: bite\n"
+            "TONE\tup: cutoff · across: the sound's colour · twist: resonance · press: bite (on the organ: the "
+            "Leslie, slow or fast; on the juno: chorus II or I; the cutoff and colour stay put unless the "
+            "finger slides)\n"
+            "/ (or the lit organ or juno chip)\tthe same switch: the Leslie slow or fast, chorus II or I\n"
             "GROOVE\tacross: accent every 2, 3, 4, 5 or 7 notes · up: chaos · press: harder accents\n"
             "ECHO\tacross: 1/16 to dotted 1/4 · up: amount · press: throw the feedback\n"
             "right hand, no notes held\tshapes the playing loop, and lets go of it on lifting\n"
@@ -1989,6 +2537,10 @@ public:
                  .arg(QString::fromUtf8(patternName(m_s.pattern)), QString::fromUtf8(rateName(m_s.rate)))
                  .arg(m_s.octaves)
                  .arg(QString::fromUtf8(soundName(m_s.sound)));
+        if (m_s.sound == Organ)
+            s += m_s.alt ? QStringLiteral(" (Leslie fast)") : QStringLiteral(" (Leslie slow)");
+        else if (m_s.sound == Juno)
+            s += m_s.alt ? QStringLiteral(" (chorus I)") : QStringLiteral(" (chorus II)");
         if (m_s.follow)
             s += QStringLiteral(" · following the chords");
         if (m_latch)
@@ -2025,6 +2577,11 @@ private:
         float base = 0; // the twisted value when the finger landed
         bool overlay = false;
         bool pressing = false;
+        // On a sound with a switch, a finger landing on the tone pad leaves
+        // the cutoff and colour where they were until it slides, so the
+        // Leslie can be thrown mid-groove without moving the drawbars.
+        bool keep = false;
+        float u0 = 0, v0 = 0;
     };
 
     static bool present(const Frame &f, int id) {
@@ -2140,16 +2697,20 @@ private:
         }
     }
 
-    // Each sound starts from the colour it sounds best in.
-    static float soundColor(int s) {
-        static const float colors[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f};
-        return colors[std::clamp(s, 0, SoundCount - 1)];
-    }
-
     void setSound(int s, ControlContext &ctx) {
         m_s.sound = s;
+        // Each sound starts from the colour it sounds best in.
         m_s.color = soundColor(s);
         ctx.notice(QStringLiteral("Sound: %1").arg(QString::fromUtf8(soundName(s))));
+    }
+
+    // The organ's Leslie, slow or fast; the juno's chorus, II or I.
+    void flipSwitch(ControlContext &ctx) {
+        if (!hasSwitch(m_s.sound))
+            return;
+        m_s.alt = !m_s.alt;
+        ctx.notice(m_s.sound == Organ ? (m_s.alt ? QStringLiteral("Leslie fast") : QStringLiteral("Leslie slow"))
+                                      : (m_s.alt ? QStringLiteral("Chorus I") : QStringLiteral("Chorus II")));
     }
 
     // What the keys and the band's chips both do, one step at a time.
@@ -2318,9 +2879,14 @@ private:
             }
             if (t.y <= kChipsLow) {
                 const int chip = std::clamp(int(u * kBottomChips), 0, kBottomChips - 1);
-                if (chip < SoundCount) {
-                    setSound(chip, ctx);
-                } else if (chip == SoundCount) {
+                if (chip < kSoundCols) {
+                    // The lit organ or juno chip tapped again is its switch.
+                    const int sound = soundChip(u, t.y);
+                    if (sound == m_s.sound && hasSwitch(sound))
+                        flipSwitch(ctx);
+                    else
+                        setSound(sound, ctx);
+                } else if (chip == kSoundCols) {
                     toggleFollow(ctx);
                 } else {
                     setLatch(!m_latch, time, ctx);
@@ -2364,6 +2930,10 @@ private:
         k->pad = row * 2 + col;
         k->angle0 = t.angle;
         k->base = k->pad == PadRate ? m_s.swing : k->pad == PadTone ? m_s.res : 0;
+        const QPointF landed = padLocal(k->pad, t.x, t.y);
+        k->u0 = float(landed.x());
+        k->v0 = float(landed.y());
+        k->keep = k->pad == PadTone && hasSwitch(m_s.sound);
         // No notes under the left hand and a loop playing: this hand plays
         // the loop.
         k->overlay = !anyNotes() && ctx.studio().parts[ctx.part()].playing >= 0;
@@ -2456,6 +3026,7 @@ private:
         // Pressing is well above a normal touch (about 0.5), and once in it
         // stays until the finger eases clearly off: rolls, bite and throws
         // are things you mean.
+        const bool wasPressing = k.pressing;
         if (!k.pressing && t.pressure > 0.78f)
             k.pressing = true;
         else if (k.pressing && t.pressure < 0.7f)
@@ -2502,11 +3073,22 @@ private:
         }
         case PadTone: {
             const float res = clampf(k.base - turn / (50.0f * kPi / 180.0f), 0, 1);
+            // On the organ and the juno a press is a switch, not a bite:
+            // pressing in flips the Leslie between slow and fast (the
+            // half-moon lever under an organist's hand) or the chorus
+            // between II and I, and lifting leaves it where it is.
+            const bool flip = hasSwitch(m_s.sound) && k.pressing && !wasPressing;
+            if (k.keep && std::hypot(u - k.u0, v - k.v0) > 0.05f)
+                k.keep = false;
             both([&](Settings &s) {
-                s.cutoff = 0.04f + 0.96f * v;
-                s.color = u;
+                if (!k.keep) {
+                    s.cutoff = 0.04f + 0.96f * v;
+                    s.color = u;
+                }
                 s.res = res;
-                s.envBoost = press;
+                s.envBoost = hasSwitch(s.sound) ? 0.0f : press;
+                if (flip)
+                    s.alt = !s.alt;
             });
             break;
         }
@@ -2833,9 +3415,14 @@ void ArpControl::paintChips(QPainter &p, const PaintContext &pc) {
         p.drawPath(path);
     }
     const StudioView &sv = *pc.studio;
-    for (int i = 0; i < kBottomChips; ++i) {
-        const float x0 = kSplit * float(i) / kBottomChips, x1 = kSplit * float(i + 1) / kBottomChips;
-        const QRectF r = pc.rect(x0, 0.0f, x1, kChipsLow).adjusted(4, 5, -4, -7);
+    for (int i = 0; i < kBottomChips + kSoundCols; ++i) {
+        // The sounds first, row by row, then follow and latch.
+        const int column = i < SoundCount ? i % kSoundCols : i - kSoundCols;
+        const float x0 = kSplit * float(column) / kBottomChips, x1 = kSplit * float(column + 1) / kBottomChips;
+        const float half = 0.5f * kChipsLow;
+        const QRectF r = i < kSoundCols    ? pc.rect(x0, half, x1, kChipsLow).adjusted(4, 5, -4, -2)
+                         : i < SoundCount ? pc.rect(x0, 0.0f, x1, half).adjusted(4, 2, -4, -7)
+                                          : pc.rect(x0, 0.0f, x1, kChipsLow).adjusted(4, 5, -4, -7);
         bool lit;
         QString label;
         QColor tint = col;
@@ -2868,7 +3455,29 @@ void ArpControl::paintChips(QPainter &p, const PaintContext &pc) {
             p.setBrush(Qt::NoBrush);
             p.drawRect(r);
         }
-        c::text(p, r, label, lit ? QColor::fromRgb(c::kInk) : tint, 11, true, Qt::AlignCenter);
+        const QColor ink = lit ? QColor::fromRgb(c::kInk) : tint;
+        if (i < SoundCount) {
+            // Each sound chip wears its key small in the top corner, so the
+            // lower row teaches that Shift reaches it.
+            static const char *keys = "ZXCVB";
+            const QString key = QStringLiteral("%1%2").arg(i < kSoundCols ? QString() : QStringLiteral("⇧"))
+                                    .arg(QChar::fromLatin1(keys[i % kSoundCols]));
+            if (lit && hasSwitch(i)) {
+                // The lit organ or juno chip is also its switch: it says
+                // where it stands and the key that flips it (in place of
+                // the key that picks it, which has done its job).
+                c::text(p, QRectF(r.left(), r.top() + 2, r.width(), 15), label, ink, 11, true, Qt::AlignCenter);
+                c::text(p, QRectF(r.left(), r.bottom() - 12, r.width(), 11),
+                        QStringLiteral("%1  /").arg(QString::fromUtf8(switchName(i, m_s.alt))), c::alpha(ink, 0.75f),
+                        8, true, Qt::AlignCenter);
+            } else {
+                c::text(p, r.adjusted(0, 4, 0, 0), label, ink, 11, true, Qt::AlignCenter);
+                c::text(p, QRectF(r.right() - 26, r.top() + 1, 23, 11), key, c::alpha(ink, 0.6f), 8, true,
+                        Qt::AlignRight | Qt::AlignVCenter);
+            }
+        } else {
+            c::text(p, r, label, ink, 11, true, Qt::AlignCenter);
+        }
     }
 }
 
@@ -3005,7 +3614,11 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
             if (env > 0.01f)
                 p.fillRect(QRectF(in.left(), in.bottom() - 3, in.width() * env, 3), c::alpha(tint, 0.7f));
             c::text(p, QRectF(r.left(), r.top() + 1, r.width() - 6, 20),
-                    QStringLiteral("%1 · RES %2").arg(QString::fromUtf8(soundShort(s.sound))).arg(int(s.res * 100)),
+                    hasSwitch(s.sound)
+                        ? QStringLiteral("%1 · %2 · RES %3")
+                              .arg(QString::fromUtf8(soundShort(s.sound)), QString::fromUtf8(switchName(s.sound, s.alt)))
+                              .arg(int(s.res * 100))
+                        : QStringLiteral("%1 · RES %2").arg(QString::fromUtf8(soundShort(s.sound))).arg(int(s.res * 100)),
                     touched ? QColor::fromRgb(c::kInk) : c::alpha(tint, 0.85f), 10, true,
                     Qt::AlignRight | Qt::AlignVCenter);
             marker(s.color, (s.cutoff - 0.04f) / 0.96f);

@@ -4,6 +4,7 @@
 #include "testkit.h"
 
 #include "../src/risers.h"
+#include "parts.h"
 
 using namespace tf;
 
@@ -74,9 +75,88 @@ double timeOfBeat(const StudioView &v, double beat) { return v.time + (beat - v.
 
 }
 
+// The FX engine on its own at 124 BPM, for what the page's commands do.
+struct FxAudio : AudioContext {
+    Transport tr;
+    Harmony h;
+    float duckBuf[kBlock] = {};
+    const Transport &transport() const override { return tr; }
+    const Harmony &harmony() const override { return h; }
+    double now() const override { return double(tr.sample) / double(tr.rate); }
+    int offsetOf(double t, int n) const override {
+        const int o = int((t - now()) * double(tr.rate));
+        return o < 0 ? 0 : std::min(o, n - 1);
+    }
+    void pump(int, float) override {}
+    void setChord(int, const int *, int) override {}
+    const float *duck() const override { return duckBuf; }
+};
+
 class RisersTests : public QObject {
     Q_OBJECT
 private slots:
+    void aLoopsFallDropsOnlyItsOwnLayersRisers() {
+        // A riser from the hand and one replayed by a loop's second layer;
+        // the loop's "every riser falls" drops its own, not the hand's. The
+        // hand's falls everything.
+        PartSpec spec = makeRisers();
+        auto &e = *spec.engine;
+        FxAudio ctx;
+        ctx.tr.rate = 48000;
+        ctx.tr.bpm = 124;
+        ctx.tr.beatsPerSample = 124 / 60.0 / 48000.0;
+        e.init(48000);
+        auto run = [&](double seconds) {
+            for (int b = 0; b < int(seconds * 48000 / kBlock); ++b) {
+                ctx.tr.beat = double(ctx.tr.sample) * ctx.tr.beatsPerSample;
+                float l[kBlock] = {}, r[kBlock] = {};
+                e.render(l, r, kBlock, ctx);
+                ctx.tr.sample += kBlock;
+            }
+        };
+        auto riser = [&](int id, int kind) {
+            Command c;
+            c.type = Command::On;
+            c.id = id;
+            c.i[0] = kind;
+            c.i[1] = 2;
+            c.f[0] = 0.6f;
+            c.f[2] = 0.7f;
+            c.f[5] = 8;
+            e.command(c, ctx);
+        };
+        const int layer1 = (1 << 30) | (1 << 27);
+        riser(5, risers::Noise);
+        riser(layer1 | 7, risers::Pitch);
+        run(0.3);
+        Command fall;
+        fall.type = risers::CmdFall;
+        fall.id = layer1 | risers::kEveryone;
+        e.command(fall, ctx);
+        run(0.1);
+        float data[kPartData] = {};
+        e.publish(data);
+        StudioView v;
+        std::copy(std::begin(data), std::end(data), v.parts[kFx].data);
+        int hand = -1, loop = -1;
+        for (const auto &vi : voicesOf(v)) {
+            if (vi.kind == risers::Noise)
+                hand = vi.state;
+            if (vi.kind == risers::Pitch)
+                loop = vi.state;
+        }
+        QCOMPARE(hand, int(risers::Running));
+        QVERIFY(loop >= int(risers::Falling));
+        fall.id = risers::kEveryone;
+        e.command(fall, ctx);
+        run(0.1);
+        e.publish(data);
+        std::copy(std::begin(data), std::end(data), v.parts[kFx].data);
+        for (const auto &vi : voicesOf(v))
+            if (vi.kind == risers::Noise)
+                QVERIFY(vi.state >= int(risers::Falling));
+    }
+
     void fingersPlayAndStayFinite() {
         const auto take = testkit::play("page 0 7\n"
                                         "tap 0.2 0.2 0.5\ntap 0.5 0.4 0.6\ndown 0.8 1 0.6 0.4\n"

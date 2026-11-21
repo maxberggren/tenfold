@@ -277,11 +277,17 @@ public:
             if (c.i[0] == ParamStyle)
                 m_gap = std::lround(c.f[0]) >= 1; // gap, and strip, which ends in one
             break;
-        case CmdFall:
+        case CmdFall: {
+            // "Every one" from the hand drops every riser; from a loop, only
+            // the risers of that loop's slot and layer, so a Fall in one
+            // layer doesn't cut the hand's riser or another layer's.
+            const bool everyone = (c.id & kEveryone) == kEveryone;
             for (Voice &v : m_voices)
-                if (v.active && isRiser(v.kind) && ((c.id & kEveryone) == kEveryone || v.id == c.id) && v.state <= Running)
+                if (v.active && isRiser(v.kind) && v.state <= Running &&
+                    (everyone ? !isReplay(c.id) || (v.id & ~kEveryone) == (c.id & ~kEveryone) : v.id == c.id))
                     fall(v, tr.beat);
             break;
+        }
         default:
             break;
         }

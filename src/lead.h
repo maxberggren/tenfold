@@ -29,7 +29,11 @@ constexpr float kHarmBottom = 0.40f; // harmony rows above this, bend and throw 
 constexpr float kBendSplit = 0.11f;  // bend on the left of the bottom, throw on the right
 constexpr int kRows = 5;             // harmony intervals, from the bottom: −OCT, 3RD, 5TH, 6TH, +OCT
 constexpr int kHarmSlots = 3;        // harmony voices at once
-constexpr int kLines = 1 + kClipSlots; // the live player, and one per clip slot
+// The lines of play: the live player, and one per clip slot and layer (a
+// loop with something layered on it plays each layer as a line of its own).
+// The page is shown kShownLines of them: the live one and one per slot.
+constexpr int kLines = 1 + kClipSlots * kClipLayers;
+constexpr int kShownLines = 1 + kClipSlots;
 constexpr int kKeyId = 0x400000;     // ids of notes played from the keyboard
 constexpr int kNeckOctaves = 2;
 
@@ -112,8 +116,8 @@ inline int packRows(const int rows[kHarmSlots]) {
 }
 inline int unpackRow(int flags, int slot) { return ((flags >> (8 + 3 * slot)) & 7) - 1; }
 
-// What the engine publishes for the page: sixteen numbers per line (0 live,
-// 1 + slot for a clip), then the echo.
+// What the engine publishes for the page: sixteen numbers per shown line (0
+// live, 1 + slot for a clip: its first layer sounding), then the echo.
 //   [0] 1 sounding and held, 0.5 ringing out, 0 silent
 //   [1] where it sings, in absolute scale degrees (octave·degreesPerOctave + degree)
 //   [2] its level, [3] its brightness (the finger's height)
@@ -125,8 +129,9 @@ constexpr int kLineData = 16;
 constexpr int kEchoLevel = 160;
 constexpr int kVoiceCount = 161;
 
-// Which line of play a command belongs to: 0 live, 1 + slot for a clip.
-inline int lineOf(int id) { return (id & (1 << 30)) ? 1 + ((id >> 24) & 7) : 0; }
+// Which line of play a command belongs to: 0 live, 1 + slot (+ kClipSlots
+// per layer above the first) for a clip.
+inline int lineOf(int id) { return isReplay(id) ? 1 + replaySlot(id) + kClipSlots * replayLayer(id) : 0; }
 
 // --- sounds -------------------------------------------------------------------
 

@@ -405,6 +405,55 @@ private slots:
         QCOMPARE(undone.view.parts[1].clips[0].events, 8);
     }
 
+    // (Lead counts a note left ringing out as a voice, so this can't tell
+    // it apart there: lead_tests checks its layers' lines directly.)
+    void aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn_data() {
+        QTest::addColumn<int>("page");
+        QTest::newRow("bass") << 2;
+    }
+    void aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn() {
+        // A bar that is one long note, then short notes layered over it: bass
+        // and lead are mono, but each layer is a line of its own, so the long
+        // note keeps sounding under the new ones (two voices at once) instead
+        // of being cut off by them.
+        QFETCH(int, page);
+        const int part = page - 1;
+        const std::string script = std::string(kBeat) +
+                                   "page 3.0 " + std::to_string(page) + "\n"
+                                   "tap 4.52 0.3 0.5 len=1.85\n"
+                                   "key 6.6 Space\n"
+                                   "tap 7.0 0.6 0.5 len=0.3\ntap 7.5 0.7 0.5 len=0.3\n"
+                                   "tap 9.0 0.6 0.5 len=0.3\ntap 9.5 0.7 0.5 len=0.3\n"
+                                   "key 10.0 Space\nend 15\n";
+        int most = 0;
+        const auto take = testkit::play(script, [&](Session &s) {
+            if (s.view().time > 11.0)
+                most = std::max(most, int(s.view().parts[part].voices));
+        });
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[part].playing, 0);
+        QVERIFY(take.view.parts[part].clips[1].state == ClipView::Empty);
+        QVERIFY2(most >= 2, qPrintable(QStringLiteral("at most %1 voice(s) at once").arg(most)));
+    }
+
+    void aLayerFitsTheLoopItGoesOnto() {
+        // A four-bar bass loop (one note a bar, played once), then three
+        // notes over three bars layered on it: the layer is taken as four
+        // bars, so it plays once per loop. Taken as three, it would repeat
+        // within the loop, out of step with it, and be cut where it wraps.
+        const std::string script = std::string(kBeat) +
+                                   "page 3.0 2\n"
+                                   "tap 4.55 0.1 0.5\ntap 6.55 0.3 0.5\ntap 8.55 0.2 0.5\ntap 10.55 0.4 0.5\n"
+                                   "key 12.4 Space\n"
+                                   "tap 12.8 0.6 0.5\ntap 14.8 0.7 0.5\ntap 16.8 0.6 0.5\n"
+                                   "key 17.4 Space\nend 19\n";
+        const auto take = testkit::play(script);
+        QVERIFY(take.error.empty());
+        const auto &c = take.view.parts[1].clips[0];
+        QCOMPARE(int(c.lengthBeats), 16);
+        QCOMPARE(c.events, 8 + 6);
+    }
+
     void shiftSpaceMakesANewLoopInstead() {
         // The same, with Shift+Space: the second line alone becomes a new
         // loop in the next slot, in the first one's place.

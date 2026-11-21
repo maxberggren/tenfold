@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QPainter>
 
+#include "lead.h"
 #include "parts.h"
 #include "testkit.h"
 
@@ -397,6 +398,32 @@ private slots:
         run(*spec.engine, ctx, 0.2, data);
         QCOMPARE(data[1], 12.0f);
         QCOMPARE(data[4], 14.0f);
+    }
+
+    void aLoopsLayersAreLinesOfTheirOwn() {
+        // A loop's first take holds a note; a note layered on top of it (the
+        // same slot, layer 1) sounds beside it on its own line, instead of
+        // taking the first take's line over (a legato slide away from it).
+        auto spec = makeLead();
+        Fake ctx;
+        spec.engine->init(48000);
+        const int layer0 = (1 << 30) | 5, layer1 = (1 << 30) | (1 << 27) | 5;
+        spec.engine->command(note(Command::On, layer0, 2, 1), ctx);
+        float data[kPartData] = {};
+        run(*spec.engine, ctx, 0.15, data);
+        const float first = data[lead::kLineData * 1 + 1];
+        spec.engine->command(note(Command::On, layer1, 6, 1), ctx);
+        run(*spec.engine, ctx, 0.3, data);
+        // Slot 1 still shows the first take's note, held, at its pitch...
+        QCOMPARE(data[lead::kLineData * 1 + 0], 1.0f);
+        QVERIFY(std::fabs(data[lead::kLineData * 1 + 1] - first) < 0.02f);
+        // ...and both sound.
+        QVERIFY(data[lead::kVoiceCount] >= 2.0f);
+        // The layer's note ends; the first take's goes on.
+        spec.engine->command(note(Command::Off, layer1, 6, 1), ctx);
+        run(*spec.engine, ctx, 0.2, data);
+        QCOMPARE(data[lead::kLineData * 1 + 0], 1.0f);
+        QVERIFY(std::fabs(data[lead::kLineData * 1 + 1] - first) < 0.02f);
     }
 
     void aKeyChangeRetunesAHeldNote() {

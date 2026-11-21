@@ -52,6 +52,9 @@ stays.
 
 **Layers.** Over a page's own playing loop, Space puts what you just played on
 top of it, as one loop. Shift+Space makes a new loop in its place instead.
+A layer is as long as fits the loop (one, two, four… bars over a longer one,
+never longer than it), and on Bass and Lead each layer plays on a voice of
+its own, so layers sound together instead of cutting each other off.
 
 **Editing loops on Arrange.** Hold a clip (a second finger, or the mouse
 button) or right-click it to pick it; right-click opens a menu of what can be

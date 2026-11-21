@@ -795,7 +795,7 @@ public:
             break;
         case kSeamRelease:
             for (Voice &v : m_voices)
-                if (v.active && v.seamHold && ((v.id >> 24) & 63) == (c.i[0] & 63)) {
+                if (v.active && v.seamHold && replaySlot(v.id) == (c.i[0] & 7)) {
                     v.seamHold = false;
                     if (v.frozen)
                         v.pendingOff = true;

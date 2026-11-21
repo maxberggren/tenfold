@@ -1041,7 +1041,8 @@ public:
     void init(float rate) override {
         m_rate = rate;
         m_live.init(rate, 0xB455u);
-        m_clip.init(rate, 0x5EB0u);
+        for (int k = 0; k < kClipLayers; ++k)
+            m_clip[size_t(k)].init(rate, 0x5EB0u + uint32_t(k) * 0x101u);
     }
 
     void command(const Command &c, AudioContext &ctx) override {
@@ -1077,7 +1078,8 @@ public:
 
     void silence(bool hard) override {
         m_live.silence(hard);
-        m_clip.silence(hard);
+        for (Lane &ln : m_clip)
+            ln.silence(hard);
         m_pendingCount = 0;
         // The live shapers are the page's to set and clear; the loops' go.
         if (hard)
@@ -1086,7 +1088,7 @@ public:
     }
 
     void publish(float *data) override {
-        const Lane *lanes[2] = {&m_live, &m_clip};
+        const Lane *lanes[2] = {&m_live, &clipShown()};
         for (int k = 0; k < 2; ++k) {
             const Lane &ln = *lanes[k];
             float *d = data + PubLane + 8 * k;
@@ -1099,7 +1101,7 @@ public:
             d[PubEnv] = ln.amp();
             d[PubGate] = ln.gate() ? 1.0f : 0.0f;
         }
-        const Lane &shown = m_live.active() || !m_clip.active() ? m_live : m_clip;
+        const Lane &shown = m_live.active() || !clipShown().active() ? m_live : clipShown();
         const Shape sh = &shown == &m_live ? m_shapeLive : Shape::over(clipShape(), m_shapeLive);
         data[PubLfo] = shown.lfo();
         data[PubWobDepth] = shown.lfoDepth();
@@ -1116,11 +1118,16 @@ public:
         data[PubFilter] = sh.cut;
         data[PubFilterMorph] = sh.morph;
         data[PubChordShift] = float(chordShift(m_harmony));
-        data[PubClipMute] = 1.0f - m_clip.mute();
+        data[PubClipMute] = 1.0f - m_clip[0].mute();
         scope(data + PubScope, data[PubScopeCycles]);
     }
 
-    int voices() const override { return int(m_live.active()) + int(m_clip.active()); }
+    int voices() const override {
+        int n = int(m_live.active());
+        for (const Lane &ln : m_clip)
+            n += int(ln.active());
+        return n;
+    }
 
 private:
     static constexpr int kPending = 64, kScope = 4096;
@@ -1131,7 +1138,8 @@ private:
 
     void apply(const Command &c, AudioContext &ctx, int off) {
         const bool replay = (c.id >> 24) != 0;
-        Lane &lane = replay ? m_clip : m_live;
+        // Each layer of a loop is a mono line of its own, on its own lane.
+        Lane &lane = replay ? m_clip[size_t(replayLayer(c.id))] : m_live;
         // A loop's shapers belong to its slot, so one loop's wobble never
         // leaks into the next.
         Shape &own = replay ? m_shapeSlot[slotOf(c.id)] : m_shapeLive;
@@ -1203,18 +1211,29 @@ private:
         }
     }
 
-    static int slotOf(int id) { return std::clamp((id >> 24) & 0x3F, 0, kClipSlots - 1); }
-    const Shape &clipShape() const { return m_shapeSlot[slotOf(m_clip.current().id)]; }
+    static int slotOf(int id) { return replaySlot(id); }
+    // The clip lane shown and heard as "the loop": the first layer sounding.
+    const Lane &clipShown() const {
+        for (const Lane &ln : m_clip)
+            if (ln.active())
+                return ln;
+        return m_clip[0];
+    }
+    const Shape &clipShape() const { return m_shapeSlot[slotOf(clipShown().current().id)]; }
 
     void segment(float *l, float *r, int n, int off0, AudioContext &ctx) {
         uint8_t wraps[kBlock] = {};
         // The shown lane marks its cycles for the scope.
-        const bool liveShown = m_live.active() || !m_clip.active();
+        const Lane &shownClip = clipShown();
+        const bool liveShown = m_live.active() || !shownClip.active();
         float mixL[kBlock] = {}, mixR[kBlock] = {};
         m_live.render(mixL, mixR, n, off0, ctx, m_shapeLive, 1.0f, liveShown ? wraps : nullptr);
-        // The loop steps aside while the player holds a note.
-        m_clip.render(mixL, mixR, n, off0, ctx, Shape::over(clipShape(), m_shapeLive), m_live.holding() ? 0.0f : 1.0f,
-                      liveShown ? nullptr : wraps);
+        // The loop steps aside while the player holds a note; its layers
+        // all share the loop's shapers.
+        const Shape clipSh = Shape::over(clipShape(), m_shapeLive);
+        for (Lane &ln : m_clip)
+            ln.render(mixL, mixR, n, off0, ctx, clipSh, m_live.holding() ? 0.0f : 1.0f,
+                          liveShown || &ln != &shownClip ? nullptr : wraps);
         for (int i = 0; i < n; ++i) {
             l[i] += mixL[i];
             r[i] += mixR[i];
@@ -1249,7 +1268,8 @@ private:
     }
 
     float m_rate = 48000;
-    Lane m_live, m_clip;
+    Lane m_live;
+    std::array<Lane, kClipLayers> m_clip; // a loop's layers, each its own mono line
     Shape m_shapeLive, m_shapeSlot[kClipSlots];
     Pending m_pending[kPending];
     int m_pendingCount = 0;

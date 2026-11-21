@@ -1142,6 +1142,25 @@ bars:
         if (phrase > length && phrase <= 64 && end - phrase >= beatFirst - 1.0)
             length = phrase;
     }
+    // A layer fits its loop: the shortest length that goes into the loop a
+    // whole number of times and still holds all that was played (what is
+    // added before it is silence), and never longer than the loop.
+    double layerBase = 0;
+    if (layer && m_view.parts[part].playing >= 0) {
+        layerBase = m_view.parts[part].clips[m_view.parts[part].playing].lengthBeats;
+        if (layerBase > 0) {
+            const auto fits = layerLengths(layerBase);
+            double fit = fits.back();
+            for (double d : fits)
+                if (d >= length - 1e-6) {
+                    fit = d;
+                    break;
+                }
+            if (std::fabs(fit - length) > 1e-6)
+                dlog("  layer over a %.3f-beat loop: %.3f beats fits it as %.3f", layerBase, length, fit);
+            length = fit;
+        }
+    }
     const int bars = int(std::lround(length / kBeatsPerBar));
     StudioMsg m;
     m.kind = StudioMsg::TakeBars;
@@ -1163,6 +1182,7 @@ bars:
     m_view.parts[part].recording = slot;
     handOver();
     m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now(), m_view.parts[part].takes};
+    m_lastTake.base = m_lastTake.into >= 0 ? layerBase : 0;
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
@@ -1170,6 +1190,19 @@ bars:
         ctx.notice(QStringLiteral("Layered %1 onto slot %2 · ↑↓ longer, shorter").arg(what).arg(into + 1));
     else
         ctx.notice(QStringLiteral("Looping %1 in slot %2 · ↑↓ longer, shorter").arg(what).arg(slot + 1));
+}
+
+std::vector<double> Session::layerLengths(double base) {
+    std::vector<double> out;
+    const double unit = base >= kBeatsPerBar ? kBeatsPerBar : 1.0;
+    for (int k = 64; k >= 1; --k) {
+        const double d = base / k, units = d / unit;
+        if (d >= unit - 1e-6 && std::fabs(units - std::round(units)) < 1e-6)
+            out.push_back(d);
+    }
+    if (out.empty())
+        out.push_back(base);
+    return out;
 }
 
 int Session::freeRounds(int dir) const {
@@ -1199,6 +1232,15 @@ double Session::retakeLength(int dir) const {
         while (len * 60.0 / secs < 88.0 && len < 32)
             len *= 2;
         return len;
+    }
+    // A layer: the lengths that fit its loop.
+    if (lt.into >= 0 && lt.base > 0) {
+        const auto lengths = layerLengths(lt.base);
+        const long at = long(std::find_if(lengths.begin(), lengths.end(),
+                                          [&](double d) { return std::fabs(d - lt.length) < 1e-6; }) -
+                             lengths.begin()) +
+                        dir;
+        return at >= 0 && at < long(lengths.size()) ? lengths[size_t(at)] : 0;
     }
     // Whole bars, by doubling and halving, through the length Space chose.
     std::vector<double> lengths{4, 8, 16, 32, 64};

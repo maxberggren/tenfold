@@ -263,9 +263,18 @@ public:
     }
 
     void publish(float *data) override {
-        // See lead.h for what each number is.
-        for (int li = 0; li < kLines; ++li) {
-            float *d = data + kLineData * li;
+        // See lead.h for what each number is. A slot shows its first layer
+        // that is sounding.
+        for (int shown = 0; shown < kShownLines; ++shown) {
+            int li = shown;
+            if (shown > 0)
+                for (int layer = kClipLayers - 1; layer >= 0; --layer) {
+                    const int l2 = shown + kClipSlots * layer;
+                    const Line &c = m_lines[size_t(l2)];
+                    if (c.voice >= 0 && m_voices[size_t(c.voice)].active && m_voices[size_t(c.voice)].owner == l2)
+                        li = l2;
+                }
+            float *d = data + kLineData * shown;
             const Line &line = m_lines[size_t(li)];
             const Voice *v = line.voice >= 0 ? &m_voices[size_t(line.voice)] : nullptr;
             const bool on = v && v->active && v->owner == li;

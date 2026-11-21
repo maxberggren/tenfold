@@ -50,6 +50,16 @@ constexpr int kBeatsPerBar = 4;
 // taken. A page can treat it as a finger, or as a pointer that clicks.
 constexpr int kMouseId = 0x7FFF;
 
+// A replayed sound's id: bit 30 set, the slot it plays from in bits 24–26,
+// the layer of its clip in bits 27–28 (0 for what was taken first, 1… for
+// what Space layered on top), the id it was played with in bits 0–23. A
+// mono part plays each layer on a voice of its own, so layers never cut
+// each other off.
+constexpr int kClipLayers = 4;
+inline bool isReplay(int id) { return (id & (1 << 30)) != 0; }
+inline int replaySlot(int id) { return (id >> 24) & 7; }
+inline int replayLayer(int id) { return isReplay(id) ? (id >> 27) & 3 : 0; }
+
 // A message to a part's engine.
 struct Command {
     // Types the studio understands when it records and replays clips. A

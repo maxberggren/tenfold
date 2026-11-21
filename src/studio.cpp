@@ -25,7 +25,9 @@ constexpr int kClipEvents = 2048;  // events a clip can hold
 constexpr int kReplayHeld = 96;    // replayed sounds a part can have on at once
 constexpr int kReplayBit = 1 << 30;
 
-int replayId(int id, int slot) { return kReplayBit | (slot << 24) | (id & 0xFFFFFF); }
+int replayId(int id, int slot, int layer) {
+    return kReplayBit | (std::clamp(layer, 0, kClipLayers - 1) << 27) | (slot << 24) | (id & 0xFFFFFF);
+}
 
 // The lengths a clip snaps to, in beats.
 // A take of a bar or more keeps its whole bars (a three-bar phrase stays
@@ -77,6 +79,7 @@ struct Studio::PartState {
         double pos;
         Command c;
         double after = -1e18; // an overdub: not replayed before this beat (it was just heard live)
+        int layer = 0;        // 0 the first take, 1… what was layered on top (see replayLayer)
     };
     struct Clip {
         std::vector<Event> events;
@@ -524,17 +527,25 @@ static bool mergeInto(Studio::PartState &p, Studio::Impl &s, int a, int b, bool 
                 dst.events.push_back(e);
         for (const auto &e : other.events)
             if (room())
-                dst.events.push_back({lenA + e.pos, otherId(e.c), -1e18});
+                dst.events.push_back({lenA + e.pos, otherId(e.c), -1e18, e.layer});
     } else {
+        // Layered, the other clip plays on layers of its own, above the
+        // ones this clip has (a mono part gives each layer its own voice);
+        // its ids stay as they were, the layer telling them apart.
+        int top = 0;
+        for (const auto &e : before.events)
+            top = std::max(top, e.layer);
         for (double k = 0; k < len - 1e-9; k += lenA)
             for (const auto &e : before.events)
                 if (room())
-                    dst.events.push_back({k + e.pos, e.c, -1e18});
+                    dst.events.push_back({k + e.pos, e.c, -1e18, e.layer});
         const double shift = floorMod(other.anchor - before.anchor, lenB);
         for (double k = 0; k < len - 1e-9; k += lenB)
             for (const auto &e : other.events)
                 if (room())
-                    dst.events.push_back({floorMod(k + e.pos + shift, len), otherId(e.c), -1e18});
+                    dst.events.push_back({floorMod(k + e.pos + shift, len),
+                                          top + 1 + e.layer < kClipLayers ? e.c : otherId(e.c), -1e18,
+                                          std::min(kClipLayers - 1, top + 1 + e.layer)});
     }
     sortClip(dst.events);
     if (was)
@@ -1069,7 +1080,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             if (b0 + (pos - pos0) <= e.after)
                 return;
             Command c = e.c;
-            c.id = replayId(c.id, p.playing);
+            c.id = replayId(c.id, p.playing, e.layer);
             c.t = s.blockTime + (pos - pos0) * spb;
             debugOn(s, pi, p.playing, c);
             if (c.type == Command::On) {

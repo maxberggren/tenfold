@@ -194,7 +194,13 @@ private:
         double unit = 0;
         int n = 0;
         std::vector<double> rounds; // when each round of the pattern began
+        double base = 0; // a layer: the length of the loop it went onto, in beats
     } m_lastTake;
+    // The lengths a layer may have over a loop `base` beats long: the ones
+    // that go into it a whole number of times, in whole bars (whole beats
+    // for a loop under a bar), shortest first. A layer that didn't would
+    // drift against the loop and be cut off where the loop wraps.
+    static std::vector<double> layerLengths(double base);
     int freeRounds(int dir) const; // the rounds one step that way, or 0
     static constexpr double kRetakeSecs = 3.0;
     bool adjustTake(int dir); // ↑ (+1) longer, ↓ (−1) shorter; false when there's nothing to adjust

@@ -1726,8 +1726,9 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
         Page &page = *m_pages[size_t(i)];
         for (int c = 0; c < ChannelCount; ++c)
             ctx.setChannel(page.part, c, in ? unit(in->mix, kChannelNames[c], page.spec.channel[c]) : page.spec.channel[c], 0);
-        if (in)
-            page.spec.control->load(in->settings, *page.ctx);
+        // A part the file doesn't have loads nothing, which every page
+        // takes as its defaults: the last song's sound doesn't stay on.
+        page.spec.control->load(in ? in->settings : QJsonObject(), *page.ctx);
     }
     Page &arrange = *m_pages[size_t(arrangePage())];
     arrange.spec.control->load(doc.value(QStringLiteral("song")).toObject(), *arrange.ctx);

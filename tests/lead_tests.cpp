@@ -1,9 +1,11 @@
 // The Lead page: a neck that sings in the key, legato that glides without a
 // new attack, harmony that moves with the melody, and clips that replay it.
 
+#include <climits>
 #include <cstdio>
 
 #include <QImage>
+#include <QJsonArray>
 #include <QPainter>
 
 #include "lead.h"
@@ -203,6 +205,19 @@ Taken takeOverALoop(const std::vector<std::pair<double, int>> &taps, double spac
                                     [&](Session &ss) { got.status = ss.pageStatus(); });
     got.beats = take.view.parts[kLead].clips[1].lengthBeats;
     return got;
+}
+
+// The Lead's settings in a song file.
+QJsonObject leadSettings(const QJsonObject &doc) {
+    return doc[QStringLiteral("parts")].toArray()[kLead].toObject()[QStringLiteral("settings")].toObject();
+}
+QJsonObject withLeadSettings(QJsonObject doc, const QJsonObject &settings) {
+    QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+    QJsonObject lead = parts[kLead].toObject();
+    lead[QStringLiteral("settings")] = settings;
+    parts[kLead] = lead;
+    doc[QStringLiteral("parts")] = parts;
+    return doc;
 }
 
 const char *soundName(int i) {
@@ -755,6 +770,108 @@ private slots:
         p.end();
         QVERIFY(!session.pageHelp(kLead).isEmpty());
         QVERIFY(session.pageStatus().contains(QStringLiteral("3RD")));
+    }
+
+    void aSongKeepsTheSettingsChosenHere() {
+        // Chip, the neck an octave up, a longer glide, a sixteenth gate,
+        // two steps darker, following the chord, the harmony holding; then
+        // a bar looped. Saved and opened in a fresh tenfold, the page is as
+        // it was and the loop plays again.
+        const std::string s = riffInBarTwo() + kChip +
+                              "key 0.2 Up\nkey 0.25 Shift+Up\nkey 0.3 Shift+Right\nkey 0.35 Shift+Right\n"
+                              "key 0.4 -\nkey 0.45 -\nkey 0.5 §\nkey 0.55 Return\n" +
+                              fmt("key %.4f Space\nend 6.5\n", 8 * 60.0 / 124.0);
+        testkit::reopen(s, 3.0, [](Session &before, Session &opened, const QJsonObject &doc) {
+            const QJsonObject saved = leadSettings(doc);
+            QCOMPARE(saved[QStringLiteral("sound")].toString(), QStringLiteral("Chip"));
+            QCOMPARE(saved[QStringLiteral("octave")].toInt(), 1);
+            QCOMPARE(saved[QStringLiteral("glide")].toInt(), 1);
+            QCOMPARE(saved[QStringLiteral("gate")].toString(), QStringLiteral("1/16"));
+            QCOMPARE(saved[QStringLiteral("tone")].toInt(), -2);
+            QCOMPARE(saved[QStringLiteral("follow")].toBool(), true);
+            QCOMPARE(saved[QStringLiteral("hold")].toBool(), true);
+            QCOMPARE(leadSettings(opened.saveSong()), saved);
+            QCOMPARE(opened.page(), before.page());
+            for (const char *said : {"Chip", "neck an octave up", "on the chord", "gated 1/16", "tone −2", "harmony held"})
+                QVERIFY2(opened.pageStatus().contains(QString::fromUtf8(said)), qPrintable(opened.pageStatus()));
+            QCOMPARE(opened.view().parts[kLead].playing, 0);
+            // Another song opened over it, one with no Lead settings at all:
+            // the page goes back to its own defaults, not this song's.
+            QString error;
+            QVERIFY2(opened.openSong(withLeadSettings(doc, {}), &error), qPrintable(error));
+            const QJsonObject home = leadSettings(opened.saveSong());
+            QCOMPARE(home[QStringLiteral("sound")].toString(), QStringLiteral("Anthem"));
+            QCOMPARE(home[QStringLiteral("gate")].toString(), QStringLiteral("off"));
+            QCOMPARE(home[QStringLiteral("octave")].toInt(), 0);
+            QCOMPARE(home[QStringLiteral("hold")].toBool(), false);
+        });
+    }
+
+    void aSongWithNonsenseSettingsOpensSane() {
+        // Wrong kinds, numbers far out of range, names this tenfold
+        // doesn't know: each falls back to its default or into its range.
+        QJsonObject doc;
+        testkit::play("end 0.1\n", [&](Session &s) { doc = s.saveSong(); });
+        QJsonObject bad;
+        bad[QStringLiteral("sound")] = 3;
+        bad[QStringLiteral("octave")] = 1e300;
+        bad[QStringLiteral("glide")] = QStringLiteral("long");
+        bad[QStringLiteral("gate")] = QStringLiteral("1/64");
+        bad[QStringLiteral("tone")] = -1e9;
+        bad[QStringLiteral("follow")] = QStringLiteral("yes");
+        bad[QStringLiteral("hold")] = 1;
+        bad[QStringLiteral("wobble")] = QJsonArray{1, 2, 3};
+        testkit::play("page 0 4\nkey 0.05 Right\nkey 0.1 Shift+Right\nend 0.2\n", [&](Session &s) {
+            QString error;
+            QVERIFY2(s.openSong(withLeadSettings(doc, bad), &error), qPrintable(error));
+            const QJsonObject got = leadSettings(s.saveSong());
+            QCOMPARE(got[QStringLiteral("sound")].toString(), QStringLiteral("Anthem"));
+            QCOMPARE(got[QStringLiteral("octave")].toInt(), 1);
+            QCOMPARE(got[QStringLiteral("glide")].toInt(), 0);
+            QCOMPARE(got[QStringLiteral("gate")].toString(), QStringLiteral("off"));
+            QCOMPARE(got[QStringLiteral("tone")].toInt(), -4);
+            QCOMPARE(got[QStringLiteral("follow")].toBool(), false);
+            QCOMPARE(got[QStringLiteral("hold")].toBool(), false);
+            QVERIFY(!got.contains(QStringLiteral("wobble")));
+        });
+    }
+
+    void clipEventsFromAFileStayInBounds() {
+        // A song's events come from disk: any int and any finite float in
+        // a note or a param plays without reaching outside the engine's
+        // tables, and the sound stays finite.
+        auto spec = makeLead();
+        Fake ctx;
+        spec.engine->init(48000);
+        const int ints[] = {INT_MIN, -1, INT_MAX};
+        const float floats[] = {-3.4e38f, 3.4e38f};
+        int id = 1;
+        for (int a : ints)
+            for (int b : ints) {
+                Command on = note(Command::On, id, a, b, a, b);
+                for (float f : floats) {
+                    for (float &x : on.f)
+                        x = f;
+                    spec.engine->command(on, ctx);
+                    Command mv = on;
+                    mv.type = Command::Move;
+                    spec.engine->command(mv, ctx);
+                    for (int which = 0; which < 8; ++which) {
+                        Command p;
+                        p.type = Command::Param;
+                        p.i[0] = which;
+                        p.i[1] = a;
+                        p.f[0] = p.f[1] = f;
+                        spec.engine->command(p, ctx);
+                    }
+                    std::vector<float> out;
+                    float data[kPartData] = {};
+                    run(*spec.engine, ctx, 0.05, data, &out);
+                    for (float v : out)
+                        QVERIFY(std::isfinite(v));
+                }
+                spec.engine->command(note(Command::Off, id++, 0, 0), ctx);
+            }
     }
 };
 

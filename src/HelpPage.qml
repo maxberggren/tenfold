@@ -13,7 +13,7 @@ Rectangle {
     readonly property var pageLines: pageHelp.split("\n").filter(l => l.length > 0)
     readonly property var globalLines: [
         "1 – 7\t" + qsTr("the parts: drums, bass, chords, lead, arp, atmosphere, effects"),
-        "0\t" + qsTr("arrange: every part's clips together"),
+        "0\t" + qsTr("the Song page: your loops become a track (sections, builds and drops)"),
         "Tab\t" + qsTr("next page (Shift: previous)"),
         "Space\t" + qsTr("loop what you just played. With nothing else playing, press it where your phrase would start again: that sets the tempo. Over a playing loop, the bars you just played loop from the bar line. Over this page's own loop it layers on top, as one loop"),
         "Take pad / Esc\t" + qsTr("take the trackpad (the button) / give it back"),

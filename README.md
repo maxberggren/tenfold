@@ -1,6 +1,6 @@
 # tenfold
 
-![tenfold's eight pages mid-performance: drums, bass, chords, lead, arp, atmosphere, effects and the arrange page](docs/screenshot.png)
+![tenfold's eight pages mid-performance: drums, bass, chords, lead, arp, atmosphere, effects and the Song page](docs/screenshot.png)
 
 tenfold turns the trackpad into an electronic music studio you play with all
 ten fingers. Every part of a track has its own page and its own instrument,
@@ -8,7 +8,7 @@ designed for what that part needs: a pad grid with note-repeat for drums, a
 303-style bass with slides and a filter you ride, chords that voice-lead
 themselves, an expressive lead with glides, vibrato and harmonies, an
 arpeggiator, a bed of pads and choirs, a transitions desk of risers and
-drops, and an arrange page that turns your loops into a track. Everything
+drops, and a Song page that turns your loops into a track. Everything
 plays in one key and on one clock, and every kick pumps the mix.
 
 All of it is synthesized from scratch, with no samples, at 48 kHz in

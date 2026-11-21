@@ -21,7 +21,7 @@ enum Page { Drums = 0, Bass, Chords, Lead, Arp, Atmos, FX, Vocal, Arrange };
 const Tutorial::Probe kProbes[] = {
     {Drums, "hits"},     {Drums, "rolls"},      {Drums, "grooves"}, {Drums, "keeps"},
     {Chords, "chords"},  {Lead, "glides"},      {Lead, "wiggles"},  {Lead, "harmonized"},
-    {Atmos, "swells"},   {FX, "drops"},         {Arrange, "drops"},
+    {Atmos, "swells"},   {FX, "drops"},         {Arrange, "drops"},   {Arrange, "backIns"},
 };
 constexpr int kProbeCount = int(sizeof(kProbes) / sizeof(kProbes[0]));
 
@@ -405,7 +405,7 @@ void Tutorial::build() {
 
     add({QStringLiteral("FX"), FX, QStringLiteral("Keep it for the track"),
          QStringLiteral("A drop every few bars is too much for now. Press Backspace: the loop stops at the bar and waits "
-                        "in its slot. The track you'll write uses it to lead into every drop."),
+                        "in its slot. On the Song page, B and the track you'll write launch it to lead into their drops."),
          QStringLiteral("F1 would start it again. Ctrl+Backspace stops every page's loop at once."),
          QStringLiteral("Saved for the big moments."),
          {QStringLiteral("Backspace")},
@@ -414,7 +414,10 @@ void Tutorial::build() {
          {{QStringLiteral("Backspace: stopped, kept"),
            [](Look &l) { return !l.playing(FX) && l.view().parts[FX].queued < 0 && l.hasClip(FX); }}}});
 
-    // --- Arrange: the mix and the song -----------------------------------------
+    // --- The Song page: the mix, the moves, the song ------------------------------
+    // What it teaches: live moves (mute, breakdown, build and drop) on the
+    // loops; a song is a row of sections, I writes one from the loops, and
+    // Space while it plays puts your own moves into it.
     // Lanes run down from the scene strip (y 0.885), one per part; a lane's
     // clips sit between x 0.12 and 0.73. The bass is the second lane.
     const float lane = 0.885f / float(kMaxParts); // a lane per part, all eight
@@ -422,7 +425,7 @@ void Tutorial::build() {
          QStringLiteral("Every part has a lane here, with its loops. One finger moves a pointer; a second finger's tap, "
                         "anywhere, does what it points at (the mouse just clicks). Tap the bass loop: it stops on the "
                         "bar. Tap again: it's back."),
-         QStringLiteral("Shift+F1 stores what plays as a scene and F1 brings it back; Tab steps through the pages."),
+         QStringLiteral("Tab steps through the pages; 0 always comes back here."),
          QStringLiteral("Every loop is in your hands here."),
          {},
          {},
@@ -461,12 +464,14 @@ void Tutorial::build() {
          {},
          {spot(0.73f, 0.885f, 0.87f, 1.0f, QStringLiteral("N"))},
          {{QStringLiteral("N: breakdown"), [](Look &l) { return l.probe(Arrange, "breakdown") > 0.5f; }},
-          {QStringLiteral("N again: back"), [](Look &l) { return l.checked(0) && l.probe(Arrange, "breakdown") < 0.5f; }}}});
+          {QStringLiteral("N again: back"), [](Look &l) { return l.checked(0) && l.since(Arrange, "backIns") >= 1; }}}});
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Build and drop"),
-         QStringLiteral("Press B: the whole mix builds to the end of the phrase, filter rising, an echo roll, a breath, "
-                        "then the drop on the ONE. Return drops sooner, on the next bar."),
-         QStringLiteral("The tension fader on the right does it by hand: push up, let go high to drop."),
+         QStringLiteral("Press B: the mix builds to the end of the phrase (filter rising, an echo roll, your FX loop "
+                        "leading in), takes a breath, and drops on the ONE: everything back, from the top. Return drops "
+                        "sooner, on the next bar."),
+         QStringLiteral("A drop is the payoff of a build or a breakdown; on a full mix there is nothing to drop. The "
+                        "tension fader on the right builds by hand: push up, let go high to drop."),
          QStringLiteral("That's the moment people wait for."),
          {QStringLiteral("B"), QStringLiteral("Return")},
          {},
@@ -474,25 +479,12 @@ void Tutorial::build() {
          {{QStringLiteral("B: a build"), [](Look &l) { return l.probe(Arrange, "building") > 0.5f; }},
           {QStringLiteral("The drop"), [](Look &l) { return l.checked(0) && l.since(Arrange, "drops") >= 1; }}}});
 
-    add({QStringLiteral("Song"), Arrange, QStringLiteral("Record your song"),
-         QStringLiteral("Press Space: the pad counts down, and from the next bar the song records what you do here. Let "
-                        "it groove, N for a breakdown, N to come back. Space again stops; then P plays your song back."),
-         QStringLiteral("Shift+O takes a take back; Left and Right jump between sections while it plays."),
-         QStringLiteral("A song, played by you."),
-         {QStringLiteral("Space"), QStringLiteral("N"), QStringLiteral("P")},
-         {},
-         {},
-         {{QStringLiteral("Space: recording"), [](Look &l) { return l.probe(Arrange, "songRecording") > 0.5f; }},
-          {QStringLiteral("Space: stopped"),
-           [](Look &l) {
-               return l.checked(0) && l.probe(Arrange, "songRecording") < 0.5f && l.probe(Arrange, "songArmed") < 0.5f;
-           }},
-          {QStringLiteral("P: it plays back"), [](Look &l) { return l.checked(1) && l.songPlaying(); }}}});
-
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Write the whole track"),
-         QStringLiteral("tenfold writes a whole track from your loops: intro, builds, drops, a breakdown, an outro. "
-                        "Ctrl+R to record it to a file, then I, and I again: it plays from the next bar."),
-         QStringLiteral("It takes your take's place; Shift+O brings yours back. Shift+I writes a short one."),
+         QStringLiteral("A song is a row of sections: intro, groove, builds, drops, a breakdown, an outro. I writes one "
+                        "from your loops (the first I asks, the second writes) and it plays from the next bar; the band "
+                        "under the lanes shows its sections and where it is. Ctrl+R first, to record it to a file."),
+         QStringLiteral("Shift+I writes a short one. Stopped, Left and Right pick a section: D doubles it, Delete "
+                        "removes it, Shift+O takes an edit back."),
          QStringLiteral("Your track is playing, and recording."),
          {QStringLiteral("Ctrl R"), QStringLiteral("I"), QStringLiteral("I")},
          QStringLiteral("record"),
@@ -500,10 +492,33 @@ void Tutorial::build() {
          {{QStringLiteral("Ctrl+R: recording"), [](Look &l) { return l.recording(); }},
           {QStringLiteral("I, I: the track plays"), [](Look &l) { return l.songBars() >= 30 && l.songPlaying(); }}}});
 
+    // Your own moves into the written track: a punch-in while it plays.
+    add({QStringLiteral("Song"), Arrange, QStringLiteral("Play over it"),
+         QStringLiteral("The song is yours to change. While it plays, Space punches in: from the next bar, what you do "
+                        "here replaces what the song did. Mute the drums with Q, bring them back with Q, then Space "
+                        "again: those bars are yours now."),
+         QStringLiteral("Anything goes in: mutes, N, B and Return, the fader, the lanes' rides."),
+         QStringLiteral("Your moves are in the song."),
+         {QStringLiteral("Space"), QStringLiteral("Q"), QStringLiteral("Space")},
+         {},
+         {},
+         {{QStringLiteral("Space: punching in"),
+           [](Look &l) { return l.songPlaying() && l.probe(Arrange, "songRecording") > 0.5f; }},
+          {QStringLiteral("Q: drums out, and back"),
+           [](Look &l) {
+               if (l.checked(0) && l.muted(Drums))
+                   l.flag(1) = true;
+               return l.flag(1) && !l.muted(Drums);
+           }},
+          {QStringLiteral("Space: punched in"),
+           [](Look &l) {
+               return l.checked(0) && l.probe(Arrange, "songRecording") < 0.5f && l.probe(Arrange, "songArmed") < 0.5f;
+           }}}});
+
     // The track, heard through: its sections tick off as they come, the end
     // once the echo has died away, and the file once Ctrl+R saves it.
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Listen, then save"),
-         QStringLiteral("Your track: everything you played, arranged, two and a half minutes. The strip under the pad "
+         QStringLiteral("Your track: everything you played, arranged, with your moves in it. The band under the lanes "
                         "shows where it is. When its echo has died away, Ctrl+R saves it in Music/tenfold."),
          {},
          QStringLiteral("Saved. You made a track."),

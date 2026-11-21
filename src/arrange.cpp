@@ -490,11 +490,41 @@ public:
             return moving(MBuild);
         if (name == QLatin1String("drops"))
             return float(m_drops);
+        if (name == QLatin1String("backIns"))
+            return float(m_backIns);
         return PartControl::tutorialProbe(name);
     }
 
     QString help() const override {
         return QStringLiteral(
+            "the song\ta row of sections (INTRO, GROOVE, BUILD, DROP, BREAK, OUTRO), shown in the band under the lanes. "
+            "Write one from your loops with I, or record one with Space as you play here; P plays it\n"
+            "I\twrite a whole track from your loops and play it: the long form (2½ minutes) with four parts or more, the "
+            "short one with fewer; Shift: always the short one. While clips play, the first I asks and the second writes\n"
+            "Space or O\trecord the song from the next bar: everything you do here goes in (clips, mutes, the moves, the "
+            "fader). While the song plays, Space punches in: the bars you play over are replaced. Again to stop\n"
+            "P\tplay the song from the top (Shift: loop it); again to stop. Ctrl+P pauses everything and plays it on\n"
+            "Left, Right\tplaying: jump a section back or on, on the bar; stopped: pick a section\n"
+            "picked section: Delete · D · M · Shift+← →\tremove it · double it · join it with the next · swap it with a "
+            "neighbour (Shift+O takes each back)\n"
+            "Shift+O\tback to the song before the last take, write, clear or edit (eight deep)\n"
+            "the moves\tlive, on the bar, on whatever plays; recorded into the song when you record\n"
+            "B\tBUILD to the end of the phrase (two bars at least; Shift: eight): the mix lifts and thins, the FX page's "
+            "loop leads in, then the drop\n"
+            "Return\tDROP: everything that played comes back on the next ONE, from the top, after a breath; the payoff "
+            "of a B or an N (a full mix has nothing to drop)\n"
+            "N\tbreakdown to chords and atmos; again to bring it back\n"
+            "X\techo-out: the last bar into the echo, then out\n"
+            "C\tcut the last beat before the bar (Shift: half a beat)\n"
+            "Z\tfilter the mix out; again to open it back onto a bar\n"
+            "L\tlift the key a whole tone on the bar (Shift: down)\n"
+            "V\tevery part to its next clip on the bar\n"
+            "tension fader, right\tup builds (filter, wash, an echo roll), down sinks the mix; let go high and it drops on the "
+            "next ONE\n"
+            "F1–F8\tlaunch a scene (slot n of every part); Shift stores what plays into it\n"
+            "Q W E R T Y U\tmute a part now; with Shift, on the next bar\n"
+            "A S D F G H J\tsolo while held; with Shift, latched (D doubles while something is picked)\n"
+            "Backspace\tstop everything on the bar; Shift+Backspace twice clears the song\n"
             "one finger\tmoves the pointer (like a trackpad cursor: slow for fine, fast to cross) and lights what it is on; "
             "nothing fires\n"
             "a second finger's tap, anywhere\tdoes what the pointer is on: start or stop a clip, launch a scene, mute a part, "
@@ -505,33 +535,12 @@ public:
             "a finger on a lane's readouts (LVL FLT ECH VRB)\trides it at once: up and down its level, sideways its DJ filter "
             "(springs back), harder throws it into the echo, a twist pumps it\n"
             "a second finger there\tup washes it in reverb, sideways pans it; a click latches the ride\n"
-            "tension fader, right\tup builds (filter, wash, an echo roll), down sinks the mix; let go high and it drops on the "
-            "next ONE\n"
             "right-click a clip or a section\tpicks it and opens a menu of what can be done to it; the same buttons show "
             "under the song while something is picked\n"
             "picked clips: D · M · Shift+M\tdouble into a free slot · layer the others into the first · chain them after it "
             "(Ctrl+Z takes each back)\n"
             "picked clips: Shift+← → (or [ ]) · Delete\tmove one to the free slot left or right · clear them (Ctrl+Z "
-            "brings them back)\n"
-            "picked section: Delete · D · M · Shift+← →\tremove it · double it · join it with the next · swap it with a "
-            "neighbour (Shift+O takes each back)\n"
-            "F1–F8\tlaunch a scene; Shift stores what plays into it\n"
-            "Q W E R T Y U\tmute a part now; with Shift, on the next bar\n"
-            "A S D F G H J\tsolo while held; with Shift, latched (D doubles while something is picked)\n"
-            "Return\tDROP: everything back on the next ONE, after a breath\n"
-            "B\tBUILD to the end of the 4-bar phrase (Shift: 8), then the drop\n"
-            "N\tbreakdown to chords and atmos; again to bring it back\n"
-            "X\techo-out: the last bar into the echo, then out\n"
-            "C\tcut the last beat before the bar (Shift: half a beat)\n"
-            "Z\tfilter the mix out; again to open it back onto a bar\n"
-            "L\tlift the key a whole tone on the bar (Shift: down)\n"
-            "V\tevery part to its next clip on the bar\n"
-            "I\twrite a whole track from the loops and play it: the long form (2½ minutes) with four parts or more, the short one with fewer; Shift: always the short one; twice while clips play\n"
-            "Space or O\trecord the song from the next bar (punch in while it plays); again to stop\n"
-            "Shift+O\tback to the song before the last take, write, clear or edit (eight deep)\n"
-            "P\tplay the song from the top (Shift: loop it); again to stop\n"
-            "Left, Right\tjump a section back or on, on the bar; stopped, pick a section\n"
-            "Backspace\tstop everything on the bar; Shift+Backspace twice clears the song");
+            "brings them back)");
     }
 
     QString status() const override;
@@ -2085,6 +2094,7 @@ private:
             // Again: everything back on the bar, without the drama of a drop.
             b->b1 = std::min(b->b1, bar * double(kBeatsPerBar));
             recordMoveAt(MUnbreak, bar * double(kBeatsPerBar), 0);
+            ++m_backIns;
             ctx.notice(QStringLiteral("Back in on the bar"));
             return;
         }
@@ -2370,6 +2380,10 @@ private:
                     m_song = std::move(m_take);
                     m_take = Song{};
                 }
+                const bool punched = m_playing && !m_song.empty();
+                std::vector<uint8_t> kept;
+                for (const SongBar &sb : m_song.bars)
+                    kept.push_back(sb.label);
                 m_song.resize(std::max(m_song.length(), std::min(b - m_origin, kMaxSongBars)));
                 if (m_playing) {
                     // The trims and flips are in the take now.
@@ -2379,7 +2393,17 @@ private:
                     }
                 }
                 labelSong();
-                ctx.notice(QStringLiteral("Song: %1 bars").arg(m_song.length()));
+                // A punch-in names only the bars it replaced: the rest of the
+                // song keeps the sections it had.
+                if (punched) {
+                    const int from = m_recStartBar - m_origin, to = b - m_origin;
+                    for (int k = 0; k < int(kept.size()) && k < m_song.length(); ++k)
+                        if (k < from || k >= to)
+                            m_song.bars[size_t(k)].label = kept[size_t(k)];
+                    sections();
+                }
+                ctx.notice(m_playing ? QStringLiteral("Song: %1 bars, punched in").arg(m_song.length())
+                                     : QStringLiteral("Song: %1 bars · P plays it").arg(m_song.length()));
             }
             if (m_recording && b - m_origin >= kMaxSongBars)
                 m_recStopBar = b + 1;
@@ -3502,6 +3526,7 @@ private:
     int m_recArmBar = -1, m_recStopBar = -1, m_recStartBar = 0, m_recBarDone = -1000000;
     long m_recStep = -1;
     int m_takeNo = 0; // counts recordings, so a punch-in knows its own moves
+    int m_backIns = 0; // N pressed to end a breakdown, for the tutorial
     size_t m_moveCursor = 0;
     int m_moveCursorOrigin = -1;
 };
@@ -3526,7 +3551,7 @@ void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
     const StudioView &v = *pc.studio;
     const int parts = std::clamp(v.partCount, 1, P);
     m_padPx = pc.pad;
-    c::pad(p, pc, QStringLiteral("Arrange"));
+    c::pad(p, pc, QStringLiteral("Song"));
 
     // The build rises from the floor of the pad, breathing on the beat.
     const float tens = m_buildShown;
@@ -4396,8 +4421,9 @@ QString ArrangeControl::status() const {
 
 PartSpec makeArrange(const QStringList &names, const std::vector<QColor> &colors) {
     PartSpec s;
-    s.name = QStringLiteral("Arrange");
-    s.blurb = QStringLiteral("clips into a track");
+    // "Song": what is made here, and what every guide calls it.
+    s.name = QStringLiteral("Song");
+    s.blurb = QStringLiteral("loops into a track");
     s.color = QColor("#FFD60A");
     s.control = std::make_unique<ArrangeControl>(names, colors);
     return s;

@@ -448,7 +448,7 @@ ApplicationWindow {
                           : backend.padState === Backend.Ready ? qsTr("Paused, pointer released")
                           : qsTr("Standby: Take pad to play"))
                           + ((backend.pagesSilenced[backend.page] || "") !== ""
-                             ? "     " + qsTr("Silent: %1 on the arrange page").arg(backend.pagesSilenced[backend.page]) : "")
+                             ? "     " + qsTr("Silent: %1 on the Song page").arg(backend.pagesSilenced[backend.page]) : "")
                           + (backend.pageStatus !== "" ? "     " + backend.pageStatus : "")
                           + (backend.audioOk || backend.audioError === "" ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
                           + (backend.lastRecording !== "" ? "     " + qsTr("Saved %1").arg(backend.lastRecording) : "")
@@ -539,7 +539,7 @@ ApplicationWindow {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects. Play, then Space loops what you just played on any page; put the loops together on 0, the arrange page. ? shows what the fingers do on the page you're on.")
+                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects, 8 vocal. Play, then Space loops what you just played on any page; turn the loops into a track on 0, the Song page. ? shows what the fingers do on the page you're on.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14

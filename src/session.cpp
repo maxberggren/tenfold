@@ -1880,7 +1880,10 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
         if (in.playing >= 0)
             ctx.launchPart(m_pages[size_t(in.page)]->part, in.playing, false);
     // Back on the page that was showing when the song was saved.
-    const QString shown = doc.value(QStringLiteral("page")).toString();
+    QString shown = doc.value(QStringLiteral("page")).toString();
+    if (shown == QLatin1String("Arrange"))
+        shown = QStringLiteral("Song"); // what the Song page was called before
+
     for (int i = 0; i < pageCount(); ++i)
         if (m_pages[size_t(i)]->spec.name == shown)
             m_page = i;

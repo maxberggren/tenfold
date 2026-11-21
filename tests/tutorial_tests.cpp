@@ -178,7 +178,7 @@ std::string walkthrough() {
     s.key(bar(68) + 0.3, "Space");
     s.key(bar(69) + 0.5, "Backspace");
 
-    s.comment("0 Arrange. The mouse clicks the bass loop: it stops on the bar; again: back.");
+    s.comment("0 Song page. The mouse clicks the bass loop: it stops on the bar; again: back.");
     s.key(bar(72), "0");
     const double laneH = 0.885 / kMaxParts; // a lane per part, all eight
     const double bassY = 0.885 - 1.5 * laneH, clipX = 0.12 + 0.07625 / 2;
@@ -195,20 +195,19 @@ std::string walkthrough() {
     s.key(bar(79) + 0.5, "N");
     s.key(bar(82) + 0.5, "N");
 
-    s.comment("B: build to the end of the phrase, and the drop.");
+    s.comment("B: build to the end of the phrase (the FX loop leading in), and the drop.");
     s.key(bar(85) + 0.5, "B");
 
-    s.comment("Space records the song from the next bar: a groove, a breakdown, back; Space stops; P plays it back.");
-    s.key(bar(93) + 0.5, "Space");
-    s.key(bar(97) + 0.5, "N");
-    s.key(bar(101) + 0.5, "N");
-    s.key(bar(105) + 0.5, "Space");
-    s.key(bar(106) + 0.5, "P");
-
-    s.comment("Ctrl+R records the mix; I, I writes the whole track over the take and plays it from bar 109.");
+    s.comment("Ctrl+R records the mix; I, I writes the whole track and plays it from bar 109.");
     s.key(bar(108), "Ctrl+R");
     s.key(bar(108) + 0.5, "I");
     s.key(bar(108) + 0.9, "I");
+
+    s.comment("Space punches in from bar 112: Q mutes the drums, Q brings them back; Space ends it on bar 115.");
+    s.key(bar(kTrack + 2) + 0.5, "Space");
+    s.key(bar(kTrack + 3) + 0.5, "Q");
+    s.key(bar(kTrack + 4) + 0.5, "Q");
+    s.key(bar(kTrack + 5) + 0.5, "Space");
 
     s.comment("The track plays to its end (76 bars, to bar 185); Ctrl+R saves it.");
     s.key(bar(kTrack + 76) + 0.5, "Ctrl+R");

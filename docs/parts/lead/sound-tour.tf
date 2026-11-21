@@ -1,4 +1,4 @@
-# Sound tour: the same phrase on Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover and Big room (→ steps
+# Sound tour: the same phrase on Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room, Mini and Flute (→ steps
 # through them). On Vox the finger's height sweeps the vowel.
 # Render: build/tenfold render docs/parts/lead/sound-tour.tf tour.wav
 page 0 4
@@ -211,4 +211,53 @@ glide 33.12 33.21 48 0.7210 0.850
 up 33.1900 48
 glide 33.21 33.26 48 0.7140 0.850
 key 33.75 Right
-end 34.0
+# Mini
+down 34.0 49 0.6100 0.600 p=0.55
+down 34.5 50 0.7140 0.600 p=0.55
+up 34.54 49
+down 34.75 51 0.8180 0.600 p=0.55
+up 34.79 50
+down 35.0 52 0.8700 0.600 p=0.55
+up 35.04 51
+up 35.69 52
+down 35.75 53 0.8180 0.600 p=0.55
+up 35.94 53
+down 36.0 54 0.7140 0.600 p=0.55
+glide 36.05 37.2 54 0.7140 0.850 p=0.80
+glide 36.4 36.49 54 0.7210 0.850
+glide 36.49 36.58 54 0.7070 0.850
+glide 36.58 36.67 54 0.7210 0.850
+glide 36.67 36.76 54 0.7070 0.850
+glide 36.76 36.85 54 0.7210 0.850
+glide 36.85 36.94 54 0.7070 0.850
+glide 36.94 37.03 54 0.7210 0.850
+glide 37.03 37.12 54 0.7070 0.850
+glide 37.12 37.21 54 0.7210 0.850
+up 37.19 54
+glide 37.21 37.26 54 0.7140 0.850
+key 37.75 Right
+# Flute
+down 38.0 55 0.6100 0.600 p=0.55
+down 38.5 56 0.7140 0.600 p=0.55
+up 38.54 55
+down 38.75 57 0.8180 0.600 p=0.55
+up 38.79 56
+down 39.0 58 0.8700 0.600 p=0.55
+up 39.04 57
+up 39.69 58
+down 39.75 59 0.8180 0.600 p=0.55
+up 39.94 59
+down 40.0 60 0.7140 0.600 p=0.55
+glide 40.05 41.2 60 0.7140 0.850 p=0.80
+glide 40.4 40.49 60 0.7210 0.850
+glide 40.49 40.58 60 0.7070 0.850
+glide 40.58 40.67 60 0.7210 0.850
+glide 40.67 40.76 60 0.7070 0.850
+glide 40.76 40.85 60 0.7210 0.850
+glide 40.85 40.94 60 0.7070 0.850
+glide 40.94 41.03 60 0.7210 0.850
+glide 41.03 41.12 60 0.7070 0.850
+glide 41.12 41.21 60 0.7210 0.850
+up 41.19 60
+glide 41.21 41.26 60 0.7140 0.850
+end 42.0

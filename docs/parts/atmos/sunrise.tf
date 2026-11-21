@@ -53,7 +53,7 @@ key 31.218 F
 key 31.268 Delete
 # ...and the Pulse scene gates under it in sixteenths, pumping on every beat
 key 31.368 I
-key 31.468 P
+key 31.468 ]
 # bar 20: the chords move on (VI, III, VII, i); at each change the freeze melts for a bar
 # and catches the new chord from the pulse
 # bar 26: thaw

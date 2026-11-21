@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <climits>
 #include <QPainter>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -102,6 +103,69 @@ arp::Engine *engineOf(Session &s) {
         if (s.pageName(p) == QStringLiteral("Arp"))
             return dynamic_cast<arp::Engine *>(s.studio()->engine(p));
     return nullptr;
+}
+
+// One sound on its own, in the colour the page starts it in: a single A3
+// (220 Hz) every eighth at 60 BPM, each 0.45 s long, from beat 0 to beat 3
+// (or `off`), no echo; what comes out to beat 9 (or `end`). tweak may
+// change the settings first, and reg and row move the note.
+struct SoundTake {
+    std::vector<float> l, r;
+    int voicesAfter = 0, mostVoices = 0;
+};
+SoundTake playSound(int sound, double off = 3.0, double end = 9.0,
+                    const std::function<void(arp::Settings &)> &tweak = {}, int row = 0) {
+    Clock c(60);
+    std::unique_ptr<arp::Engine> owner;
+    arp::Engine &e = *fresh(owner);
+    arp::Settings s;
+    s.sound = sound;
+    s.rate = arp::Eighth;
+    s.octaves = 1;
+    s.gate = 0.9f;
+    s.echo = 0;
+    s.color = arp::soundColor(sound);
+    if (tweak)
+        tweak(s);
+    state(e, c, s, 0.0);
+    note(e, c, Command::On, 1, 0, row, 0.0, 0);
+    note(e, c, Command::Off, 1, 0, row, off, 0);
+    SoundTake t;
+    float l[kBlock], r[kBlock];
+    while (c.tr.beat < end) {
+        std::fill(l, l + kBlock, 0.0f);
+        std::fill(r, r + kBlock, 0.0f);
+        e.render(l, r, kBlock, c);
+        t.mostVoices = std::max(t.mostVoices, e.voices());
+        t.l.insert(t.l.end(), l, l + kBlock);
+        t.r.insert(t.r.end(), r, r + kBlock);
+        c.tr.sample += kBlock;
+        c.tr.beat += kBlock * c.tr.beatsPerSample;
+    }
+    t.voicesAfter = e.voices();
+    return t;
+}
+// The strength of one frequency over [a, b) seconds of the mid, through a
+// Hann window (a Goertzel filter).
+double strengthAt(const SoundTake &t, double hz, double a, double b) {
+    const size_t i0 = size_t(a * 48000), i1 = std::min(t.l.size(), size_t(b * 48000));
+    const double w = 2 * M_PI * hz / 48000, coef = 2 * std::cos(w);
+    double s1 = 0, s2 = 0;
+    for (size_t i = i0; i < i1; ++i) {
+        const double win = 0.5 - 0.5 * std::cos(2 * M_PI * double(i - i0) / double(i1 - i0));
+        const double s0 = 0.5 * (t.l[i] + t.r[i]) * win + coef * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return std::sqrt(std::max(0.0, s1 * s1 + s2 * s2 - coef * s1 * s2)) / double(i1 - i0);
+}
+// The same on one side: 0 left, 1 right.
+double sideStrengthAt(const SoundTake &t, int side, double hz, double a, double b) {
+    SoundTake one;
+    const auto &x = side == 0 ? t.l : t.r;
+    one.l = x;
+    one.r = x;
+    return strengthAt(one, hz, a, b);
 }
 
 // Pitch classes of A natural minor.
@@ -233,7 +297,18 @@ private slots:
         arp::Settings t;
         t.unpack(c);
         QVERIFY(t == s);
+        QCOMPARE(t.sound, int(arp::Acid));
         QCOMPARE(t.rotate, 13);
+        // The second five need the sound's fourth bit, which a loop saved
+        // with five sounds never set.
+        for (int sound = arp::Marimba; sound < arp::SoundCount; ++sound) {
+            s.sound = sound;
+            s.pack(c);
+            t.unpack(c);
+            QCOMPARE(t.sound, sound);
+            QCOMPARE(t.rotate, 13);
+            QVERIFY(t.follow);
+        }
         QVERIFY(t.follow);
         QVERIFY(std::fabs(t.ratchet - 0.3f) < 0.002f);
     }
@@ -544,9 +619,241 @@ private slots:
                      qPrintable(QStringLiteral("note %1 at beat %2").arg(i).arg(log[i].beat, 0, 'f', 6)));
     }
 
+    void everySoundIsInTuneCleanAndDiesAway() {
+        // Each of the ten on one A3: finite, under the ceiling, no DC, its
+        // fundamental on 220 Hz to a few cents (the harp's string and the
+        // marimba's bar are tuned by their own arithmetic, not by an
+        // oscillator's increment), and silent with no voices left once the
+        // notes are gone.
+        for (int sound = 0; sound < arp::SoundCount; ++sound) {
+            const auto name = QString::fromUtf8(arp::soundName(sound));
+            const SoundTake t = playSound(sound);
+            double peak = 0, sum = 0, tail = 0;
+            const size_t end = size_t(3.0 * 48000), quiet = size_t(6.5 * 48000);
+            for (size_t i = 0; i < t.l.size(); ++i) {
+                QVERIFY2(std::isfinite(t.l[i]) && std::isfinite(t.r[i]), qPrintable(name));
+                peak = std::max<double>(peak, std::max(std::fabs(t.l[i]), std::fabs(t.r[i])));
+                if (i < end)
+                    sum += 0.5 * (t.l[i] + t.r[i]);
+                if (i >= quiet)
+                    tail = std::max<double>(tail, std::fabs(t.l[i]) + std::fabs(t.r[i]));
+            }
+            QVERIFY2(peak < 0.99 && peak > 0.05, qPrintable(QStringLiteral("%1: peak %2").arg(name).arg(peak)));
+            QVERIFY2(std::fabs(sum / double(end)) < 2e-3, qPrintable(QStringLiteral("%1: DC %2").arg(name).arg(sum / end)));
+            QVERIFY2(tail < 1e-3, qPrintable(QStringLiteral("%1: tail %2").arg(name).arg(tail)));
+            QVERIFY2(t.voicesAfter == 0, qPrintable(QStringLiteral("%1: %2 voices").arg(name).arg(t.voicesAfter)));
+            // The strongest frequency within half a semitone of A3, cent by
+            // cent, in the note at beat 1.
+            int best = 0;
+            double strongest = 0;
+            for (int cents = -50; cents <= 50; ++cents) {
+                const double v = strengthAt(t, 220.0 * std::exp2(cents / 1200.0), 1.02, 1.42);
+                if (v > strongest) {
+                    strongest = v;
+                    best = cents;
+                }
+            }
+            // The supersaw's seven detuned saws beat round the note: its
+            // centre wanders a little further.
+            const int within = sound == arp::Saw ? 8 : 4;
+            QVERIFY2(std::abs(best) <= within, qPrintable(QStringLiteral("%1: %2 cents").arg(name).arg(best)));
+        }
+    }
+
+    void theTenSoundsAreTenSounds() {
+        // A blind ear tells each sound from every other: how its harmonics
+        // stand (in dB, against its strongest), how fast a note falls, and
+        // how wide it sits. Every pair differs by a margin in the sum.
+        struct Print {
+            double harm[10];
+            double fall, width;
+        };
+        std::vector<Print> prints;
+        for (int sound = 0; sound < arp::SoundCount; ++sound) {
+            const SoundTake t = playSound(sound);
+            Print p{};
+            double top = 0;
+            for (int k = 0; k < 10; ++k) {
+                p.harm[k] = strengthAt(t, 220.0 * (k + 1), 1.02, 1.42);
+                top = std::max(top, p.harm[k]);
+            }
+            for (double &h : p.harm)
+                h = std::max(-60.0, 20 * std::log10(std::max(h, 1e-12) / top));
+            auto rms = [&](double a, double b) {
+                double s = 0;
+                for (size_t i = size_t(a * 48000); i < size_t(b * 48000); ++i)
+                    s += double(t.l[i]) * t.l[i] + double(t.r[i]) * t.r[i];
+                return std::sqrt(s / (b - a) / 96000.0) + 1e-9;
+            };
+            p.fall = 20 * std::log10(rms(1.30, 1.42) / rms(1.005, 1.06));
+            double mid = 0, side = 0;
+            for (size_t i = 48000; i < 3 * 48000; ++i) {
+                mid += std::pow(double(t.l[i]) + t.r[i], 2);
+                side += std::pow(double(t.l[i]) - t.r[i], 2);
+            }
+            p.width = std::sqrt(side / std::max(mid, 1e-12));
+            prints.push_back(p);
+        }
+        double closest = 1e9;
+        QString pair;
+        for (int a = 0; a < arp::SoundCount; ++a)
+            for (int b = a + 1; b < arp::SoundCount; ++b) {
+                double d = 0;
+                for (int k = 0; k < 10; ++k)
+                    d += std::fabs(prints[a].harm[k] - prints[b].harm[k]) / 10.0;
+                d += std::fabs(prints[a].fall - prints[b].fall) + 20.0 * std::fabs(prints[a].width - prints[b].width);
+                if (d < closest) {
+                    closest = d;
+                    pair = QStringLiteral("%1 and %2").arg(arp::soundName(a), arp::soundName(b));
+                }
+            }
+        QVERIFY2(closest > 6.0, qPrintable(QStringLiteral("%1 only %2 apart").arg(pair).arg(closest)));
+    }
+
+    void theChorusLeavesTheSubInTheMiddle() {
+        // The juno's square an octave down (110 Hz under an A3) stays dry:
+        // level on both sides alike all through the chorus's sweep, and
+        // nothing lost when the two are summed to mono.
+        for (bool one : {false, true}) {
+            const SoundTake t = playSound(arp::Juno, 6.0, 6.0, [&](arp::Settings &s) {
+                s.gate = 1.0f;
+                s.alt = one;
+            });
+            double worst = 0, dip = 0;
+            for (double a = 1.0; a < 5.6; a += 0.1) {
+                const double l = sideStrengthAt(t, 0, 110, a, a + 0.2), r = sideStrengthAt(t, 1, 110, a, a + 0.2);
+                const double m = strengthAt(t, 110, a, a + 0.2);
+                worst = std::max(worst, std::fabs(20 * std::log10(l / r)));
+                dip = std::min(dip, 20 * std::log10(m / (0.5 * (l + r))));
+            }
+            QVERIFY2(worst < 2.5, qPrintable(QStringLiteral("chorus %1: sides differ by %2 dB").arg(one ? 1 : 2).arg(worst)));
+            QVERIFY2(dip > -1.0, qPrintable(QStringLiteral("chorus %1: mono dips %2 dB").arg(one ? 1 : 2).arg(dip)));
+        }
+    }
+
+    void theOrgansLeslieSpinsSlowOrFast() {
+        // Held, the organ swirls: the level swings from side to side as the
+        // rotors turn. Slow, horn and drum together swing it a couple of
+        // times a second at most; switched fast, six or so (once the drum
+        // has spun up). Summed to mono the swirl keeps its level, overall
+        // and in the horn's 1–4 kHz (heard on an A4, whose harmonics fill
+        // it), the sides hearing the rotors a hundred degrees apart and a
+        // share of the horn unswung.
+        struct Spin {
+            double turns, mono, band;
+        };
+        auto spin = [](bool fast) {
+            const SoundTake t = playSound(arp::Organ, 9.0, 9.0, [&](arp::Settings &s) {
+                s.gate = 1.0f;
+                s.alt = fast;
+            });
+            const SoundTake high = playSound(arp::Organ, 9.0, 9.0, [&](arp::Settings &s) {
+                s.gate = 1.0f;
+                s.alt = fast;
+                s.reg = 2;
+            });
+            Svf hl, hr, ll, lr;
+            hl.set(1000, 0.7f, 48000);
+            hr.set(1000, 0.7f, 48000);
+            ll.set(4000, 0.7f, 48000);
+            lr.set(4000, 0.7f, 48000);
+            double bandSide = 0, bandMid = 0;
+            for (size_t i = 0; i < size_t(8 * 48000); ++i) {
+                const double l = ll.step(hl.step(high.l[i]).high).low, r = lr.step(hr.step(high.r[i]).high).low;
+                if (i >= size_t(5 * 48000)) {
+                    bandSide += 0.5 * (l * l + r * r);
+                    bandMid += 0.25 * (l + r) * (l + r);
+                }
+            }
+            const double a = 5.0, b = 8.0;
+            double side = 0, mid = 0;
+            for (size_t i = size_t(a * 48000); i < size_t(b * 48000); ++i) {
+                side += 0.5 * (double(t.l[i]) * t.l[i] + double(t.r[i]) * t.r[i]);
+                mid += 0.25 * std::pow(double(t.l[i]) + t.r[i], 2);
+            }
+            // Crossings of the balance, with a little hysteresis so a note's
+            // onset near the middle does not count as a turn.
+            int crossings = 0, sign = 0;
+            for (double x = a; x < b; x += 0.01) {
+                double l = 0, r = 0;
+                for (size_t i = size_t(x * 48000); i < size_t((x + 0.01) * 48000); ++i) {
+                    l += double(t.l[i]) * t.l[i];
+                    r += double(t.r[i]) * t.r[i];
+                }
+                const double d = std::log(l + 1e-12) - std::log(r + 1e-12);
+                if (d > 0.05 && sign <= 0) {
+                    crossings += sign != 0;
+                    sign = 1;
+                } else if (d < -0.05 && sign >= 0) {
+                    crossings += sign != 0;
+                    sign = -1;
+                }
+            }
+            return Spin{crossings / 2.0 / (b - a), 10 * std::log10(mid / side), 10 * std::log10(bandMid / bandSide)};
+        };
+        const Spin slow = spin(false), fast = spin(true);
+        QVERIFY2(slow.turns < 2.5, qPrintable(QStringLiteral("slow: %1 turns a second").arg(slow.turns)));
+        QVERIFY2(fast.turns > 4.5 && fast.turns < 9.0, qPrintable(QStringLiteral("fast: %1 turns a second").arg(fast.turns)));
+        for (const Spin &sp : {slow, fast}) {
+            QVERIFY2(sp.mono > -1.0, qPrintable(QStringLiteral("mono: %1 dB").arg(sp.mono)));
+            QVERIFY2(sp.band > -1.5, qPrintable(QStringLiteral("mono, 1–4 kHz: %1 dB").arg(sp.band)));
+        }
+    }
+
+    void aPressOnTheToneFlipsTheOrgansLeslie() {
+        // On the organ a press on the TONE pad is the slow/fast switch
+        // (and on the juno chorus II/I); a second press flips it back.
+        QString status;
+        const std::string press = "down 0.3 7 0.9 0.5 p=0.5\nmove 0.35 7 0.9 0.5 p=0.92\nup 0.5 7\n";
+        float tone = 0;
+        testkit::play("page 0 5\nkey 0.1 Shift+B\n" + press + "end 0.7\n", [&](Session &s) {
+            status = s.pageStatus();
+            tone = s.probe(4, QStringLiteral("tone"));
+        });
+        QVERIFY2(status.contains(QStringLiteral("Leslie fast")), qPrintable(status));
+        // The finger landed far from the cutoff and did not slide: the tone
+        // is where it was.
+        QVERIFY2(std::fabs(tone - 0.55f) < 1e-4f, qPrintable(QString::number(tone)));
+        // / is the same switch, and so is the lit chip tapped again.
+        testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.2 /\nend 0.4\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("Leslie fast")), qPrintable(status));
+        testkit::play("page 0 5\nmouse 0.2 0.373 0.04 down\nmouse 0.3 0.373 0.04 up\n"
+                      "mouse 0.4 0.373 0.04 down\nmouse 0.5 0.373 0.04 up\nend 0.7\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("organ (Leslie fast)")), qPrintable(status));
+        const std::string again = "down 0.8 8 0.9 0.5 p=0.5\nmove 0.85 8 0.9 0.5 p=0.92\nup 1.0 8\n";
+        testkit::play("page 0 5\nkey 0.1 Shift+B\n" + press + again + "end 1.2\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("Leslie slow")), qPrintable(status));
+        testkit::play("page 0 5\nkey 0.1 Shift+V\n" + press + "end 0.7\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("chorus I)")), qPrintable(status));
+    }
+
+    void aStringOrBarStruckAgainIsTheSameStringOrBar() {
+        // The same A3 eight times on the harp and the marimba: each stroke
+        // damps what rings of the last, so no more than two voices ever
+        // sound (the old one fading under the new).
+        for (int sound : {int(arp::Harp), int(arp::Marimba)}) {
+            const SoundTake t = playSound(sound);
+            QVERIFY2(t.mostVoices <= 2, qPrintable(QStringLiteral("%1: %2 voices")
+                                                       .arg(arp::soundName(sound))
+                                                       .arg(t.mostVoices)));
+        }
+    }
+
+    void aHarpStringRingsOnPastItsGate() {
+        // One pluck high up (A6, 1760 Hz, a gate of 0.45 s): the string is
+        // not damped when the arp lets go, and even this high it rings for
+        // about its second: some 20 dB down 0.4 s on, not gone.
+        const SoundTake t = playSound(arp::Harp, 0.4, 2.0, [](arp::Settings &s) { s.reg = 3; }, 1);
+        const double early = strengthAt(t, 1760, 0.1, 0.3), late = strengthAt(t, 1760, 0.5, 0.7);
+        const double drop = 20 * std::log10(early / late);
+        QVERIFY2(drop > 8 && drop < 30, qPrintable(QStringLiteral("%1 dB in 0.4 s").arg(drop)));
+    }
+
     void everySoundSitsAtASimilarLevel() {
         std::vector<double> levels;
-        for (const char *key : {"Z", "X", "C", "V", "B"}) {
+        for (const char *key : {"Z", "X", "C", "V", "B", "Shift+Z", "Shift+X", "Shift+C", "Shift+V", "Shift+B"}) {
             const auto take = testkit::play(std::string("page 0 5\nkey 0.2 ") + key + "\ndown 0.5 1 " + gridX(0) +
                                             " 0.32\nup 4.5 1\nend 4.6\n");
             QVERIFY(take.finite());
@@ -825,8 +1132,13 @@ private slots:
                           status = s.pageStatus();
                           follow = s.probe(4, QStringLiteral("follow"));
                       });
-        QVERIFY2(status.contains(QStringLiteral("acid")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("organ")), qPrintable(status)); // round the end to the tenth
         QVERIFY2(status.contains(QStringLiteral("3 oct")), qPrintable(status));
+        // Z X C V B pick the first five, with Shift the second five.
+        testkit::play("page 0 5\nkey 0.1 Shift+X\nend 0.3\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("harp")), qPrintable(status));
+        testkit::play("page 0 5\nkey 0.1 Shift+X\nkey 0.2 C\nend 0.3\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("supersaw")), qPrintable(status));
         QCOMPARE(follow, 0.0f);
         // M, the tutorial's key, still follows; [ ] still set the rate.
         testkit::play("page 0 5\nkey 0.1 M\nkey 0.2 [\nend 0.4\n", [&](Session &s) {
@@ -910,11 +1222,11 @@ private slots:
 
     void theMouseIsAFingerOnThePadsChips() {
         // Pressed and let go on the chips drawn on the pad: a pattern, a
-        // sound, FOLLOW.
+        // sound from the upper row, FOLLOW; then one from the lower row.
         QString status;
         float follow = -1;
         testkit::play("page 0 5\nmouse 0.2 0.18 0.93 down\nmouse 0.3 0.18 0.93 up\n"
-                      "mouse 0.4 0.124 0.07 down\nmouse 0.5 0.124 0.07 up\n"
+                      "mouse 0.4 0.124 0.11 down\nmouse 0.5 0.124 0.11 up\n"
                       "mouse 0.6 0.456 0.07 down\nmouse 0.7 0.456 0.07 up\nend 0.9\n",
                       [&](Session &s) {
                           status = s.pageStatus();
@@ -923,6 +1235,9 @@ private slots:
         QVERIFY2(status.contains(QStringLiteral("up·down")), qPrintable(status));
         QVERIFY2(status.contains(QStringLiteral("glass")), qPrintable(status));
         QCOMPARE(follow, 1.0f);
+        testkit::play("page 0 5\nmouse 0.2 0.29 0.04 down\nmouse 0.3 0.29 0.04 up\nend 0.5\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("juno")), qPrintable(status));
     }
 
     void theMouseLatchesAChordAClickAtATime() {

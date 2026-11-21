@@ -142,33 +142,45 @@ inline int lineOf(int id) { return isReplay(id) ? 1 + replaySlot(id) + kClipSlot
 
 struct Sound {
     const char *name = "";
-    // Oscillators, mixed: a unison of saws, a pulse, a two-operator FM pair
-    // and an octave-up saw layer.
-    float saw = 0, pulse = 0, fm = 0, layer = 0;
+    // Oscillators, mixed: a unison of saws, a pulse, a two-operator FM pair,
+    // an octave-up saw layer and an octave-down square (a mono synth's
+    // third oscillator, switched down to 16'; it thins out up the neck so
+    // a high note still sounds where it is played, and a flatter finger
+    // brings it up).
+    float saw = 0, pulse = 0, fm = 0, layer = 0, sub = 0;
     int unison = 1;
     float detune = 0;      // cents for the outermost saw at a normal touch
+    float drift = 0;       // cents each of an old synth's oscillators wanders on its own, slowly
     float spread = 0.5f;   // how wide the unison stands, 0..1
     float pw = 0.5f, pwm = 0, pwmRate = 0.37f; // pulse width, how far a sweep moves it, how fast
     float pulse2 = 0;      // a second pulse a few cents off (a flat finger brings it up anyway)
     float fmRatio = 1, fmIndex = 0, fmDecay = 0.3f, fmFloor = 1; // the index falls to fmIndex·fmFloor
+    float fmLow = 0;       // how much richer low notes are: the index grows by this much an octave under C5
     bool formant = false;  // through three vowel formants, the finger's height choosing the vowel
+    // Breath: noise in a band over the note, rocked by the tone itself so
+    // it blows through it rather than hissing beside it, with a puff on
+    // every tongued attack.
+    float breath = 0, chiff = 0;
     // The ladder filter: base cutoff (0..1, about eight octaves above 60 Hz),
     // how far the finger's height moves it, resonance, the envelope's depth
     // and decay, and how far it follows the note.
     float cutoff = 0.9f, cutoffY = 0.1f, res = 0, envAmt = 0, envDecay = 0.3f, keyTrack = 0.3f;
+    float envPress = 0;    // how much the envelope waits on pressure (1: a light touch none of it, a hard one all)
     float drive = 0;       // above 0.3 it runs oversampled
     float a = 0.005f, d = 0.5f, s = 0.8f, r = 0.3f; // amplitude envelope
+    float aHard = 0;       // the attack under a hard press, if it is quicker (0: always a)
     float glide = 0.05f;   // legato glide, seconds (scaled by the interval)
     float porta = 0;       // portamento between detached notes too (0: none)
     float scoop = 0, scoopTime = 0.05f; // semitones below the note an attack starts from
     float vibRate = 5.5f, vibDepth = 0.15f, vibDelay = 0.4f; // the vibrato a held note grows
+    float vibAmp = 0;      // how far the vibrato swells the level too (a wind player's is mostly breath)
     bool retrig = false;   // legato notes strike the envelopes again (plucks, bells)
     bool swoop = false;    // keeps a slow slur even across a step (trills smear on purpose)
     float echo = 0.15f, echoFb = 0.3f, echoBeats = 0.75f; // its own delay: send, feedback, time
     float gain = 1;
 };
 
-constexpr int kSounds = 8;
+constexpr int kSounds = 10;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -223,6 +235,31 @@ inline const Sound &sound(int i) {
          .cutoff = 0.7f, .cutoffY = 0.25f, .res = 0.1f, .envAmt = 0.35f, .envDecay = 0.25f, .keyTrack = 0.5f,
          .drive = 0.15f, .a = 0.002f, .d = 0.3f, .s = 0.55f, .r = 0.15f, .glide = 0.03f, .vibDepth = 0.06f,
          .echo = 0.22f, .gain = 1.09f},
+        // A vintage mono synth, the solo lead of G-funk, prog and
+        // synthwave: two saws a few cents apart over a square an octave
+        // down, each wandering in tune on its own like an old synth's,
+        // into a resonant ladder that follows the note. Touch decides its
+        // character: a light finger low on the pad is the smooth, near
+        // sine whistle of a G-funk lead, a hard press quacks the filter
+        // open on every attack. Close to mono, a hint of drive, and it
+        // always glides.
+        {.name = "Mini", .saw = 0.85f, .sub = 0.1f, .unison = 2, .detune = 7.0f, .drift = 6.0f, .spread = 0.15f,
+         .cutoff = 0.6f, .cutoffY = 0.2f, .res = 0.36f, .envAmt = 0.55f, .envDecay = 0.24f, .keyTrack = 0.9f,
+         .envPress = 1.0f, .drive = 0.25f, .a = 0.003f, .d = 0.6f, .s = 0.85f, .r = 0.16f, .glide = 0.09f,
+         .porta = 0.08f, .vibRate = 5.6f, .vibDepth = 0.17f, .vibDelay = 0.5f, .echo = 0.12f, .echoFb = 0.3f,
+         .gain = 1.0f},
+        // A breathy wooden flute, for ambient, lo-fi, world and dub: a
+        // near sine whose few harmonics fill in as the note is blown, air
+        // through it and a puff on each tongued note, a soft attack, and
+        // a slow vibrato that comes late and is mostly breath. Low notes
+        // are reedier and airier, as a real flute's are; a hard press
+        // tongues a quicker attack for fast runs. One pipe, in the middle;
+        // a flatter finger blows more air through it.
+        {.name = "Flute", .fm = 1.0f, .fmRatio = 1.0f, .fmIndex = 0.45f, .fmDecay = 0.15f, .fmFloor = 1.4f,
+         .fmLow = 0.5f, .breath = 0.3f, .chiff = 1.4f, .cutoff = 0.7f, .cutoffY = 0.22f, .envAmt = 0.06f,
+         .envDecay = 0.2f, .keyTrack = 0.6f, .a = 0.07f, .d = 0.5f, .s = 0.88f, .r = 0.2f, .aHard = 0.018f, .glide = 0.05f,
+         .scoop = 0.3f, .scoopTime = 0.05f, .vibRate = 4.9f, .vibDepth = 0.1f, .vibDelay = 0.38f, .vibAmp = 0.16f,
+         .echo = 0.18f, .echoFb = 0.38f, .gain = 0.92f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

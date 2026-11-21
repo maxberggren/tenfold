@@ -21,13 +21,13 @@ pick a page with its number:
 
 | Key | Page | What the fingers do |
 |---|---|---|
-| 1 | Drums | 16 pads in five kits. Tap to hit, hold to roll (slide up for faster), land several fingers for a groove, click to keep it. A thumb on the bottom strip (or B / N) is note-repeat. |
-| 2 | Bass | Notes of the key across the pad; height opens the sound, a second finger slides. The rail has octave, roll, wobble, filter, grit and bend. Eight sounds from sub to acid to 808. |
-| 3 | Chords | Columns are the key's chords, rows their colour (power, sus, triad, add9, seventh). Hold to play, slide to recolour; the top rail gates them in rhythm. The others follow the chord you play. |
-| 4 | Lead | A two-octave neck: glide, wiggle for vibrato, twist to bend, a second finger for legato, the left column for harmonies. Eight sounds from anthem to hoover. |
-| 5 | Arp | Hold notes on the left; the pads on the right set rate, rhythm, range, tone, groove and echo. Click to latch. |
-| 6 | Atmos | Five layers (drone, pad, choir, glass, air), one per finger; click to latch, F freezes, S swells. Scenes on Q–I. |
-| 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws. Click to drop now. |
+| 1 | Drums | 16 pads in ten kits, from house and trap to boom bap, jungle, an 80s Linn, a CR-78 and jazz brushes. Tap to hit, hold to roll (slide up for faster), land several fingers for a groove, click to keep it. A thumb on the bottom strip (or B / N) is note-repeat. |
+| 2 | Bass | Notes of the key across the pad; height opens the sound, a second finger slides. The rail has octave, roll, wobble, filter, grit and bend. Ten sounds from sub to acid to 808, a Moog-style ladder bass and an upright. |
+| 3 | Chords | Columns are the key's chords, rows their colour (power, sus, triad, add9, seventh). Hold to play, slide to recolour; the top rail gates them in rhythm. The others follow the chord you play. Ten sounds from pad, trance and organ to Rhodes keys, a string machine, dub-techno stabs and funk guitar. |
+| 4 | Lead | A two-octave neck: glide, wiggle for vibrato, twist to bend, a second finger for legato, the left column for harmonies. Ten sounds from anthem to hoover, a vintage mono synth and a breathy flute. |
+| 5 | Arp | Hold notes on the left; the pads on the right set rate, rhythm, range, tone, groove and echo. Click to latch. Ten sounds from trance pluck and acid to marimba, harp, Rhodes and organ. |
+| 6 | Atmos | Five layers (drone, pad, choir, glass, air), one per finger; click to latch, F freezes, S swells. Ten scenes on Q–P, from dawn and cathedral to neon (synthwave) and dub (dub techno); L picks the style hand-laid layers play in: classic, neon, dub or tape (lo-fi). |
+| 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws, in ten sets from EDM and analog to dub, lo-fi, trap, cinema and ambient. Click to drop now. |
 | 8 | Vocal | Your microphone, heard at once in the headphones. Each finger in the middle is your voice again as a harmony in the key (−8ve to +8ve, height the throat, giant to elf); touch a word on the tape and it plays again; the edges are filter, freeze and stutter, echo and reverb throws, radio and crush; click for tape stop. Hard tune, prism, choir, vocoder and robot on ← →. Space loops your last phrase as audio, cut in the breaths; Shift+Space layers it. |
 | 0 | Arrange | Every part's clips, scenes on the bar, a ten-finger mixer, a tension fader for builds and drops. I writes a whole track from your loops. |
 
@@ -77,9 +77,9 @@ also has a button in the band under the pad, so the mouse alone can play:
 
 | Key | Does |
 |---|---|
-| ← → | the sound: kit, preset, scene, drop style |
+| ← → | the sound: kit, preset, scene, FX set |
 | ↑ ↓ | octave or register (Drums: the loop longer or shorter, any time; FX: riser length) |
-| Shift ← → | the rhythm: swing, gate, arp rate |
+| Shift ← → | the rhythm: swing, gate, arp rate, FX drop style |
 | - + | tone: darker, brighter |
 | Return | hold or latch (FX: drop; Drums: keep the roll) |
 | Shift Return | overdub |

@@ -26,6 +26,30 @@
 //           low-pass that closes as it decays.
 //   and a rim, a shaker, a conga (a woodblock tok in techno, a tambourine
 //   in breaks), a cowbell tuned to the fifth, and a laser zap.
+//
+// The five kits past the dance floor bring drums of their own:
+//
+//   boom bap  everything through an SP-1200's 26 kHz and twelve bits and a
+//             dark low-pass; the clap is a finger snap, the zap a baby
+//             scratch (a tone whose speed swings forward and back like a
+//             record).
+//   jungle    a tight break snare on the key's root, its ghosts on the
+//             second and mostly wires, kick and snare chopping each other
+//             off like slices of one break; tight high toms, a piccolo rim,
+//             a splash; the hand drum a timbale (a skin with a metal
+//             shell's ring), the zap a dub siren.
+//   linn      the 80s: a snare (and clap) whose room holds flat until a
+//             gate chops it to silence, the LM-1's sidestick, a cabasa, a
+//             tambourine with its own part, and a Simmons syndrum falling
+//             all the way down.
+//   cr-78     the rhythm box: a round kick, ringing noise for hats and
+//             "metal beat", a guiro of scraped clicks, claves in key.
+//   brushes   jazz: a felt kick, a brush slap and a swish (noise swelling
+//             slowly through a moving band-pass), a dark ride whose bell
+//             is its own pad, tuned, and vibes on the hand drum.
+//
+// In the CR-78 and brushes kits the 808 is an upright bass: a plucked
+// string's harmonics an octave up, walking the chord of the moment.
 
 #include <algorithm>
 #include <cmath>
@@ -47,7 +71,11 @@ enum Pad : int {
     PadCount
 };
 
-enum Kit : int { House, Techno, Trap, Breaks, Garage, KitCount };
+// The first five are the dance floor's; the second five reach past it: a
+// dusty sampler's boom bap, jungle's chopped breaks, an 80s LinnDrum with its
+// gated snare, the Roland CR-78 rhythm box, and a jazz kit played with
+// brushes. Saved songs and clips store the index, so new kits go at the end.
+enum Kit : int { House, Techno, Trap, Breaks, Garage, BoomBap, Jungle, Linn, Cr78, Brushes, KitCount };
 
 inline const char *padName(int pad) {
     static const char *names[PadCount] = {"kick", "snare", "clap", "hat", "808",   "rim",  "shaker", "open",
@@ -55,22 +83,69 @@ inline const char *padName(int pad) {
     return names[std::clamp(pad, 0, PadCount - 1)];
 }
 
-// The hand drum changes with the kit.
+// Some pads are another instrument in some kits: where a drum has no place
+// in a style, the pad plays the nearest one that does.
 inline const char *padName(int pad, int kit) {
-    if (pad == Perc)
-        return kit == Techno ? "tok" : kit == Breaks ? "tamb" : kit == Trap ? "bongo" : "conga";
-    return padName(pad);
+    switch (pad) {
+    case Perc:
+        switch (kit) {
+        case Techno: return "tok";
+        case Breaks:
+        case Linn: return "tamb";
+        case Trap:
+        case Cr78: return "bongo";
+        case Jungle: return "timbale";
+        case Brushes: return "vibes";
+        default: return "conga";
+        }
+    case Clap: return kit == BoomBap ? "snap" : kit == Cr78 ? "guiro" : kit == Brushes ? "swish" : "clap";
+    case Snare: return kit == Brushes ? "brush" : "snare";
+    case Sub: return kit == Brushes || kit == Cr78 ? "bass" : "808";
+    case Rim: return kit == Brushes ? "x-stick" : "rim";
+    case Shaker: return kit == Cr78 ? "maracas" : kit == Linn ? "cabasa" : "shaker";
+    case Open: return kit == Cr78 ? "metal" : "open";
+    case TomLo: return kit == Cr78 ? "conga lo" : "tom lo";
+    case TomMid: return kit == Cr78 ? "conga" : "tom mid";
+    case TomHi: return kit == Cr78 ? "conga hi" : "tom hi";
+    case Bell: return kit == Brushes ? "ride bell" : kit == Cr78 || kit == Linn ? "cowbell" : "bell";
+    case Zap:
+        switch (kit) {
+        case BoomBap: return "scratch";
+        case Linn: return "simmons";
+        case Cr78: return "clave";
+        case Brushes: return "block";
+        case Jungle: return "siren";
+        default: return "zap";
+        }
+    default: return padName(pad);
+    }
 }
 
 inline const char *kitName(int kit) {
-    static const char *names[KitCount] = {"house", "techno", "trap", "breaks", "garage"};
+    static const char *names[KitCount] = {"house",    "techno", "trap", "breaks", "garage",
+                                          "boom bap", "jungle", "linn", "cr-78",  "brushes"};
     return names[std::clamp(kit, 0, KitCount - 1)];
 }
 
-// Each kit's feel, in MPC terms: 50% is straight, 66% a full triplet shuffle.
+// Each kit's feel, in MPC terms: 50% is straight, 66% a full triplet
+// shuffle. The brushes' own parts are written in triplets; this swings what
+// they roll in sixteenths.
 inline float kitSwing(int kit) {
-    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f};
+    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f};
     return swing[std::clamp(kit, 0, KitCount - 1)];
+}
+
+// Each kit's output level, in dB: a kit is voiced to sound like its genre,
+// and these bring every kit's groove to about the same loudness so changing
+// kit never jumps the mix. Every hit carries its kit, so a loop keeps its
+// level too.
+inline float kitTrim(int kit) {
+    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f};
+    static const float gain[KitCount] = {
+        std::exp2(db[0] / 6.0206f), std::exp2(db[1] / 6.0206f), std::exp2(db[2] / 6.0206f), std::exp2(db[3] / 6.0206f),
+        std::exp2(db[4] / 6.0206f), std::exp2(db[5] / 6.0206f), std::exp2(db[6] / 6.0206f), std::exp2(db[7] / 6.0206f),
+        std::exp2(db[8] / 6.0206f), std::exp2(db[9] / 6.0206f)};
+    return gain[std::clamp(kit, 0, KitCount - 1)];
 }
 
 // Roughly how long each drum rings in each kit (its main decay's time
@@ -78,22 +153,23 @@ inline float kitSwing(int kit) {
 inline float displayDecay(int pad, int kit) {
     kit = std::clamp(kit, 0, KitCount - 1);
     static const float table[PadCount][KitCount] = {
-        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f},    // kick
-        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f},   // snare
-        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f},     // clap
-        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f}, // hat
-        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f},         // 808
-        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f}, // rim
-        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f}, // shaker
-        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f},     // open
-        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f},    // tom lo
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f},        // tom mid
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f},        // tom hi
-        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f},   // hand drum
-        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f},         // crash
-        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f},        // ride
-        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f},    // bell
-        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f},    // zap
+        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes
+        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f},             // kick
+        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f},             // snare
+        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f},               // clap
+        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f},       // hat
+        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f},                      // 808
+        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f},    // rim
+        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f},      // shaker
+        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f},                 // open
+        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f},              // tom lo
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f},                  // tom mid
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f},                 // tom hi
+        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f},              // hand drum
+        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f},                     // crash
+        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f},                      // ride
+        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f},              // bell
+        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f},              // zap
     };
     return table[std::clamp(pad, 0, PadCount - 1)][kit];
 }
@@ -195,6 +271,9 @@ struct Step {
 struct Pattern {
     Step steps[96];
     int count = 0;
+    // Written in triplets, with each beat's last triplet on the straight
+    // eighth: the page's swing puts it late, onto the triplet at 66%.
+    bool triplet = false;
     void add(int tick, float vel, int degree = 0) {
         if (count < 96)
             steps[count++] = {uint8_t(((tick % kTicks) + kTicks) % kTicks), vel, int8_t(degree)};
@@ -266,12 +345,15 @@ inline void addSixteenths(Pattern &p, const char *s, int shift) {
     }
 }
 
-// The kit's parts for the pads that have one, at densities 0..2.
+// The kit's parts for the pads that have one, at densities 0..2. The
+// brushes' are written in triplets (tripletPart, below), so their rows here
+// are empty.
 inline const char *part(int pad, int kit, int density) {
     const int d = std::clamp(density, 0, 2);
     struct Row {
         const char *p[3];
     };
+    static constexpr Row none = {{nullptr, nullptr, nullptr}};
     // Kick.
     static const Row kick[KitCount] = {
         {{"X.......X.......", "X...X...X...X...", "X...X...X...X..x"}},
@@ -279,6 +361,15 @@ inline const char *part(int pad, int kit, int density) {
         {{"X...............", "X......X..X.....", "X..x...X..X...x."}},
         {{"X.........X.....", "X.X.......XX....", "X.X.......XX..x."}},
         {{"X...............", "X.........X.....", "X......x..X....."}},
+        // Boom bap: the kick lays back, a pickup after each of its beats.
+        {{"X.........X.....", "X..x......X..x..", "X..x...x.xX..x.."}},
+        // Jungle: the two-step, then the break's doubled kicks.
+        {{"X.........X.....", "X.........X..x..", "X.X.....x.X..x.."}},
+        // Linn: the 80s pop beat, on one and three.
+        {{"X.......X.......", "X.......X.X.....", "X.....x.X.X...x."}},
+        // CR-78: the rhythm box's pop preset, a kick tucked before three.
+        {{"X.......X.......", "X......xX.......", "X..x...xX.x...x."}},
+        none,
     };
     static const Row snare[KitCount] = {
         {{"............X...", "....X.......X...", "....X.......X.oo"}},
@@ -286,6 +377,12 @@ inline const char *part(int pad, int kit, int density) {
         {{"........X.......", "........X.......", "........X.....o."}},
         {{"....X.......X...", "....X..o.o..X..o", "o...X..o.o.oX..o"}},
         {{"............X...", "....X.......X...", "....X.......X..o"}},
+        {{"....X.......X...", "....X....o..X...", "....X..o.o..X..o"}},
+        // Jungle: ghosts all through the break (and a rush, below).
+        {{"....X.......X...", "....X..o.o..X.o.", "o.o.X.oo.o.oX.o."}},
+        {{"....X.......X...", "....X.......X...", "....X.......X.oX"}},
+        {{"....X.......X...", "....X.......X...", "....X..o....X.o."}},
+        none,
     };
     static const Row clap[KitCount] = {
         {{"............X...", "....X.......X...", "....X..o....X..o"}},
@@ -293,6 +390,12 @@ inline const char *part(int pad, int kit, int density) {
         {{"........X.......", "........X.......", "........X.....x."}},
         {{"....X...........", "....X.......X...", "....X.......X.o."}},
         {{"............X...", "....X.......X...", "....X.......X.x."}},
+        {{"....X.......X...", "....X.......X...", "....X.......X.x."}},
+        {{"....X.......X...", "....X.......X...", "....X.......X..x"}},
+        {{"....X.......X...", "....X.......X...", "....X.......X.X."}},
+        // CR-78: the guiro's long-short-short scrape.
+        {{"X.......X.......", "X.x...x.X.x...x.", "X.xxX.x.X.xxX.x."}},
+        none,
     };
     static const Row hat[KitCount] = {
         {{"..X...X...X...X.", "o.X.o.X.o.X.o.X.", "oxXooxXooxXooxXx"}},
@@ -300,6 +403,13 @@ inline const char *part(int pad, int kit, int density) {
         {{"X.x.X.x.X.x.X.x.", "", ""}}, // trap hats are built below
         {{"X.x.X.x.X.x.X.x.", "X.xoX.x.X.xoX.x.", "XoxoXoxoXoxoXoxo"}},
         {{"..X...X...X...X.", "o.Xoo.X.o.Xoo.X.", "oxXooxXxoxXooxXx"}},
+        {{"X.x.X.x.X.x.X.x.", "X.x.X.xoX.x.X.xo", "XoxoXoxxXoxoXoxx"}},
+        // Jungle: rolling sixteenths that lean on the offbeat.
+        {{"x.x.x.x.x.x.x.x.", "x.xox.xox.xox.xo", "xoxxxoxxxoxxxoxx"}},
+        {{"X.x.X.x.X.x.X.x.", "X.x.X.x.X.x.X.xx", "XxXxXxXxXxXxXxXx"}},
+        // CR-78: sixteenths with the box's accent on the offbeat eighths.
+        {{"x.x.x.x.x.x.x.x.", "x.X.x.X.x.X.x.X.", "xoXoxoXoxoXoxoXo"}},
+        none,
     };
     static const Row open[KitCount] = {
         {{"..............X.", "..X...X...X...X.", "..X...X...X...XX"}},
@@ -307,17 +417,33 @@ inline const char *part(int pad, int kit, int density) {
         {{"..............X.", "......X.......X.", "......X...X...X."}},
         {{"..........X.....", "..........X.....", "..X.......X...X."}},
         {{"..X.............", "..X.......X.....", "..X...X...X...X."}},
+        {{"..............X.", "......X.......X.", "..X.......X...X."}},
+        {{"..X...........X.", "......X.......X.", "..X...X...X...X."}},
+        {{"..............X.", "......X.......X.", "..X...X...X...X."}},
+        {{"..............X.", "......X.......X.", "..X...X...X...X."}},
+        none,
     };
     static const Row shaker = {{"..X...X...X...X.", "oxXxoxXxoxXxoxXx", "xxXxxxXxxxXxxXXX"}};
     static const Row ride = {{"X...X...X...X...", "X.x.X.x.X.x.X.x.", "X.xxX.xxX.xxX.xx"}};
     static const Row rideTechno = {{"..X...X...X...X.", "x.X.x.X.x.X.x.X.", "xxXxxxXxxxXxxxXx"}};
     static const Row crash = {{"X...............", "X...............", "X.......X......."}};
+    // The CR-78's rim plays the son clave, three-two.
+    static const Row rimCr78 = {{"X..X..X.........", "X..X..X...X.X...", "X..X..X...X.X..x"}};
+    // The Linn's tambourine: the backbeat, then the 80s' shaken sixteenths.
+    static const Row tambLinn = {{"....X.......X...", "..x.X.x...x.X.x.", "oxoxXxoxoxoxXxox"}};
     static const Row sub[KitCount] = {
         {{"X...............", "..X...X...X...X.", "..X.x.X...X.x.X."}},
         {{"..X...X...X...X.", ".xX..xX..xX..xX.", ".xxx.xxx.xxx.xxx"}},
         {{"X...............", "X......X..X.....", "X..x...X..X...x."}},
         {{"X.........X.....", "X.X.......XX....", "X.X.......XX..x."}},
         {{"X...............", "X.........X..x..", "X......x..X..x.."}},
+        {{"X.........X.....", "X..x......X..x..", "X..x...x.xX..x.."}},
+        // Jungle: long sub notes under the break.
+        {{"X...............", "X.........X.....", "X.....x...X....."}},
+        // Linn: the synthwave bass's driving eighths.
+        {{"X.......X.......", "X.X.X.X.X.X.X.X.", "X.XxX.XxX.XxX.Xx"}},
+        {{"X.......X.......", "X......xX.......", "X..x...xX.x...x."}},
+        none,
     };
     switch (pad) {
     case Kick: return kick[kit].p[d];
@@ -329,6 +455,55 @@ inline const char *part(int pad, int kit, int density) {
     case Ride: return kit == Techno ? rideTechno.p[d] : ride.p[d];
     case Crash: return crash.p[d];
     case Sub: return sub[kit].p[d];
+    case Rim: return kit == Cr78 ? rimCr78.p[d] : nullptr;
+    case Perc: return kit == Linn ? tambLinn.p[d] : nullptr;
+    default: return nullptr;
+    }
+}
+
+// The tick of the i-th of twelve triplet eighths: each beat's first on the
+// beat, its second a third of the way through (eight ticks), its last on
+// the straight eighth (twelve), where swing moves it (a full triplet at
+// 66%, straight at 50%).
+inline int tripletTick(int i) {
+    static const int within[3] = {0, 8, 12};
+    return (i / 3) * 24 + within[i % 3];
+}
+
+// Twelve steps of triplet eighths: X accent, x normal, o ghost, . rest.
+inline void addTriplets(Pattern &p, const char *s, int shift) {
+    p.triplet = true;
+    for (int i = 0; i < 12 && s[i]; ++i) {
+        const char c = s[i];
+        if (c == '.')
+            continue;
+        p.add(tripletTick(i) + shift * 6, c == 'X' ? 1.0f : c == 'x' ? 0.72f : 0.42f);
+    }
+}
+
+// The brushes' parts, in triplets because jazz swings its eighths: the
+// ride's spang-a-lang, the hat's foot on two and four, the brush slapping
+// the backbeat while the other hand swishes round the head, the kick
+// feathered under it all.
+inline const char *tripletPart(int pad, int density) {
+    const int d = std::clamp(density, 0, 2);
+    static const char *const parts[7][3] = {
+        {"X.....o.....", "o..o..o..o..", "X..o..o.xo.."}, // kick: feathered quarters, a bomb
+        {"...X.....X..", "...X..o..X.o", "..oX.o.o.X.o"}, // the brush's slap
+        {"X.....X.....", "X..X..X..X..", "X.oX.oX.oX.o"}, // the swish
+        {"...X.....X..", "...X.....X..", "...X..o..X.o"}, // hat, the foot
+        {"......X.....", "...X.....X..", "...X..x..X.x"}, // open
+        {"X..X..X..X..", "X..X.xX..X.x", "X.xX.xX.xX.x"}, // ride
+        {".........X..", "...X.....X..", "...X..o..X.o"}, // cross-stick
+    };
+    switch (pad) {
+    case Kick: return parts[0][d];
+    case Snare: return parts[1][d];
+    case Clap: return parts[2][d];
+    case Hat: return parts[3][d];
+    case Open: return parts[4][d];
+    case Ride: return parts[5][d];
+    case Rim: return parts[6][d];
     default: return nullptr;
     }
 }
@@ -345,9 +520,10 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
     kit = std::clamp(kit, 0, KitCount - 1);
     density = std::clamp(density, 0, kDensities - 1);
     if (density >= 3) {
-        // Rolls: sixteenths, or thirty-seconds; trap hats roll in triplets.
-        const bool trapHat = kit == Trap && (pad == Hat || pad == Shaker);
-        const int rate = density == 3 ? (trapHat ? 4 : 3) : 5;
+        // Rolls: sixteenths, or thirty-seconds; trap hats and brushes roll
+        // in triplets.
+        const bool triplets = (kit == Trap && (pad == Hat || pad == Shaker)) || kit == Brushes;
+        const int rate = density == 3 ? (triplets ? 4 : 3) : 5;
         return rollPattern(rate);
     }
     if (pad == Hat && kit == Trap) {
@@ -371,8 +547,31 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
         p.sort();
         return p;
     }
+    if (kit == Brushes && pad == Sub) {
+        // The bass walks the chord of the moment (the upright counts these
+        // from its root): half notes on the root and fifth, then root,
+        // third, fifth and the step below the root leading into the next
+        // bar, then root, fifth, seventh and the step above it.
+        static const int walks[3][4] = {{0, 4, 0, 4}, {0, 2, 4, -1}, {0, 4, 6, 1}};
+        for (int b = 0; b < 4; ++b)
+            if (density > 0 || b % 2 == 0)
+                p.add(b * 24 + shift * 6, b == 0 ? 1.0f : 0.8f, walks[density][b]);
+        p.sort();
+        return p;
+    }
+    if (kit == Brushes)
+        if (const char *s = detail::tripletPart(pad, density)) {
+            detail::addTriplets(p, s, shift);
+            p.sort();
+            return p;
+        }
     if (const char *s = detail::part(pad, kit, density)) {
         detail::addSixteenths(p, s, shift);
+        // Jungle's busiest snare rushes into the bar line in thirty-seconds,
+        // louder as it goes: the edit a junglist cuts into the break.
+        if (kit == Jungle && pad == Snare && density == 2)
+            for (int t = 87; t < kTicks; t += 3)
+                p.add(t + shift * 6, 0.45f + 0.15f * float(t - 87) / 3.0f);
         p.sort();
         return p;
     }
@@ -390,12 +589,17 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
     default: break;
     }
     // A melody of chord tones for the tuned ones: root, fifth, third, octave.
+    // The brushes' run on the triplet grid, twelve to the bar, so they
+    // swing with the rest of the kit.
     static const int walk[4] = {0, 4, 2, 7};
+    const bool triplets = kit == Brushes;
+    const int steps = triplets ? 12 : 16;
+    p.triplet = triplets;
     int n = 0;
-    for (int s = 0; s < 16; ++s)
-        if (euclid(pulses[density], 16, rot + shift, s)) {
+    for (int s = 0; s < steps; ++s)
+        if (euclid(pulses[density], steps, rot + shift, s)) {
             const bool tuned = pad == Perc || pad == Bell || pad == Zap;
-            p.add(s * 6, n == 0 ? 1.0f : 0.75f, tuned ? walk[n % 4] : 0);
+            p.add(triplets ? detail::tripletTick(s) : s * 6, n == 0 ? 1.0f : 0.75f, tuned ? walk[n % 4] : 0);
             ++n;
         }
     return p;
@@ -454,8 +658,15 @@ struct Voice {
     SquareOsc sq[12];
     float sqInc[12] = {};
     Partial partial[7];
-    Svf f1, f2, f3, f4, f5, f6;
+    Svf f1, f2, f3, f4, f5, f6, f7;
     Rng rng, rng2;
+    // Boom bap's sampler: every drum leaves through twelve bits and a dark
+    // low-pass, in each ear.
+    bool dusty = false;
+    Svf dustL, dustR;
+    float holdPhase = 0, holdInc = 0, heldL = 0, heldR = 0; // its 26 kHz sample-and-hold
+    // A second envelope, and a gate's swell, for the drums that need more.
+    float env2 = 0, env2Mul = 1, swell = 0;
 
     // Fades the voice out over a few milliseconds: a choke, or a steal.
     void release(float seconds) {
@@ -484,6 +695,17 @@ struct Voice {
         f4.reset();
         f5.reset();
         f6.reset();
+        f7.reset();
+        dusty = kit == BoomBap;
+        if (dusty) {
+            dustL.reset();
+            dustR.reset();
+            dustL.set(8500.0f, 0.6f, rate_);
+            dustR.set(8500.0f, 0.6f, rate_);
+            holdPhase = 1.0f;
+            holdInc = 26040.0f / rate_;
+            heldL = heldR = 0;
+        }
         const Harmony &h = *su.harmony;
         const float vel = clampf(s.vel, 0.02f, 1.0f);
         // Louder hits are louder by more than their velocity, the way a
@@ -502,16 +724,24 @@ struct Voice {
         switch (pad) {
         case Kick: {
             // k: 0 pitch amount, 1 fast pitch amount, 2 drive, 3 click, 4 drive norm
-            static const float amt[KitCount] = {5.5f, 7.0f, 4.0f, 4.5f, 5.0f};
-            static const float tauP[KitCount] = {0.030f, 0.034f, 0.028f, 0.022f, 0.025f};
-            static const float hold[KitCount] = {0.025f, 0.04f, 0.02f, 0.01f, 0.015f};
-            static const float tauA[KitCount] = {0.15f, 0.21f, 0.16f, 0.09f, 0.11f};
-            static const float drive[KitCount] = {1.8f, 3.6f, 1.5f, 2.4f, 2.0f};
-            static const float click[KitCount] = {0.45f, 0.4f, 0.5f, 0.7f, 0.5f};
-            static const float clickHz[KitCount] = {3500.0f, 2600.0f, 4200.0f, 2200.0f, 3200.0f};
-            hz[0] = kickHz(h, degrees, kit == Trap ? 47.0f : 52.0f);
+            // The CR-78's and the felt jazz kick barely sweep: a round
+            // boom, no punch; boom bap's knocks through its drive. The
+            // CR-78's sits higher, a little driven and with a soft knock at
+            // a kilohertz, so a laptop's speakers still hear it.
+            static const float amt[KitCount] = {5.5f, 7.0f, 4.0f, 4.5f, 5.0f, 3.5f, 6.0f, 4.0f, 1.2f, 1.6f};
+            static const float fast[KitCount] = {8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 8.0f, 10.0f, 8.0f, 1.5f, 2.0f};
+            static const float tauP[KitCount] = {0.030f, 0.034f, 0.028f, 0.022f, 0.025f,
+                                                 0.028f, 0.018f, 0.040f, 0.020f, 0.030f};
+            static const float hold[KitCount] = {0.025f, 0.04f, 0.02f, 0.01f, 0.015f, 0.012f, 0.008f, 0.03f, 0.0f, 0.02f};
+            static const float tauA[KitCount] = {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f};
+            static const float drive[KitCount] = {1.8f, 3.6f, 1.5f, 2.4f, 2.0f, 3.2f, 2.6f, 2.2f, 1.5f, 1.2f};
+            static const float click[KitCount] = {0.45f, 0.4f, 0.5f, 0.7f, 0.5f, 0.85f, 0.8f, 0.6f, 0.15f, 0.25f};
+            static const float clickHz[KitCount] = {3500.0f, 2600.0f, 4200.0f, 2200.0f, 3200.0f,
+                                                    1500.0f, 4000.0f, 2600.0f, 1000.0f, 700.0f};
+            static const float nearHz[KitCount] = {52.0f, 52.0f, 47.0f, 52.0f, 52.0f, 50.0f, 55.0f, 54.0f, 68.0f, 56.0f};
+            hz[0] = kickHz(h, degrees, nearHz[kit]);
             k[0] = amt[kit];
-            k[1] = 8.0f;
+            k[1] = fast[kit];
             mul[0] = decayMul(tauP[kit], rate);
             mul[1] = decayMul(0.0035f, rate);
             env[0] = env[1] = 1;
@@ -525,7 +755,7 @@ struct Voice {
             mul[3] = decayMul(0.0025f, rate);
             f1.set(clickHz[kit], 0.8f, rate);
             // Every kit's kick peaks alike, whatever its drive and sweep.
-            static const float level[KitCount] = {1.0f, 1.15f, 0.92f, 1.08f, 1.0f};
+            static const float level[KitCount] = {1.0f, 1.15f, 0.92f, 1.08f, 1.0f, 1.0f, 0.75f, 1.05f, 1.2f, 1.25f};
             gain = 0.48f * level[kit];
             send = 0.02f;
             break;
@@ -535,15 +765,32 @@ struct Voice {
             active = false;
             return;
         case Snare: {
-            // k: 0 body level, 1 noise level, 2 click level
-            static const float base[KitCount] = {190.0f, 200.0f, 225.0f, 172.0f, 212.0f};
-            static const float tauB[KitCount] = {0.05f, 0.04f, 0.035f, 0.07f, 0.045f};
-            static const float tauN[KitCount] = {0.085f, 0.06f, 0.07f, 0.13f, 0.07f};
-            static const float hp[KitCount] = {1300.0f, 2200.0f, 2800.0f, 900.0f, 1900.0f};
-            static const float bp[KitCount] = {4800.0f, 5200.0f, 6500.0f, 3600.0f, 5600.0f};
-            static const float noise[KitCount] = {0.85f, 0.75f, 0.95f, 0.8f, 0.9f};
-            static const float body[KitCount] = {0.65f, 0.55f, 0.45f, 0.85f, 0.5f};
-            hz[0] = base[kit] * ratio * (1.0f + 0.04f * (s.sx - 0.5f)) * (1.0f + 0.06f * std::max(0.0f, edge));
+            // k: 0 body level, 1 noise level, 2 click level, 3 the noise's
+            // rise in samples, 4 the gated room's level, 5 when its gate
+            // shuts (samples), 6 its swell per sample, 7 the gate's fall.
+            // Jungle's is the ringing break snare, tuned high; the CR-78's
+            // a thin tick of noise; the brush has hardly any body, and its
+            // bristles spread the hit over a few milliseconds.
+            static const float base[KitCount] = {190.0f, 200.0f, 225.0f, 172.0f, 212.0f,
+                                                 185.0f, 245.0f, 200.0f, 270.0f, 180.0f};
+            static const float tauB[KitCount] = {0.05f, 0.04f, 0.035f, 0.07f, 0.045f, 0.06f, 0.035f, 0.05f, 0.03f, 0.04f};
+            static const float tauN[KitCount] = {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.04f, 0.06f, 0.12f};
+            static const float hp[KitCount] = {1300.0f, 2200.0f, 2800.0f, 900.0f, 1900.0f,
+                                               900.0f, 1800.0f, 1200.0f, 2500.0f, 1500.0f};
+            static const float bp[KitCount] = {4800.0f, 5200.0f, 6500.0f, 3600.0f, 5600.0f,
+                                               3000.0f, 6000.0f, 4500.0f, 7000.0f, 4200.0f};
+            static const float noise[KitCount] = {0.85f, 0.75f, 0.95f, 0.8f, 0.9f, 0.85f, 0.9f, 0.8f, 0.9f, 1.0f};
+            static const float body[KitCount] = {0.65f, 0.55f, 0.45f, 0.85f, 0.5f, 0.8f, 0.75f, 0.6f, 0.35f, 0.15f};
+            static const float crack[KitCount] = {0.2f, 0.2f, 0.35f, 0.2f, 0.2f, 0.25f, 0.35f, 0.2f, 0.15f, 0.04f};
+            static const float rise[KitCount] = {0.0004f, 0.0004f, 0.0004f, 0.0004f, 0.0004f,
+                                                 0.0004f, 0.0004f, 0.0004f, 0.0004f, 0.004f};
+            static const float sends[KitCount] = {0.3f, 0.3f, 0.3f, 0.5f, 0.3f, 0.25f, 0.45f, 0.0f, 0.2f, 0.35f};
+            // Jungle's ringing body is tuned to the key's root, so a break
+            // played busy rings in key; its ghosts are struck nearer the
+            // rim and ring on the scale's second, a step above.
+            const float tuned = kit == Jungle ? degreeHz(h, vel > 0.5f ? 0 : 1, base[kit])
+                                              : base[kit];
+            hz[0] = tuned * ratio * (1.0f + 0.04f * (s.sx - 0.5f)) * (1.0f + 0.06f * std::max(0.0f, edge));
             hz[1] = hz[0] * 1.62f;
             env[0] = 1; // body
             mul[0] = dm(tauB[kit]);
@@ -554,19 +801,82 @@ struct Voice {
             env[3] = 1; // the crack
             mul[3] = decayMul(0.0012f, rate);
             k[0] = body[kit] * std::exp2(-tone * 0.6f) * (1.0f - 0.35f * std::max(0.0f, edge));
+            if (kit == Jungle) // a ghost is mostly the wires, so a busy break doesn't drone
+                k[0] *= vel * vel;
             k[1] = noise[kit] * std::exp2(tone * 0.7f) * (1.0f + 0.25f * std::max(0.0f, edge));
-            k[2] = (kit == Trap ? 0.35f : 0.2f) * (0.6f + 0.6f * vel);
+            k[2] = crack[kit] * (0.6f + 0.6f * vel);
+            k[3] = rise[kit] * rate;
             f1.set(hp[kit] * ratio * (1.0f + 0.5f * std::max(0.0f, edge)), 0.7f, rate);
             f2.set(std::min(bp[kit] * ratio, rate * 0.4f), 1.1f, rate);
-            f3.set(11000.0f, 0.7f, rate);
+            f3.set(kit == Brushes ? 8000.0f : 11000.0f, 0.7f, rate);
+            if (kit == Linn) {
+                // The 80s: the snare's big room swells, holds nearly flat,
+                // and is cut off by a noise gate a fifth of a second on, in
+                // a few milliseconds. A pair of noises, one each side,
+                // stands for the room's reflections, filtered to the
+                // snare's colour. The room is all its own: none goes to the
+                // kit's, which would blur the cut.
+                k[4] = 3.4f * (1.0f + 0.3f * tone); // the band-pass passes 0.45 at its peak
+                k[5] = 0.17f * decayScale * rate;
+                k[6] = 1.0f - decayMul(0.01f, rate);
+                k[7] = decayMul(0.004f, rate);
+                swell = 0;
+                env2 = 1;
+                env2Mul = dm(1.5f);
+                f4.set(1700.0f * ratio, 0.45f, rate);
+                f5.set(1700.0f * ratio, 0.45f, rate);
+                f6.set(9000.0f, 0.6f, rate);
+                f7.set(9000.0f, 0.6f, rate);
+            }
             gain = 0.45f;
-            send = kit == Breaks ? 0.5f : 0.3f;
+            send = sends[kit];
             break;
         }
         case Clap: {
-            static const float centre[KitCount] = {1200.0f, 1000.0f, 1500.0f, 1100.0f, 1300.0f};
-            static const float tail[KitCount] = {0.11f, 0.08f, 0.09f, 0.14f, 0.1f};
-            static const float spread[KitCount] = {1.0f, 0.9f, 0.8f, 1.15f, 1.0f};
+            if (kit == Cr78) {
+                // The guiro: a stick scraped along a gourd's ridges, so a
+                // train of clicks (each a ring of band-passed noise) that
+                // quickens as the stroke goes, swelling and fading over it.
+                // k: 0 samples between ridges, 1 the stroke's length, 2
+                // the next ridge.
+                k[0] = 0.0095f * rate * std::exp2(-0.3f * tone);
+                k[1] = (0.08f + 0.06f * vel) * decayScale * rate * (1.0f + 0.4f * std::max(0.0f, edge));
+                k[2] = 0;
+                env[0] = 0;
+                mul[0] = decayMul(0.0012f, rate);
+                f1.set(std::min(3300.0f * ratio, rate * 0.4f), 2.5f, rate);
+                f2.set(1200.0f, 0.7f, rate);
+                gain = 0.12f;
+                pan = 0.25f;
+                send = 0.25f;
+                break;
+            }
+            if (kit == Brushes) {
+                // The swish: the brush swept round the head. Noise that
+                // swells over most of a tenth of a second and fades as
+                // slowly, through a band that climbs as the wires speed up.
+                // k: 0 the swell, in samples.
+                k[0] = (0.07f + 0.04f * std::max(0.0f, edge)) * rate;
+                env[0] = 1;
+                mul[0] = dm(0.16f * (1.0f + 0.3f * tone));
+                k[1] = 2200.0f * ratio * std::exp2(0.4f * tone);
+                f1.set(k[1], 0.9f, rate);
+                f2.set(700.0f, 0.7f, rate);
+                f3.set(9000.0f, 0.6f, rate);
+                gain = 0.22f;
+                pan = -0.12f + 0.25f * (s.sx - 0.5f);
+                send = 0.3f;
+                break;
+            }
+            // The boom bap snap is a clap whose bursts crowd into a few
+            // milliseconds, pitched up, with almost no tail; the Linn's
+            // tail holds, then a gate shuts it.
+            static const float centre[KitCount] = {1200.0f, 1000.0f, 1500.0f, 1100.0f, 1300.0f,
+                                                   2300.0f, 1250.0f, 1150.0f, 1200.0f, 1200.0f};
+            static const float tail[KitCount] = {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.6f, 0.1f, 0.1f};
+            static const float spread[KitCount] = {1.0f, 0.9f, 0.8f, 1.15f, 1.0f, 0.25f, 0.85f, 1.1f, 1.0f, 1.0f};
+            k[6] = kit == Linn ? 0.2f * decayScale * rate : 1e9f; // the gate
+            k[7] = decayMul(0.01f, rate);
             // Burst times in samples.
             k[0] = 0;
             k[1] = 0.0085f * spread[kit] * rate;
@@ -584,20 +894,25 @@ struct Voice {
             f5.set(std::min(12000.0f, rate * 0.4f), 0.6f, rate);
             f6.set(std::min(12000.0f, rate * 0.4f), 0.6f, rate);
             k[5] = 0.35f + 0.25f * tone; // sizzle
-            gain = 0.7f;
-            send = 0.45f;
+            gain = kit == BoomBap ? 0.6f : 0.7f;
+            send = kit == BoomBap ? 0.2f : 0.45f;
             break;
         }
         case Rim: {
-            hz[0] = 480.0f * ratio;
-            hz[1] = 1720.0f * ratio * (1.0f + 0.05f * edge);
+            // The brushes' cross-stick lays the stick across the rim: more
+            // of the shell's wooden tock, longer, less ring. Jungle's is a
+            // high piccolo rimshot that rings. The Linn's is the LM-1's
+            // sidestick: a short, low, woody knock with hardly any ring.
+            const bool cross = kit == Brushes, piccolo = kit == Jungle, side = kit == Linn;
+            hz[0] = (cross ? 560.0f : piccolo ? 660.0f : side ? 400.0f : 480.0f) * ratio;
+            hz[1] = (cross ? 1450.0f : piccolo ? 2350.0f : side ? 1150.0f : 1720.0f) * ratio * (1.0f + 0.05f * edge);
             env[0] = env[1] = env[2] = 1;
-            mul[0] = dm(0.011f);
-            mul[1] = dm(0.007f);
+            mul[0] = dm(cross ? 0.02f : side ? 0.008f : 0.011f);
+            mul[1] = dm(piccolo ? 0.018f : side ? 0.004f : 0.007f);
             mul[2] = decayMul(0.0012f, rate);
-            k[0] = 0.55f - 0.2f * tone;
-            k[1] = 0.8f + 0.3f * tone;
-            f1.set(320.0f, 0.7f, rate);
+            k[0] = (cross ? 0.9f : side ? 1.1f : 0.55f) - 0.2f * tone;
+            k[1] = (cross ? 0.45f : side ? 0.3f : 0.8f) + 0.3f * tone;
+            f1.set(side ? 180.0f : 320.0f, 0.7f, rate);
             f2.set(3500.0f, 1.2f, rate);
             gain = 0.25f;
             pan = -0.2f;
@@ -608,22 +923,48 @@ struct Voice {
             const float attack = (0.004f + 0.012f * (0.5f + 0.5f * edge)) * rate;
             k[0] = attack;
             env[0] = 1;
-            mul[0] = dm((kit == Trap ? 0.03f : 0.045f) * (1.0f + 0.3f * tone));
-            f1.set(7200.0f * ratio * std::exp2(0.4f * tone), 0.9f, rate);
+            // The CR-78's maracas are short and bright; the brushes' shaker
+            // a softer, longer shush.
+            static const float tau[KitCount] = {0.045f, 0.045f, 0.03f, 0.045f, 0.045f,
+                                                0.045f, 0.035f, 0.045f, 0.03f, 0.06f};
+            static const float centre[KitCount] = {7200.0f, 7200.0f, 7200.0f, 7200.0f, 7200.0f,
+                                                   6500.0f, 7600.0f, 7200.0f, 8200.0f, 5600.0f};
+            mul[0] = dm(tau[kit] * (1.0f + 0.3f * tone));
+            f1.set(std::min(centre[kit] * ratio * std::exp2(0.4f * tone), rate * 0.42f), 0.9f, rate);
             f2.set(4500.0f * ratio, 0.7f, rate);
             f3.set(std::min(13000.0f, rate * 0.4f), 0.6f, rate);
             gain = 0.17f;
             pan = 0.3f + 0.3f * (s.sx - 0.5f);
             send = 0.15f;
+            if (kit == Linn) {
+                // The cabasa: steel beads scraped round the drum, "chk-a".
+                // A sharp, bright scrape, then the beads rolling back,
+                // softer, a moment later. k: 1 when they roll back.
+                k[0] = 0.0015f * rate;
+                mul[0] = dm(0.04f * (1.0f + 0.3f * tone));
+                k[1] = (0.075f + 0.03f * std::max(0.0f, edge)) * rate;
+                env2 = 0.55f;
+                env2Mul = dm(0.05f);
+                f1.set(std::min(9800.0f * ratio * std::exp2(0.4f * tone), rate * 0.42f), 0.7f, rate);
+                f2.set(6500.0f * ratio, 0.7f, rate);
+                gain = 0.2f;
+            }
             break;
         }
         case Hat:
         case Open: {
             static const float ratios[6] = {1.0f, 1.483f, 1.800f, 2.546f, 2.630f, 3.897f};
-            static const float tune[KitCount] = {1.0f, 1.12f, 1.25f, 0.92f, 1.05f};
-            static const float noise[KitCount] = {0.45f, 0.3f, 0.75f, 0.55f, 0.5f};
-            static const float closedTau[KitCount] = {0.034f, 0.028f, 0.018f, 0.045f, 0.03f};
-            static const float openTau[KitCount] = {0.24f, 0.2f, 0.17f, 0.34f, 0.22f};
+            // The Linn's sampled hats are mostly noise; the CR-78's are
+            // noise ringing through a narrow band, its "metal beat" (the
+            // open pad) the squares ringing high and short; the jazz foot
+            // hat is dark and loose.
+            static const float tune[KitCount] = {1.0f, 1.12f, 1.25f, 0.92f, 1.05f, 0.9f, 1.15f, 1.3f, 1.45f, 0.82f};
+            static const float noise[KitCount] = {0.45f, 0.3f, 0.75f, 0.55f, 0.5f, 0.65f, 0.6f, 0.9f, 1.1f, 0.7f};
+            static const float closedTau[KitCount] = {0.034f, 0.028f, 0.018f, 0.045f, 0.03f,
+                                                      0.04f, 0.022f, 0.04f, 0.025f, 0.05f};
+            static const float openTau[KitCount] = {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f};
+            static const float bright[KitCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.85f, 1.05f, 1.0f, 1.0f, 0.75f};
+            static const float ring[KitCount] = {1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.1f, 1.0f, 4.0f, 1.1f};
             const float base = 205.3f * 1.7f * tune[kit] * ratio * std::exp2(0.25f * tone);
             for (int i = 0; i < 6; ++i) {
                 sq[i].phase = rng.unit();
@@ -637,13 +978,15 @@ struct Voice {
                                    : closedTau[kit] * (0.8f + 0.4f * vel) * (1.0f + 0.9f * std::max(0.0f, edge));
             env[0] = 1;
             mul[0] = dm(tau);
-            f1.set(std::min(9000.0f * std::exp2(0.3f * tone), rate * 0.42f), 1.1f, rate);
-            f2.set(6800.0f * std::exp2(0.3f * tone), 0.7f, rate);
-            f4.set(6000.0f * std::exp2(0.3f * tone), 0.7f, rate);
+            const float b = bright[kit] * std::exp2(0.3f * tone);
+            f1.set(std::min(9000.0f * b, rate * 0.42f), kit == Cr78 && open ? 6.0f : ring[kit], rate);
+            f2.set(6800.0f * b, 0.7f, rate);
+            f4.set(6000.0f * b, 0.7f, rate);
             f3.set(std::min(13500.0f, rate * 0.42f), 0.7f, rate);
             // Brighter and looser kits are trimmed to sit as far under the kick.
-            static const float level[KitCount] = {1.0f, 1.0f, 0.7f, 0.8f, 1.0f};
-            gain = (open ? 0.19f : 0.25f) * level[kit];
+            // The CR-78's ringing band is trimmed hardest, its metal more.
+            static const float level[KitCount] = {1.0f, 1.0f, 0.7f, 0.8f, 1.0f, 0.9f, 0.85f, 0.6f, 0.22f, 0.55f};
+            gain = (open ? 0.19f : 0.25f) * level[kit] * (kit == Cr78 && open ? 0.8f : 1.0f);
             pan = (open ? 0.22f : 0.15f) + 0.25f * (s.sx - 0.5f);
             send = open ? 0.12f : 0.08f;
             break;
@@ -651,18 +994,30 @@ struct Voice {
         case TomLo:
         case TomMid:
         case TomHi: {
+            // The Linn's are the 80s' big toms, falling far; jungle's are
+            // a break's tight high toms, snapping down with a slap of skin;
+            // the CR-78's congas sit higher and barely bend; brushes on a
+            // jazz kit's open toms leave a long hiss of wire on the skin.
+            static const float decay[KitCount] = {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f};
+            static const float drop[KitCount] = {0.75f, 0.75f, 0.75f, 0.55f, 0.75f, 0.55f, 0.9f, 1.1f, 0.15f, 0.3f};
+            static const float dropTau[KitCount] = {0.045f, 0.045f, 0.045f, 0.045f, 0.045f,
+                                                    0.045f, 0.03f, 0.09f, 0.03f, 0.045f};
+            static const float skin[KitCount] = {0.12f, 0.12f, 0.12f, 0.35f, 0.12f, 0.35f, 0.45f, 0.2f, 0.03f, 0.45f};
+            static const float skinTau[KitCount] = {0.008f, 0.008f, 0.008f, 0.03f, 0.008f,
+                                                    0.03f, 0.015f, 0.02f, 0.004f, 0.05f};
             const int deg = pad == TomLo ? 0 : pad == TomMid ? 2 : 4;
-            hz[0] = degreeHz(h, deg + degrees, 125.0f);
-            if (pad != TomLo && hz[0] < degreeHz(h, degrees, 125.0f))
+            const float near = kit == Cr78 ? 200.0f : kit == Jungle ? 160.0f : 125.0f;
+            hz[0] = degreeHz(h, deg + degrees, near);
+            if (pad != TomLo && hz[0] < degreeHz(h, degrees, near))
                 hz[0] *= 2.0f;
             env[0] = 1; // amp
-            mul[0] = dm((kit == Trap ? 0.3f : kit == Breaks ? 0.15f : 0.2f) * (pad == TomLo ? 1.15f : 1.0f));
+            mul[0] = dm(decay[kit] * (pad == TomLo ? 1.15f : 1.0f));
             env[1] = 1; // pitch
-            mul[1] = decayMul(0.045f, rate);
-            k[0] = (kit == Breaks ? 0.55f : 0.75f) * (1.0f + 0.3f * tone) * (1.0f + 0.3f * vel);
+            mul[1] = decayMul(dropTau[kit], rate);
+            k[0] = drop[kit] * (1.0f + 0.3f * tone) * (1.0f + 0.3f * vel);
             env[2] = 1; // skin noise
-            mul[2] = decayMul(kit == Breaks ? 0.03f : 0.008f, rate);
-            k[1] = (kit == Breaks ? 0.35f : 0.12f) * (1.0f + 0.5f * std::max(0.0f, edge));
+            mul[2] = decayMul(skinTau[kit], rate);
+            k[1] = skin[kit] * (1.0f + 0.5f * std::max(0.0f, edge));
             k[2] = 1.6f + 1.2f * std::max(0.0f, tone);
             k[3] = 1.0f / fastTanh(k[2]);
             f1.set(hz[0] * 6.0f, 0.9f, rate);
@@ -672,12 +1027,40 @@ struct Voice {
             break;
         }
         case Perc: {
-            hz[0] = degreeHz(h, 4 + degrees, kit == Trap ? 520.0f : 360.0f);
+            static const float near[KitCount] = {360.0f, 360.0f, 520.0f, 360.0f, 360.0f,
+                                                 360.0f, 560.0f, 360.0f, 480.0f, 520.0f};
+            hz[0] = degreeHz(h, 4 + degrees, near[kit]);
             const float slap = clampf((s.sy - 0.45f) * 2.5f, 0.0f, 1.0f);
             env[0] = 1;
             env[1] = 1;
             env[2] = 1;
-            if (kit == Techno) {
+            if (kit == Brushes) {
+                // Vibes: a struck bar's fundamental, its fourth partial two
+                // octaves up (a vibraphone bar is cut so it rings there) and
+                // a brief tenth for the mallet, all under the motor's
+                // tremolo.
+                const float t0 = 0.9f * decayScale * (1.0f + 0.4f * std::max(0.0f, edge));
+                partial[0].set(hz[0], rate, 1.0f, t0);
+                partial[1].set(hz[0] * 3.98f, rate, 0.28f * (1.0f + 0.5f * tone), t0 * 0.3f);
+                partial[2].set(hz[0] * 9.85f, rate, 0.1f * (1.0f + tone) * vel, 0.04f);
+                k[0] = 5.4f / rate; // the tremolo's rate, per sample
+                k[1] = 0.0015f * rate; // the mallet's soft landing
+                gain = 0.2f;
+                pan = 0.3f + 0.3f * (s.sx - 0.5f);
+                send = 0.4f;
+                break;
+            }
+            if (kit == Linn) {
+                // The Linn's tambourine is the breaks one, brighter.
+                static const float ratios[6] = {1.0f, 1.37f, 1.73f, 2.21f, 2.67f, 3.11f};
+                for (int i = 0; i < 6; ++i) {
+                    sq[i].phase = rng.unit();
+                    sqInc[i] = std::min(1650.0f * ratios[i] * ratio / rate, 0.45f);
+                }
+                mul[0] = dm(0.13f * (1.0f + 0.4f * tone));
+                f1.set(9000.0f, 1.0f, rate);
+                f2.set(6000.0f, 0.7f, rate);
+            } else if (kit == Techno) {
                 // A woodblock tok: frequency modulation that dies in a few
                 // milliseconds, leaving a short hollow tone.
                 mul[0] = dm(0.055f);
@@ -695,13 +1078,22 @@ struct Voice {
                 f1.set(9500.0f, 1.0f, rate);
                 f2.set(5500.0f, 0.7f, rate);
             } else {
-                // Conga or bongo: open tone at the centre, a slap at the edge.
-                mul[0] = dm((kit == Trap ? 0.07f : 0.13f) * (1.0f - 0.6f * slap) * (1.0f + 0.3f * tone));
+                // Conga or bongo: open tone at the centre, a slap at the
+                // edge. Jungle's timbale is a bongo whose metal shell rings
+                // on above it (two inharmonic partials); the CR-78's bongo
+                // is a short, soft blip.
+                static const float tau[KitCount] = {0.13f, 0.13f, 0.07f, 0.13f, 0.13f,
+                                                    0.13f, 0.2f, 0.13f, 0.06f, 0.13f};
+                mul[0] = dm(tau[kit] * (1.0f - 0.6f * slap) * (1.0f + 0.3f * tone));
                 mul[1] = decayMul(0.006f, rate);
-                k[0] = 0.3f;
+                k[0] = kit == Cr78 ? 0.1f : 0.3f;
                 mul[2] = decayMul(0.012f, rate);
-                k[2] = 0.15f + 0.7f * slap;
-                f1.set(2400.0f, 1.3f, rate);
+                k[2] = (kit == Cr78 ? 0.3f : 1.0f) * (0.15f + 0.7f * slap);
+                f1.set(kit == Jungle ? 3800.0f : 2400.0f, 1.3f, rate);
+                if (kit == Jungle) {
+                    partial[0].set(hz[0] * 2.37f, rate, 0.3f, 0.25f * decayScale);
+                    partial[1].set(hz[0] * 3.61f, rate, 0.18f, 0.16f * decayScale);
+                }
             }
             gain = 0.21f;
             pan = -0.35f + 0.3f * (s.sx - 0.5f);
@@ -710,7 +1102,12 @@ struct Voice {
         }
         case Crash: {
             static const float ratios[6] = {1.0f, 1.342f, 1.693f, 2.131f, 2.788f, 3.414f};
-            const float base = 410.0f * ratio * std::exp2(0.2f * tone);
+            // The jazz crash is a big dark one that washes on; the CR-78's
+            // a thin, short splash; jungle's a bright, quick one.
+            static const float tune[KitCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.95f, 1.25f, 1.1f, 1.3f, 0.8f};
+            static const float wash[KitCount] = {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f};
+            static const float shine[KitCount] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.9f, 1.0f, 1.0f, 1.0f, 0.7f};
+            const float base = 410.0f * tune[kit] * ratio * std::exp2(0.2f * tone);
             for (int i = 0; i < 6; ++i) {
                 sq[i].phase = rng.unit();
                 sq[i + 6].phase = rng.unit();
@@ -720,10 +1117,11 @@ struct Voice {
             env[0] = 1; // the hit
             mul[0] = decayMul(0.05f, rate);
             env[1] = 1; // the wash
-            mul[1] = dm(kit == Trap ? 0.8f : kit == Breaks ? 1.3f : 1.1f);
+            mul[1] = dm(wash[kit]);
             env[2] = 1; // brightness
             mul[2] = dm(0.45f);
             k[0] = 1.0f;
+            k[1] = shine[kit];
             f1.set(4200.0f, 0.7f, rate);
             f2.set(4200.0f, 0.7f, rate);
             f5.set(3600.0f, 0.7f, rate);
@@ -740,8 +1138,14 @@ struct Voice {
             static const float ratios[7] = {1.0f, 1.34f, 1.71f, 2.15f, 2.62f, 3.27f, 4.08f};
             static const float amps[7] = {0.7f, 1.0f, 0.85f, 0.7f, 0.55f, 0.45f, 0.3f};
             static const float taus[7] = {1.1f, 0.95f, 0.8f, 0.65f, 0.55f, 0.45f, 0.35f};
-            const float bell = clampf(edge, 0.0f, 1.0f);
-            const float base = (kit == Techno ? 1500.0f : 1250.0f) * ratio * std::exp2(0.25f * tone) * (1.0f - 0.5f * bell);
+            // The jazz ride is big and dark, rings long, and its bell is
+            // always in it a little; the CR-78's cymbal is mostly hiss.
+            static const float pitch[KitCount] = {1250.0f, 1500.0f, 1250.0f, 1250.0f, 1250.0f,
+                                                  1150.0f, 1350.0f, 1300.0f, 1600.0f, 950.0f};
+            static const float ring[KitCount] = {1.0f, 1.0f, 0.7f, 1.0f, 1.0f, 0.75f, 1.0f, 1.1f, 0.5f, 1.5f};
+            static const float hiss[KitCount] = {0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.9f, 0.3f};
+            const float bell = clampf(edge + (kit == Brushes ? 0.2f : 0.0f), 0.0f, 1.0f);
+            const float base = pitch[kit] * ratio * std::exp2(0.25f * tone) * (1.0f - 0.5f * bell);
             // No two strokes of a real ride ring quite alike: each hit's
             // partials wander a little, so a run of eighths shimmers
             // instead of droning on one chord.
@@ -749,13 +1153,13 @@ struct Voice {
                 const float shape = i < 3 ? 1.0f + 1.2f * bell : 1.0f - 0.5f * bell;
                 const float wander = 1.0f + 0.018f * rng.bipolar();
                 partial[i].set(base * ratios[i] * wander, rate, amps[i] * shape / 6.0f,
-                               taus[i] * (0.65f + 1.0f * bell) * decayScale * (kit == Trap ? 0.7f : 1.0f));
+                               taus[i] * (0.65f + 1.0f * bell) * decayScale * ring[kit]);
             }
             env[0] = 1; // wash
             mul[0] = dm(0.5f);
             env[1] = 1; // stick
             mul[1] = decayMul(0.0015f, rate);
-            k[0] = 0.55f * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
+            k[0] = hiss[kit] * (1.0f - 0.6f * bell) * (1.0f + 0.5f * tone);
             f1.set(6500.0f, 0.7f, rate);
             f2.set(5000.0f, 1.2f, rate);
             f3.set(std::min(14500.0f, rate * 0.4f), 0.6f, rate); // air in the wash, not fizz
@@ -765,9 +1169,33 @@ struct Voice {
             break;
         }
         case Bell: {
+            if (kit == Brushes) {
+                // The ride's bell, struck on its own and tuned: one partial
+                // on the note, the cup's inharmonic others fading faster
+                // above it, a tick of the stick and a breath of the bow's
+                // wash.
+                static const float ratios[5] = {1.0f, 1.52f, 2.24f, 2.93f, 4.12f};
+                static const float amps[5] = {1.0f, 0.42f, 0.38f, 0.24f, 0.14f};
+                static const float taus[5] = {1.1f, 0.8f, 0.6f, 0.45f, 0.3f};
+                hz[0] = degreeHz(h, 4 + degrees, 760.0f);
+                const float t = decayScale * (1.0f + 0.3f * edge);
+                for (int i = 0; i < 5; ++i)
+                    partial[i].set(hz[0] * ratios[i], rate, amps[i] * (i ? 1.0f + 0.5f * tone : 1.0f), taus[i] * t);
+                env[0] = 1; // wash
+                mul[0] = dm(0.35f);
+                env[1] = 1; // stick
+                mul[1] = decayMul(0.0015f, rate);
+                f1.set(6500.0f, 0.7f, rate);
+                f2.set(5000.0f, 1.2f, rate);
+                f3.set(std::min(14500.0f, rate * 0.4f), 0.6f, rate);
+                gain = 0.11f;
+                pan = 0.32f + 0.2f * (s.sx - 0.5f);
+                send = 0.12f;
+                break;
+            }
             // The 808's two squares, here a perfect fifth apart so the bell
             // rings in key.
-            hz[0] = degreeHz(h, 4 + degrees, 680.0f);
+            hz[0] = degreeHz(h, 4 + degrees, kit == Cr78 ? 800.0f : kit == Jungle ? 900.0f : 680.0f);
             sq[0].phase = 0;
             sq[1].phase = 0.25f;
             sqInc[0] = std::min(hz[0] / rate, 0.45f);
@@ -775,7 +1203,7 @@ struct Voice {
             env[0] = 1;
             mul[0] = decayMul(0.01f, rate);
             env[1] = 1;
-            mul[1] = dm((kit == Techno ? 0.09f : 0.15f) * (1.0f + 0.3f * edge));
+            mul[1] = dm((kit == Techno ? 0.09f : kit == Linn || kit == Cr78 ? 0.12f : 0.15f) * (1.0f + 0.3f * edge));
             f1.set(hz[0] * 2.2f * std::exp2(0.4f * tone), 1.4f, rate);
             f2.set(380.0f, 0.7f, rate);
             gain = 0.09f;
@@ -784,23 +1212,83 @@ struct Voice {
             break;
         }
         case Zap: {
-            hz[0] = degreeHz(h, degrees, 220.0f);
-            k[0] = 10.0f + 16.0f * (0.5f + 0.5f * edge); // sweep depth
-            env[0] = 1;
-            mul[0] = decayMul(0.03f * (1.0f + 0.4f * tone), rate);
-            env[1] = 1;
-            mul[1] = dm(0.13f);
-            k[1] = 0.6f + 0.4f * tone;
-            gain = 0.2f;
             pan = -0.15f + 0.4f * (s.sx - 0.5f);
             send = 0.3f;
+            env[0] = 1;
+            env[1] = 1;
+            if (kit == BoomBap) {
+                // A baby scratch: the record pushed forward and pulled back
+                // once. Its speed swings as a sine through zero; the sound's
+                // pitch and loudness follow the speed, and a band-pass
+                // follows the pitch, so it says "wicka". k: 0 the note at
+                // full speed, 1 the hand's motion, cycles per sample.
+                k[0] = degreeHz(h, degrees, 330.0f);
+                k[1] = (4.6f + 1.2f * std::max(0.0f, edge)) / rate;
+                mul[1] = dm(0.16f);
+                f1.set(1200.0f, 0.9f, rate);
+                f2.set(250.0f, 0.7f, rate);
+                gain = 0.42f;
+                send = 0.15f;
+                break;
+            }
+            if (kit == Brushes) {
+                // A temple block in key: the techno tok's frequency
+                // modulation, rounder and a touch longer.
+                hz[0] = degreeHz(h, degrees, 620.0f);
+                mul[0] = decayMul(0.006f, rate);
+                mul[1] = dm(0.07f);
+                k[0] = 1.8f + 1.0f * tone;
+                k[1] = 1.0f;
+                k[2] = 2.76f;
+                gain = 0.2f;
+                pan = 0.4f;
+                break;
+            }
+            if (kit == Jungle) {
+                // A dub siren, the sound system's: a squared-off tone that
+                // whoops up an octave and back down, on the note. k: 0 the
+                // whoop's rate, cycles per sample.
+                hz[0] = degreeHz(h, degrees, 440.0f);
+                k[0] = (2.2f + 1.2f * std::max(0.0f, edge)) / rate;
+                mul[1] = dm(0.35f * (1.0f + 0.4f * tone));
+                f1.set(2400.0f * std::exp2(tone), 0.7f, rate);
+                gain = 0.17f;
+                send = 0.45f;
+                break;
+            }
+            // The Linn kit's is a Simmons syndrum: a sine that starts three
+            // times higher and falls all the way down as it fades, "pyoo".
+            // The CR-78's is a clave, a pure high tone gone in a few
+            // milliseconds.
+            hz[0] = degreeHz(h, degrees, kit == Linn ? 150.0f : kit == Cr78 ? 2100.0f : 220.0f);
+            if (kit == Linn) {
+                k[0] = 3.0f + 1.0f * std::max(0.0f, edge);
+                mul[0] = dm(0.28f * (1.0f + 0.4f * tone));
+                mul[1] = dm(0.33f);
+                k[1] = 0.12f;
+                gain = 0.3f;
+                send = 0.35f;
+            } else if (kit == Cr78) {
+                k[0] = 0.04f;
+                mul[0] = decayMul(0.002f, rate);
+                mul[1] = dm(0.03f * (1.0f + 0.3f * tone));
+                k[1] = 0.0f;
+                gain = 0.2f;
+                send = 0.3f;
+            } else {
+                k[0] = 10.0f + 16.0f * (0.5f + 0.5f * edge); // sweep depth
+                mul[0] = decayMul(0.03f * (1.0f + 0.4f * tone), rate);
+                mul[1] = dm(0.13f);
+                k[1] = 0.6f + 0.4f * tone;
+                gain = 0.2f;
+            }
             break;
         }
         default:
             active = false;
             return;
         }
-        gain *= dyn;
+        gain *= dyn * kitTrim(kit);
         pan = clampf(pan, -0.9f, 0.9f);
         gl = std::sqrt(0.5f * (1.0f - pan));
         gr = std::sqrt(0.5f * (1.0f + pan));
@@ -849,14 +1337,55 @@ struct Voice {
                 const float n0 = rng.bipolar();
                 const float nz = f3.step(f1.step(n0).high * 0.7f + f2.step(n0).band * 1.3f).low;
                 env[2] *= mul[2];
-                const float attack = std::min(1.0f, t / (0.0004f * rate));
+                const float attack = std::min(1.0f, t / k[3]);
                 env[3] *= mul[3];
                 // Tape-like rounding of the noise's tallest peaks: the snare
                 // stays as loud but no longer spikes past the kick.
                 sl = fastTanh(1.2f * (body + nz * env[2] * attack * k[1] + n0 * env[3] * k[2])) * (1.0f / 1.2f);
+                if (kit == Linn) {
+                    // The gated room: it swells, holds while it slowly
+                    // fades, and the gate shuts on everything, the snare's
+                    // own tail too, so it chops to silence.
+                    swell = t < k[5] ? swell + (1.0f - swell) * k[6] : swell * k[7];
+                    env2 *= env2Mul;
+                    const float e = swell * env2 * k[4];
+                    const float cut = t < k[5] ? 1.0f : swell;
+                    const float rl = f6.step(f4.step(rng2.bipolar()).band).low;
+                    const float rr = f7.step(f5.step(rng2.bipolar()).band).low;
+                    sl *= cut;
+                    sr = sl + rr * e;
+                    sl += rl * e;
+                    stereo = true;
+                }
                 break;
             }
             case Clap: {
+                if (kit == Cr78) {
+                    // The guiro: a ridge struck, then the next a little
+                    // sooner, until the stroke ends.
+                    if (t >= k[2] && t < k[1]) {
+                        env[0] = 1;
+                        k[2] += k[0];
+                        k[0] *= 0.985f;
+                    }
+                    env[0] *= mul[0];
+                    const float w = t / k[1];
+                    const float shape = w < 1.0f ? 0.3f + 2.8f * w * (1.0f - w) : 0.3f;
+                    sl = f2.step(f1.step(rng.bipolar() * env[0]).band).high * shape * 3.0f;
+                    break;
+                }
+                if (kit == Brushes) {
+                    // The swish: a slow swell, a slow fade, and every few
+                    // samples the band moves up with the stroke.
+                    const float a = t < k[0] ? t / k[0] : 1.0f;
+                    if (t >= k[0])
+                        env[0] *= mul[0];
+                    if ((int(t) & 15) == 0)
+                        f1.set(k[1] * (1.0f + 0.8f * a) * (0.8f + 0.2f * env[0]), 0.9f, rate);
+                    const float n0 = rng.bipolar();
+                    sl = f3.step(f2.step(f1.step(n0).band).high).low * a * a * env[0] * 2.2f;
+                    break;
+                }
                 float burst = 0;
                 for (int b = 0; b < 4; ++b) {
                     const float since = t - k[b];
@@ -865,7 +1394,7 @@ struct Voice {
                 }
                 const bool tailing = t > k[3];
                 if (tailing)
-                    env[1] *= mul[1];
+                    env[1] *= t < k[6] ? mul[1] : k[7]; // a gate shuts the Linn's
                 const float nl = rng.bipolar(), nr = rng2.bipolar();
                 const float bl = f1.step(nl).band * 2.2f + f3.step(nl).high * k[5];
                 const float br = f2.step(nr).band * 2.2f + f4.step(nr).high * k[5];
@@ -896,8 +1425,13 @@ struct Voice {
                 const float a = t < k[0] ? (t / k[0]) * (t / k[0]) : 1.0f;
                 if (t >= k[0])
                     env[0] *= mul[0];
+                float e = a * env[0];
+                if (kit == Linn && t >= k[1]) { // the cabasa's beads rolling back
+                    env2 *= env2Mul;
+                    e += env2 * std::min(1.0f, (t - k[1]) / (0.004f * rate));
+                }
                 const float n0 = rng.bipolar();
-                sl = f3.step(f2.step(f1.step(n0).band).high).low * a * env[0] * 2.0f;
+                sl = f3.step(f2.step(f1.step(n0).band).high).low * e * 2.0f;
                 break;
             }
             case Hat:
@@ -928,14 +1462,22 @@ struct Voice {
             }
             case Perc: {
                 env[0] *= mul[0];
-                if (kit == Techno) {
+                if (kit == Brushes) {
+                    // The vibes' motor turns a disc over each bar's
+                    // resonator: the tone pulses a few times a second.
+                    ph[0] += k[0];
+                    ph[0] -= std::floor(ph[0]);
+                    const float trem = 1.0f - 0.3f * (0.5f + 0.5f * std::sin(kTwoPi * ph[0]));
+                    const float a = std::min(1.0f, t / k[1]);
+                    sl = (partial[0].step() + partial[1].step() + partial[2].step()) * trem * a;
+                } else if (kit == Techno) {
                     env[1] *= mul[1];
                     ph[1] += hz[0] * k[1] * inv;
                     ph[1] -= std::floor(ph[1]);
                     ph[0] += hz[0] * inv;
                     ph[0] -= std::floor(ph[0]);
                     sl = std::sin(kTwoPi * ph[0] + k[0] * env[1] * std::sin(kTwoPi * ph[1])) * env[0];
-                } else if (kit == Breaks) {
+                } else if (kit == Breaks || kit == Linn) {
                     float m = 0;
                     for (int q = 0; q < 6; ++q)
                         m += sq[q].step(sqInc[q]);
@@ -949,6 +1491,8 @@ struct Voice {
                     ph[0] += hz[0] * (1.0f + k[0] * env[1]) * inv;
                     ph[0] -= std::floor(ph[0]);
                     sl = std::sin(kTwoPi * ph[0]) * env[0] + f1.step(rng.bipolar()).band * env[2] * k[2] * 2.0f;
+                    if (kit == Jungle) // the timbale's shell
+                        sl += partial[0].step() + partial[1].step();
                 }
                 break;
             }
@@ -962,7 +1506,7 @@ struct Voice {
                 env[1] *= mul[1];
                 env[2] *= mul[2];
                 if ((int(t) & 15) == 0) {
-                    const float hz2 = std::min(6000.0f + 7000.0f * env[2], rate * 0.4f);
+                    const float hz2 = std::min((6000.0f + 7000.0f * env[2]) * k[1], rate * 0.4f);
                     f3.set(hz2, 0.6f, rate);
                     f4.set(hz2, 0.6f, rate);
                 }
@@ -985,6 +1529,16 @@ struct Voice {
                 break;
             }
             case Bell: {
+                if (kit == Brushes) {
+                    float v = 0;
+                    for (int q = 0; q < 5; ++q)
+                        v += partial[q].step();
+                    env[0] *= mul[0];
+                    env[1] *= mul[1];
+                    const float n0 = rng.bipolar();
+                    sl = v + f3.step(f1.step(n0).high).low * env[0] * 0.15f + f2.step(n0).band * env[1] * 0.8f;
+                    break;
+                }
                 const float m = sq[0].step(sqInc[0]) + sq[1].step(sqInc[1]);
                 env[0] *= mul[0];
                 env[1] *= mul[1];
@@ -995,6 +1549,40 @@ struct Voice {
             case Zap: {
                 env[0] *= mul[0];
                 env[1] *= mul[1];
+                if (kit == BoomBap) {
+                    // The record's speed, forward then back; the tone is a
+                    // squared-off sine (a sample's mids) with some of the
+                    // vinyl's hiss, both as loud as the record is fast.
+                    ph[1] += k[1];
+                    const float v = std::sin(kTwoPi * std::min(ph[1], 1.0f));
+                    const float speed = std::fabs(v);
+                    ph[0] += k[0] * (0.12f + 1.4f * speed) * inv;
+                    ph[0] -= std::floor(ph[0]);
+                    if ((int(t) & 15) == 0)
+                        f1.set(500.0f + 2600.0f * speed, 0.9f, rate);
+                    const float tone = fastTanh(2.4f * std::sin(kTwoPi * ph[0])) + 0.35f * rng.bipolar();
+                    // One push and pull, then the hand lets the record stop.
+                    const float done = ph[1] < 1.0f ? 1.0f : 0.0f;
+                    sl = f2.step(f1.step(tone * speed * done).band).high * env[1] * 2.0f;
+                    break;
+                }
+                if (kit == Jungle) {
+                    ph[1] += k[0];
+                    const float up = 0.5f - 0.5f * std::cos(kTwoPi * ph[1]);
+                    ph[0] += hz[0] * (1.0f + up) * inv;
+                    ph[0] -= std::floor(ph[0]);
+                    const float a = std::min(1.0f, t / (0.004f * rate));
+                    sl = f1.step(fastTanh(2.5f * std::sin(kTwoPi * ph[0]))).low * env[1] * a;
+                    break;
+                }
+                if (kit == Brushes) {
+                    ph[0] += hz[0] * inv;
+                    ph[1] += hz[0] * k[2] * inv;
+                    ph[0] -= std::floor(ph[0]);
+                    ph[1] -= std::floor(ph[1]);
+                    sl = std::sin(kTwoPi * ph[0] + k[0] * env[0] * std::sin(kTwoPi * ph[1])) * env[1];
+                    break;
+                }
                 ph[0] += hz[0] * (1.0f + k[0] * env[0]) * inv;
                 ph[0] -= std::floor(ph[0]);
                 sl = std::sin(kTwoPi * ph[0] + k[1] * env[0] * std::sin(kTwoPi * 2.0f * ph[0])) * env[1];
@@ -1007,6 +1595,25 @@ struct Voice {
             const float g = gain * fade;
             sl *= g;
             sr = stereo ? sr * g : sl;
+            if (dusty) {
+                // The sampler, after the level so it hears the drum as it
+                // sits in the mix: a little drive, then the SP-1200's 26 kHz
+                // and twelve bits. With no filter before it, the hold folds
+                // the highs back down as a metallic grit, and the tails turn
+                // gritty as they fall toward the last steps; the output
+                // filter's dark top follows.
+                auto crush = [](float x) {
+                    return std::floor(fastTanh(1.2f * x) * (2048.0f / 1.2f) + 0.5f) * (1.0f / 2048.0f);
+                };
+                holdPhase += holdInc;
+                if (holdPhase >= 1.0f) {
+                    holdPhase -= 1.0f;
+                    heldL = crush(sl);
+                    heldR = stereo ? crush(sr) : heldL;
+                }
+                sl = dustL.step(heldL).low;
+                sr = stereo ? dustR.step(heldR).low : sl;
+            }
             l[i] += sl * gl * 1.4142f;
             r[i] += sr * gr * 1.4142f;
             room[i] += (sl + sr) * 0.5f * send;
@@ -1041,8 +1648,9 @@ struct Sub808 {
     void start(int fingerId, int deg, float velocity, float holdSeconds, int kit_, const Edit &e, int delaySamples,
                float rate_) {
         rate = rate_;
-        // A new note while the last still sounds slides into it.
-        const bool slide = active && env > 0.05f;
+        // A new note while the last still sounds slides into it; the
+        // upright's is plucked afresh, from where the last left the string.
+        const bool slide = active && env > 0.05f && kit_ != Brushes && kit_ != Cr78;
         id = fingerId;
         held = true;
         autoOff = holdSeconds > 0 ? holdSeconds * rate : -1;
@@ -1060,7 +1668,8 @@ struct Sub808 {
         attacking = true;
         punch = slide ? 0.25f : 1.0f;
         click = slide ? 0.0f : 1.0f;
-        clickBp.set(2000.0f, 0.8f, rate);
+        // The 808's click is up high; the upright's thump, the finger, low.
+        clickBp.set(kit == Brushes || kit == Cr78 ? 320.0f : 2000.0f, 0.8f, rate);
     }
     void off(int fingerId) {
         if (fingerId == id)
@@ -1088,11 +1697,25 @@ struct Sub808 {
         const float lo = std::floor(degree);
         const float frac = degree - lo;
         const int deg = int(lo) + int(std::lround(edit.tune));
+        const bool upright = kit == Brushes || kit == Cr78;
+        if (upright) {
+            // The upright plays the chord, not the key: its degrees count
+            // from the chord's root, an octave up where a laptop can hear
+            // its fundamental.
+            const int oct = octaveNear(h, 100.0f);
+            const float m0 = float(h.midi(chordDegree(h, deg), oct)), m1 = float(h.midi(chordDegree(h, deg + 1), oct));
+            hz = midiToHz(m0 + (m1 - m0) * frac);
+            renderUpright(l, r, from, n);
+            return;
+        }
         const int oct = octaveNear(h, kit == Trap ? 46.0f : 50.0f);
         const float m0 = float(h.midi(deg, oct)), m1 = float(h.midi(deg + 1, oct));
         hz = midiToHz(m0 + (m1 - m0) * frac);
-        static const float sustainTau[KitCount] = {1.0f, 1.2f, 2.6f, 0.8f, 1.1f};
-        static const float drives[KitCount] = {1.6f, 2.4f, 2.2f, 1.8f, 1.7f};
+        // Jungle's is a clean, long sub; the CR-78's and the brushes' a
+        // round bass that fades like a plucked string, barely driven.
+        static const float sustainTau[KitCount] = {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f};
+        static const float drives[KitCount] = {1.6f, 2.4f, 2.2f, 1.8f, 1.7f, 2.6f, 1.2f, 2.0f, 1.1f, 1.0f};
+        static const float punchAmt[KitCount] = {1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.4f, 1.0f, 1.4f, 0.5f, 0.3f};
         const float decayScale = std::exp2(clampf(edit.decay, -3.0f, 3.0f));
         const float sustain = decayMul(sustainTau[kit] * decayScale, rate);
         const float release = decayMul(0.07f, rate);
@@ -1100,6 +1723,7 @@ struct Sub808 {
         const float norm = 1.0f / fastTanh(drive);
         const float punchMul = decayMul(0.04f, rate), clickMul = decayMul(0.003f, rate);
         const float attack = 1.0f - decayMul(0.0015f, rate);
+        const float trim = kitTrim(kit);
         float peak = 0;
         for (int i = from; i < n; ++i) {
             if (autoOff > 0) {
@@ -1115,11 +1739,70 @@ struct Sub808 {
             }
             punch *= punchMul;
             click *= clickMul;
-            phase += hz * (1.0f + 1.4f * punch) / rate;
+            phase += hz * (1.0f + punchAmt[kit] * punch) / rate;
             phase -= std::floor(phase);
             const float s = fastTanh(drive * std::sin(kTwoPi * phase) * env) * norm;
             const float c = clickBp.step(rng.bipolar()).band * click * 0.25f;
-            const float y = (s + c) * vel * 0.47f;
+            const float y = (s + c) * vel * 0.47f * trim;
+            l[i] += y;
+            r[i] += y;
+            peak = std::max(peak, std::fabs(y));
+        }
+        level = std::max(level * 0.8f, peak);
+        if (!held && !attacking && env < 1e-4f)
+            active = false;
+    }
+
+    // A walking bass's degree, counted from the chord's root: 2, 4 and 6
+    // are the chord's own third, fifth and seventh (so a sus or an altered
+    // chord is followed), anything else a step of the scale from its root,
+    // so −1 is the step below the root that leads back to it.
+    static int chordDegree(const Harmony &h, int d) {
+        if ((d == 2 || d == 4 || d == 6) && d / 2 < std::clamp(h.chordCount, 1, 4))
+            return h.chordTones[d / 2];
+        return h.chordRoot + d;
+    }
+
+    // The upright: a plucked string's fundamental with its second, third
+    // and fourth harmonics, which fade faster than it (the pluck's
+    // brightness), and a thump of the finger on the string; the note itself
+    // dies away like a string even while held, and a groove's lets go
+    // sooner.
+    void renderUpright(float *l, float *r, int from, int n) {
+        const float decayScale = std::exp2(clampf(edit.decay, -3.0f, 3.0f));
+        const float sustain = decayMul((kit == Cr78 ? 0.45f : 0.6f) * decayScale, rate);
+        const float release = decayMul(0.25f, rate); // the string rings on past a groove's note
+        const float brightMul = decayMul(0.09f, rate), thumpMul = decayMul(0.012f, rate);
+        const float attack = 1.0f - decayMul(0.0012f, rate);
+        const float trim = kitTrim(kit);
+        const float tone = std::exp2(edit.tone);
+        const float inc = hz / rate;
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            if (autoOff > 0) {
+                autoOff -= 1.0f;
+                if (autoOff <= 0)
+                    held = false;
+            }
+            if (attacking) {
+                env += (1.0f - env) * attack;
+                attacking = env < 0.995f;
+            } else {
+                env *= held ? sustain : release;
+            }
+            punch *= brightMul;
+            click *= thumpMul;
+            phase += inc;
+            phase -= std::floor(phase);
+            // The harmonics from the fundamental's sine and cosine, by the
+            // double- and triple-angle formulas: two trig calls a sample.
+            const float s1 = std::sin(kTwoPi * phase), c1 = std::cos(kTwoPi * phase);
+            const float s2 = 2.0f * s1 * c1, c2 = 1.0f - 2.0f * s1 * s1;
+            const float s3 = s1 * (3.0f - 4.0f * s1 * s1), s4 = 2.0f * s2 * c2;
+            const float b = std::min(1.0f, (0.35f + 0.65f * punch) * tone);
+            const float body = s1 + b * (0.55f * s2 + 0.32f * s3 + 0.16f * s4);
+            const float thump = clickBp.step(rng.bipolar()).band * click * 1.2f;
+            const float y = (fastTanh(1.1f * body * env) + thump) * vel * 0.32f * trim;
             l[i] += y;
             r[i] += y;
             peak = std::max(peak, std::fabs(y));
@@ -1438,6 +2121,15 @@ private:
     }
 
     void startVoice(const Strike &s, const Setup &su, int offset) {
+        // Jungle's kick and snare are chopped from one break: each new hit
+        // of either cuts the last one's tail short, the way the next slice
+        // of an Amen cuts in, so a busy pattern plays as a chopped break
+        // rather than drums ringing over each other.
+        const int kit = s.kit >= 0 ? s.kit : su.kit;
+        if (kit == Jungle && (s.pad == Kick || s.pad == Snare))
+            for (auto &v : m_voices)
+                if (v.active && v.kit == Jungle && (v.pad == Kick || v.pad == Snare))
+                    v.release(0.006f);
         // A closed hat chokes the open one.
         if (s.pad == Hat)
             for (auto &v : m_voices)
@@ -1472,8 +2164,10 @@ private:
     }
 
     void applyKit() {
-        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f};
-        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f};
+        // Boom bap and the CR-78 are dry; jungle's breaks and the jazz kit
+        // keep their room.
+        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f};
+        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f};
         m_room.set(t60[m_kit], wet[m_kit]);
     }
 

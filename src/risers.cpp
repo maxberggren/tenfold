@@ -17,6 +17,10 @@
 // power-down, echo throw, reverb wash and the DJ sweep. Taps there are
 // rhythms, and tap-then-hold loops them like every other page.
 //
+// Left and Right choose the set: the sound of all of it, from EDM through
+// analog, dub, lo-fi, trap, drum and bass, cinema, synthwave and techno to
+// ambient (see risers.h). Each riser and hit keeps the set it began in.
+//
 // Pressing the pad until it clicks (or Return) is the drop gesture: the
 // drop comes on the next bar line, and whatever is rising rushes into it.
 // On the drop the engine fires the impact and the sub on the exact sample,
@@ -58,6 +62,31 @@ enum Style { Clean = 0, Gap, Strip, StyleCount };
 const char *styleName(int s) {
     static const char *names[StyleCount] = {"clean", "gap", "strip"};
     return names[std::clamp(s, 0, int(StyleCount) - 1)];
+}
+
+// What each set is, for the notice when Left or Right picks it.
+const char *setBlurb(int s) {
+    static const char *blurbs[SetCount] = {
+        "noise sweeps, supersaw stabs, crash and sub",
+        "square waves, singing filters, chorus, a spring crash, a resonant power-down",
+        "siren (twist it to sweep), offbeat skank, spring splash, echoes that run away",
+        "dust and crackle, keys, tape wow, a vinyl brake",
+        "a whistle, FM bells, hi-hats changing rate, an 808 dive, reversed vocal chops",
+        "a chopped break into a fill, reese riser and stabs, a screaming zap, a rewind",
+        "wind, strings, taiko, a braam on the drop",
+        "gated snare and crash, chorused brass, laser toms, a tape stop",
+        "ring-modulated metal, an acid line, offbeat chords, gated swells, a clang",
+        "grains, soft pads, a shaker, a bloom instead of a crash",
+    };
+    return blurbs[std::clamp(s, 0, int(SetCount) - 1)];
+}
+
+// The hit row's own names, where a set has none of its own.
+const char *kHitLabels[kHits] = {"IMPACT", "SUB DROP", "DOWNLIFT", "ZAP", "STOP", "THROW", "WASH", "SWEEP"};
+QString kindTitle(int set, int kind) {
+    if (!isRiser(kind) && kind < KindCount && !palette(set).names[kind])
+        return QString::fromUtf8(kHitLabels[kind - kRisers]);
+    return QString::fromUtf8(kindLabel(set, kind)).toUpper();
 }
 
 const char *kHitKeys = "ZXCVBNM,";
@@ -152,9 +181,18 @@ public:
         case Qt::Key_Down:
             setKeyRow(m_keyRow + (k.key == Qt::Key_Up ? 1 : -1), ctx);
             return true;
+        // Left and Right, the sound: the set. Shift with them (or [ ]), the
+        // drop style, the page's rhythm.
         case Qt::Key_Left:
         case Qt::Key_Right:
-            setStyle((m_style + (k.key == Qt::Key_Right ? 1 : StyleCount - 1)) % StyleCount, t, ctx);
+            if (k.modifiers & Qt::ShiftModifier)
+                setStyle((m_style + (k.key == Qt::Key_Right ? 1 : StyleCount - 1)) % StyleCount, t, ctx);
+            else
+                setSet((m_set + (k.key == Qt::Key_Right ? 1 : SetCount - 1)) % SetCount, ctx);
+            return true;
+        case Qt::Key_BracketLeft:
+        case Qt::Key_BracketRight:
+            setStyle((m_style + (k.key == Qt::Key_BracketRight ? 1 : StyleCount - 1)) % StyleCount, t, ctx);
             return true;
         case Qt::Key_W:
             toggleBuildMix(ctx);
@@ -213,6 +251,7 @@ public:
     // The style is saved by its name and the risers by their bars, so the
     // file reads as the page does.
     void save(QJsonObject &out) const override {
+        out[QStringLiteral("set")] = QString::fromUtf8(palette(m_set).name);
         out[QStringLiteral("dropStyle")] = QString::fromUtf8(styleName(m_style));
         out[QStringLiteral("riserBars")] = rowBars(m_keyRow);
         out[QStringLiteral("buildMix")] = m_buildMix;
@@ -222,7 +261,12 @@ public:
     // know, is the page's default, never what the song before it left.
     void load(const QJsonObject &in, ControlContext &ctx) override {
         m_style = Clean;
+        m_set = SetEdm;
         m_keyRow = 2;
+        const QString set = in.value(QStringLiteral("set")).toString();
+        for (int s = 0; s < SetCount; ++s)
+            if (set.compare(QString::fromUtf8(palette(s).name), Qt::CaseInsensitive) == 0)
+                m_set = s;
         m_buildMix = true;
         const QString style = in.value(QStringLiteral("dropStyle")).toString();
         for (int s = 0; s < StyleCount; ++s)
@@ -245,22 +289,26 @@ public:
 
     // The mouse on the band under the pad: everything the keys do that the
     // pad doesn't already.
-    enum Spot { SpotStyle = 100, SpotShorter = 200, SpotLonger, SpotDrop, SpotFall, SpotMix };
+    enum Spot { SpotStyle = 100, SpotShorter = 200, SpotLonger, SpotDrop, SpotFall, SpotMix, SpotSet = 300 };
     bool click(QPointF, ControlContext &ctx) override;
 
     QString help() const override {
         return QStringLiteral(
-            "Left / Right\tdrop style: clean; gap, a half-beat breath before the ONE with only the risers' room ringing; "
-            "or strip, the risers alone for the build's last bar, then the breath\n"
+            "Left / Right\tthe set, the sound of every riser and hit: EDM, analog, dub, lo-fi, trap, drum and bass, "
+            "cinema, synthwave (80S), techno, ambient. What is already playing keeps its own, and loops keep theirs. "
+            "Some cells take the set's own name: a dub SIREN (twist it for a swept siren), trap HATS, a cinema BRAAM\n"
+            "Shift+Left / Right (or [ ])\tdrop style: clean; gap, a half-beat breath before the ONE with only the "
+            "risers' room ringing; or strip, the risers alone for the build's last bar, then the breath\n"
             "Up / Down\tlonger or shorter risers from the keys (1, 2, 4, 8, 16 bars)\n"
             "Return\tdrop on the next bar line: everything rising rushes into it\n"
             "Delete (or Q)\tthe whole build falls away\n"
             "F1–F8 · Shift+F1–F8\tlaunch a slot at the next bar · empty it\n"
             "Backspace\tstop the FX clip at the next bar\n"
             "Space\tloop what you just played (as on every page); Shift+Space layers it onto the loop playing\n"
-            "under the pad, with the mouse\tthe clips (click: launch or stop), the drop styles, riser length, DROP, "
-            "the build falling away, and whether builds move the mix\n"
-            "land in the build field\ta riser: the column is the sound (noise, pitch, saw, roll, swell), the row its "
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the sets, the drop styles, riser "
+            "length, DROP, the build falling away, and whether builds move the mix\n"
+            "land in the build field\ta riser: the column is the sound (noise, pitch, saw, roll, swell, renamed by "
+            "some sets: a dub siren, trap hats), the row its "
             "length (1, 2, 4, 8, 16 bars up the pad); it peaks on the next phrase line (every 8 bars, 16 for the top "
             "row) and comes in that many bars before it; the finger shows the bar\n"
             "more fingers\tstack layers on the same drop; each enters its row's length before it\n"
@@ -284,6 +332,8 @@ public:
             return float(m_risers);
         if (name == QLatin1String("drops"))
             return float(m_drops);
+        if (name == QLatin1String("set"))
+            return float(m_set);
         return PartControl::tutorialProbe(name);
     }
 
@@ -292,9 +342,9 @@ public:
         for (const Finger &h : m_fingers)
             if (h.id >= 0 && !h.dropFinger) {
                 if (isRiser(h.kind))
-                    parts << QStringLiteral("%1 %2").arg(QString::fromUtf8(kindName(h.kind)).toUpper()).arg(h.bars);
+                    parts << QStringLiteral("%1 %2").arg(kindTitle(h.set, h.kind)).arg(h.bars);
                 else
-                    parts << QString::fromUtf8(kindName(h.kind)).toUpper();
+                    parts << kindTitle(h.set, h.kind);
             }
         QString s = parts.join(QStringLiteral(" + "));
         if (m_statusDrop > m_statusBeat) {
@@ -305,6 +355,8 @@ public:
         }
         if (s.isEmpty())
             s = QStringLiteral("land a riser to build; click to drop");
+        if (m_set != SetEdm)
+            s += QStringLiteral("  ·  %1").arg(QString::fromUtf8(palette(m_set).name));
         if (m_style != Clean)
             s += QStringLiteral("  ·  %1").arg(QString::fromUtf8(styleName(m_style)));
         if (m_take >= 0)
@@ -315,7 +367,7 @@ public:
 private:
     struct Finger {
         int id = -1;
-        int kind = 0, bars = 1, flags = 0;
+        int kind = 0, bars = 1, flags = 0, set = 0;
         double t0 = 0, drop = -1;
         float x0 = 0, y0 = 0, a0 = 0;
         float x = 0, y = 0, size = 1, press = 0.5f, angle = 0;
@@ -359,6 +411,7 @@ private:
         h.ht[0] = time;
         h.hy[0] = t.y;
         h.hn = 1;
+        h.set = m_set;
         h.grit = clampf((h.size - 1.25f) / 0.8f, 0, 1);
         if (t.y < kHitTop) {
             const float cell = t.x * kHits;
@@ -434,6 +487,7 @@ private:
         c.i[0] = h.kind;
         c.i[1] = h.bars;
         c.i[2] = h.flags;
+        c.i[3] = h.set;
         c.f[0] = h.press;
         c.f[1] = h.tone;
         c.f[2] = h.intensity;
@@ -511,7 +565,7 @@ private:
             off.id = h.id;
             off.t = t;
             ctx.send(off);
-            ctx.notice(QStringLiteral("%1 falls away").arg(QString::fromUtf8(kindName(h.kind)).toUpper()));
+            ctx.notice(QStringLiteral("%1 falls away").arg(kindTitle(h.set, h.kind)));
             bool others = false;
             for (const Finger &o : m_fingers)
                 others |= o.id >= 0 && o.id != h.id && isRiser(o.kind) && o.sent;
@@ -536,6 +590,7 @@ private:
         Command c;
         c.type = CmdDrop;
         c.t = t;
+        c.i[0] = m_set;
         ctx.send(c);
         const double beat = ctx.beatAt(t);
         const double target = std::ceil((beat - 0.25) / kBeatsPerBar - 1e-9) * kBeatsPerBar;
@@ -560,6 +615,11 @@ private:
         m_style = std::clamp(style, 0, int(StyleCount) - 1);
         sendStyle(t, ctx);
         ctx.notice(QStringLiteral("Drop style: %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()));
+    }
+
+    void setSet(int set, ControlContext &ctx) {
+        m_set = std::clamp(set, 0, int(SetCount) - 1);
+        ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(palette(m_set).label), QString::fromUtf8(setBlurb(m_set))));
     }
 
     void setKeyRow(int row, ControlContext &ctx) {
@@ -735,7 +795,10 @@ private:
             m_mods[MasterGain].releaseAt = ctx.timeAt(s1) - 0.15;
         }
         if (s1 > 0 && beat < s1 - home - horizon && beat >= s0) {
-            const float u = clampf(float((beat - s0) / std::max(0.25, s1 - s0)), 0, 1);
+            // A brake is all the way down within its second; a power-down
+            // takes until its bar line.
+            const double ramp = d[pub::StopRamp] > 0 ? double(d[pub::StopRamp]) : s1 - s0;
+            const float u = clampf(float((beat - s0) / std::max(0.25, ramp)), 0, 1);
             pull(MasterFilter, 0.03f, std::pow(u, 0.6f));
             pull(MasterGain, 0.12f, u * u);
         }
@@ -818,6 +881,7 @@ private:
     bool m_button = false;
     bool m_buildMix = true;
     int m_style = Clean;
+    int m_set = SetEdm;
     int m_keyRow = 2; // keys play 4-bar risers until Up or Down says otherwise
     double m_localDrop = -1;
     double m_liveDrop = -1; // the drop a build played live is aiming at
@@ -836,6 +900,11 @@ bool FxPage::click(QPointF at, ControlContext &ctx) {
     if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
         return true;
     const double t = ctx.now();
+    if (id >= SpotSet && id < SpotSet + int(SetCount)) {
+        if (id - SpotSet != m_set)
+            setSet(id - SpotSet, ctx);
+        return true;
+    }
     if (id >= SpotStyle && id < SpotStyle + int(StyleCount)) {
         if (id - SpotStyle != m_style)
             setStyle(id - SpotStyle, t, ctx);
@@ -985,7 +1054,6 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     const qreal unit = pc.pad.height();
 
     // The build field's grid: columns are sounds, rows lengths.
-    static const char *columns[kRisers] = {"NOISE", "PITCH", "SAW", "ROLL", "SWELL"};
     for (int k = 0; k < kRisers; k += 2)
         p.fillRect(pc.rect(float(k) / kRisers, kHitTop, float(k + 1) / kRisers, 1), c::alpha(col, 0.035f));
     p.setPen(QPen(c::alpha(col, 0.18f), 1));
@@ -1061,13 +1129,12 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         const qreal gw = std::min<qreal>(84, head.width() * 0.6);
         const QRectF plate(head.center().x() - gw / 2 - 8, head.top() + 40, gw + 16, 40);
         p.fillRect(plate, QColor(0, 0, 0, 220));
-        c::text(p, QRectF(head.left(), head.top() + 42, head.width(), 18), QString::fromUtf8(columns[k]), col, 13, true,
+        c::text(p, QRectF(head.left(), head.top() + 42, head.width(), 18), kindTitle(m_set, k), col, 13, true,
                 Qt::AlignCenter);
         glyph(p, QRectF(head.center().x() - gw / 2, head.top() + 61, gw, 14), k, c::alpha(col, 0.8f));
     }
 
     // The hit row.
-    static const char *hits[kHits] = {"IMPACT", "SUB DROP", "DOWNLIFT", "ZAP", "STOP", "THROW", "WASH", "SWEEP"};
     p.setPen(QPen(c::alpha(col, 0.6f), 1.5));
     p.drawLine(pc.at(0, kHitTop), pc.at(1, kHitTop));
     for (int k = 0; k < kHits; ++k) {
@@ -1087,7 +1154,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             p.setPen(QPen(c::alpha(col, 0.25f), 1));
             p.drawLine(cell.topLeft(), cell.bottomLeft());
         }
-        c::text(p, QRectF(cell.left(), cell.center().y() - 2, cell.width(), 18), QString::fromUtf8(hits[k]),
+        c::text(p, QRectF(cell.left(), cell.center().y() - 2, cell.width(), 18), kindTitle(m_set, kRisers + k),
                 lit > 0.5f ? QColor::fromRgb(c::kInk) : col, 12, true, Qt::AlignCenter);
         const qreal gw = std::min<qreal>(56, cell.width() * 0.5);
         glyph(p, QRectF(cell.center().x() - gw / 2, cell.center().y() - 24, gw, 18), kRisers + k,
@@ -1100,7 +1167,11 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     // keys' length and whether builds move the mix are in the band under
     // the pad, where the mouse can change them.
     const qreal bandTop = pc.pad.top() + 12;
-    const QRectF band(pc.pad.left() + pc.pad.width() * 0.26, bandTop, pc.pad.width() * 0.3, 10);
+    // It ends where the meters on the right begin, however narrow the pad.
+    const qreal meterW = std::min<qreal>(150, pc.pad.width() * 0.13);
+    const qreal meterLeft = pc.pad.right() - 2 * (meterW + 54) - 8;
+    const qreal bandLeft = pc.pad.left() + pc.pad.width() * 0.24;
+    const QRectF band(bandLeft, bandTop, std::min<qreal>(pc.pad.width() * 0.3, meterLeft - bandLeft - 16), 10);
     if (drop > beat) {
         const double span = std::max(0.25, drop - start);
         const double prog = std::clamp((beat - start) / span, 0.0, 1.0);
@@ -1121,7 +1192,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         p.setPen(QPen(c::alpha(col, 0.25f), 1, Qt::DotLine));
         p.setBrush(Qt::NoBrush);
         p.drawRect(band);
-        c::text(p, QRectF(band.left(), band.bottom() + 4, band.width(), 16), QStringLiteral("LAND A RISER, OR CLICK TO DROP"),
+        c::text(p, QRectF(band.left(), band.bottom() + 4, band.width(), 16), QStringLiteral("LAND A RISER · CLICK TO DROP"),
                 c::alpha(col, 0.45f), 10, true, Qt::AlignCenter);
     }
     {
@@ -1134,7 +1205,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
                                  {"DRIVE", sv.master[MasterDrive], false},
                                  {"ROOM", sv.master[RoomSize], false},
                                  {"ECHO", sv.master[EchoFeedback], false}};
-        const qreal w = std::min<qreal>(150, pc.pad.width() * 0.13);
+        const qreal w = meterW;
         for (int k = 0; k < 4; ++k) {
             const qreal x = pc.pad.right() - 2 * (w + 54) - 8 + (k % 2) * (w + 54), y = bandTop + 2 + (k / 2) * 16;
             c::text(p, QRectF(x, y - 2, 48, 12), QString::fromUtf8(meters[k].name), c::alpha(col, 0.6f), 9, true);
@@ -1154,11 +1225,11 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
                 else if (isRiser(h.kind))
                     // Where it will land, before the finger lifts.
                     label = QStringLiteral("%1 %2B → BAR %3")
-                                .arg(QString::fromUtf8(kindName(h.kind)).toUpper())
+                                .arg(kindTitle(h.set, h.kind))
                                 .arg(h.bars)
                                 .arg(int(std::floor(h.drop / kBeatsPerBar + 0.5)) + 1);
                 else
-                    label = QString::fromUtf8(kindName(h.kind)).toUpper();
+                    label = kindTitle(h.set, h.kind);
                 glow = 0.3f + 0.7f * h.intensity;
                 intensity = h.intensity;
             }
@@ -1204,36 +1275,42 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     }
     c::beats(p, pc, col);
 
-    // Below the pad, every one clickable: the clips and the drop styles,
-    // then the keys' riser length, the drop, the build falling away and
-    // whether builds move the mix.
+    // Below the pad, every one clickable. Row 0: the clips and the ten sets
+    // (the page's sound, as on every page). Row 1: the drop styles, the
+    // keys' riser length, the drop, the build falling away and whether
+    // builds move the mix. Each group shows its keys; short labels, so it
+    // all reads on a small window too.
     m_spots.clear();
-    c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
+    c::clips(p, c::bandRow(pc, 0, 0, 0.26), *pc.view, col, pc.time, &m_spots);
+    c::text(p, c::bandRow(pc, 0, 0.26, 0.31), QStringLiteral("← →"), c::alpha(col, 0.7f), 11, true, Qt::AlignCenter);
+    QStringList sets;
+    for (int s = 0; s < SetCount; ++s)
+        sets << QString::fromUtf8(palette(s).label);
+    c::chips(p, pc, c::bandRow(pc, 0, 0.31, 1), sets, m_set, &m_spots, SpotSet, 3);
+    c::text(p, c::bandRow(pc, 1, 0, 0.07), QStringLiteral("⇧← →"), c::alpha(col, 0.7f), 11, true, Qt::AlignCenter);
     QStringList styles;
     for (int s = 0; s < StyleCount; ++s)
-        styles << QStringLiteral("DROP %1").arg(QString::fromUtf8(styleName(s)).toUpper());
-    c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), styles, m_style, &m_spots, SpotStyle);
-    // The length needs less room than the three chips beside it, whose
-    // words must still fit on the narrowest window.
-    const QRectF row = c::bandRow(pc, 1, 0, 0.42);
-    const double w = (row.width() + 4) / 3;
-    c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SHORTER  ↓"), false, &m_spots,
-            SpotShorter);
-    const QRectF length(row.left() + w, row.top(), w - 4, row.height());
+        styles << QString::fromUtf8(styleName(s)).toUpper();
+    c::chips(p, pc, c::bandRow(pc, 1, 0.07, 0.33), styles, m_style, &m_spots, SpotStyle);
+    // The length: shorter and longer either side of it, as arrows.
+    const QRectF row = c::bandRow(pc, 1, 0.34, 0.58);
+    const qreal aw = std::min<qreal>(34, row.width() * 0.2);
+    c::chip(p, pc, QRectF(row.left(), row.top(), aw, row.height()), QStringLiteral("↓"), false, &m_spots, SpotShorter);
+    const QRectF length(row.left() + aw + 4, row.top(), row.width() - 2 * aw - 8, row.height());
     c::text(p, length.adjusted(0, 0, 0, -12),
             rowBars(m_keyRow) == 1 ? QStringLiteral("KEYS 1 BAR") : QStringLiteral("KEYS %1 BARS").arg(rowBars(m_keyRow)),
             col, 11, true, Qt::AlignCenter);
-    c::gauge(p, QRectF(length.left() + 6, length.bottom() - 10, length.width() - 12, 7),
-             float(m_keyRow + 1) / kRows, col, kRows);
-    c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("LONGER  ↑"), false,
-            &m_spots, SpotLonger);
-    const QRectF right = c::bandRow(pc, 1, 0.44, 1);
+    c::gauge(p, QRectF(length.left() + 6, length.bottom() - 10, length.width() - 12, 7), float(m_keyRow + 1) / kRows, col,
+             kRows);
+    c::chip(p, pc, QRectF(row.right() - aw, row.top(), aw, row.height()), QStringLiteral("↑"), false, &m_spots,
+            SpotLonger);
+    const QRectF right = c::bandRow(pc, 1, 0.59, 1);
     const double rw = (right.width() + 4) / 3;
-    c::chip(p, pc, QRectF(right.left(), right.top(), rw - 4, right.height()), QStringLiteral("DROP  ↵"),
-            drop > beat, &m_spots, SpotDrop);
-    c::chip(p, pc, QRectF(right.left() + rw, right.top(), rw - 4, right.height()), QStringLiteral("FALL AWAY  DEL"),
-            false, &m_spots, SpotFall);
-    c::chip(p, pc, QRectF(right.left() + 2 * rw, right.top(), rw - 4, right.height()), QStringLiteral("MOVE MIX  W"),
+    c::chip(p, pc, QRectF(right.left(), right.top(), rw - 4, right.height()), QStringLiteral("DROP ↵"), drop > beat,
+            &m_spots, SpotDrop);
+    c::chip(p, pc, QRectF(right.left() + rw, right.top(), rw - 4, right.height()), QStringLiteral("FALL DEL"), false,
+            &m_spots, SpotFall);
+    c::chip(p, pc, QRectF(right.left() + 2 * rw, right.top(), rw - 4, right.height()), QStringLiteral("MIX W"),
             m_buildMix, &m_spots, SpotMix);
 }
 

@@ -178,7 +178,8 @@ void Tutorial::build() {
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Three fingers: a groove"),
          QStringLiteral("Land three fingers together on KICK, CLAP and HAT and leave them down (or hold Z, C and V). Each "
                         "drum plays its part of a house groove, in time. Slide one up for a busier part."),
-         QStringLiteral("Left and right arrows change the kit: house, techno, trap, breaks, garage."),
+         QStringLiteral("Left and right arrows change the kit: house, techno, trap, breaks, garage, and beyond the dance "
+                        "floor boom bap, jungle, an 80s Linn, a CR-78 and jazz brushes."),
          QStringLiteral("Now it grooves by itself."),
          {},
          {},
@@ -252,7 +253,7 @@ void Tutorial::build() {
          {QStringLiteral("§")},
          {},
          {root},
-         {{QStringLiteral("O: follows the chords"), [](Look &l) { return l.probe(Bass, "follow") > 0.5f; }}}});
+         {{QStringLiteral("§: follows the chords"), [](Look &l) { return l.probe(Bass, "follow") > 0.5f; }}}});
 
     add({QStringLiteral("Bass"), Bass, QStringLiteral("A bassline in one finger"),
          QStringLiteral("Tap ROOT on the off-beats, between the kicks: dum-DUM, dum-DUM. A bar or two, then Space. The "
@@ -360,7 +361,7 @@ void Tutorial::build() {
     add({QStringLiteral("Atmos"), Atmos, QStringLiteral("A bed of sound"),
          QStringLiteral("Lay three fingers on DRONE, PAD and CHOIR: they sing the chord of the moment, wide and soft. "
                         "Click while they're down: they latch and stay when you lift."),
-         QStringLiteral("Q to I are whole scenes at a key: dawn, ocean, cathedral, stardust…"),
+         QStringLiteral("Q to P are whole scenes at a key: dawn, ocean, cathedral… neon, dub"),
          QStringLiteral("Space opens up."),
          {QStringLiteral("click")},
          {},

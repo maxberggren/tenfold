@@ -94,6 +94,132 @@ struct FxAudio : AudioContext {
     const float *duck() const override { return duckBuf; }
 };
 
+// One sound of one set, played on the engine alone at 124 BPM: a riser of
+// one bar aimed at beat 4 (heard up to its line), or a hit held for 0.3 s
+// (heard for 2.5 s). The note it sounded at the end of the riser, too.
+struct Heard {
+    std::vector<float> l, r;
+    float note = 0;
+};
+Heard playSolo(int set, int kind) {
+    PartSpec spec = makeRisers();
+    auto &e = *spec.engine;
+    FxAudio ctx;
+    ctx.tr.rate = 48000;
+    ctx.tr.bpm = 124;
+    ctx.tr.beatsPerSample = 124 / 60.0 / 48000.0;
+    e.init(48000);
+    Command c;
+    c.type = Command::On;
+    c.id = 5;
+    c.i[0] = kind;
+    c.i[1] = 1;
+    c.i[3] = set;
+    c.f[0] = 0.6f;
+    c.f[2] = 0.7f;
+    c.f[5] = 4.0f;
+    e.command(c, ctx);
+    const bool riser = risers::isRiser(kind);
+    const int blocks = int((riser ? 4.0 * 60.0 / 124.0 - 0.01 : 2.5) * 48000 / kBlock);
+    Heard out;
+    float data[kPartData];
+    for (int b = 0; b < blocks; ++b) {
+        ctx.tr.beat = double(ctx.tr.sample) * ctx.tr.beatsPerSample;
+        if (b == int(0.3 * 48000 / kBlock)) {
+            Command off;
+            off.type = Command::Off;
+            off.id = 5;
+            e.command(off, ctx);
+        }
+        float l[kBlock] = {}, r[kBlock] = {};
+        e.render(l, r, kBlock, ctx);
+        out.l.insert(out.l.end(), l, l + kBlock);
+        out.r.insert(out.r.end(), r, r + kBlock);
+        ctx.tr.sample += kBlock;
+        e.publish(data);
+        if (data[risers::pub::Voices + risers::pub::VKind] == float(kind))
+            out.note = data[risers::pub::Voices + risers::pub::VNote];
+    }
+    return out;
+}
+
+// What a sound is like: its level; its colour, as the energy in eight
+// octave bands (63 Hz to 8 kHz) against its whole, so a sound only louder
+// or softer has the same colour; and its envelope in quarters, against its
+// loudest quarter. All in dB.
+struct Features {
+    double level = -200, bands[8] = {}, env[4] = {};
+};
+double bandsOf(const Heard &s, double *out) {
+    double total = 0;
+    for (size_t i = 0; i < s.l.size(); ++i)
+        total += 0.25 * double(s.l[i] + s.r[i]) * (s.l[i] + s.r[i]);
+    for (int k = 0; k < 8; ++k) {
+        Svf a, b;
+        const float hz = 62.5f * float(1 << k);
+        a.set(hz, 1.4f, 48000);
+        b.set(hz, 1.4f, 48000);
+        double e = 0;
+        for (size_t i = 0; i < s.l.size(); ++i) {
+            const double y = b.step(a.step(0.5f * (s.l[i] + s.r[i])).band).band;
+            e += y * y;
+        }
+        out[k] = 10 * std::log10((e + 1e-18) / (total + 1e-18));
+    }
+    return total;
+}
+Features featuresOf(const Heard &s) {
+    Features f;
+    const size_t n = s.l.size();
+    f.level = 10 * std::log10(bandsOf(s, f.bands) / double(n) + 1e-18);
+    double loudest = -200;
+    for (int q = 0; q < 4; ++q) {
+        double e = 0;
+        for (size_t i = q * n / 4; i < (q + 1) * n / 4; ++i)
+            e += 0.25 * (s.l[i] + s.r[i]) * (s.l[i] + s.r[i]);
+        f.env[q] = 10 * std::log10(e / double(n / 4) + 1e-18);
+        loudest = std::max(loudest, f.env[q]);
+    }
+    for (double &q : f.env)
+        q -= loudest;
+    return f;
+}
+// Whether two sounds would be told apart by more than how loud they are:
+// their colour 3.5 dB apart across the bands that matter (within 40 dB of
+// the strongest), or their shape 4 dB apart in some quarter.
+bool differ(const Features &a, const Features &b) {
+    double top = -200, sum = 0;
+    int count = 0;
+    for (int k = 0; k < 8; ++k)
+        top = std::max({top, a.bands[k], b.bands[k]});
+    for (int k = 0; k < 8; ++k)
+        if (std::max(a.bands[k], b.bands[k]) > top - 40) {
+            sum += std::fabs(std::max(a.bands[k], top - 40) - std::max(b.bands[k], top - 40));
+            ++count;
+        }
+    bool env = false;
+    for (int q = 0; q < 4; ++q)
+        env |= std::fabs(std::max(a.env[q], -40.0) - std::max(b.env[q], -40.0)) > 4;
+    return (count && sum / count > 3.5) || env;
+}
+// Energy above 10 kHz against the whole, in dB: two high-passes in a row.
+double airOf(const Heard &s) {
+    Svf a, b;
+    a.set(10000, 0.7f, 48000);
+    b.set(10000, 0.7f, 48000);
+    double e = 0, total = 0;
+    for (size_t i = 0; i < s.l.size(); ++i) {
+        const float m = 0.5f * (s.l[i] + s.r[i]);
+        const double y = b.step(a.step(m).high).high;
+        e += y * y;
+        total += double(m) * m;
+    }
+    return 10 * std::log10((e + 1e-18) / (total + 1e-18));
+}
+// The kinds that make a sound of their own.
+const int kSounding[] = {risers::Noise,  risers::Pitch, risers::Saw,  risers::Roll, risers::Swell,
+                         risers::Impact, risers::Sub,   risers::Down, risers::Zap,  risers::Stop};
+
 class RisersTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs it with the machine to itself.
@@ -225,7 +351,7 @@ private slots:
         for (int style = 0; style < 3; ++style) {
             std::string fx = std::string(kBeat) + "page 3.0 7\n";
             for (int k = 0; k < style; ++k)
-                fx += fmt("key %.3f Right\n", 3.02 + 0.03 * k);
+                fx += fmt("key %.3f Shift+Right\n", 3.02 + 0.03 * k);
             fx += fmt("down 3.1 1 %.3f %.3f p=0.6\nup 3.6 1\n", columnX(0), rowY(2));
             std::vector<VoiceInfo> v;
             StudioView view;
@@ -300,7 +426,7 @@ private slots:
         for (int style : {1, 2}) {
             std::string fx = std::string(kBeat) + "page 3.0 7\n";
             for (int k = 0; k < style; ++k)
-                fx += fmt("key %.3f Right\n", 3.05 + 0.05 * k);
+                fx += fmt("key %.3f Shift+Right\n", 3.05 + 0.05 * k);
             fx += fmt("down 3.3 1 %.3f %.3f\nup 3.8 1\n", columnX(1), rowY(3));
             std::vector<VoiceInfo> v;
             StudioView view, last, after;
@@ -331,7 +457,7 @@ private slots:
         for (int style = 0; style < 3; ++style) {
             std::string fx = std::string(kBeat) + "page 3.0 7\n";
             for (int k = 0; k < style; ++k)
-                fx += fmt("key %.3f Right\n", 3.02 + 0.03 * k);
+                fx += fmt("key %.3f Shift+Right\n", 3.02 + 0.03 * k);
             fx += fmt("down 3.1 1 %.3f %.3f p=0.6\nup 3.6 1\n", columnX(0), rowY(2));
             if (style == 0) {
                 std::vector<VoiceInfo> v;
@@ -453,27 +579,32 @@ private slots:
 
     // The band under the pad does what the keys do. On the scripts' window
     // row 0 is 0.048 of the pad under it, row 1 0.119. Row 0: the clips to
-    // 0.55, then the three drop styles; row 1: shorter, the length, longer
-    // to 0.42, then DROP, FALL AWAY and MOVE MIX.
+    // 0.26, then the ten sets from 0.31; row 1: the three drop styles from
+    // 0.07 to 0.33, then shorter, the length and longer to 0.58, then DROP,
+    // FALL AWAY and MOVE MIX.
     void theBandUnderThePadIsClickable() {
         // DROP GAP.
-        testkit::play("page 0 7\nbutton 0.2 0.785 -0.048\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 7\nbutton 0.2 0.2 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("gap")), qPrintable(s.pageStatus()));
+        });
+        // DUB, the third set.
+        testkit::play("page 0 7\nbutton 0.2 0.4825 -0.048\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("dub")), qPrintable(s.pageStatus()));
         });
         // DROP with nothing building: the next bar line.
         StudioView after;
-        testkit::play(fmt("page 0 7\nbutton %.3f 0.53 -0.119\nend %.3f\n", timeOf(1.5), timeOf(4.0) + 0.2),
+        testkit::play(fmt("page 0 7\nbutton %.3f 0.658 -0.119\nend %.3f\n", timeOf(1.5), timeOf(4.0) + 0.2),
                       [&](Session &s) { after = s.view(); });
         QCOMPARE(double(after.parts[kFx].data[risers::pub::LastDrop]), 4.0);
         // LONGER: the keys' noise riser is 8 bars instead of 4.
         std::vector<VoiceInfo> v;
-        testkit::play("page 0 7\nbutton 0.2 0.35 -0.119\nkey 0.5 A\nend 0.8\n",
+        testkit::play("page 0 7\nbutton 0.2 0.561 -0.119\nkey 0.5 A\nend 0.8\n",
                       [&](Session &s) { v = voicesOf(s.view()); });
         QCOMPARE(int(v.size()), 1);
         QCOMPARE(v[0].end, 32.0);
         QVERIFY2(v[0].end - v[0].start > 20, qPrintable(QString::number(v[0].start)));
         // FALL AWAY.
-        testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\nbutton 1.5 0.72 -0.119\nend 3.0\n", columnX(0), rowY(3)),
+        testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\nbutton 1.5 0.795 -0.119\nend 3.0\n", columnX(0), rowY(3)),
                       [&](Session &s) { after = s.view(); });
         QVERIFY(after.parts[kFx].data[risers::pub::Drop] < 0);
         QVERIFY(after.parts[kFx].data[risers::pub::LastDrop] < 0);
@@ -485,7 +616,7 @@ private slots:
                                      "key 2.5 Space\n",
                                      hitX(3), hitX(3), hitX(0), hitX(3));
         StudioView after;
-        testkit::play(loop + "button 4.0 0.03 -0.048\nend 6.5\n", [&](Session &s) { after = s.view(); });
+        testkit::play(loop + "button 4.0 0.015 -0.048\nend 6.5\n", [&](Session &s) { after = s.view(); });
         QCOMPARE(after.parts[kFx].playing, -1);
         QVERIFY(after.parts[kFx].clips[0].state != ClipView::Empty);
         testkit::play(loop + "key 4.0 Backspace\nkey 6.0 Shift+F1\nend 6.5\n", [&](Session &s) { after = s.view(); });
@@ -670,6 +801,107 @@ private slots:
         }
     }
 
+    // Every set's every sound is clean (finite, under the peak, no offset)
+    // and sits near EDM's level for the same sound. And every set is its
+    // own: against any other set, most of its ten sounds would be told
+    // apart.
+    void everySetIsCleanLevelAndItsOwn() {
+        constexpr int kinds = int(std::size(kSounding));
+        static Features f[risers::SetCount][kinds];
+        for (int s = 0; s < risers::SetCount; ++s)
+            for (int k = 0; k < kinds; ++k) {
+                const Heard solo = playSolo(s, kSounding[k]);
+                double peak = 0, mean = 0, power = 0;
+                bool finite = true;
+                for (size_t i = 0; i < solo.l.size(); ++i) {
+                    power += double(solo.l[i]) * solo.l[i] + double(solo.r[i]) * solo.r[i];
+                    finite &= std::isfinite(solo.l[i]) && std::isfinite(solo.r[i]);
+                    peak = std::max({peak, double(std::fabs(solo.l[i])), double(std::fabs(solo.r[i]))});
+                    mean += solo.l[i] + solo.r[i];
+                }
+                mean /= 2.0 * double(solo.l.size());
+                const double rms = std::sqrt(power / (2.0 * double(solo.l.size())));
+                const QString what = QStringLiteral("%1 %2").arg(risers::palette(s).name, risers::kindName(kSounding[k]));
+                QVERIFY2(finite, qPrintable(what));
+                QVERIFY2(peak < 0.9, qPrintable(QStringLiteral("%1: peak %2").arg(what).arg(peak)));
+                // A decaying sine leaves a little offset of its own (EDM's sub
+                // does); nothing more than that.
+                QVERIFY2(std::fabs(mean) < 0.04 * rms + 1e-4,
+                         qPrintable(QStringLiteral("%1: offset %2 at %3 rms").arg(what).arg(mean).arg(rms)));
+                f[s][k] = featuresOf(solo);
+                QVERIFY2(std::fabs(f[s][k].level - f[0][k].level) < 4.5,
+                         qPrintable(QStringLiteral("%1: %2 dB against EDM's %3").arg(what).arg(f[s][k].level).arg(f[0][k].level)));
+            }
+        for (int a = 0; a < risers::SetCount; ++a)
+            for (int b = a + 1; b < risers::SetCount; ++b) {
+                int told = 0;
+                for (int k = 0; k < kinds; ++k)
+                    told += differ(f[a][k], f[b][k]);
+                QVERIFY2(told >= 6, qPrintable(QStringLiteral("%1 and %2: %3 of %4 sounds differ")
+                                                   .arg(risers::palette(a).name, risers::palette(b).name)
+                                                   .arg(told)
+                                                   .arg(kinds)));
+            }
+    }
+
+    // Lo-fi's sampler grit stays under its output filter: nothing of it
+    // above 10 kHz, where the sample-and-hold's images would whine.
+    void loFiHasNoAir() {
+        for (int k : kSounding) {
+            const double air = airOf(playSolo(risers::SetLofi, k));
+            QVERIFY2(air < -35, qPrintable(QStringLiteral("%1: %2 dB above 10 kHz").arg(risers::kindName(k)).arg(air)));
+        }
+    }
+
+    // The pitch riser lands on a scale note in every set: a dub siren stops
+    // throwing it about before the line, and tape wow is a few cents.
+    void everySetsPitchRiserLandsInKey() {
+        Harmony h;
+        for (int s = 0; s < risers::SetCount; ++s) {
+            const Heard solo = playSolo(s, risers::Pitch);
+            bool inKey = false;
+            for (int d = -21; d < 42; ++d)
+                inKey |= std::fabs(solo.note - float(h.midi(d, 0))) < 0.5f;
+            QVERIFY2(inKey, qPrintable(QStringLiteral("%1: %2").arg(risers::palette(s).name).arg(solo.note)));
+        }
+    }
+
+    // Left and Right step through the ten sets and wrap round; Shift with
+    // them (or [ ]) is the drop style, and leaves the set alone.
+    void arrowsStepTheSets() {
+        testkit::play("page 0 7\nkey 0.1 Right\nkey 0.2 Right\nkey 0.3 Right\nkey 0.4 Shift+Right\nend 0.6\n",
+                      [](Session &s) {
+                          QCOMPARE(s.probe(kFx, QStringLiteral("set")), 3.0f);
+                          QVERIFY2(s.pageStatus().contains(QStringLiteral("gap")), qPrintable(s.pageStatus()));
+                          QVERIFY2(s.pageStatus().contains(QStringLiteral("lo-fi")), qPrintable(s.pageStatus()));
+                      });
+        testkit::play("page 0 7\nkey 0.1 Left\nkey 0.2 ]\nkey 0.3 ]\nend 0.6\n", [](Session &s) {
+            QCOMPARE(s.probe(kFx, QStringLiteral("set")), 9.0f);
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("strip")), qPrintable(s.pageStatus()));
+        });
+    }
+
+    // A loop keeps the set it was played in: zaps looped in the trap set
+    // (reversed vocal chops) sound exactly the same whether the hand then
+    // turns to EDM or not, and nothing like zaps looped in EDM.
+    void aLoopKeepsItsSet() {
+        const std::string zaps = fmt("tap 0.5 %.3f 0.1\ntap 1.0 %.3f 0.1\ntap 1.5 %.3f 0.1\ntap 2.0 %.3f 0.1\n"
+                                     "key 2.5 Space\n",
+                                     hitX(3), hitX(3), hitX(3), hitX(3));
+        const std::string trap = "page 0 7\nkey 0.1 Right\nkey 0.15 Right\nkey 0.2 Right\nkey 0.25 Right\n";
+        const auto kept = testkit::play(trap + zaps + "end 8\n");
+        const auto turned = testkit::play(trap + zaps + "key 3.0 Left\nkey 3.1 Left\nkey 3.2 Left\nkey 3.3 Left\nend 8\n");
+        const auto edm = testkit::play("page 0 7\n" + zaps + "end 8\n");
+        QVERIFY(kept.rms(4, 8) > 1e-3);
+        double same = 0, other = 0;
+        for (size_t i = size_t(4 * 48000); i < kept.left.size(); ++i) {
+            same = std::max(same, double(std::fabs(kept.left[i] - turned.left[i])));
+            other += std::pow(double(kept.left[i] - edm.left[i]), 2);
+        }
+        QVERIFY2(same < 1e-6, qPrintable(QString::number(same)));
+        QVERIFY2(std::sqrt(other / (4 * 48000)) > 0.3 * kept.rms(4, 8), qPrintable(QString::number(other)));
+    }
+
     // Ten fingers on the busiest risers stay well inside the page's share of
     // the audio callback.
     void tenFingersStayInsideBudget() {
@@ -687,7 +919,7 @@ private slots:
     // length and whether builds move the mix come back with the loop.
     void theSongKeepsTheFxSettings() {
         const std::string script =
-            fmt("page 0 7\nkey 0.2 Right\nkey 0.25 Right\nkey 0.3 Up\nkey 0.35 W\n"
+            fmt("page 0 7\nkey 0.15 Right\nkey 0.2 Shift+Right\nkey 0.25 Shift+Right\nkey 0.3 Up\nkey 0.35 W\n"
                 "tap 0.5 %.3f 0.1\ntap 1.0 %.3f 0.1\ntap 1.5 %.3f 0.1\ntap 2.0 %.3f 0.1\nkey 2.5 Space\nend 3.5\n",
                 hitX(3), hitX(3), hitX(0), hitX(3));
         bool checked = false;
@@ -695,6 +927,7 @@ private slots:
             const QJsonObject part = doc[QStringLiteral("parts")].toArray()[kFx].toObject();
             QCOMPARE(part[QStringLiteral("name")].toString(), opened.pageName(kFx)); // scripts count pages from 1
             const QJsonObject settings = part[QStringLiteral("settings")].toObject();
+            QCOMPARE(settings[QStringLiteral("set")].toString(), QStringLiteral("analog"));
             QCOMPARE(settings[QStringLiteral("dropStyle")].toString(), QStringLiteral("strip"));
             QCOMPARE(settings[QStringLiteral("riserBars")].toInt(), 8);
             QCOMPARE(settings[QStringLiteral("buildMix")].toBool(true), false);
@@ -741,7 +974,8 @@ private slots:
                     return QJsonObject{{QStringLiteral("error"), error}};
                 return s.saveSong()[QStringLiteral("parts")].toArray()[kFx].toObject()[QStringLiteral("settings")].toObject();
             };
-            const QJsonObject defaults{{QStringLiteral("dropStyle"), QStringLiteral("clean")},
+            const QJsonObject defaults{{QStringLiteral("set"), QStringLiteral("EDM")},
+                                       {QStringLiteral("dropStyle"), QStringLiteral("clean")},
                                        {QStringLiteral("riserBars"), 4},
                                        {QStringLiteral("buildMix"), true}};
             QCOMPARE(settingsAfter({}), defaults);
@@ -750,6 +984,10 @@ private slots:
                                     {QStringLiteral("buildMix"), QStringLiteral("no")},
                                     {QStringLiteral("extra"), QJsonArray{1, 2}}}),
                      defaults);
+            QCOMPARE(settingsAfter({{QStringLiteral("set"), QStringLiteral("KAZOO")}})[QStringLiteral("set")].toString(),
+                     QStringLiteral("EDM"));
+            QCOMPARE(settingsAfter({{QStringLiteral("set"), QStringLiteral("Dub")}})[QStringLiteral("set")].toString(),
+                     QStringLiteral("dub"));
             QJsonObject s1 = settingsAfter({{QStringLiteral("dropStyle"), QStringLiteral("boom")},
                                             {QStringLiteral("riserBars"), 1e300}});
             QCOMPARE(s1[QStringLiteral("dropStyle")].toString(), QStringLiteral("clean"));

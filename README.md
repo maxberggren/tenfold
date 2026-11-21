@@ -54,7 +54,7 @@ them, Shift+M to chain them.
 **Changed your mind?** Ctrl+Z takes back the newest change to the page's
 loops (a loop, a layer, a pass played into one), up to 16 back, and what
 was playing before comes back. On the Song page it takes back the newest
-change anywhere. Ctrl+N twice starts over: every loop
+change anywhere. Ctrl+Shift+Z brings back what Ctrl+Z took back. Ctrl+N twice starts over: every loop
 cleared, the mix set back, nothing left muted.
 
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M

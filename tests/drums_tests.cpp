@@ -434,6 +434,21 @@ private slots:
         const auto undone = testkit::play(base + "key 8.0 Ctrl+Z\nend 9\n");
         QCOMPARE(undone.view.parts[0].playing, 0);
         QCOMPARE(undone.view.parts[0].clips[0].events, before);
+        // Before its pass begins (the click waits for the bar line), Ctrl+Z
+        // takes back the kept roll, not the loop under it; mid-pass it takes
+        // the pass back and the roll stops with it. Either way one Ctrl+Z is
+        // one step: the loop plays on as it was.
+        for (const char *when : {"4.5", "6.5"}) {
+            const auto one = testkit::play(base + "key " + when + " Ctrl+Z\nend 10\n");
+            QCOMPARE(one.view.parts[0].playing, 0);
+            QCOMPARE(one.view.parts[0].clips[0].events, before);
+            // Nothing of the shaker after the roll was taken back.
+            QVERIFY2(one.rms(8.5, 10) < 1.5 * testkit::play("page 0 1\n"
+                                                            "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " +
+                                                            at(drums::Clap) + "\nclick 2.0 len=0.15\nup 2.4 1\nup 2.4 2\nend 10\n")
+                                                     .rms(8.5, 10),
+                     when);
+        }
     }
 
     void aThumbThatComesDownToClickOnlyClicks() {

@@ -356,6 +356,13 @@ public:
     // Ctrl+N twice (or the tutorial starting): the studio has been cleared,
     // its mix set back home. Drop whatever belongs to the old song.
     virtual void startOver(ControlContext &ctx) { (void)ctx; }
+    // Ctrl+Z, before the studio takes back a step: a change the page has
+    // promised but not yet made (a roll kept for the next bar line) is the
+    // newest thing done, so taking it back is the page's. True if it did.
+    virtual bool takeBackPending(ControlContext &ctx) { (void)ctx; return false; }
+    // The studio has taken back this part's newest step: anything the page
+    // still plays as part of it (a kept roll finishing its pass) stops.
+    virtual void undone(ControlContext &ctx) { (void)ctx; }
     // A number about what the player has done on this page, for the
     // tutorial to tell when a step is done: a state ("follow": 1 or 0) or a
     // count that only goes up ("rolls": how many rolls were ever started),

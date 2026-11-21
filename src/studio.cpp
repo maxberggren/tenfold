@@ -95,6 +95,10 @@ struct Studio::PartState {
     };
     Before undo[kUndo];
     int undoCount = 0;
+    // What Ctrl+Z took back, newest last, for Ctrl+Shift+Z; a new change
+    // forgets it.
+    Before redo[kUndo];
+    int redoCount = 0;
     int playing = -1;
     int queued = -1;
     uint32_t takes = 0;       // clips made from what was played, ever
@@ -213,6 +217,8 @@ int Studio::addPart(std::unique_ptr<PartEngine> engine, const float *channel) {
     p->history.resize(kHistory);
     for (auto &u : p->undo)
         u.events.reserve(kClipEvents);
+    for (auto &u : p->redo)
+        u.events.reserve(kClipEvents);
     for (auto &c : p->clips)
         c.events.reserve(kClipEvents);
     m_parts.push_back(std::move(p));
@@ -257,7 +263,9 @@ static void releaseHeld(Studio::PartState &p, Studio::Impl &s) {
 
 // Keeps a slot as it is, so the change about to be made (a take, an edit)
 // can be taken back. The vectors' room is reserved, so this never allocates.
-static Studio::PartState::Before &keepForUndo(Studio::PartState &p, int slot) {
+static Studio::PartState::Before &keepForUndo(Studio::PartState &p, int slot, bool fresh = true) {
+    if (fresh)
+        p.redoCount = 0; // a new change: what was taken back can't come back
     if (p.undoCount == Studio::PartState::kUndo) {
         for (int i = 1; i < Studio::PartState::kUndo; ++i)
             std::swap(p.undo[i - 1], p.undo[i]);
@@ -704,6 +712,13 @@ void Studio::apply(const StudioMsg &m) {
         if (m.value != 0 && !p->overdub && p->playing >= 0 && p->clips[p->playing].length > 0) {
             keepForUndo(*p, p->playing);
             ++p->takes;
+            Studio::DebugEvent e;
+            e.kind = 3;
+            e.part = m.part;
+            e.src = p->playing;
+            e.beat = nowBeat;
+            e.events = int(p->clips[p->playing].events.size());
+            s.debug.push(e);
         }
         p->overdub = m.value != 0;
         break;
@@ -799,6 +814,20 @@ void Studio::apply(const StudioMsg &m) {
             return;
         auto &b = p->undo[--p->undoCount];
         auto &clip = p->clips[b.slot];
+        {
+            // As it is now, for Ctrl+Shift+Z.
+            if (p->redoCount == PartState::kUndo) {
+                for (int i = 1; i < PartState::kUndo; ++i)
+                    std::swap(p->redo[i - 1], p->redo[i]);
+                --p->redoCount;
+            }
+            auto &r = p->redo[p->redoCount++];
+            r.events.assign(clip.events.begin(), clip.events.end());
+            r.length = clip.length;
+            r.anchor = clip.anchor;
+            r.slot = b.slot;
+            r.playing = p->playing;
+        }
         if (p->playing == b.slot)
             stopClip(*p, s);
         if (p->recording == b.slot)
@@ -807,9 +836,39 @@ void Studio::apply(const StudioMsg &m) {
         clip.events.assign(b.events.begin(), b.events.end());
         clip.length = b.length;
         clip.anchor = b.anchor;
+        {
+            Studio::DebugEvent e;
+            e.kind = 4;
+            e.part = m.part;
+            e.src = b.slot;
+            e.beat = nowBeat;
+            e.len = b.length;
+            e.events = int(b.events.size());
+            e.id = b.playing;
+            e.i0 = p->undoCount;
+            s.debug.push(e);
+        }
         // What was playing before the take plays again, in its own time.
         if (b.playing >= 0 && p->clips[b.playing].length > 0)
             startClip(*p, s, b.playing, p->clips[b.playing].anchor);
+        break;
+    }
+    case StudioMsg::RedoTake: {
+        if (!p || p->redoCount == 0)
+            return;
+        auto &r = p->redo[--p->redoCount];
+        keepForUndo(*p, r.slot, false); // Ctrl+Z again takes it back again
+        auto &clip = p->clips[r.slot];
+        if (p->playing == r.slot || (r.playing != p->playing))
+            stopClip(*p, s);
+        if (p->recording == r.slot)
+            p->recording = -1;
+        p->overdub = false;
+        clip.events.assign(r.events.begin(), r.events.end());
+        clip.length = r.length;
+        clip.anchor = r.anchor;
+        if (r.playing >= 0 && p->clips[r.playing].length > 0)
+            startClip(*p, s, r.playing, p->clips[r.playing].anchor);
         break;
     }
     case StudioMsg::ClearAll:
@@ -821,6 +880,7 @@ void Studio::apply(const StudioMsg &m) {
             q->recording = -1;
             q->overdub = false;
             q->undoCount = 0;
+            q->redoCount = 0;
             for (auto &c : q->clips) {
                 c.events.clear();
                 c.length = 0;

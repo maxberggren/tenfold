@@ -149,6 +149,31 @@ private slots:
         QCOMPARE(none.view.parts[0].playing, 0);
     }
 
+    void ctrlShiftZBringsBackWhatCtrlZTookBack() {
+        // A bass loop, then a second line layered on: Ctrl+Z takes the layer
+        // off, Ctrl+Shift+Z brings it back, Ctrl+Z takes it off again. A new
+        // loop after a Ctrl+Z forgets what could have come back.
+        const std::string base = std::string(kBeat) +
+                                 "page 3.0 2\n"
+                                 "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                 "key 6.6 Space\n"
+                                 "tap 6.8 0.6 0.5\ntap 7.8 0.7 0.5\ntap 8.8 0.6 0.5\ntap 9.8 0.7 0.5\n"
+                                 "key 10.6 Space\n";
+        const auto redone = testkit::play(base + "key 11.0 Ctrl+Z\nkey 11.5 Ctrl+Shift+Z\nend 12.5\n");
+        QCOMPARE(redone.view.parts[1].playing, 0);
+        QCOMPARE(redone.view.parts[1].clips[0].events, 12);
+        const auto again = testkit::play(base + "key 11.0 Ctrl+Z\nkey 11.5 Ctrl+Shift+Z\nkey 12.0 Ctrl+Z\nend 12.5\n");
+        QCOMPARE(again.view.parts[1].clips[0].events, 8);
+        // Twice back, twice forward: both steps return, in order.
+        const auto both = testkit::play(base + "key 11.0 Ctrl+Z\nkey 11.3 Ctrl+Z\nkey 11.6 Ctrl+Shift+Z\n"
+                                               "key 11.9 Ctrl+Shift+Z\nend 12.5\n");
+        QCOMPARE(both.view.parts[1].playing, 0);
+        QCOMPARE(both.view.parts[1].clips[0].events, 12);
+        // Nothing to bring back on a page where nothing was taken back.
+        const auto other = testkit::play(base + "key 11.0 Ctrl+Z\npage 11.2 1\nkey 11.5 Ctrl+Shift+Z\nend 12.5\n");
+        QCOMPARE(other.view.parts[1].clips[0].events, 8);
+    }
+
     void startingOverSetsTheMixBack() {
         // Drums looped, then muted on the Song page with Q: Ctrl+N twice
         // clears the loop and unmutes them, so the next beat is heard.

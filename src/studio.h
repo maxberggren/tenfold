@@ -39,6 +39,7 @@ struct StudioMsg {
         Metronome,   // value = on
         Silence,     // part (−1: all), value = hard
         UndoTake,    // part: take back that part's latest take or edit, and play what played before
+        RedoTake,    // part: bring back the last step Ctrl+Z took back
         CopyClip,    // part, slot = from, value = to
         MergeClips,  // part, slot = into, value = the other, f = 0 layer / 1 chain
         ClearAll,    // every clip of every part goes, every sound stops: start over
@@ -91,7 +92,7 @@ public:
     // Debugging: every On a part hears (live or replayed from a slot) and
     // every take made, in a ring the session drains into its log.
     struct DebugEvent {
-        int kind = 0;  // 0 an On heard, 1 a take made, 2 one of its events
+        int kind = 0;  // 0 an On heard, 1 a take made, 2 one of its events, 3 a pass into a loop, 4 an undo
         int part = -1;
         int src = -1;  // kind 0: −1 live, else the slot it replayed from; kinds 1/2: the slot
         double t = 0, heard = 0, beat = 0; // kind 0

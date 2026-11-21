@@ -916,6 +916,35 @@ private:
 
     // --- the click -------------------------------------------------------------
 
+    // Ctrl+Z with a roll or groove kept but its pass not begun (or its bar
+    // not reached): that keep is the newest thing done, so it goes, and
+    // the loop it would have gone into stays as it was.
+    bool takeBackPending(ControlContext &ctx) override {
+        if (!m_keep.active || (m_keep.overdub && m_keep.overdubOn))
+            return false;
+        dropKept();
+        m_keep = Keep{};
+        ctx.notice(QStringLiteral("Took back the kept roll before it went in"));
+        return true;
+    }
+
+    // The studio took back the pass a kept roll was playing into: the roll
+    // stops with it, rather than playing on to the end of the pass.
+    void undone(ControlContext &ctx) override {
+        if (!m_keep.active)
+            return;
+        if (m_keep.overdubOn && !m_userOverdub)
+            ctx.overdub(false);
+        dropKept();
+        m_keep = Keep{};
+    }
+
+    void dropKept() {
+        for (auto &g : m_gens)
+            if (g.active && g.until >= 0 && g.holder < 0)
+                g.active = false;
+    }
+
     bool holdingGen() const {
         for (const auto &g : m_gens)
             if (g.active && !g.preview && g.holder >= 0)

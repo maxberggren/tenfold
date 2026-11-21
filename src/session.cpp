@@ -266,6 +266,12 @@ void Session::drainDebug() {
                  name, src, e.beat, int(std::floor(e.beat / kBeatsPerBar)) + 1,
                  e.beat - std::floor(e.beat / kBeatsPerBar) * kBeatsPerBar, e.t, (e.heard - e.t) * 1000.0, e.type, e.id, e.i0,
                  e.flags, double(e.v));
+        } else if (e.kind == 3) {
+            dlog("PASS part=%d slot=%d: playing into the loop from beat %.4f (it had %d events; Ctrl+Z takes it back)",
+                 e.part, e.src + 1, e.beat, e.events);
+        } else if (e.kind == 4) {
+            dlog("UNDONE part=%d slot=%d back to len=%.3f events=%d at beat %.4f, slot %d plays, %d steps left", e.part,
+                 e.src + 1, e.len, e.events, e.beat, e.id + 1, e.i0);
         } else if (e.kind == 1) {
             dlog("TAKE part=%d slot=%d window %.4f..%.4f (%.3f beats) -> clip len=%.3f anchor=%.4f events=%d (clock beat %.4f)",
                  e.part, e.src + 1, e.a, e.b, e.b - e.a, e.len, e.anchor, e.events, e.beat);
@@ -467,7 +473,12 @@ bool Session::key(const KeyEvent &k) {
         case Qt::Key_BracketRight: shiftMode(-1); return true;
         case Qt::Key_M: toggleMetronome(); return true;
         case Qt::Key_Backspace: stopAll(); return true;
-        case Qt::Key_Z: undoTake(); return true;
+        case Qt::Key_Z:
+            if (shift)
+                redoTake();
+            else
+                undoTake();
+            return true;
         case Qt::Key_N: startOver(); return true;
         case Qt::Key_T: toggleTutorial(); return true;
         case Qt::Key_Return:
@@ -505,6 +516,7 @@ void Session::refresh() {
         for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
             while (m_takesSeen[p] < m_view.parts[p].takes) {
                 ++m_takesSeen[p];
+                m_redoOrder.erase(std::remove(m_redoOrder.begin(), m_redoOrder.end(), p), m_redoOrder.end());
                 m_takeOrder.push_back(p);
                 // The studio keeps only so many of a part's changes.
                 if (std::count(m_takeOrder.begin(), m_takeOrder.end(), p) > kUndoSteps)
@@ -1043,6 +1055,12 @@ void Session::undoTake() {
     // Song page, the newest change anywhere. The studio keeps the last
     // kUndoSteps changes of each part; older ones are gone.
     const int here = m_pages[size_t(m_page)]->part;
+    // Something the page promised and hasn't made yet goes first.
+    if (here >= 0 && m_pages[size_t(m_page)]->spec.control->takeBackPending(*m_pages[size_t(m_page)]->ctx)) {
+        ++m_undos;
+        dlog("UNDO pending on page %d", m_page);
+        return;
+    }
     auto it = m_takeOrder.end();
     for (auto i = m_takeOrder.rbegin(); i != m_takeOrder.rend(); ++i)
         if (here < 0 || *i == here) {
@@ -1055,6 +1073,10 @@ void Session::undoTake() {
         return;
     }
     const int part = *it;
+    Page *owner = nullptr;
+    for (auto &pg : m_pages)
+        if (pg->part == part)
+            owner = pg.get();
     m_takeOrder.erase(it);
     dlog("UNDO part=%d (on page %d)", part, m_page);
     ++m_undos;
@@ -1062,7 +1084,34 @@ void Session::undoTake() {
     m.kind = StudioMsg::UndoTake;
     m.part = int8_t(part);
     m_studio->post(m);
+    if (owner)
+        owner->spec.control->undone(*owner->ctx);
+    m_redoOrder.push_back(part);
     context(m_page).notice(QStringLiteral("Took back the last %1 loop").arg(pageName(part)));
+}
+
+void Session::redoTake() {
+    std::lock_guard lock(m_lock);
+    const int here = m_pages[size_t(m_page)]->part;
+    auto it = m_redoOrder.end();
+    for (auto i = m_redoOrder.rbegin(); i != m_redoOrder.rend(); ++i)
+        if (here < 0 || *i == here) {
+            it = std::next(i).base();
+            break;
+        }
+    if (it == m_redoOrder.end()) {
+        context(m_page).notice(QStringLiteral("Nothing taken back to bring again"));
+        return;
+    }
+    const int part = *it;
+    m_redoOrder.erase(it);
+    m_takeOrder.push_back(part);
+    dlog("REDO part=%d (on page %d)", part, m_page);
+    StudioMsg m;
+    m.kind = StudioMsg::RedoTake;
+    m.part = int8_t(part);
+    m_studio->post(m);
+    context(m_page).notice(QStringLiteral("Brought back the %1 loop (Ctrl+Z takes it back again)").arg(pageName(part)));
 }
 
 void Session::startOver() {
@@ -1096,6 +1145,7 @@ void Session::clearEverything() {
             page->ctx->heldCount = 0;
         }
     m_takeOrder.clear();
+    m_redoOrder.clear();
     for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
         m_view.parts[p].playing = -1;
         for (auto &c : m_view.parts[p].clips)

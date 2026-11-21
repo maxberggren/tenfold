@@ -139,6 +139,7 @@ public:
     Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
     Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }
     Q_INVOKABLE void undoTake() { m_session->undoTake(); }
+    Q_INVOKABLE void redoTake() { m_session->redoTake(); }
     Q_INVOKABLE void startOver() { m_session->startOver(); }
     Q_INVOKABLE void toggleTutorial();
     Q_INVOKABLE void tutorialNext();

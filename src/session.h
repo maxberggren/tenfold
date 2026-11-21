@@ -91,6 +91,7 @@ public:
     // Ctrl+Z: take back the newest loop on any page; what played before
     // plays again. Ctrl+N: start over, every loop cleared (asks first).
     void undoTake();
+    void redoTake(); // Ctrl+Shift+Z: what Ctrl+Z took back comes back
     void startOver();
     // How many times Ctrl+Z took a loop back, for the tutorial.
     int undos() const { return m_undos; }
@@ -157,6 +158,7 @@ private:
     double m_startOverAsked = -1, m_tutorialAsked = -1;
     void clearEverything(); // every loop, the mix home, each page's song state
     int m_undos = 0;
+    std::vector<int> m_redoOrder; // parts, as Ctrl+Z took their steps back
     bool m_mixRecording = false;
     Tutorial m_tutorial;
     Frame m_last;            // the last frame, as the pad sent it

@@ -25,17 +25,7 @@ void Surface::setBackend(Backend *b) {
 }
 
 QRectF Surface::padRect() const {
-    // The trackpad's own proportions, as large as fits, leaving a band under
-    // it for the page's clip slots and a margin over it for its legend.
-    const float aspect = m_backend ? std::clamp(m_backend->padAspect(), 1.0f, 2.4f) : 1.6f;
-    const qreal top = 14, side = 30, bottom = 60;
-    const qreal availW = width() - 2 * side, availH = height() - top - bottom;
-    qreal w = availW, h = w / aspect;
-    if (h > availH) {
-        h = availH;
-        w = h * aspect;
-    }
-    return QRectF((width() - w) / 2, top, w, h);
+    return Session::padRect(QSizeF(width(), height()), m_backend ? m_backend->padAspect() : 1.6f);
 }
 
 void Surface::paint(QPainter *p) {
@@ -59,6 +49,11 @@ void Surface::sendPointer(QPointF pos, bool down) {
 void Surface::mousePressEvent(QMouseEvent *e) {
     const QRectF pad = padRect();
     if (!pad.contains(e->position())) {
+        // Around the pad: a control the page drew there, if any.
+        if (m_backend && m_backend->session()->clickAt(e->position())) {
+            update();
+            return;
+        }
         e->ignore();
         return;
     }
@@ -79,12 +74,18 @@ void Surface::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void Surface::hoverMoveEvent(QHoverEvent *e) {
+    if (m_backend)
+        m_backend->session()->mouseAt(e->position(), true);
     if (!m_mouseHeld)
         sendPointer(e->position(), false);
+    update();
 }
 
 void Surface::hoverLeaveEvent(QHoverEvent *) {
-    if (m_backend && !m_mouseHeld)
-        m_backend->session()->pointer(-1, -1, false, false);
+    if (m_backend) {
+        m_backend->session()->mouseAt({}, false);
+        if (!m_mouseHeld)
+            m_backend->session()->pointer(-1, -1, false, false);
+    }
     update();
 }

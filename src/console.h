@@ -7,8 +7,11 @@
 #include <QColor>
 #include <QFont>
 #include <QPainter>
+#include <utility>
+#include <vector>
 #include <QRectF>
 #include <QString>
+#include <QStringList>
 
 #include "part.h"
 
@@ -43,6 +46,45 @@ void text(QPainter &p, const QRectF &r, const QString &s, QColor color, int px =
 // middle toward the value).
 void gauge(QPainter &p, const QRectF &r, float value, QColor color, int segments = 10, bool bipolar = false);
 // A console button: an outlined box with a header; lit when on.
+// What a page drew to be clicked: added while painting, asked by click().
+// The ids are the page's own.
+struct Hotspots {
+    std::vector<std::pair<QRectF, int>> spots;
+    void clear() { spots.clear(); }
+    void add(const QRectF &r, int id) { spots.push_back({r, id}); }
+    int at(QPointF p) const {
+        for (auto it = spots.rbegin(); it != spots.rend(); ++it)
+            if (it->first.contains(p))
+                return it->second;
+        return -1;
+    }
+};
+
+// The band under the pad holds two rows of controls, each 30 px high:
+// row 0 the clip slots and the page's main choice (kit, sound), row 1 the
+// settings the keys reach (swing, follow, latch, overdub…), so the mouse can
+// reach everything. x0, x1 are fractions of the pad's width.
+inline QRectF bandRow(const PaintContext &pc, int row, double x0 = 0, double x1 = 1) {
+    return QRectF(pc.pad.left() + pc.pad.width() * x0, pc.pad.bottom() + 12 + row * 40,
+                  pc.pad.width() * (x1 - x0), 30);
+}
+
+// Lays `labels` out as equal chips across `r`, the `lit` one filled; each
+// clickable as idBase + its index. A label "" leaves a gap.
+void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, int lit,
+           Hotspots *spots, int idBase, double gap = 4);
+
+// Ids the shared clip strip answers to: kClipSpot + slot.
+constexpr int kClipSpot = 1000;
+// The clip slots, clickable (kClipSpot + slot); clickClip() does what a
+// click on one should: launch it at the next bar, or stop it if it plays.
+bool clickClip(int id, const PartView &v, ControlContext &ctx);
+
+// A row of clickable chips under the pad (or anywhere): each a label in
+// the page colour, lit when on, brighter under the mouse. Returns the rect.
+QRectF chip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &label, bool lit,
+            Hotspots *spots = nullptr, int id = -1);
+
 void button(QPainter &p, const QRectF &r, const QString &title, QColor color, bool lit);
 // A finger: an ellipse sized by contact, a lit tag with what it does.
 void finger(QPainter &p, const PaintContext &pc, const Touch &t, QColor color, const QString &label = {},
@@ -54,6 +96,6 @@ void grid(QPainter &p, const PaintContext &pc, int columns, int rows, QColor col
 void beats(QPainter &p, const PaintContext &pc, QColor color);
 // This part's eight clip slots in a row: empty, stopped, queued (blinking),
 // playing (a hand sweeping round), recording (red).
-void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double time);
+void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double time, Hotspots *spots = nullptr);
 
 }

@@ -503,6 +503,20 @@ private slots:
         }
     }
 
+    // The mouse reaches what the keys do: a click on TECHNO under the pad
+    // changes the kit, SWING + adds swing, a filled clip slot launches.
+    void theBandUnderThePadIsClickable() {
+        // On the scripts' window the pad is 562.5 px high: row 0 of the band
+        // is 0.048 of it under the pad, row 1 0.119. The kits fill row 0
+        // from 0.57 of the width, five across.
+        testkit::play("page 0 1\nbutton 0.2 0.70 -0.048\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 1\nbutton 0.2 0.35 -0.119\nbutton 0.3 0.35 -0.119\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
+        });
+    }
+
     void aThumbThatComesDownToClickOnlyClicks() {
         // Two fingers groove; a thumb lands and clicks: the groove is kept,
         // nothing is grabbed for shaping.

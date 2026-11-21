@@ -413,6 +413,32 @@ void Session::pointer(float x, float y, bool down, bool inside) {
     deliver(withMouse(f));
 }
 
+QRectF Session::padRect(QSizeF item, float aspect) {
+    aspect = std::clamp(aspect, 1.0f, 2.4f);
+    const qreal top = 14, side = 30, bottom = kBandHeight;
+    const qreal availW = item.width() - 2 * side, availH = item.height() - top - bottom;
+    qreal w = availW, h = w / aspect;
+    if (h > availH) {
+        h = availH;
+        w = h * aspect;
+    }
+    return QRectF((item.width() - w) / 2, top, w, h);
+}
+
+void Session::mouseAt(QPointF at, bool over) {
+    std::lock_guard lock(m_lock);
+    m_mousePx = at;
+    m_mouseOver = over;
+}
+
+bool Session::clickAt(QPointF at) {
+    std::lock_guard lock(m_lock);
+    m_mousePx = at;
+    m_mouseOver = true;
+    Page &p = *m_pages[size_t(m_page)];
+    return p.spec.control->click(at, *p.ctx);
+}
+
 void Session::deliver(const Frame &f) {
     m_lastFrame = f.t;
     for (auto &page : m_pages)
@@ -614,6 +640,8 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     pc.hover = m_mouseIn;
     pc.hoverX = m_mouseX;
     pc.hoverY = m_mouseY;
+    pc.mouseOver = m_mouseOver;
+    pc.mouse = m_mousePx;
     painter.save();
     p.spec.control->paint(painter, pc);
     painter.restore();

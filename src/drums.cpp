@@ -257,18 +257,20 @@ public:
         }
         case Qt::Key_BracketLeft:
         case Qt::Key_BracketRight:
-            m_swing = clampf(m_swing + (k.key == Qt::Key_BracketRight ? 0.02f : -0.02f), 0.5f, 0.7f);
-            ctx.notice(QStringLiteral("Swing %1%").arg(int(std::lround(m_swing * 100))));
+            shiftSwing(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (!shift)
-                return false;
-            m_userOverdub = !m_userOverdub;
-            ctx.overdub(m_userOverdub);
-            ctx.notice(m_userOverdub ? QStringLiteral("Overdub: what you play joins the loop")
-                                     : QStringLiteral("Overdub off"));
-            return true;
+            if (shift) {
+                toggleOverdub(ctx);
+                return true;
+            }
+            // Return keeps what rolls or grooves, as a click does.
+            if (holdingGen() && !m_keep.active) {
+                keepHeld(ctx.now(), ctx);
+                return true;
+            }
+            return false;
         case Qt::Key_Delete:
             if (toggleLanes(ctx))
                 return true;
@@ -335,7 +337,7 @@ public:
             "land fingers together and hold\ta groove: each pad plays its part in the kit's style; "
             "slide one up for busier, sideways to shift it\n"
             "hold another pad while grooving\tadds its drum to the groove\n"
-            "click or Space while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it "
+            "click, Return or Space while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it "
             "was held, without what you tried before it (or overdubs into the loop playing; Shift+Space: a new loop)\n"
             "click a pad you just touched, drag\twith nothing rolling, shape that drum: sideways tunes, up lengthens, "
             "twist changes its tone\n"
@@ -346,6 +348,7 @@ public:
             "Up / Down\tfaster or slower key rolls\n"
             "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
             "[ / ]\tless or more swing\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, overdub, sounds back\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
             "Shift+Enter\toverdub on or off: what you play joins the loop\n"
             "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in); with no loop, only its "
@@ -1288,6 +1291,49 @@ private:
         ctx.send(c);
     }
 
+    void shiftSwing(int dir, ControlContext &ctx) {
+        m_swing = clampf(m_swing + 0.02f * float(dir), 0.5f, 0.7f);
+        ctx.notice(QStringLiteral("Swing %1%").arg(int(std::lround(m_swing * 100))));
+    }
+
+    void toggleOverdub(ControlContext &ctx) {
+        m_userOverdub = !m_userOverdub;
+        ctx.overdub(m_userOverdub);
+        ctx.notice(m_userOverdub ? QStringLiteral("Overdub: what you play joins the loop")
+                                 : QStringLiteral("Overdub off"));
+    }
+
+    void resetSounds(ControlContext &ctx) {
+        for (int p = 0; p < PadCount; ++p)
+            if (m_edit[p].any()) {
+                m_edit[p] = {};
+                sendEdit(p, ctx);
+            }
+        ctx.notice(QStringLiteral("Every drum back to the kit's sound"));
+    }
+
+    // The mouse on the band under the pad.
+    enum Spot { SpotKit = 100, SpotSwingDown = 200, SpotSwingUp, SpotOverdub, SpotReset };
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int id = m_spots.at(at);
+        if (id < 0)
+            return false;
+        if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+            return true;
+        if (id >= SpotKit && id < SpotKit + KitCount) {
+            if (id - SpotKit != m_kit)
+                setKit(id - SpotKit, ctx);
+            return true;
+        }
+        switch (id) {
+        case SpotSwingDown: shiftSwing(-1, ctx); return true;
+        case SpotSwingUp: shiftSwing(1, ctx); return true;
+        case SpotOverdub: toggleOverdub(ctx); return true;
+        case SpotReset: resetSounds(ctx); return true;
+        default: return false;
+        }
+    }
+
     void setKit(int kit, ControlContext &ctx) {
         m_kit = kit;
         m_swing = kitSwing(kit);
@@ -1320,6 +1366,7 @@ private:
 
     int m_kit = House;
     float m_swing = 0.54f;
+    console::Hotspots m_spots; // what paint() drew to be clicked
     int m_keyRate = 0;
     Edit m_edit[PadCount];
     std::array<Holder, 24> m_holders{};
@@ -1576,29 +1623,27 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                    : QStringLiteral("LOOPING INTO SLOT %1 · SPACE CALLS IT OFF").arg(pc.view->recording + 1),
                std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f), 13, true);
     c::beats(p, pc, col);
-    // Below the pad: the clips, then the kits with the one playing lit and
-    // the swing.
-    const double split = pc.pad.left() + pc.pad.width() * 0.62;
-    c::clips(p, QRectF(pc.pad.left(), pc.pad.bottom() + 14, split - pc.pad.left(), 30), *pc.view, col, pc.time);
-    const double kx0 = split + 10;
-    const double swingW = 74;
-    const double kw = (pc.pad.right() - kx0 - swingW) / double(int(KitCount));
-    for (int k = 0; k < KitCount; ++k) {
-        const QRectF r(kx0 + k * kw + 2, pc.pad.bottom() + 14, kw - 4, 30);
-        if (k == m_kit) {
-            p.fillRect(r, col);
-        } else {
-            p.setBrush(Qt::NoBrush);
-            p.setPen(QPen(c::alpha(col, 0.45f), 1.2));
-            p.drawRect(r);
-        }
-        c::text(p, r, QString::fromUtf8(kitName(k)), k == m_kit ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.7f),
-                int(std::clamp(r.height() * 0.38, 8.0, 12.0)), true, Qt::AlignCenter);
-    }
-    const QRectF sw(pc.pad.right() - swingW + 6, pc.pad.bottom() + 14, swingW - 6, 30);
-    c::text(p, sw.adjusted(0, 0, 0, -14), QStringLiteral("SWING %1").arg(int(std::lround(m_swing * 100))), col, 11, true,
-            Qt::AlignCenter);
-    c::gauge(p, QRectF(sw.left() + 4, sw.bottom() - 10, sw.width() - 8, 8), (m_swing - 0.5f) / 0.2f, col, 10);
+    // Below the pad, every one clickable: the clips and the kits, then the
+    // swing, overdub and the drums' own sounds back.
+    m_spots.clear();
+    c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
+    QStringList kits;
+    for (int k = 0; k < KitCount; ++k)
+        kits << QString::fromUtf8(kitName(k)).toUpper();
+    c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), kits, m_kit, &m_spots, SpotKit);
+    const QRectF row = c::bandRow(pc, 1, 0, 0.55);
+    const double w = row.width() / 4;
+    c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SWING −  ["), false, &m_spots,
+            SpotSwingDown);
+    const QRectF gauge(row.left() + w, row.top(), w - 4, row.height());
+    c::text(p, gauge.adjusted(0, 0, 0, -12), QStringLiteral("SWING %1%").arg(int(std::lround(m_swing * 100))), col, 11,
+            true, Qt::AlignCenter);
+    c::gauge(p, QRectF(gauge.left() + 6, gauge.bottom() - 10, gauge.width() - 12, 7), (m_swing - 0.5f) / 0.2f, col, 10);
+    c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ]"), false,
+            &m_spots, SpotSwingUp);
+    c::chips(p, pc, c::bandRow(pc, 1, 0.57, 1),
+             {QStringLiteral("OVERDUB  ⇧⏎"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,
+             SpotOverdub);
 }
 
 }

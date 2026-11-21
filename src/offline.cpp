@@ -7,7 +7,9 @@
 #include <sstream>
 #include <vector>
 
+#include <QImage>
 #include <QKeySequence>
+#include <QPainter>
 
 #include "dsp.h"
 #include "session.h"
@@ -26,9 +28,14 @@ struct Finger {
     float x = 0, y = 0, p = 0.6f, size = 1.0f, twist = 0;
 };
 
+// The window a script's `button` clicks are made in: the size of the
+// screenshots' pad area, at a MacBook trackpad's proportions.
+constexpr double kButtonItemW = 960, kButtonItemH = 720;
+constexpr float kButtonAspect = 1.6f;
+
 struct Event {
     double t = 0, t2 = 0;
-    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, End } kind = End;
+    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, End } kind = End;
     int keyMode = 0; // 0 press, 1 down, 2 up
     int id = 0;
     float x = 0, y = 0;
@@ -154,6 +161,14 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                     e.keyMode = 2;
                 else if (mode != "move")
                     return fail("mouse is down, up or move");
+                events.push_back(e);
+            } else if (word == "button") {
+                // A mouse click on a control the page draws around the pad,
+                // at pad coordinates (y below 0 is the band under it), on a
+                // window like the real one.
+                e.kind = Event::Button;
+                if (!(ls >> e.t >> e.x >> e.y))
+                    return fail("expected T X Y");
                 events.push_back(e);
             } else if (word == "page") {
                 e.kind = Event::Page;
@@ -303,6 +318,21 @@ void ScriptPlayer::tick(double t, Session &session) {
                 d->mouseDown = e.keyMode == 1;
             session.pointer(e.x, e.y, d->mouseDown, true);
             break;
+        case Event::Button: {
+            // The page is drawn first, as the window would have, so the
+            // controls it lays out are where the click lands.
+            const QSizeF item(kButtonItemW, kButtonItemH);
+            const QRectF pad = Session::padRect(item, kButtonAspect);
+            QImage canvas(item.toSize(), QImage::Format_ARGB32_Premultiplied);
+            canvas.fill(Qt::black);
+            {
+                QPainter painter(&canvas);
+                session.paint(painter, pad, e.t);
+            }
+            const QPointF at(pad.left() + double(e.x) * pad.width(), pad.bottom() - double(e.y) * pad.height());
+            session.clickAt(at);
+            break;
+        }
         case Event::Page:
             session.setPage(e.id == 0 ? session.arrangePage() : e.id - 1);
             break;

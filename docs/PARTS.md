@@ -110,6 +110,37 @@ about 60 times a second and the page reads as `pc.view->data`.
    heard (a bar-line handover, a re-asserted latched layer) `Command::Continue`. Show it on your page from `pc.view->recording` (a take
    waiting) and the clip strip. F1–F8 launch your slots, Backspace stops your
    clip.
+4b. **The same keys mean the same thing on every part page.** Letters are
+   the page's own (notes, pads, chords, scenes, sounds by name). The rest is
+   shared, so a player who learned one page knows the others:
+
+   | Key | On every part page |
+   |---|---|
+   | ← → | the sound: kit, preset, scene, drop style (step through them) |
+   | ↑ ↓ | octave or register (Drums: roll rate, FX: riser length). For three seconds after Space the session takes them for the loop's length |
+   | [ ] | the rhythm: swing, gate pattern, arp pattern, trance gate |
+   | - = | tone: darker, brighter (the page's filter or brightness) |
+   | Return | hold or latch (FX: drop on the next bar; Drums: keep what rolls) |
+   | Shift+Return | overdub on or off |
+   | \\ | follow the Chords page, on or off |
+   | Delete | let go or reset (latched layers, held chords, drum sounds) |
+   | F1–F8 · Shift+F1–F8 · Backspace | launch a slot · clear it · stop the loop at the bar |
+
+   Space, Shift+Space and every Ctrl key are the session's. Old keys for
+   the same things may stay as second keys, but help() lists the shared
+   ones first.
+
+4c. **The mouse can do everything the keys do.** A setting with only a key
+   gets a control: on the pad where a finger would use it, or as a chip in
+   the band under the pad (`console::bandRow(pc, 0|1, x0, x1)`: row 0 the
+   clips and the page's main choice, row 1 its settings). Draw chips with
+   `console::chip` / `console::chips` into a `console::Hotspots` cleared at
+   the top of paint(), and answer `PartControl::click(at, ctx)` from it;
+   `console::clips(…, &spots)` and `console::clickClip` make the clip slots
+   clickable. A chip shows its key (`SWING +  ]`). Scripts click with
+   `button T X Y` (pad coordinates, y below 0 is the band). Drums is the
+   example.
+
 5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about
    0.5%) and at most about 60 Hz per finger. A clip holds 2048 events.
 6. **Ids** stay below `1 << 24`.

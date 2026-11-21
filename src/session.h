@@ -25,6 +25,9 @@
 // Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
 // record the mix, quit). The pad is taken with the window's Play button.
 
+#include <QPointF>
+#include <QRectF>
+#include <QSizeF>
 #include <QString>
 #include <cstdio>
 #include <memory>
@@ -68,6 +71,15 @@ public:
     // The mouse over the pad, in pad coordinates (UI thread): held down it
     // is one more finger (kMouseId); hovering, pages can show what it is on.
     void pointer(float x, float y, bool down, bool inside);
+    // The mouse over the page in item pixels (for lighting controls drawn
+    // around the pad), and a click outside the pad: true if the page used it.
+    void mouseAt(QPointF at, bool over);
+    // Where the pad is drawn in an item of this size: the trackpad's own
+    // proportions, as large as fits, with a band under it for the page's
+    // controls and clip slots and a margin over it for its legend.
+    static QRectF padRect(QSizeF item, float aspect);
+    static constexpr double kBandHeight = 96; // under the pad: two rows of controls (console::bandRow)
+    bool clickAt(QPointF at);
     void idle(double t) override;
 
     // UI thread. Returns true when the key was used.
@@ -185,6 +197,8 @@ private:
     bool m_mixRecording = false;
     Tutorial m_tutorial;
     Frame m_last;            // the last frame, as the pad sent it
+    QPointF m_mousePx;
+    bool m_mouseOver = false;
     std::vector<int> m_ignored; // fingers down when the page changed, until they lift
     // Just after Space makes a loop, the hand steps aside: fingers down
     // then, and any that land before this time, are ignored until they

@@ -71,6 +71,23 @@ void gauge(QPainter &p, const QRectF &r, float value, QColor color, int segments
     }
 }
 
+QRectF chip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &label, bool lit, Hotspots *spots,
+            int id) {
+    const bool over = pc.mouseOver && r.contains(pc.mouse);
+    if (lit)
+        p.fillRect(r, pc.color);
+    else if (over)
+        p.fillRect(r, alpha(pc.color, 0.22f));
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(lit || over ? pc.color : alpha(pc.color, 0.6f), 1.5));
+    p.drawRect(r);
+    text(p, r.adjusted(4, 0, -4, 0), label, lit ? QColor::fromRgb(kInk) : pc.color,
+         int(std::clamp(r.height() * 0.42, 9.0, 13.0)), true, Qt::AlignCenter);
+    if (spots && id >= 0)
+        spots->add(r, id);
+    return r;
+}
+
 void button(QPainter &p, const QRectF &r, const QString &title, QColor color, bool lit) {
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(color, 2));
@@ -140,12 +157,14 @@ void beats(QPainter &p, const PaintContext &pc, QColor color) {
     }
 }
 
-void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double time) {
+void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double time, Hotspots *spots) {
     const qreal w = r.width() / kClipSlots;
     const bool blink = std::fmod(time, 0.5) < 0.25;
     for (int s = 0; s < kClipSlots; ++s) {
         const ClipView &c = v.clips[s];
         const QRectF cell(r.left() + s * w + 2, r.top(), w - 4, r.height());
+        if (spots)
+            spots->add(cell, kClipSpot + s);
         QColor col = color;
         if (c.state == ClipView::Recording)
             col = red();
@@ -179,6 +198,34 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
              c.state == ClipView::Playing || c.state == ClipView::Recording ? QColor::fromRgb(kInk) : col,
              int(std::clamp(cell.height() * 0.45, 9.0, 13.0)), true, Qt::AlignCenter);
     }
+}
+
+void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, int lit,
+           Hotspots *spots, int idBase, double gap) {
+    const int n = int(labels.size());
+    if (n == 0)
+        return;
+    const double w = (r.width() + gap) / n;
+    for (int i = 0; i < n; ++i) {
+        if (labels[i].isEmpty())
+            continue;
+        const QRectF cell(r.left() + i * w, r.top(), w - gap, r.height());
+        chip(p, pc, cell, labels[i], i == lit, spots, idBase + i);
+    }
+}
+
+bool clickClip(int id, const PartView &v, ControlContext &ctx) {
+    const int slot = id - kClipSpot;
+    if (slot < 0 || slot >= kClipSlots)
+        return false;
+    const ClipView &c = v.clips[slot];
+    if (c.state == ClipView::Empty)
+        return true; // nothing there to launch
+    if (c.state == ClipView::Playing)
+        ctx.stop();
+    else
+        ctx.launch(slot);
+    return true;
 }
 
 }

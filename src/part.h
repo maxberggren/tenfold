@@ -320,6 +320,10 @@ struct PaintContext {
     float scale = 1;      // device pixels per pad unit hint: pad.height() / 600
     bool hover = false;   // the mouse is over the pad (not pressed or pressed)
     float hoverX = 0, hoverY = 0; // where, in pad coordinates
+    // The mouse anywhere over the page, pad or not, in item pixels: for
+    // lighting a control drawn around the pad (see PartControl::click).
+    bool mouseOver = false;
+    QPointF mouse;
     // Pad coordinates (0..1, y up) to item pixels and back.
     QPointF at(float x, float y) const {
         return {pad.left() + double(x) * pad.width(), pad.bottom() - double(y) * pad.height()};
@@ -349,6 +353,12 @@ public:
     // Draws the page inside pc.pad (and may use the margin around it). UI
     // thread, under the session's lock: keep it to drawing.
     virtual void paint(QPainter &p, const PaintContext &pc) = 0;
+    // A mouse click on a control the page drew outside the pad (the band
+    // under it, the margin over it), at `at` in the item pixels paint()
+    // drew in. Clicks on the pad itself arrive as a finger (kMouseId).
+    // Every setting a key reaches should have such a control or a place
+    // on the pad, so the mouse alone can play the page. True if it hit one.
+    virtual bool click(QPointF at, ControlContext &ctx) { (void)at, (void)ctx; return false; }
     // The page's gesture guide: one "gesture\twhat it does" per line.
     virtual QString help() const = 0;
     // One line under the pad: what the fingers are doing right now.

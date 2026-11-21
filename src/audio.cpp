@@ -522,7 +522,10 @@ int measureLatency(bool json) {
         std::printf("this machine's devices, as reported   input %.2f ms, output %.2f ms%s\n", double(inMs),
                     double(outMs), input == StudioView::InputLive ? "" : "  (no live microphone)");
         if (softwareMs >= 0)
-            std::printf("so, singing into the headphones       about %.1f ms\n", softwareMs + inMs + outMs);
+            std::printf("so, from the mic to that output       about %.1f ms%s\n", softwareMs + inMs + outMs,
+                        outMs > 15 ? "  (that output buffers a lot: monitor on headphones, or set\n"
+                                     "                                       TENFOLD_SINK to the headphone device)"
+                                   : "");
     }
     return softwareMs >= 0 ? 0 : 1;
 }

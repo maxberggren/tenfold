@@ -506,6 +506,9 @@ void Session::refresh() {
             while (m_takesSeen[p] < m_view.parts[p].takes) {
                 ++m_takesSeen[p];
                 m_takeOrder.push_back(p);
+                // The studio keeps only so many of a part's changes.
+                if (std::count(m_takeOrder.begin(), m_takeOrder.end(), p) > kUndoSteps)
+                    m_takeOrder.erase(std::find(m_takeOrder.begin(), m_takeOrder.end(), p));
                 m_loopSince[p] = m_view.beat;
             }
             if (m_view.parts[p].playing != m_lastPlaying[p]) {
@@ -513,8 +516,8 @@ void Session::refresh() {
                 m_loopSince[p] = m_view.beat;
             }
         }
-        if (m_takeOrder.size() > 64)
-            m_takeOrder.erase(m_takeOrder.begin(), m_takeOrder.end() - 64);
+        if (m_takeOrder.size() > size_t(kUndoSteps * kMaxParts))
+            m_takeOrder.erase(m_takeOrder.begin(), m_takeOrder.end() - kUndoSteps * kMaxParts);
         const long bin = long(std::floor(m_view.time * 4.0));
         for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
             const bool on = m_view.parts[p].voices > 0 && m_view.parts[p].playing < 0;
@@ -986,12 +989,12 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     const bool settled = length > 0;
     if (!settled) {
         // Played once: the phrase, in whole bars, with no bars of silence
-        // added to round it, and no more than its last four bars. Longer
+        // added to round it, and no more than its last eight bars. Longer
         // playing that never repeated is a performance, not a loop; a loop
         // already playing that is longer still sets the length below. Sound
         // that carries itself (a build into its drop) stays whole.
         const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
-        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 4.0);
+        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 8.0);
     }
     // Over loops already playing, a take long enough to cover the longest
     // of them takes its length: a bass line over a four-bar progression
@@ -1036,13 +1039,24 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
 
 void Session::undoTake() {
     std::lock_guard lock(m_lock);
-    // The studio keeps the last four takes per part; older ones are gone.
-    if (m_takeOrder.empty()) {
-        context(m_page).notice(QStringLiteral("No loop to take back"));
+    // On a part's page, Ctrl+Z takes back that part's newest change; on the
+    // Song page, the newest change anywhere. The studio keeps the last
+    // kUndoSteps changes of each part; older ones are gone.
+    const int here = m_pages[size_t(m_page)]->part;
+    auto it = m_takeOrder.end();
+    for (auto i = m_takeOrder.rbegin(); i != m_takeOrder.rend(); ++i)
+        if (here < 0 || *i == here) {
+            it = std::next(i).base();
+            break;
+        }
+    if (it == m_takeOrder.end()) {
+        context(m_page).notice(here < 0 ? QStringLiteral("No loop to take back")
+                                        : QStringLiteral("Nothing on %1 to take back").arg(pageName(here)));
         return;
     }
-    const int part = m_takeOrder.back();
-    m_takeOrder.pop_back();
+    const int part = *it;
+    m_takeOrder.erase(it);
+    dlog("UNDO part=%d (on page %d)", part, m_page);
     ++m_undos;
     StudioMsg m;
     m.kind = StudioMsg::UndoTake;

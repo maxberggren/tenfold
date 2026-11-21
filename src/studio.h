@@ -16,6 +16,9 @@
 namespace tf {
 
 // A message to the studio itself, or through it to a part.
+// How many changes to its loops each part can take back (Ctrl+Z).
+constexpr int kUndoSteps = 16;
+
 struct StudioMsg {
     enum Kind : uint8_t {
         ToPart,      // part, cmd

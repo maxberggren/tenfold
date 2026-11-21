@@ -421,6 +421,21 @@ private slots:
         QVERIFY(take.rms(10, 12) > 0.02);
     }
 
+    // A roll kept over the playing loop goes into it for a pass; Ctrl+Z
+    // takes it back out, and the loop plays as it was.
+    void ctrlZTakesBackARollKeptIntoTheLoop() {
+        const std::string base = "page 0 1\n"
+                                 "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Clap) +
+                                 "\nclick 2.0 len=0.15\nup 2.4 1\nup 2.4 2\n"
+                                 "down 4.2 4 " + at(drums::Shaker) + "\nclick 4.4 len=0.15\nup 4.6 4\n";
+        const auto kept = testkit::play(base + "end 8\n");
+        const int before = 6, with = kept.view.parts[0].clips[0].events;
+        QVERIFY2(with > before, qPrintable(QString::number(with)));
+        const auto undone = testkit::play(base + "key 8.0 Ctrl+Z\nend 9\n");
+        QCOMPARE(undone.view.parts[0].playing, 0);
+        QCOMPARE(undone.view.parts[0].clips[0].events, before);
+    }
+
     void aThumbThatComesDownToClickOnlyClicks() {
         // Two fingers groove; a thumb lands and clicks: the groove is kept,
         // nothing is grabbed for shaping.

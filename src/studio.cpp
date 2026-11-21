@@ -87,7 +87,7 @@ struct Studio::PartState {
     // The last few takes, as the slots were before them, newest last, so a
     // take can be taken back: its slot gets its old clip, and the clip that
     // was playing plays again.
-    static constexpr int kUndo = 4;
+    static constexpr int kUndo = kUndoSteps;
     struct Before {
         std::vector<Event> events;
         double length = 0, anchor = 0;
@@ -697,8 +697,15 @@ void Studio::apply(const StudioMsg &m) {
             p->recording = -1;
         break;
     case StudioMsg::Overdub:
-        if (p)
-            p->overdub = m.value != 0;
+        if (!p)
+            return;
+        // Playing into the loop that plays (a roll kept over it, a pass
+        // overdubbed) is a change to that loop: Ctrl+Z takes it back.
+        if (m.value != 0 && !p->overdub && p->playing >= 0 && p->clips[p->playing].length > 0) {
+            keepForUndo(*p, p->playing);
+            ++p->takes;
+        }
+        p->overdub = m.value != 0;
         break;
     case StudioMsg::Launch:
         if (!p || m.slot < 0 || m.slot >= kClipSlots || p->clips[m.slot].length <= 0)
@@ -796,6 +803,7 @@ void Studio::apply(const StudioMsg &m) {
             stopClip(*p, s);
         if (p->recording == b.slot)
             p->recording = -1;
+        p->overdub = false; // a pass still going would write into what came back
         clip.events.assign(b.events.begin(), b.events.end());
         clip.length = b.length;
         clip.anchor = b.anchor;

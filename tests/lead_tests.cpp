@@ -486,9 +486,9 @@ private slots:
 
     void theLandedTakeSaysWhatItBecame() {
         // Phrases of 1, 3, 5 and 6 bars, played once: the whole phrase, in
-        // its own whole bars, up to its last four, and the page names the
+        // its own whole bars, up to its last eight, and the page names the
         // clip the studio made.
-        const int phrases[4] = {1, 3, 5, 6}, expect[4] = {1, 3, 4, 4};
+        const int phrases[4] = {1, 3, 5, 6}, expect[4] = {1, 3, 5, 6};
         for (int i = 0; i < 4; ++i) {
             std::vector<std::pair<double, int>> taps;
             for (int b = 0; b < 4 * phrases[i]; ++b)

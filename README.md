@@ -51,8 +51,10 @@ top of it, as one loop. Shift+Space makes a new loop in its place instead. On
 Arrange, pick two loops of a part and press M to layer
 them, Shift+M to chain them.
 
-**Changed your mind?** Ctrl+Z takes back the newest loop on any page, and
-what was playing before comes back. Ctrl+N twice starts over: every loop
+**Changed your mind?** Ctrl+Z takes back the newest change to the page's
+loops (a loop, a layer, a pass played into one), up to 16 back, and what
+was playing before comes back. On the Song page it takes back the newest
+change anywhere. Ctrl+N twice starts over: every loop
 cleared, the mix set back, nothing left muted.
 
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M

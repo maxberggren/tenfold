@@ -23,7 +23,7 @@ Rectangle {
         "Ctrl M\t" + qsTr("metronome"),
         "Ctrl ⌫\t" + qsTr("stop every clip at the next bar"),
         "Shift Space\t" + qsTr("a new loop of what you just played, in place of this part's playing loop"),
-        "Ctrl Z\t" + qsTr("take back the newest loop, on any page; what played before plays again"),
+        "Ctrl Z\t" + qsTr("take back this page's newest loop change (a loop, a layer, a pass played into it), up to 16 back; on the Song page, the newest anywhere"),
         "Ctrl N, Ctrl N\t" + qsTr("start over: every loop cleared, every part unmuted and the mix set back, the next loop sets the tempo"),
         "Ctrl R\t" + qsTr("record to ~/Music/tenfold"),
         "Ctrl T\t" + qsTr("the tutorial: a whole track, step by step, from a cleared studio (with loops made, press it twice; Ctrl Return next, Ctrl Shift Return back, Esc leaves)"),

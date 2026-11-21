@@ -111,15 +111,15 @@ private slots:
 
     void ctrlZTakesBackTheNewestLoopAndBringsBackTheOneBefore() {
         // The beat, then two bass loops one after the other: the second
-        // replaces the first. Ctrl+Z takes the second back and the first
-        // plays again; Ctrl+Z again takes the first back too, and the beat
-        // plays on.
+        // (Shift+Space) replaces the first. Ctrl+Z takes the second back and
+        // the first plays again; Ctrl+Z again takes the first back too, and
+        // on the bass page that is all: the beat plays on.
         const auto take = testkit::play(std::string(kBeat) +
                                         "page 3.0 2\n"
                                         "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
                                         "key 6.6 Space\n"
                                         "tap 6.55 0.6 0.5\ntap 7.05 0.8 0.5\ntap 7.55 0.7 0.5\ntap 8.05 0.6 0.5\n"
-                                        "key 8.6 Space\n"
+                                        "key 8.6 Shift+Space\n"
                                         "key 9.5 Ctrl+Z\nend 10.5\n");
         QCOMPARE(take.view.parts[1].playing, 0);
         QVERIFY(take.view.parts[1].clips[1].state == ClipView::Empty);
@@ -130,8 +130,23 @@ private slots:
                                          "key 6.6 Space\nkey 7.5 Ctrl+Z\nkey 7.8 Ctrl+Z\nend 9\n");
         QCOMPARE(twice.view.parts[1].playing, -1);
         QVERIFY(twice.view.parts[1].clips[0].state == ClipView::Empty);
-        QCOMPARE(twice.view.parts[0].playing, -1); // the second Ctrl+Z took the beat back
-        QVERIFY(twice.view.parts[0].clips[0].state == ClipView::Empty);
+        QCOMPARE(twice.view.parts[0].playing, 0); // the drums are the drums page's to take back
+    }
+
+    void ctrlZTakesBackThisPagesOwnLoop() {
+        // Drums looped, then a bass loop: on the drums page Ctrl+Z takes
+        // back the drums, not the bass that came later.
+        const std::string base = std::string(kBeat) +
+                                 "page 3.0 2\n"
+                                 "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                 "key 6.6 Space\n";
+        const auto drums = testkit::play(base + "page 7.0 1\nkey 7.2 Ctrl+Z\nend 8\n");
+        QCOMPARE(drums.view.parts[0].playing, -1);
+        QCOMPARE(drums.view.parts[1].playing, 0);
+        // On the bass page with nothing of its own to take back, nothing
+        // else goes.
+        const auto none = testkit::play(std::string(kBeat) + "page 3.0 2\nkey 3.2 Ctrl+Z\nend 4\n");
+        QCOMPARE(none.view.parts[0].playing, 0);
     }
 
     void startingOverSetsTheMixBack() {

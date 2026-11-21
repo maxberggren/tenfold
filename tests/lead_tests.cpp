@@ -586,6 +586,86 @@ private slots:
         QVERIFY(std::abs(pulses - expected) <= 2.0);
     }
 
+    void theSharedKeysWorkHereToo() {
+        // \ follows the chord, as on every part page; Enter still does, for the tutorial.
+        testkit::play("page 0 4\nkey 0.1 \\\nend 0.3\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 4\nkey 0.1 Return\nend 0.3\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), qPrintable(s.pageStatus()));
+        });
+        // ] steps the trance gate on, [ back.
+        testkit::play("page 0 4\nkey 0.1 ]\nkey 0.15 ]\nend 0.3\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/16")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 4\nkey 0.1 ]\nkey 0.15 ]\nkey 0.2 [\nend 0.3\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/8")), qPrintable(s.pageStatus()));
+            QVERIFY2(!s.pageStatus().contains(QStringLiteral("gated 1/8T")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 4\nkey 0.1 [\nend 0.3\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/8T")), qPrintable(s.pageStatus()));
+        });
+        // Shift+Return overdubs.
+        const auto dub = testkit::play("page 0 4\nkey 0.1 Shift+Return\nend 0.3\n");
+        QVERIFY(dub.view.parts[kLead].overdub);
+        // Held harmony stays after the finger lifts, and Delete lets it go.
+        const std::string held = "page 0 4\nkey 0.1 F12\n" +
+                                 fmt("down 0.3 1 %.4f 0.6\ndown 0.4 2 0.1 %.4f\nup 0.8 2\n", cellX(4), rowY(1));
+        testkit::play(held + "end 1.0\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("harmony 3RD")), qPrintable(s.pageStatus()));
+        });
+        testkit::play(held + "key 0.9 Delete\nend 1.0\n", [](Session &s) {
+            QVERIFY2(!s.pageStatus().contains(QStringLiteral("harmony 3RD")), qPrintable(s.pageStatus()));
+        });
+    }
+
+    void minusAndEqualsSetTheTone() {
+        // The same held Anthem note, darker four steps and brighter four:
+        // the sound's own sits between them in its high end (the energy of
+        // the first difference against the signal's).
+        auto edge = [](const std::string &keys) {
+            const auto take =
+                testkit::play("page 0 4\n" + keys + fmt("down 0.3 1 %.4f 0.5\nup 1.6 1\nend 1.7\n", cellX(7)));
+            double e = 0, d = 0;
+            for (size_t i = size_t(0.6 * 48000); i < size_t(1.5 * 48000); ++i) {
+                e += double(take.left[i]) * take.left[i];
+                const double diff = double(take.left[i]) - take.left[i - 1];
+                d += diff * diff;
+            }
+            return d / std::max(e, 1e-12);
+        };
+        const double dark = edge("key 0.05 -\nkey 0.08 -\nkey 0.11 -\nkey 0.14 -\n");
+        const double own = edge("");
+        const double bright = edge("key 0.05 =\nkey 0.08 =\nkey 0.11 =\nkey 0.14 =\n");
+        QVERIFY2(dark < 0.7 * own, qPrintable(QStringLiteral("%1 %2").arg(dark).arg(own)));
+        QVERIFY2(bright > 1.2 * own, qPrintable(QStringLiteral("%1 %2").arg(bright).arg(own)));
+    }
+
+    void theBandUnderThePadIsClickable() {
+        // On the scripts' window the pad is 562.5 px high: row 0 of the band
+        // is 0.048 of it under the pad, row 1 0.119. Row 0 ends with the
+        // sounds, Big room last; row 1 starts with the octave stepper (↑ at
+        // its right end) and has FOLLOW a little right of the middle, HOLD
+        // after it.
+        testkit::play("page 0 4\nbutton 0.2 0.98 -0.048\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("Big room")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 4\nbutton 0.2 0.59 -0.119\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 4\nbutton 0.2 0.71 -0.119\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("harmony held")), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 4\nbutton 0.2 0.115 -0.119\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("neck an octave up")), qPrintable(s.pageStatus()));
+        });
+        // A playing loop's slot, clicked, stops at the bar.
+        const auto take = testkit::play(riffInBarTwo() + fmt("key %.4f Space\n", 8 * 60.0 / 124.0) +
+                                        "button 6.0 0.02 -0.048\nend 9.0\n");
+        QCOMPARE(take.view.parts[kLead].playing, -1);
+        QVERIFY(take.view.parts[kLead].clips[0].state != ClipView::Empty);
+    }
+
     void stillFingersSendFewEvents() {
         // A finger held still through a looped phrase leaves hardly
         // anything in the clip besides its own on and off.

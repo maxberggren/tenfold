@@ -48,11 +48,14 @@ constexpr int kCols = 4, kRows = 4;
 // A finger still down after kHoldSecs is held: it stops being a possible
 // fill and becomes a roll or a groove. Its first repeat is the first grid
 // step at least kFirstStepSecs after landing, and goes out only if the
-// finger is still down kFirstLeadSecs before it. So a tap must last about
-// 130 ms to sprout a step, longer than a tap lasts, while a roll still
-// starts within a step and kFirstStepSecs of landing, with no hole after.
+// finger is still down kFirstLeadSecs before it (up to kMaxLeadSecs when
+// the ticks come slowly). So a tap must last about 180 ms to sprout a step:
+// a relaxed tap on glass, finger arriving and leaving softly, can last 160,
+// and one that sprouts a step sounds like a roll the player never asked
+// for. A roll still starts within a step and kFirstStepSecs of landing,
+// with no hole after.
 constexpr double kHoldSecs = 0.08;
-constexpr double kFirstStepSecs = 0.17;
+constexpr double kFirstStepSecs = 0.2;
 constexpr double kFirstLeadSecs = 0.012;
 // A held step must go out before its time comes, so the lead is at least
 // the longest recent gap between ticks (250 Hz live: 4 ms; a still finger
@@ -73,9 +76,17 @@ constexpr double kSnapSecs = 0.03;
 constexpr double kRepeatGapSecs = 0.08; // the closest a first repeat may follow a landing that plays at once
 
 // A light first reading is often a finger still coming down: such a landing
-// waits one more frame (a few milliseconds) and takes the hardest it pressed.
-// A firm one plays at once.
+// waits for the pad's next readings and takes the hardest it pressed, going
+// out at the first frame kVelocitySecs on whose pressure has stopped rising,
+// or kVelocityMaxSecs on whatever it reads. Only frames say how hard a finger
+// pressed, so the wait is counted in their time: the clock can run past a
+// frame the session hasn't handed over yet, and a landing sent on the clock
+// then played the first, near-silent reading (a tap heard as nothing). A
+// finger that sends no frames for kLandingStillSecs is still, pressing no
+// harder, and the clock sends it then. A firm landing plays at once.
 constexpr double kVelocitySecs = 0.006;
+constexpr double kVelocityMaxSecs = 0.012;
+constexpr double kLandingStillSecs = 0.025;
 constexpr float kFirmPressure = 0.45f;
 constexpr double kLookahead = 0.06;    // how far ahead rolls are scheduled
 constexpr float kLadderStep = 0.07f;   // pad heights of travel per rate or density step
@@ -154,11 +165,13 @@ public:
             }
             h->x = t.x;
             h->y = t.y;
+            const bool rising = t.pressure > h->pressure;
             h->pressure = t.pressure;
             h->size = t.size;
             h->angle = t.angle;
             h->peak = std::max(h->peak, t.pressure);
-            if (h->landing && f.t - h->t0 >= kVelocitySecs)
+            h->seen = f.t;
+            if (h->landing && f.t - h->t0 >= kVelocitySecs && (!rising || f.t - h->t0 >= kVelocityMaxSecs))
                 sendLanding(*h, ctx);
             follow(*h, f.t, ctx);
         }
@@ -173,7 +186,7 @@ public:
 
     void idle(double t, ControlContext &ctx) override {
         for (auto &h : m_holders)
-            if (h.used && h.landing && t - h.t0 >= kVelocitySecs)
+            if (h.used && h.landing && t - h.seen >= kLandingStillSecs)
                 sendLanding(h, ctx);
         resolve(t, ctx);
     }
@@ -318,6 +331,11 @@ public:
         return false;
     }
 
+    // A tap just after Space is the next hit, not the hand still going: on
+    // the drums every landing sounds. (The engine lets a live hit win over
+    // the loop's copy of it, so the loop isn't doubled.)
+    bool quietAfterSpace() const override { return false; }
+
     void leave(ControlContext &ctx) override {
         for (auto &h : m_holders)
             if (h.used)
@@ -457,6 +475,7 @@ private:
         int degree = 0; // the 808's glide, in degrees
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
+        double seen = 0; // the time of the last frame it was in
         float p0 = 0.5f; // the pressure its landing was played at
         Edit editFrom;
     };
@@ -534,7 +553,7 @@ private:
             return;
         }
         h->pad = padAt(t.x, t.y);
-        h->t0 = now;
+        h->t0 = h->seen = now;
         h->x0 = h->x = t.x;
         h->y0 = h->y = t.y;
         h->angle0 = h->angle = t.angle;

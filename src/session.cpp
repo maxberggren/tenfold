@@ -468,7 +468,7 @@ void Session::deliver(const Frame &f) {
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
-    const bool quiet = f.t < m_quietUntil;
+    const bool quiet = f.t < m_quietUntil && p.spec.control->quietAfterSpace();
     if (m_ignored.empty() && !quiet) {
         p.spec.control->frame(f, *p.ctx);
         return;

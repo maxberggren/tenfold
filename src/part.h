@@ -391,6 +391,12 @@ public:
     // bed latched) joins playing before a pause to playing after it, when
     // Space looks for the phrase. A bed left on isn't playing: false.
     virtual bool soundLeftOnJoinsThePlaying() const { return true; }
+    // Just after Space makes a loop, a finger that lands in the next moment
+    // is taken for the hand still going and ignored, so it doesn't double
+    // the loop's first notes. False for a page where every landing is a hit
+    // to be heard (the drums, whose engine already lets a live hit win over
+    // the loop's copy of it).
+    virtual bool quietAfterSpace() const { return true; }
     // The page's gesture guide: one "gesture\twhat it does" per line.
     virtual QString help() const = 0;
     // One line under the pad: what the fingers are doing right now.

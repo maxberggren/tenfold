@@ -166,6 +166,10 @@ public:
     // sixty times a second: what's sounding, envelopes, step positions…
     virtual void publish(float *data) { (void)data; }
     virtual int voices() const { return 0; }
+    // Space layering onto a loop: true if a layer's hit on the same sound as
+    // one of the loop's, within a thirty-second of it, is the hand playing
+    // along with the loop (a doubled hit, heard as a flam) and is left out.
+    virtual bool layersDropDoubles() const { return false; }
 };
 
 // A clip slot as the pages see it.

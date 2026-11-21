@@ -561,6 +561,42 @@ static bool mergeInto(Studio::PartState &p, Studio::Impl &s, int a, int b, bool 
                                           top + 1 + e.layer < kClipLayers ? e.c : otherId(e.c), -1e18,
                                           std::min(kClipLayers - 1, top + 1 + e.layer)});
     }
+    // Hits the hand played along with the loop come in again in the layer,
+    // a hair off the loop's own: on a part that says so, they are left out
+    // (with their Offs). Marked first, then removed; nothing allocates.
+    if (!chain && p.engine && p.engine->layersDropDoubles()) {
+        int top = 0;
+        for (const auto &e : before.events)
+            top = std::max(top, e.layer);
+        auto near = [&](double x, double y) { return std::fabs(floorMod(x - y + len / 2, len) - len / 2) < 0.125; };
+        const size_t n = std::min(dst.events.size(), size_t(kClipEvents));
+        uint8_t drop[kClipEvents] = {};
+        int ids[64];
+        int idCount = 0;
+        for (size_t i = 0; i < n; ++i) {
+            const auto &e = dst.events[i];
+            if (e.layer <= top || e.c.type == Command::Off || e.c.type == Command::Move || e.c.type == Command::Param)
+                continue;
+            for (size_t k = 0; k < n; ++k) {
+                const auto &f = dst.events[k];
+                if (f.layer <= top && f.c.type == e.c.type && f.c.i[0] == e.c.i[0] && near(f.pos, e.pos)) {
+                    drop[i] = 1;
+                    if (idCount < 64)
+                        ids[idCount++] = e.c.id;
+                    break;
+                }
+            }
+        }
+        for (size_t i = 0; i < n; ++i)
+            if (dst.events[i].layer > top && dst.events[i].c.type == Command::Off)
+                for (int k = 0; k < idCount; ++k)
+                    drop[i] |= dst.events[i].c.id == ids[k];
+        size_t w = 0;
+        for (size_t i = 0; i < dst.events.size(); ++i)
+            if (i >= n || !drop[i])
+                dst.events[w++] = dst.events[i];
+        dst.events.resize(w);
+    }
     sortClip(dst.events);
     if (restart)
         startClip(p, s, a, dst.anchor);
@@ -1134,7 +1170,10 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             // place in that run, counted round from the join.
             const double run = floorMod(pos0 - p.catchFrom, clip.length);
             auto since = [&](const PartState::Event &e) { return floorMod(e.pos - p.catchFrom, clip.length); };
-            if (!p.catchUpHeld) {
+            // Just passed (a quarter of a beat at most): everything it
+            // passed plays at once, a hit on the ONE included, rather than
+            // a whole loop later.
+            if (!p.catchUpHeld || run < 0.25) {
                 if (run > 0 && run < 0.25)
                     for (auto &e : clip.events)
                         if (since(e) < run)

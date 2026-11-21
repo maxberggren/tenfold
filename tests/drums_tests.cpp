@@ -157,6 +157,38 @@ double offGridMs(double t, double beats) {
 class DrumsTests : public QObject {
     Q_OBJECT
 private slots:
+    void kicksPlayedAlongArentLayeredTwice() {
+        // Four kicks looped; then the kick played along with the loop and a
+        // snare between, layered with Space: the layer brings the snare, and
+        // the kicks that only doubled the loop's (a flam) are left out.
+        const std::string base = "page 0.05 1\nkey 0.1 Ctrl+M\n"
+                                 "key 1.9355 Z\nkey 2.4194 Z\nkey 2.9032 Z\nkey 3.3871 Z\nkey 3.8952 Space\n";
+        const auto looped = testkit::play(base + "end 5.0\n");
+        const int alone = looped.view.parts[0].clips[0].events;
+        const auto take = testkit::play(base +
+                                        "key 5.8105 Z\nkey 6.0484 V\nkey 6.2943 Z\nkey 6.5323 V\n"
+                                        "key 6.7782 Z\nkey 7.0161 V\nkey 7.2621 Z\nkey 7.5000 V\n"
+                                        "key 7.7661 Space\nend 9.0\n");
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[0].playing, 0);
+        const int layered = take.view.parts[0].clips[0].events;
+        // The snares, as many events each as a kick has, and nothing more.
+        QCOMPARE(layered, alone * 2);
+    }
+
+    void spaceJustAfterTheOneKeepsItsKick() {
+        // Kicks on four beats, Space a twentieth of a beat after the next
+        // ONE: the loop's first kick plays at once, a hair late, instead of
+        // being skipped until the loop comes round.
+        const std::string script = "page 0.05 1\nkey 0.1 Ctrl+M\n"
+                                   "key 1.9355 Z\nkey 2.4194 Z\nkey 2.9032 Z\nkey 3.3871 Z\nkey 3.8952 Space\nend 5.0\n";
+        const auto take = testkit::play(script);
+        QVERIFY(take.error.empty());
+        const double spb = 60.0 / 124.0;
+        const double first = take.rms(8 * spb, 8.45 * spb), next = take.rms(9 * spb, 9.45 * spb);
+        QVERIFY2(first > next * 0.5, qPrintable(QStringLiteral("the ONE %1, the next beat %2").arg(first).arg(next)));
+    }
+
     void fingersPlayAndStayFinite() {
         const auto take = testkit::play("page 0 1\n"
                                         "tap 0.2 0.2 0.5\ntap 0.5 0.4 0.6\ndown 0.8 1 0.6 0.4\n"

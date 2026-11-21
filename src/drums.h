@@ -1325,6 +1325,10 @@ public:
         }
     }
 
+    // A hit played along with the loop while layering is a double, not a
+    // new part of the groove.
+    bool layersDropDoubles() const override { return true; }
+
     int voices() const override {
         int n = m_sub.active ? 1 : 0;
         for (auto &v : m_voices)

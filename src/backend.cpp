@@ -266,6 +266,10 @@ void Backend::giveBack() {
     emit changed();
 }
 
+bool Backend::closeMenu() {
+    return m_session->closeMenu();
+}
+
 void Backend::togglePlay() {
     if (m_touch->status() == TouchSource::Grabbed || m_wantPlay)
         giveBack();

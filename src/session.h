@@ -80,6 +80,11 @@ public:
     static QRectF padRect(QSizeF item, float aspect);
     static constexpr double kBandHeight = 96; // under the pad: two rows of controls (console::bandRow)
     bool clickAt(QPointF at);
+    // A right click (the page's menu, if it has one), a left click while
+    // that menu is open, and Esc closing it. True if the page used it.
+    bool rightClickAt(QPointF at);
+    bool menuClickAt(QPointF at);
+    bool closeMenu();
     void idle(double t) override;
 
     // UI thread. Returns true when the key was used.

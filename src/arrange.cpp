@@ -221,6 +221,14 @@ public:
                 ctx.clearPart(pc.part, pc.slot);
                 pc = PendingClear{};
             }
+        // A mouse button (or a finger) held perfectly still sends no frames,
+        // so its hold is timed here as well as in frame().
+        for (auto &fg : m_fingers)
+            if (fg.id >= 0 && (fg.kind == Finger::Activator || fg.kind == Finger::Mouse) && !fg.held && !fg.moved &&
+                t - fg.t0 >= 0.4) {
+                fg.held = true;
+                hold(fg.target, ctx);
+            }
         springs(dt > 0 && dt < 0.1 ? dt : 0.0);
         songMoves(beat, ctx);
         earlyPhase(beat, ctx);
@@ -320,21 +328,26 @@ public:
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const bool shift = k.modifiers & Qt::ShiftModifier;
+        if (k.down)
+            m_menu.open = false; // a key closes the menu (and still does its own thing)
         // The edit keys act on what is picked: clips, or a song section.
+        // Shift+← → move it too, for keyboards where [ ] need AltGr.
         prunePick(ctx.studio());
         const bool picked = clipsPicked() || m_selSection >= 0;
-        if (picked && (k.key == Qt::Key_D || k.key == Qt::Key_M || k.key == Qt::Key_BracketLeft || k.key == Qt::Key_BracketRight ||
-                       k.key == Qt::Key_Delete)) {
-            if (!k.down || k.repeat)
-                return true;
-            const bool section = m_selSection >= 0;
-            switch (k.key) {
-            case Qt::Key_D: section ? duplicateSection(ctx) : duplicateClips(ctx); break;
-            case Qt::Key_M: section ? joinSections(ctx) : mergePicked(shift, ctx); break;
-            case Qt::Key_BracketLeft: section ? moveSection(-1, ctx) : movePicked(-1, ctx); break;
-            case Qt::Key_BracketRight: section ? moveSection(1, ctx) : movePicked(1, ctx); break;
-            default: section ? removeSection(ctx) : deletePicked(ctx); break;
-            }
+        int act = ActNone;
+        switch (k.key) {
+        case Qt::Key_D: act = ActDouble; break;
+        case Qt::Key_M: act = shift ? ActChain : ActLayer; break;
+        case Qt::Key_BracketLeft: act = ActLeft; break;
+        case Qt::Key_BracketRight: act = ActRight; break;
+        case Qt::Key_Left: act = shift ? ActLeft : ActNone; break;
+        case Qt::Key_Right: act = shift ? ActRight : ActNone; break;
+        case Qt::Key_Delete: act = ActClear; break;
+        default: break;
+        }
+        if (picked && act != ActNone) {
+            if (k.down && !k.repeat)
+                this->act(act, QStringLiteral("key"), ctx);
             return true;
         }
         // Solos are held: A S D F G H J, while the key is down.
@@ -395,7 +408,7 @@ public:
         case Qt::Key_M:
         case Qt::Key_BracketLeft:
         case Qt::Key_BracketRight:
-            ctx.notice(QStringLiteral("Pick something first: hold a clip or a song section with a second finger"));
+            ctx.notice(QStringLiteral("Pick something first: hold a clip or a song section (or right-click it)"));
             return true;
         case Qt::Key_Left: jumpSection(-1, ctx); return true;
         case Qt::Key_Right: jumpSection(1, ctx); return true;
@@ -460,12 +473,14 @@ public:
             "a second finger there\tup washes it in reverb, sideways pans it; a click latches the ride\n"
             "tension fader, right\tup builds (filter, wash, an echo roll), down sinks the mix; let go high and it drops on the "
             "next ONE\n"
+            "right-click a clip or a section\tpicks it and opens a menu of what can be done to it; the same buttons show "
+            "under the song while something is picked\n"
             "picked clips: D · M · Shift+M\tdouble into a free slot · layer the others into the first · chain them after it "
             "(Ctrl+Z takes each back)\n"
-            "picked clips: [ ] · Delete\tmove one to the free slot left or right · clear them (both ask twice: a cleared slot "
-            "can't come back)\n"
-            "picked section: Delete · D · M · [ ]\tremove it · double it · join it with the next · swap it with a neighbour "
-            "(Shift+O takes each back)\n"
+            "picked clips: Shift+← → (or [ ]) · Delete\tmove one to the free slot left or right · clear them (Ctrl+Z "
+            "brings them back)\n"
+            "picked section: Delete · D · M · Shift+← →\tremove it · double it · join it with the next · swap it with a "
+            "neighbour (Shift+O takes each back)\n"
             "F1–F8\tlaunch a scene; Shift stores what plays into it\n"
             "Q W E R T Y U\tmute a part now; with Shift, on the next bar\n"
             "A S D F G H J\tsolo while held; with Shift, latched (D doubles while something is picked)\n"
@@ -1245,7 +1260,7 @@ private:
         case Target::Section:
             m_selSection = t.a;
             m_selSlots.clear();
-            ctx.notice(QStringLiteral("%1 selected: Delete removes it, D doubles it, M joins the next, [ and ] move it")
+            ctx.notice(QStringLiteral("%1 picked: Delete removes it, D doubles it, M joins the next, Shift+← → move it")
                            .arg(sectionName(t.a)));
             break;
         case Target::Strip:
@@ -1287,20 +1302,157 @@ private:
     // more clips of the same part join the pick. D doubles them into free
     // slots, M layers the others into the first, Shift+M chains them after
     // it, [ and ] move one to the free slot on its left or right, Delete
-    // clears them. Copies and merges are the studio's, taken back by Ctrl+Z;
-    // clearing isn't, so it (and a move, which clears the old slot) asks for
-    // a second press.
+    // clears them. Every one is the studio's, taken back by Ctrl+Z (a move is
+    // a copy and a clear: two steps). The keys, the chips under the song band
+    // and the right-click menu all come through act().
 
-    bool confirm(const QString &key, const QString &ask, ControlContext &ctx) {
-        if (m_confirmKey == key && m_lastT - m_confirmAt < 3.0) {
-            m_confirmKey.clear();
+public:
+    enum Act { ActNone = -1, ActDouble, ActLayer, ActChain, ActLeft, ActRight, ActClear, ActUnpick };
+
+private:
+    // What can be done to the pick, in the order the chips and the menu
+    // show it, each with its label and its key.
+    struct ActItem {
+        int act;
+        QString label, key;
+    };
+    std::vector<ActItem> actions() const {
+        if (m_selSection >= 0)
+            return {{ActDouble, QStringLiteral("DOUBLE"), QStringLiteral("D")},
+                    {ActLayer, QStringLiteral("JOIN NEXT"), QStringLiteral("M")},
+                    {ActLeft, QStringLiteral("◀ EARLIER"), QStringLiteral("⇧←")},
+                    {ActRight, QStringLiteral("LATER ▶"), QStringLiteral("⇧→")},
+                    {ActClear, QStringLiteral("REMOVE"), QStringLiteral("DEL")},
+                    {ActUnpick, QStringLiteral("UNPICK"), QString()}};
+        if (!clipsPicked())
+            return {};
+        if (m_selSlots.size() > 1)
+            return {{ActLayer, QStringLiteral("LAYER INTO %1").arg(m_selSlots.front() + 1), QStringLiteral("M")},
+                    {ActChain, QStringLiteral("CHAIN AFTER %1").arg(m_selSlots.front() + 1), QStringLiteral("⇧M")},
+                    {ActDouble, QStringLiteral("DOUBLE"), QStringLiteral("D")},
+                    {ActClear, QStringLiteral("CLEAR"), QStringLiteral("DEL")},
+                    {ActUnpick, QStringLiteral("UNPICK"), QString()}};
+        return {{ActDouble, QStringLiteral("DOUBLE"), QStringLiteral("D")},
+                {ActLeft, QStringLiteral("◀ MOVE"), QStringLiteral("⇧←")},
+                {ActRight, QStringLiteral("MOVE ▶"), QStringLiteral("⇧→")},
+                {ActClear, QStringLiteral("CLEAR"), QStringLiteral("DEL")},
+                {ActUnpick, QStringLiteral("UNPICK"), QString()}};
+    }
+    static QString actName(int a) {
+        static const char *names[] = {"double", "layer", "chain", "left", "right", "clear", "unpick"};
+        return a >= 0 && a <= ActUnpick ? QString::fromLatin1(names[a]) : QStringLiteral("none");
+    }
+
+public:
+    void act(int a, const QString &from, ControlContext &ctx) {
+        prunePick(ctx.studio());
+        const bool section = m_selSection >= 0;
+        ctx.log(QStringLiteral("SONG EDIT %1 (%2) on %3").arg(actName(a), from,
+                                                                section        ? sectionName(m_selSection)
+                                                                : clipsPicked() ? pickText()
+                                                                                : QStringLiteral("nothing picked")));
+        if (!section && !clipsPicked()) {
+            ctx.notice(QStringLiteral("Pick something first: hold a clip or a song section (or right-click it)"));
+            return;
+        }
+        switch (a) {
+        case ActDouble: section ? duplicateSection(ctx) : duplicateClips(ctx); break;
+        case ActLayer: section ? joinSections(ctx) : mergePicked(false, ctx); break;
+        case ActChain: section ? joinSections(ctx) : mergePicked(true, ctx); break;
+        case ActLeft: section ? moveSection(-1, ctx) : movePicked(-1, ctx); break;
+        case ActRight: section ? moveSection(1, ctx) : movePicked(1, ctx); break;
+        case ActClear: section ? removeSection(ctx) : deletePicked(ctx); break;
+        case ActUnpick:
+            m_selSlots.clear();
+            m_selSection = -1;
+            ctx.notice(QStringLiteral("Nothing picked"));
+            break;
+        default: break;
+        }
+    }
+
+private:
+    // --- the right-click menu ---------------------------------------------------
+    //
+    // A right click on a clip picks it (one of the picked part's other clips
+    // joins the pick, so two can be layered or chained) and on a song
+    // section picks that; a menu of what can be done to the pick opens at
+    // the mouse. A click on an item does it; a click anywhere else, a key or
+    // Esc closes it.
+
+    struct Menu {
+        bool open = false;
+        QPointF at;    // where it opened, in item pixels
+        QRectF rect;   // where it was last drawn
+        console::Hotspots spots;
+    } m_menu;
+
+    // Item pixels to pad units, as the page was last drawn.
+    QPointF padPoint(QPointF at) const {
+        if (m_padPx.isEmpty())
+            return {-1, -1};
+        return {(at.x() - m_padPx.left()) / m_padPx.width(), 1.0 - (at.y() - m_padPx.top()) / m_padPx.height()};
+    }
+
+public:
+    bool menu(QPointF at, ControlContext &ctx) override {
+        m_menu.open = false;
+        prunePick(ctx.studio());
+        const QPointF q = padPoint(at);
+        const Target t = targetAt(float(q.x()), float(q.y()));
+        if (t.kind == Target::Clip) {
+            if (ctx.studio().parts[t.a].clips[t.b].state == ClipView::Empty) {
+                ctx.notice(QStringLiteral("%1 is empty").arg(clipName(t.a, t.b)));
+                return true;
+            }
+            const bool in = t.a == m_selPart && std::find(m_selSlots.begin(), m_selSlots.end(), t.b) != m_selSlots.end();
+            if (!in)
+                selectClip(t.a, t.b, ctx);
+        } else if (t.kind == Target::Section) {
+            m_selSection = t.a;
+            m_selSlots.clear();
+        } else if (!clipsPicked() && m_selSection < 0) {
+            ctx.notice(QStringLiteral("Right-click a clip or a song section to edit it"));
             return true;
         }
-        m_confirmKey = key;
-        m_confirmAt = m_lastT;
-        ctx.notice(ask);
-        return false;
+        ctx.log(QStringLiteral("SONG MENU at %1,%2 on %3")
+                    .arg(q.x(), 0, 'f', 3)
+                    .arg(q.y(), 0, 'f', 3)
+                    .arg(m_selSection >= 0 ? sectionName(m_selSection) : pickText()));
+        m_menu.open = true;
+        m_menu.at = at;
+        m_menu.spots.clear();
+        m_menu.rect = {};
+        return true;
     }
+    bool menuClick(QPointF at, ControlContext &ctx) override {
+        if (!m_menu.open)
+            return false;
+        m_menu.open = false;
+        const int a = m_menu.spots.at(at);
+        if (a >= 0)
+            act(a, QStringLiteral("menu"), ctx);
+        return true; // a click outside the menu only closes it
+    }
+    bool closeMenu() override {
+        const bool was = m_menu.open;
+        m_menu.open = false;
+        return was;
+    }
+    // The chips under the song band.
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int a = m_spots.at(at);
+        if (a < 0)
+            return false;
+        act(a, QStringLiteral("chip"), ctx);
+        return true;
+    }
+
+private:
+    console::Hotspots m_spots; // the chips paint() drew
+    QRectF m_padPx;            // the pad as it was last drawn
+    void paintActions(QPainter &p, const PaintContext &pc);
+    void paintMenu(QPainter &p, const PaintContext &pc);
     QString clipName(int p, int slot) const { return QStringLiteral("%1 %2").arg(m_names.value(p)).arg(slot + 1); }
     QString pickText() const {
         QStringList s;
@@ -1335,8 +1487,8 @@ private:
         if (m_selSlots.empty())
             ctx.notice(QStringLiteral("Nothing picked"));
         else if (m_selSlots.size() == 1)
-            ctx.notice(QStringLiteral("%1 picked: D doubles it, [ ] move it, Delete clears it; hold another of its clips to "
-                                      "merge them")
+            ctx.notice(QStringLiteral("%1 picked: D doubles it, Shift+← → move it, Delete clears it; pick another of its "
+                                      "clips to merge them")
                            .arg(pickText()));
         else
             ctx.notice(QStringLiteral("%1 picked: M layers them into %2, Shift+M chains them")
@@ -1399,16 +1551,13 @@ private:
 
     void deletePicked(ControlContext &ctx) {
         const QString what = pickText();
-        if (!confirm(QStringLiteral("delete ") + what,
-                     QStringLiteral("Delete again clears %1 (Ctrl+Z can't bring a cleared clip back)").arg(what), ctx))
-            return;
         for (int slot : m_selSlots) {
             ctx.clearPart(m_selPart, slot);
             if (m_lastSlot[m_selPart] == slot)
                 m_lastSlot[m_selPart] = -1;
         }
         m_selSlots.clear();
-        ctx.notice(QStringLiteral("Cleared %1").arg(what));
+        ctx.notice(QStringLiteral("Cleared %1 (Ctrl+Z brings it back)").arg(what));
     }
 
     // Moves a clip to the empty slot on its left or right: a copy (which
@@ -1428,12 +1577,6 @@ private:
                            .arg(dir < 0 ? QStringLiteral("left") : QStringLiteral("right"), clipName(p, from)));
             return;
         }
-        if (!confirm(QStringLiteral("move %1 %2 %3").arg(p).arg(from).arg(to),
-                     QStringLiteral("Again moves %1 to slot %2 (the old slot is cleared: Ctrl+Z can't bring it back)")
-                         .arg(clipName(p, from))
-                         .arg(to + 1),
-                     ctx))
-            return;
         ctx.copyClip(p, from, to);
         const bool plays = predicted(v, p, nextBar()) == from;
         if (plays) {
@@ -1445,7 +1588,7 @@ private:
         if (m_lastSlot[p] == from)
             m_lastSlot[p] = to;
         m_selSlots = {to};
-        ctx.notice(QStringLiteral("Moved %1 to slot %2").arg(clipName(p, from)).arg(to + 1));
+        ctx.notice(QStringLiteral("Moved %1 to slot %2 (Ctrl+Z twice takes it back)").arg(clipName(p, from)).arg(to + 1));
     }
 
     // --- editing: the song --------------------------------------------------------
@@ -2862,8 +3005,6 @@ private:
     bool m_hover = false;
     int m_selPart = -1, m_selSection = -1;
     std::vector<int> m_selSlots; // in the order they were picked: the first is what the others go into
-    QString m_confirmKey;
-    double m_confirmAt = -1e9;
     struct PendingClear {
         int part = -1, slot = -1;
         double beat = 0;
@@ -2902,6 +3043,7 @@ QColor ArrangeControl::labelColor(int l, QColor gold) const {
 void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
     const StudioView &v = *pc.studio;
     const int parts = std::clamp(v.partCount, 1, P);
+    m_padPx = pc.pad;
     c::pad(p, pc, QStringLiteral("Arrange"));
 
     // The build rises from the floor of the pad, breathing on the beat.
@@ -2958,6 +3100,8 @@ void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
     paintHeader(p, pc);
     c::beats(p, pc, pc.color);
     paintSong(p, pc);
+    paintActions(p, pc);
+    paintMenu(p, pc);
 }
 
 QRectF ArrangeControl::targetRect(const Target &t, const PaintContext &pc) const {
@@ -3235,11 +3379,12 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
             p.drawRect(ghost);
             c::text(p, ghost, QStringLiteral("D →"), c::alpha(Qt::white, 0.6f), 10, true, Qt::AlignCenter);
         }
-        const QString keys = m_selSlots.size() > 1
-                                 ? QStringLiteral("M LAYER INTO %1   ·   SHIFT+M CHAIN   ·   D DOUBLE   ·   DEL CLEAR")
-                                       .arg(m_selSlots.front() + 1)
-                                 : QStringLiteral("D DOUBLE   ·   [ ] MOVE   ·   DEL CLEAR   ·   HOLD ANOTHER TO MERGE");
-        const QString line = QStringLiteral("PICKED %1   ·   ").arg(pickText().toUpper()) + keys + QStringLiteral("   ·   CTRL+Z UNDOES");
+        // The chips under the song say what can be done; this says how two
+        // clips come to be picked, which they can't show.
+        const QString line = m_selSlots.size() > 1
+                                 ? QStringLiteral("CTRL+Z TAKES BACK EACH EDIT")
+                                 : QStringLiteral("HOLD OR RIGHT-CLICK ANOTHER %1 CLIP TO LAYER OR CHAIN THEM   ·   CTRL+Z TAKES BACK EACH EDIT")
+                                       .arg(m_names.value(m_selPart).toUpper());
         const QFont f = c::font(10, true);
         const qreal w = console::textWidth(f, line) + 14;
         const QRectF r(pc.pad.center().x() - w / 2, pc.pad.bottom() - 9, w, 18);
@@ -3551,10 +3696,6 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
             p.setBrush(Qt::NoBrush);
             p.setPen(QPen(Qt::white, 2, Qt::DashLine));
             p.drawRect(r);
-            c::text(p, QRectF(band.left(), band.bottom() + 4, band.width(), 14),
-                    QStringLiteral("PICKED %1   ·   DEL REMOVE   ·   D DOUBLE   ·   M JOIN NEXT   ·   [ ] MOVE   ·   SHIFT+O UNDO")
-                        .arg(sectionName(m_selSection)),
-                    Qt::white, 10, true, Qt::AlignCenter);
         }
     } else {
         p.setBrush(Qt::NoBrush);
@@ -3573,6 +3714,80 @@ void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
         p.drawLine(QPointF(x, band.top() - 3), QPointF(x, band.bottom() + 3));
         if (m_recording)
             c::tag(p, QPointF(x + 4, band.top() - 4), QStringLiteral("REC"), c::red(), 9);
+    }
+}
+
+// What can be done to the pick, as a row of chips under the song band, each
+// with its key; with nothing picked, how to pick.
+void ArrangeControl::paintActions(QPainter &p, const PaintContext &pc) {
+    m_spots.clear();
+    const QRectF row = c::bandRow(pc, 1);
+    const auto items = actions();
+    if (items.empty()) {
+        if (m_anyClip && !m_menu.open)
+            c::text(p, row, QStringLiteral("HOLD OR RIGHT-CLICK A CLIP OR A SONG SECTION TO DOUBLE, MERGE, MOVE OR CLEAR IT"),
+                    c::alpha(pc.color, 0.4f), 10, true, Qt::AlignCenter);
+        return;
+    }
+    const QString what = QStringLiteral("PICKED ") + (m_selSection >= 0 ? sectionName(m_selSection) : pickText()).toUpper();
+    const qreal lw = row.width() * 0.24; // fixed, so the chips stay put as the pick changes
+    c::text(p, QRectF(row.left(), row.top(), lw, row.height()), what, Qt::white, 11, true);
+    const qreal gap = 4, x0 = row.left() + lw, w = (row.right() - x0 + gap) / qreal(items.size()) - gap;
+    for (size_t i = 0; i < items.size(); ++i) {
+        const ActItem &it = items[i];
+        const QRectF r(x0 + qreal(i) * (w + gap), row.top(), w, row.height());
+        c::chip(p, pc, r, it.key.isEmpty() ? it.label : it.label + QStringLiteral("  ") + it.key, false, &m_spots, it.act);
+    }
+}
+
+// The right-click menu: black glass framed in the page's colour, the pick
+// named at the top, one row per action with its key on the right.
+void ArrangeControl::paintMenu(QPainter &p, const PaintContext &pc) {
+    if (!m_menu.open)
+        return;
+    const auto items = actions();
+    if (items.empty()) {
+        m_menu.open = false;
+        return;
+    }
+    const QFont f = c::font(12, true), small = c::font(10, true);
+    const QString title = (m_selSection >= 0 ? sectionName(m_selSection) : pickText()).toUpper();
+    qreal w = c::textWidth(small, title) + 24;
+    for (const auto &it : items)
+        w = std::max(w, c::textWidth(f, it.label) + c::textWidth(f, it.key) + 52);
+    const qreal titleH = 24, rowH = 28;
+    const qreal h = titleH + rowH * qreal(items.size()) + 4;
+    // Beside the mouse, kept inside the page: flipped above it near the bottom.
+    const QRectF bounds = pc.pad.adjusted(-26, -10, 26, 92);
+    qreal x = std::clamp(m_menu.at.x() + 2, bounds.left(), bounds.right() - w);
+    qreal y = m_menu.at.y() + 2;
+    if (y + h > bounds.bottom())
+        y = m_menu.at.y() - h - 2;
+    y = std::max(y, bounds.top());
+    const QRectF r(x, y, w, h);
+    m_menu.rect = r;
+    p.fillRect(r.adjusted(3, 3, 3, 3), QColor(0, 0, 0, 140)); // a shadow
+    p.fillRect(r, QColor(10, 9, 8, 248));
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(pc.color, 1.5));
+    p.drawRect(r);
+    c::text(p, QRectF(x + 10, y + 2, w - 20, titleH - 2), title, c::alpha(pc.color, 0.65f), 10, true);
+    p.setPen(QPen(c::alpha(pc.color, 0.3f), 1));
+    p.drawLine(QPointF(x + 6, y + titleH), QPointF(x + w - 6, y + titleH));
+    m_menu.spots.clear();
+    for (size_t i = 0; i < items.size(); ++i) {
+        const ActItem &it = items[i];
+        const QRectF ir(x + 3, y + titleH + 2 + rowH * qreal(i), w - 6, rowH - 2);
+        const bool over = pc.mouseOver && ir.contains(pc.mouse);
+        const QColor col = it.act == ActClear ? c::red() : it.act == ActUnpick ? c::alpha(pc.color, 0.6f) : pc.color;
+        if (over)
+            p.fillRect(ir, col);
+        const QColor ink = over ? QColor::fromRgb(c::kInk) : col;
+        c::text(p, ir.adjusted(9, 0, -9, 0), it.label, ink, 12, true);
+        if (!it.key.isEmpty())
+            c::text(p, ir.adjusted(9, 0, -9, 0), it.key, over ? ink : c::alpha(pc.color, 0.45f), 11, true,
+                    Qt::AlignRight | Qt::AlignVCenter);
+        m_menu.spots.add(ir, it.act);
     }
 }
 
@@ -3673,9 +3888,9 @@ QString ArrangeControl::status() const {
     }
     if (clipsPicked())
         parts << QStringLiteral("picked %1: %2").arg(pickText(), m_selSlots.size() > 1 ? QStringLiteral("M layers, Shift+M chains")
-                                                                                       : QStringLiteral("D doubles, [ ] move, Delete clears"));
+                                                                                       : QStringLiteral("D doubles, Shift+← → move, Delete clears"));
     else if (m_selSection >= 0)
-        parts << QStringLiteral("picked %1: Delete removes, D doubles, M joins, [ ] move").arg(sectionName(m_selSection).toLower());
+        parts << QStringLiteral("picked %1: Delete removes, D doubles, M joins, Shift+← → move").arg(sectionName(m_selSection).toLower());
     if (m_tensionHeld)
         parts << (m_tensionLive >= 0.6f ? QStringLiteral("tension %1: let go to drop").arg(int(m_tensionLive * 100))
                                         : QStringLiteral("tension %1").arg(int(m_tensionLive * 100)));

@@ -56,9 +56,10 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Esc"; context: Qt.ApplicationShortcut
-        // Closes what is open first: the guide, then the tutorial; then it
-        // gives the trackpad back.
-        onActivated: win.helpVisible ? win.helpVisible = false
+        // Closes what is open first: a right-click menu, the guide, then
+        // the tutorial; then it gives the trackpad back.
+        onActivated: backend.closeMenu() ? undefined
+                   : win.helpVisible ? win.helpVisible = false
                    : backend.tutorialActive ? backend.toggleTutorial() : backend.giveBack()
     }
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }

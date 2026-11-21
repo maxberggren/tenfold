@@ -633,20 +633,62 @@ private slots:
             QCOMPARE(layered.view.parts[p].clips[1].state, uint8_t(ClipView::Empty));
     }
 
-    void deletingAClipAsksTwice() {
+    void deleteClearsAClipAndCtrlZBringsItBack() {
         const auto once = testkit::play(loops(mouseHold(15.2, cellX(0), laneY(2)) + "key 16.0 Delete\nend 16.5\n"));
-        QVERIFY(once.view.parts[2].clips[0].state != ClipView::Empty);
-        const auto twice =
-            testkit::play(loops(mouseHold(15.2, cellX(0), laneY(2)) + "key 16.0 Delete\nkey 16.3 Delete\nend 16.5\n"));
-        QVERIFY(twice.view.parts[2].clips[0].state == ClipView::Empty);
-        QVERIFY(twice.view.parts[1].clips[0].state != ClipView::Empty);
+        QVERIFY(once.view.parts[2].clips[0].state == ClipView::Empty);
+        QVERIFY(once.view.parts[1].clips[0].state != ClipView::Empty);
+        const auto back =
+            testkit::play(loops(mouseHold(15.2, cellX(0), laneY(2)) + "key 16.0 Delete\nkey 16.3 Ctrl+Z\nend 16.5\n"));
+        QVERIFY(back.view.parts[2].clips[0].state != ClipView::Empty);
+    }
+
+    void theChipsUnderTheSongEditThePick() {
+        // Picked, the bass's actions show as chips under the song band:
+        // DOUBLE first, after the fixed name column (a quarter less 1%).
+        const int n = 5; // DOUBLE, MOVE left, MOVE right, CLEAR, UNPICK
+        const double lw = 0.24, w = (1 - lw + 4.0 / 900) / n - 4.0 / 900;
+        const std::string x = num(lw + w * 0.5);
+        const auto take = testkit::play(loops(mouseHold(15.2, cellX(0), laneY(1)) + "button 16.0 " + x + " -0.119\nend 16.5\n"));
+        QVERIFY(take.error.empty());
+        const auto &bass = take.view.parts[1];
+        QVERIFY(bass.clips[1].state != ClipView::Empty);
+        QCOMPARE(bass.clips[1].events, bass.clips[0].events);
+        // Nothing picked: the row has no chips, and a click there does nothing.
+        const auto none = testkit::play(loops("button 16.0 " + x + " -0.119\nend 16.5\n"));
+        QVERIFY(none.view.parts[1].clips[1].state == ClipView::Empty);
+    }
+
+    void aRightClickOpensTheMenuOfThePick() {
+        // A right click on the bass picks it and opens the menu at the mouse;
+        // its first item (DOUBLE) doubles it. Items start 28 px below the
+        // click and are 28 px high, on a 562.5 px high pad.
+        const double dy = 41.0 / 562.5, dx = 40.0 / 900;
+        const auto item = [&](double t, int slot, int row) {
+            return "button " + num(t) + " " + num(cellX(slot) + dx) + " " + num(laneY(1) - dy - row * 28.0 / 562.5) + "\n";
+        };
+        const auto rclick = [&](double t, int slot) {
+            return "rbutton " + num(t) + " " + num(cellX(slot)) + " " + num(laneY(1)) + "\n";
+        };
+        const auto doubled = testkit::play(loops(rclick(15.2, 0) + item(15.4, 0, 0) + "end 16\n"));
+        QVERIFY(doubled.error.empty());
+        QVERIFY(doubled.view.parts[1].clips[1].state != ClipView::Empty);
+        // A click beside the menu only closes it.
+        const auto closed = testkit::play(loops(rclick(15.2, 0) + "button 15.4 0.95 0.95\n" + item(15.6, 0, 0) + "end 16\n"));
+        QVERIFY(closed.view.parts[1].clips[1].state == ClipView::Empty);
+        // Doubled, then a right click on the copy adds it to the pick: the
+        // menu's first item now layers it into slot 1.
+        const auto layered =
+            testkit::play(loops(rclick(15.2, 0) + item(15.4, 0, 0) + rclick(15.8, 1) + item(16.0, 1, 0) + "end 16.5\n"));
+        const auto &l = layered.view.parts[1];
+        QCOMPARE(l.clips[0].lengthBeats, l.clips[1].lengthBeats);
+        QCOMPARE(l.clips[0].events, 2 * l.clips[1].events);
     }
 
     void aMovedClipCarriesOnInTime() {
-        // Pick the bass and press ] twice: it moves to slot 2. Playing, it
+        // Pick the bass and press Shift+→: it moves to slot 2. Playing, it
         // carries on from there at the next bar, and slot 1 is cleared then.
         double anchorBefore = -1, anchorAfter = -1;
-        const auto take = watch(loops(mouseHold(15.2, cellX(0), laneY(1)) + "key 16.0 ]\nkey 16.2 ]\nend 19\n"),
+        const auto take = watch(loops(mouseHold(15.2, cellX(0), laneY(1)) + "key 16.0 Shift+Right\nend 19\n"),
                                 [&](double t, Session &s) {
                                     const PartView &b = s.view().parts[1];
                                     const auto anchor = [&](int slot) {

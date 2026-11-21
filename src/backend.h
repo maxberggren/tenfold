@@ -147,6 +147,7 @@ public:
 
     Q_INVOKABLE void play();     // take the trackpad
     Q_INVOKABLE void giveBack(); // let go of it, sound keeps going
+    Q_INVOKABLE bool closeMenu(); // a page's right-click menu, if one is open
     Q_INVOKABLE void togglePlay();
     Q_INVOKABLE void windowActive(bool active);
     Q_INVOKABLE void toggleRecording();

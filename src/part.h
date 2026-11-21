@@ -308,6 +308,8 @@ public:
     virtual float aspect() const = 0;
     // A short message the window shows for a moment.
     virtual void notice(const QString &text) = 0;
+    // A line in the debug log (~/.cache/tenfold/debug.log), when it is on.
+    virtual void log(const QString &line) { (void)line; }
 };
 
 struct PaintContext {
@@ -359,6 +361,14 @@ public:
     // Every setting a key reaches should have such a control or a place
     // on the pad, so the mouse alone can play the page. True if it hit one.
     virtual bool click(QPointF at, ControlContext &ctx) { (void)at, (void)ctx; return false; }
+    // A right click anywhere on the page, in item pixels: a page may open a
+    // menu of its own there (drawn by paint()). True if it took the click.
+    virtual bool menu(QPointF at, ControlContext &ctx) { (void)at, (void)ctx; return false; }
+    // A left click while that menu is open: on an item it does it, anywhere
+    // else it closes the menu. True if a menu was open (the click is used).
+    virtual bool menuClick(QPointF at, ControlContext &ctx) { (void)at, (void)ctx; return false; }
+    // Esc: closes the menu. True if one was open.
+    virtual bool closeMenu() { return false; }
     // The page's gesture guide: one "gesture\twhat it does" per line.
     virtual QString help() const = 0;
     // One line under the pad: what the fingers are doing right now.

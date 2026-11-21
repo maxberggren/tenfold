@@ -8,7 +8,7 @@ using namespace tf;
 
 Surface::Surface(QQuickItem *parent) : QQuickPaintedItem(parent) {
     setAntialiasing(true);
-    setAcceptedMouseButtons(Qt::LeftButton);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton);
     setAcceptHoverEvents(true);
     setRenderTarget(QQuickPaintedItem::FramebufferObject);
 }
@@ -47,6 +47,20 @@ void Surface::sendPointer(QPointF pos, bool down) {
 }
 
 void Surface::mousePressEvent(QMouseEvent *e) {
+    if (e->button() == Qt::RightButton) {
+        // The page's own menu, if it has one, wherever the click is.
+        if (m_backend && !m_mouseHeld && m_backend->session()->rightClickAt(e->position())) {
+            update();
+            return;
+        }
+        e->ignore();
+        return;
+    }
+    // A menu that is open takes the click: an item, or closing it.
+    if (m_backend && m_backend->session()->menuClickAt(e->position())) {
+        update();
+        return;
+    }
     const QRectF pad = padRect();
     if (!pad.contains(e->position())) {
         // Around the pad: a control the page drew there, if any.
@@ -67,7 +81,7 @@ void Surface::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void Surface::mouseReleaseEvent(QMouseEvent *e) {
-    if (!m_mouseHeld)
+    if (e->button() != Qt::LeftButton || !m_mouseHeld)
         return;
     m_mouseHeld = false;
     sendPointer(e->position(), false);

@@ -51,9 +51,16 @@ you played a pattern or pressed Space in its flow; after a wait, the tempo
 stays.
 
 **Layers.** Over a page's own playing loop, Space puts what you just played on
-top of it, as one loop. Shift+Space makes a new loop in its place instead. On
-Arrange, pick two loops of a part and press M to layer
-them, Shift+M to chain them.
+top of it, as one loop. Shift+Space makes a new loop in its place instead.
+
+**Editing loops on Arrange.** Hold a clip (a second finger, or the mouse
+button) or right-click it to pick it; right-click opens a menu of what can be
+done to it, and the same actions show as buttons under the song while
+something is picked. D doubles a loop into a free slot, Shift+← → (or [ ])
+move it, Delete clears it. Pick a second loop of the same part (hold or
+right-click it too) and M layers it into the first, Shift+M chains it after.
+Ctrl+Z takes back each edit. A song section is picked the same way: D doubles
+it, M joins it with the next, Shift+← → move it, Delete removes it.
 
 **The same keys on every page.** Letters are each page's own (pads, notes,
 chords, scenes); the rest means the same everywhere, and every one of them

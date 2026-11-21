@@ -162,11 +162,13 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                 else if (mode != "move")
                     return fail("mouse is down, up or move");
                 events.push_back(e);
-            } else if (word == "button") {
+            } else if (word == "button" || word == "rbutton") {
                 // A mouse click on a control the page draws around the pad,
                 // at pad coordinates (y below 0 is the band under it), on a
-                // window like the real one.
+                // window like the real one; an open menu takes it first.
+                // rbutton is the right button: the page's menu.
                 e.kind = Event::Button;
+                e.id = word == "rbutton";
                 if (!(ls >> e.t >> e.x >> e.y))
                     return fail("expected T X Y");
                 events.push_back(e);
@@ -330,7 +332,10 @@ void ScriptPlayer::tick(double t, Session &session) {
                 session.paint(painter, pad, e.t);
             }
             const QPointF at(pad.left() + double(e.x) * pad.width(), pad.bottom() - double(e.y) * pad.height());
-            session.clickAt(at);
+            if (e.id == 1)
+                session.rightClickAt(at);
+            else if (!session.menuClickAt(at))
+                session.clickAt(at);
             break;
         }
         case Event::Page:

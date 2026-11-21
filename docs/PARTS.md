@@ -144,7 +144,10 @@ about 60 times a second and the page reads as `pc.view->data`.
    the top of paint(), and answer `PartControl::click(at, ctx)` from it;
    `console::clips(…, &spots)` and `console::clickClip` make the clip slots
    clickable. A chip shows its key (`SWING +  ]`). Scripts click with
-   `button T X Y` (pad coordinates, y below 0 is the band). Drums is the
+   `button T X Y` (pad coordinates, y below 0 is the band) and right-click
+   with `rbutton T X Y`. Drums is the example. A page may also open a menu
+   of its own on a right click (`PartControl::menu`, `menuClick`,
+   `closeMenu`, drawn by paint()); Arrange's clip and section menu is the
    example.
 
 5. **Clips stay lean:** send `Move`/`Param` only on real change (more than about

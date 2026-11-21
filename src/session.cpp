@@ -153,6 +153,7 @@ public:
         m_s->m_view.brightness = brightness;
     }
     float aspect() const override { return m_s->m_aspect; }
+    void log(const QString &line) override { m_s->dlog("%s", qPrintable(line)); }
     void notice(const QString &text) override {
         m_s->m_notice = text;
         ++m_s->m_noticeSeq;
@@ -429,6 +430,25 @@ void Session::mouseAt(QPointF at, bool over) {
     std::lock_guard lock(m_lock);
     m_mousePx = at;
     m_mouseOver = over;
+}
+
+bool Session::rightClickAt(QPointF at) {
+    std::lock_guard lock(m_lock);
+    m_mousePx = at;
+    m_mouseOver = true;
+    Page &p = *m_pages[size_t(m_page)];
+    return p.spec.control->menu(at, *p.ctx);
+}
+
+bool Session::menuClickAt(QPointF at) {
+    std::lock_guard lock(m_lock);
+    Page &p = *m_pages[size_t(m_page)];
+    return p.spec.control->menuClick(at, *p.ctx);
+}
+
+bool Session::closeMenu() {
+    std::lock_guard lock(m_lock);
+    return m_pages[size_t(m_page)]->spec.control->closeMenu();
 }
 
 bool Session::clickAt(QPointF at) {

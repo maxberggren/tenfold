@@ -416,8 +416,15 @@ private:
             strike(*v, n.vel, true);
             return;
         }
-        if (mine)
-            v->owner = -1; // the old note rings out on its own
+        if (mine) {
+            // The old note rings out on its own. It may still be held: a
+            // replayed clip's note coming round under the same id replaces
+            // one whose Off never came, and left unreleased it would sing on,
+            // owned by nobody, after every loop pass and past the clip's stop.
+            if (!v->releasing)
+                release(*v);
+            v->owner = -1;
+        }
         const int vi = allocate();
         line.voice = vi;
         start(m_voices[size_t(vi)], li, snd, n, ctx);

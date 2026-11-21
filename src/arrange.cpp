@@ -150,6 +150,9 @@ struct Move {
     float auxValue = -1;     // sink: its depth when it turned back; drop: the echo time to hold through the ONE
     int param = 0;
     bool song = false; // replayed from the song: it launches nothing, the song's bars do
+    // build: the FX page's loop that leads into its drop (its own drop on its
+    // last bar), how many bars it is, and what the FX part played before
+    int fxClip = -1, fxBars = 0, fxBefore = -1;
     double endFor[P];  // break: when each muted part comes back
     Move() { std::fill(std::begin(endFor), std::end(endFor), 1e18); }
 };
@@ -1920,6 +1923,21 @@ private:
             ctx.notice(QStringLiteral("DROP on the ONE"));
             return;
         }
+        // A drop is everything coming back: with everything already in (no
+        // breakdown, sink or echo-out, nothing muted, every part on its
+        // loop), there is nothing for it to bring, only a hiccup.
+        if (!active(MBreak) && !active(MSink) && !active(MEchoOut)) {
+            const StudioView &v = ctx.studio();
+            bool comesBack = false;
+            for (int p = 0; p < m_parts; ++p) {
+                const int s = recentSlot(v, p, nextBar());
+                comesBack |= s >= 0 && (predicted(v, p, nextBar()) != s || v.parts[p].channel.value[Mute] > 0.5f);
+            }
+            if (!comesBack) {
+                ctx.notice(QStringLiteral("Everything is in already: B builds up to a drop, N breaks it down first"));
+                return;
+            }
+        }
         if (nb - m_beat >= 0.75)
             addGap(nb, false);
         Move d;
@@ -1992,6 +2010,8 @@ private:
         b.gap = kGap;
         b.param = bars;
         b.song = song;
+        if (!song)
+            pickFxLead(b, ctx.studio());
         // Out of a breakdown: the arp comes back first, the drums half way
         // (as the echo starts to roll), the rest with the drop.
         for (auto &m : m_moves)
@@ -2012,6 +2032,39 @@ private:
         d.auxValue = kEcho16;
         m_moves.push_back(d); // the build records itself; its drop comes with it
         addMove(b, ctx);
+    }
+
+    // A build the player makes brings the FX page in, as the written track
+    // does: its loops are builds with their drop on their last bar, so the
+    // strongest that fits is launched that many bars ahead of the drop and
+    // plays once, landing its drop on the ONE; after it, the FX part goes
+    // back to what it played.
+    void pickFxLead(Move &b, const StudioView &v) const {
+        const int fx = role(RFx);
+        if (fx < 0)
+            return;
+        const int bars = b.param;
+        int calm = -1, strong = -1;
+        rankClips(v, fx, calm, strong);
+        auto lenOf = [&](int s) {
+            return s < 0 ? 0 : std::max(1, int(std::lround(v.parts[fx].clips[s].lengthBeats / kBeatsPerBar)));
+        };
+        int pick = -1;
+        for (int s : {strong, calm})
+            if (s >= 0 && lenOf(s) <= bars + 1) {
+                pick = s;
+                break;
+            }
+        if (pick < 0)
+            for (int s = 0; s < kClipSlots; ++s)
+                if (v.parts[fx].clips[s].state != ClipView::Empty && lenOf(s) <= bars + 1 &&
+                    (pick < 0 || lenOf(s) > lenOf(pick)))
+                    pick = s;
+        if (pick < 0)
+            return;
+        b.fxClip = pick;
+        b.fxBars = lenOf(pick);
+        b.fxBefore = predicted(v, fx, int(std::lround(b.b0 / kBeatsPerBar)));
     }
 
     // Whether anything will be playing once the coming bar line has passed.
@@ -2145,7 +2198,9 @@ private:
         m_moves.erase(std::remove_if(m_moves.begin(), m_moves.end(),
                                      [&](const Move &m) {
                                          const double tail = m.kind == MDrop ? 2.0 : 0.0;
-                                         return beat > std::max(m.b1, m.b0 + tail) + 0.5;
+                                         // A build with an FX lead stays to put the FX back a bar after its drop.
+                                         const double after = m.kind == MBuild && m.fxClip >= 0 ? kBeatsPerBar + 1.0 : 0.0;
+                                         return beat > std::max(m.b1 + after, m.b0 + tail) + 0.5;
                                      }),
                       m_moves.end());
     }
@@ -2193,10 +2248,32 @@ private:
         // drop brings back what was playing (or played in the last sixteen
         // bars, before a breakdown or an echo-out), each on the clip it last
         // played, all from the top of their loops, together.
+        // A build's FX lead: launched so its drop lands on the build's, and
+        // put back after it.
+        const int fx = role(RFx);
+        bool fxLands = false;
+        for (const auto &m : m_moves) {
+            if (m.song || m.kind != MBuild || m.fxClip < 0 || fx < 0)
+                continue;
+            const int dropBar = int(std::lround(m.b1 / kBeatsPerBar));
+            if (bar == dropBar - (m.fxBars - 1) && bar < dropBar + 1) {
+                want[fx] = m.fxClip;
+                relaunch[fx] = true;
+            }
+            if (bar == dropBar)
+                fxLands = true;
+            if (bar == dropBar + 1) {
+                want[fx] = m.fxBefore;
+                relaunch[fx] = m.fxBefore >= 0;
+            }
+        }
         for (const auto &m : m_moves) {
             if (m.song || m.kind != MDrop || std::fabs(m.b0 - b) > 1e-6)
                 continue;
             for (int p = 0; p < m_parts; ++p) {
+                // The FX lead plays on through its own drop.
+                if (p == fx && fxLands)
+                    continue;
                 const int s = recentSlot(v, p, bar);
                 if (s < 0)
                     continue;

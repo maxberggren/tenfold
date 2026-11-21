@@ -585,6 +585,55 @@ private slots:
         QVERIFY2(bars[drop] >= 5, qPrintable(QString::number(bars[drop])));
     }
 
+    // B brings the FX page in: its loop (a build that drops on its last
+    // bar) is launched so its drop lands on B's, and stops after it.
+    void aBuildBringsInTheFxLead() {
+        // An FX build of two bars over the loops (the build field's second
+        // row), from 16.5, dropping on 20.5; Space at 21 loops it: three
+        // bars, its drop on the last. Stopped, then on the Song page B at 29
+        // builds from 30.5 to a drop on 36.5.
+        const std::string script = loops("page 15.0 7\ndown 15.2 1 0.1 0.44\nup 15.5 1\nkey 21.0 Space\n"
+                                         "key 23.0 Backspace\npage 24.0 0\nkey 29.0 B\nend 41\n");
+        std::vector<std::pair<double, int>> fx;
+        double dropAt = -1;
+        float building = 0, fxBeats = 0;
+        watch(script, [&](double t, Session &s) {
+            const float b = probeAt(s, "building");
+            if (t > 29.1 && building > 0 && b == 0 && dropAt < 0)
+                dropAt = t;
+            building = b;
+            const int now = s.view().parts[6].playing;
+            if (t > 26.0 && (fx.empty() || fx.back().second != now))
+                fx.push_back({t, now});
+            if (now >= 0)
+                fxBeats = s.view().parts[6].clips[now].lengthBeats;
+        });
+        QCOMPARE(int(fxBeats), 12);
+        QVERIFY2(std::fabs(dropAt - 36.5) < 0.05, qPrintable(QString::number(dropAt)));
+        // Launched two bars before the drop, so its own drop (its third bar)
+        // lands on B's; a bar after, it stops.
+        // (From 26: stopped, then the lead, then stopped again.)
+        QVERIFY2(fx.size() == 3, qPrintable(QString::number(fx.size())));
+        QCOMPARE(fx[0].second, -1);
+        QCOMPARE(fx[1].second, 0);
+        QVERIFY2(std::fabs(fx[1].first - 32.5) < 0.05, qPrintable(QString::number(fx[1].first)));
+        QCOMPARE(fx[2].second, -1);
+        QVERIFY2(std::fabs(fx[2].first - 38.5) < 0.05, qPrintable(QString::number(fx[2].first)));
+    }
+
+    // Return on a full mix with nothing to bring back says so, instead of a
+    // hiccup that pretends to be a drop.
+    void aDropWithNothingToBringBackSaysSo() {
+        QString notice;
+        float dropping = -1;
+        testkit::play(loops("key 16.0 Return\nend 17\n"), [&](Session &s) {
+            notice = s.notice(nullptr);
+            dropping = probeAt(s, "drops");
+        });
+        QVERIFY2(notice.contains(QStringLiteral("Everything is in already")), qPrintable(notice));
+        QCOMPARE(dropping, 0.0f);
+    }
+
     void aRecordedBuildReplays() {
         // A build recorded into the song comes back with its drop on the same bar.
         //   15.3 O → take from 16.5; 16.7 B → a build from 18.5 to the end of

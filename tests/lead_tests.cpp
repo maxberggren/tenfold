@@ -646,12 +646,12 @@ private slots:
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
         // is 0.048 of it under the pad, row 1 0.119. Row 0 ends with the
         // sounds, Big room last; row 1 starts with the octave stepper (↑ at
-        // its right end) and has FOLLOW a little right of the middle, HOLD
+        // its right end) and has FOLLOW about 0.64 across, HOLD
         // after it.
         testkit::play("page 0 4\nbutton 0.2 0.98 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("Big room")), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 4\nbutton 0.2 0.59 -0.119\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 4\nbutton 0.2 0.635 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), qPrintable(s.pageStatus()));
         });
         testkit::play("page 0 4\nbutton 0.2 0.71 -0.119\nend 0.5\n", [](Session &s) {

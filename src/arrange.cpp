@@ -23,6 +23,7 @@
 // line rather than just after it, and the first kick arrives whole.
 
 #include <QFontMetricsF>
+#include <QJsonArray>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -2297,6 +2298,325 @@ private:
         m_tensionHeld = false;
         // Take the studio's mix as home again once it has been set back.
         m_ready = false;
+    }
+
+    // --- song files -------------------------------------------------------------
+    //
+    // The page's part of a song file, its "song" object:
+    //
+    //   "tempo": 124, "key": {"root": 9, "family": 0, "brightness": 4},
+    //   "bars": [{"label": "Intro", "play": {"Drums": 0, "Atmos": 1}, "fromTop": ["Drums"]}, ...],
+    //   "channels": {"Drums": {"gain": [[0, 0.8], [96, 0.6]], "mute": [[0, 0], [32, 1]], ...}, ...},
+    //   "tension": [[0, 0], [288, 0.75], [320, 0]],
+    //   "moves": [{"at": 288, "move": "build", "bars": 4}, {"at": 352, "move": "drop"}, ...],
+    //   "scenes": [{"scene": 2, "play": {"Drums": 1, "Bass": 0}, "stop": ["Chords"]}]
+    //
+    // The tempo and key are the song's own, the ones P plays it in. Parts go
+    // by name, so a song keeps its shape in a tenfold whose parts have been
+    // added to or reordered. Slots and scenes count from 0, as the clips'
+    // slots do. Positions ("at", and the first number of each pair) are
+    // sixteenths from the song's top. A channel or the tension is written only
+    // where it changes: each pair is a sixteenth and the value from there on,
+    // so a song mixed by hand reads as the moves the hand made. The tension
+    // is the fader's -1..1, resting at 0.
+    //
+    // Mutes, solos and the rest of the mix as it stands are the session's: it
+    // saves every channel, and the page takes them back as home on its first
+    // tick. What isn't saved: the song's place while it plays (opening waits
+    // for P, see load), a take still being recorded (it isn't the song until
+    // it closes, and calling it off leaves the song as it was), the songs
+    // Shift+O goes back to (an undo history, like the studio's), the live
+    // moves and whatever the fingers ride, and the pick.
+
+    static const char *channelKey(int c) {
+        static const char *const names[ChannelCount] = {"gain", "pan", "filter", "reverb", "echo", "pump", "mute", "solo"};
+        return names[std::clamp(c, 0, int(ChannelCount) - 1)];
+    }
+    static const char *moveKey(int k) {
+        static const char *const names[MoveKinds] = {"build", "drop",      "breakdown",  "backIn", "echoOut",
+                                                     "cut",   "filterOut", "filterOpen", "lift"};
+        return names[std::clamp(k, 0, int(MoveKinds) - 1)];
+    }
+    // The tension byte as the fader's -1..1 and back, with the rest (128) at 0.
+    static double tensionValue(uint8_t b) { return b >= 128 ? (b - 128) / 127.0 : (b - 128) / 128.0; }
+    static uint8_t tensionByte(double v) {
+        v = std::clamp(v, -1.0, 1.0);
+        return uint8_t(128 + std::lround(v >= 0 ? v * 127 : v * 128));
+    }
+    static double rounded(double v, double scale) { return std::round(v * scale) / scale; }
+
+    void save(QJsonObject &out) const override {
+        const int parts = std::min(int(m_names.size()), P);
+        if (!m_song.empty()) {
+            out[QStringLiteral("tempo")] = rounded(m_song.bpm, 1e6);
+            QJsonObject key;
+            key[QStringLiteral("root")] = m_song.root;
+            key[QStringLiteral("family")] = m_song.family;
+            key[QStringLiteral("brightness")] = m_song.brightness;
+            out[QStringLiteral("key")] = key;
+            QJsonArray bars;
+            for (const SongBar &b : m_song.bars) {
+                QJsonObject bar, play;
+                QJsonArray fromTop;
+                for (int p = 0; p < parts; ++p) {
+                    if (b.slot[p] < 0)
+                        continue;
+                    play[m_names[p]] = b.slot[p];
+                    if ((b.relaunch >> p) & 1)
+                        fromTop.append(m_names[p]);
+                }
+                if (b.label != LNone)
+                    bar[QStringLiteral("label")] = QString::fromUtf8(labelName(b.label));
+                if (b.join)
+                    bar[QStringLiteral("join")] = true;
+                if (!play.isEmpty())
+                    bar[QStringLiteral("play")] = play;
+                if (!fromTop.isEmpty())
+                    bar[QStringLiteral("fromTop")] = fromTop;
+                bars.append(bar);
+            }
+            out[QStringLiteral("bars")] = bars;
+            // Each value only where it changes.
+            auto changes = [&](auto value) {
+                QJsonArray list;
+                double last = std::nan("");
+                for (size_t s = 0; s < m_song.steps.size(); ++s) {
+                    const double v = value(m_song.steps[s]);
+                    if (!(v == last))
+                        list.append(QJsonArray{qint64(s), v});
+                    last = v;
+                }
+                return list;
+            };
+            QJsonObject channels;
+            for (int p = 0; p < parts; ++p) {
+                QJsonObject ch;
+                for (int c = 0; c < ChannelCount; ++c)
+                    ch[QLatin1String(channelKey(c))] =
+                        changes([&](const Step &st) { return rounded(dq8(st.ch[p][c]), 1e4); });
+                channels[m_names[p]] = ch;
+            }
+            out[QStringLiteral("channels")] = channels;
+            out[QStringLiteral("tension")] = changes([](const Step &st) { return rounded(tensionValue(st.tension), 1e4); });
+            QJsonArray moves;
+            for (const SongMove &m : m_song.moves) {
+                if (m.kind >= MoveKinds)
+                    continue;
+                QJsonObject move;
+                move[QStringLiteral("at")] = m.step;
+                move[QStringLiteral("move")] = QString::fromLatin1(moveKey(m.kind));
+                switch (m.kind) {
+                case MBuild: move[QStringLiteral("bars")] = std::max(1, m.param); break;
+                case MBreak: {
+                    QJsonArray muted;
+                    for (int p = 0; p < parts; ++p)
+                        if ((m.param >> p) & 1)
+                            muted.append(m_names[p]);
+                    move[QStringLiteral("parts")] = muted;
+                    const int bars = (m.param >> 8) & 0xff;
+                    move[QStringLiteral("bars")] = bars ? bars : int(kBreakBars);
+                    break;
+                }
+                case MCut: move[QStringLiteral("sixteenths")] = std::max(1, m.param); break;
+                case MLift: move[QStringLiteral("semitones")] = m.param; break;
+                default: break;
+                }
+                moves.append(move);
+            }
+            out[QStringLiteral("moves")] = moves;
+        }
+        // Scenes the player stored (Shift+F1…); the others are their columns.
+        QJsonArray scenes;
+        for (int s = 0; s < kClipSlots; ++s) {
+            if (!m_scene[s].stored)
+                continue;
+            QJsonObject scene, play;
+            QJsonArray stop;
+            for (int p = 0; p < parts; ++p) {
+                if (m_scene[s].slot[p] >= 0)
+                    play[m_names[p]] = m_scene[s].slot[p];
+                else if (m_scene[s].slot[p] == -1)
+                    stop.append(m_names[p]);
+            }
+            scene[QStringLiteral("scene")] = s;
+            if (!play.isEmpty())
+                scene[QStringLiteral("play")] = play;
+            if (!stop.isEmpty())
+                scene[QStringLiteral("stop")] = stop;
+            scenes.append(scene);
+        }
+        if (!scenes.isEmpty())
+            out[QStringLiteral("scenes")] = scenes;
+    }
+
+    // The song comes back stopped, and waits for P. The clips that were
+    // playing start again on the next bar (the session sees to that), so the
+    // music picks up where it was; but a song started by opening a file would
+    // begin from its top on whatever bar came next, taking the mix, the key
+    // and the tempo with it, which is not where it was saved and not
+    // something the player asked for. Playing it is one key away.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        const StudioView &v = ctx.studio();
+        m_parts = std::clamp(v.partCount, 0, P);
+        const int parts = std::min(int(m_names.size()), P);
+        auto partOf = [&](const QString &name) {
+            const int p = int(m_names.indexOf(name));
+            return p < parts ? p : -1;
+        };
+        // A number in range, or the fallback when it is missing or not a number.
+        auto number = [](const QJsonValue &x, double lo, double hi, double fallback) {
+            const double d = x.toDouble(fallback);
+            return x.isDouble() && std::isfinite(d) ? std::clamp(d, lo, hi) : std::clamp(fallback, lo, hi);
+        };
+        // A whole number in [lo, hi), or -1.
+        auto index = [](const QJsonValue &x, int lo, int hi) {
+            const double d = x.toDouble(-1);
+            return x.isDouble() && d == std::floor(d) && d >= lo && d < hi ? int(d) : -1;
+        };
+
+        Song song;
+        const QJsonArray bars = in.value(QStringLiteral("bars")).toArray();
+        const int n = int(std::min<qsizetype>(bars.size(), kMaxSongBars));
+        song.resize(n);
+        if (n > 0) {
+            song.bpm = number(in.value(QStringLiteral("tempo")), 40, 240, v.bpm);
+            const QJsonObject key = in.value(QStringLiteral("key")).toObject();
+            song.root = int(number(key.value(QStringLiteral("root")), 0, 11, v.root));
+            song.family = int(number(key.value(QStringLiteral("family")), 0, familyCount() - 1, v.family));
+            song.brightness =
+                int(number(key.value(QStringLiteral("brightness")), 0, family(song.family).modeCount - 1, v.brightness));
+            for (int b = 0; b < n; ++b) {
+                const QJsonObject o = bars[b].toObject();
+                SongBar &sb = song.bars[size_t(b)];
+                const QString label = o.value(QStringLiteral("label")).toString();
+                for (int l = LIntro; l < LabelCount; ++l)
+                    if (label == QLatin1String(labelName(l)))
+                        sb.label = uint8_t(l);
+                sb.join = o.value(QStringLiteral("join")).toBool(false);
+                const QJsonObject play = o.value(QStringLiteral("play")).toObject();
+                for (auto it = play.begin(); it != play.end(); ++it) {
+                    const int p = partOf(it.key()), slot = index(it.value(), 0, kClipSlots);
+                    if (p >= 0 && slot >= 0)
+                        sb.slot[p] = int8_t(slot);
+                }
+                for (const QJsonValue &x : o.value(QStringLiteral("fromTop")).toArray())
+                    if (const int p = partOf(x.toString()); p >= 0 && sb.slot[p] >= 0)
+                        sb.relaunch |= uint8_t(1 << p);
+            }
+            // A channel through the song from its changes. Until its first
+            // change, a channel the file leaves out (a part this song was made
+            // without) holds the part's mix as it opened, unmuted and unsoloed.
+            auto unpack = [&](const QJsonValue &list, uint8_t from, auto byte, auto field) {
+                std::vector<std::pair<long, uint8_t>> at;
+                for (const QJsonValue &x : list.toArray()) {
+                    const QJsonArray pair = x.toArray();
+                    if (pair.size() != 2 || !pair[0].isDouble() || !pair[1].isDouble())
+                        continue;
+                    const double s = pair[0].toDouble(), value = pair[1].toDouble();
+                    if (!std::isfinite(value) || !(s >= 0) || s >= double(song.steps.size()))
+                        continue;
+                    at.push_back({long(s), byte(value)});
+                }
+                std::stable_sort(at.begin(), at.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+                size_t k = 0;
+                for (size_t s = 0; s < song.steps.size(); ++s) {
+                    while (k < at.size() && at[k].first <= long(s))
+                        from = at[k++].second;
+                    field(song.steps[s]) = from;
+                }
+            };
+            const QJsonObject channels = in.value(QStringLiteral("channels")).toObject();
+            for (int p = 0; p < parts; ++p) {
+                const QJsonObject ch = channels.value(m_names[p]).toObject();
+                for (int c = 0; c < ChannelCount; ++c)
+                    unpack(ch.value(QLatin1String(channelKey(c))),
+                           c == Mute || c == Solo ? uint8_t(0) : q8(v.parts[p].channel.value[c]),
+                           [](double x) { return q8(float(std::clamp(x, 0.0, 1.0))); },
+                           [&](Step &st) -> uint8_t & { return st.ch[p][c]; });
+            }
+            unpack(in.value(QStringLiteral("tension")), uint8_t(128), [](double x) { return tensionByte(x); },
+                   [](Step &st) -> uint8_t & { return st.tension; });
+            // The moves, in order of time as the song replays them, each with
+            // what it needs and nothing a page can't act on.
+            for (const QJsonValue &x : in.value(QStringLiteral("moves")).toArray()) {
+                if (song.moves.size() >= size_t(n) * kSteps)
+                    break;
+                const QJsonObject o = x.toObject();
+                const int step = index(o.value(QStringLiteral("at")), 0, n * kSteps + 1);
+                int kind = -1;
+                for (int k = 0; k < MoveKinds; ++k)
+                    if (o.value(QStringLiteral("move")).toString() == QLatin1String(moveKey(k)))
+                        kind = k;
+                if (step < 0 || kind < 0)
+                    continue;
+                SongMove m{step, uint8_t(kind), 0};
+                switch (kind) {
+                case MBuild: m.param = int(number(o.value(QStringLiteral("bars")), 1, 32, 4)); break;
+                case MBreak: {
+                    int mask = 0;
+                    for (const QJsonValue &name : o.value(QStringLiteral("parts")).toArray())
+                        if (const int p = partOf(name.toString()); p >= 0)
+                            mask |= 1 << p;
+                    m.param = mask | int(number(o.value(QStringLiteral("bars")), 1, 255, kBreakBars)) << 8;
+                    break;
+                }
+                case MCut: m.param = int(number(o.value(QStringLiteral("sixteenths")), 1, kSteps, 4)); break;
+                case MLift: m.param = int(number(o.value(QStringLiteral("semitones")), -12, 12, 2)); break;
+                default: break;
+                }
+                song.moves.push_back(m);
+            }
+            std::stable_sort(song.moves.begin(), song.moves.end(),
+                             [](const SongMove &a, const SongMove &b) { return a.step < b.step; });
+        }
+
+        // Scenes: a part a stored scene doesn't name keeps playing what it plays.
+        for (auto &sc : m_scene)
+            sc = Scene{};
+        for (const QJsonValue &x : in.value(QStringLiteral("scenes")).toArray()) {
+            const QJsonObject o = x.toObject();
+            const int s = index(o.value(QStringLiteral("scene")), 0, kClipSlots);
+            if (s < 0)
+                continue;
+            Scene &sc = m_scene[s];
+            sc.stored = true;
+            std::fill(std::begin(sc.slot), std::end(sc.slot), int8_t(-2));
+            for (const QJsonValue &name : o.value(QStringLiteral("stop")).toArray())
+                if (const int p = partOf(name.toString()); p >= 0)
+                    sc.slot[p] = -1;
+            const QJsonObject play = o.value(QStringLiteral("play")).toObject();
+            for (auto it = play.begin(); it != play.end(); ++it) {
+                const int p = partOf(it.key()), slot = index(it.value(), 0, kClipSlots);
+                if (p >= 0 && slot >= 0)
+                    sc.slot[p] = int8_t(slot);
+            }
+        }
+
+        // What belonged to the song before this one goes: its earlier songs,
+        // the pick, and what it remembered of its clips' slots.
+        m_song = std::move(song);
+        m_take = Song{};
+        m_rec = &m_song;
+        m_songUndo.clear();
+        m_moveCursorOrigin = -1;
+        m_selPart = m_selSection = -1;
+        m_selSlots.clear();
+        m_sceneQueued = m_sceneQueuedBar = -1;
+        for (int p = 0; p < P; ++p) {
+            m_pendingClear[p] = PendingClear{};
+            m_lastSlot[p] = -1;
+            m_relaunchAt[p] = -1;
+            m_lastPlayedBar[p] = -1000000;
+        }
+        // Sections as saved (a join is the player's); a song whose file names
+        // none is named again from what plays in it.
+        bool named = false;
+        for (const SongBar &b : m_song.bars)
+            named = named || b.label != LNone;
+        if (named || m_song.empty())
+            sections();
+        else
+            labelSong();
     }
 
     void stopSong() {

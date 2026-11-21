@@ -28,6 +28,7 @@
 #include "risers.h"
 
 #include <QFontMetricsF>
+#include <QJsonValue>
 #include <QPainter>
 #include <QPainterPath>
 #include <QStringList>
@@ -204,6 +205,40 @@ public:
                 lift(h, t, ctx);
         m_frame = Frame{};
         m_button = false;
+    }
+
+    // Ctrl+S: the drop style, how long the keys' risers are, and whether a
+    // build moves the mix. A build on its way is a moment, not a setting,
+    // and a build kept in a loop is the studio's to save with its clips.
+    // The style is saved by its name and the risers by their bars, so the
+    // file reads as the page does.
+    void save(QJsonObject &out) const override {
+        out[QStringLiteral("dropStyle")] = QString::fromUtf8(styleName(m_style));
+        out[QStringLiteral("riserBars")] = rowBars(m_keyRow);
+        out[QStringLiteral("buildMix")] = m_buildMix;
+    }
+
+    // Ctrl+O. What the file lacks, or holds in a form the page doesn't
+    // know, is the page's default, never what the song before it left.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        m_style = Clean;
+        m_keyRow = 2;
+        m_buildMix = true;
+        const QString style = in.value(QStringLiteral("dropStyle")).toString();
+        for (int s = 0; s < StyleCount; ++s)
+            if (style == QLatin1String(styleName(s)))
+                m_style = s;
+        // A length the field has no row for (a hand-edited 6) is the
+        // nearest one it has.
+        const QJsonValue bars = in.value(QStringLiteral("riserBars"));
+        if (bars.isDouble() && std::isfinite(bars.toDouble()))
+            m_keyRow = std::clamp(int(std::lround(std::log2(std::clamp(bars.toDouble(), 1.0, 16.0)))), 0, kRows - 1);
+        const QJsonValue mix = in.value(QStringLiteral("buildMix"));
+        if (mix.isBool())
+            m_buildMix = mix.toBool();
+        // The engine keeps the style too (in a gap its risers stop half a
+        // beat early), so it hears it just as a key would send it.
+        sendStyle(0, ctx);
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;

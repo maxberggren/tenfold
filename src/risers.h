@@ -252,9 +252,11 @@ public:
         case Command::Move:
             for (Voice &v : m_voices)
                 if (v.active && v.id == c.id && v.held) {
-                    v.press = c.f[0];
-                    v.pressPeak = std::max(v.pressPeak * 0.9f, c.f[0]);
-                    v.tone = c.f[1];
+                    // Clamped as On clamps them: a clip from a file may carry
+                    // any number, and the tone picks chord tones by index.
+                    v.press = clampf(c.f[0], 0, 1);
+                    v.pressPeak = std::max(v.pressPeak * 0.9f, v.press);
+                    v.tone = clampf(c.f[1], -1, 1);
                     v.intensity = clampf(c.f[2], 0, 1);
                     v.motion = clampf(c.f[3], 0, 1);
                     v.grit = clampf(c.f[4], 0, 1);
@@ -275,7 +277,7 @@ public:
             break;
         case Command::Param:
             if (c.i[0] == ParamStyle)
-                m_gap = std::lround(c.f[0]) >= 1; // gap, and strip, which ends in one
+                m_gap = c.f[0] >= 0.5f; // gap, and strip, which ends in one
             break;
         case CmdFall: {
             // "Every one" from the hand drops every riser; from a loop, only

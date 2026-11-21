@@ -214,6 +214,22 @@ private slots:
         QCOMPARE(undone.view.parts[0].playing, 0);
     }
 
+    void theLastLoopStaysResizableUntilAnotherIsMade() {
+        // A bass loop over the beat: long after the arrows' three seconds,
+        // the window's Shorter / Longer still have it, on its own page only;
+        // Ctrl+Z leaves nothing to resize.
+        const std::string s = std::string(kBeat) + "page 3.0 2\n"
+                              "tap 4.55 0.21 0.4\ntap 5.05 0.37 0.4\ntap 5.55 0.29 0.4\ntap 6.05 0.46 0.4\n"
+                              "tap 6.55 0.54 0.4\ntap 7.05 0.62 0.4\nkey 7.6 Space\n";
+        testkit::play(s + "end 15\n", [](Session &ses) {
+            QCOMPARE(ses.loopBars(0), 2);
+            QCOMPARE(ses.loopBars(-1), 1);
+            QCOMPARE(ses.loopBars(1), 4);
+        });
+        testkit::play(s + "page 9 1\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBars(0), 0); });
+        testkit::play(s + "key 9 Ctrl+Z\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBars(0), 0); });
+    }
+
     void aWaitBeforeSpaceKeepsTheTempo() {
         // Nothing playing: a few chords tried at no steady pace, then a long
         // wait, then Space. No pattern, not in the flow: the tempo stays at

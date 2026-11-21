@@ -48,6 +48,7 @@ ApplicationWindow {
     }
     // The number a page answers to: 1–7 for the parts, 0 for arrange.
     function pageKey(i) { return i === backend.pageCount - 1 ? "0" : String(i + 1) }
+    function barsText(n) { return n === 1 ? qsTr("→ 1 bar") : qsTr("→ %1 bars").arg(n) }
 
     Shortcut {
         sequence: "Esc"; context: Qt.ApplicationShortcut
@@ -373,6 +374,27 @@ ApplicationWindow {
                             label: backend.tutorialActive ? qsTr("Leave tutorial") : qsTr("Tutorial: make a track")
                             key: "Ctrl T"; color: win.green; active: backend.tutorialActive
                             onClicked: backend.toggleTutorial()
+                        }
+                        // The loop Space last made on this page, longer or
+                        // shorter, until another loop of its part is made:
+                        // ↑ ↓ do the same for three seconds after Space.
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: backend.loopBars > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
+                            opacity: backend.loopShorterBars > 0 ? 1 : 0.35
+                            label: qsTr("Loop shorter")
+                            key: backend.loopShorterBars > 0 ? win.barsText(backend.loopShorterBars) : "—"
+                            color: win.pageColor
+                            onClicked: if (backend.loopShorterBars > 0) backend.resizeLoop(-1)
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: backend.loopBars > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
+                            opacity: backend.loopLongerBars > 0 ? 1 : 0.35
+                            label: qsTr("Loop longer")
+                            key: backend.loopLongerBars > 0 ? win.barsText(backend.loopLongerBars) : "—"
+                            color: win.pageColor
+                            onClicked: if (backend.loopLongerBars > 0) backend.resizeLoop(1)
                         }
                     }
                 }

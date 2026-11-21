@@ -502,7 +502,7 @@ bool Session::key(const KeyEvent &k) {
     // Just after Space, ↑ and ↓ make the loop longer or shorter (the page
     // gets them back once they rest).
     if ((k.key == Qt::Key_Up || k.key == Qt::Key_Down) && !(k.modifiers & Qt::ControlModifier) &&
-        m_lastTake.part >= 0 && m_lastTake.part == p.part && now() - m_lastTake.at <= kRetakeSecs) {
+        retakeLength(0) > 0 && now() - m_lastTake.at <= kRetakeSecs) {
         if (k.down)
             adjustTake(k.key == Qt::Key_Up ? 1 : -1);
         return true;
@@ -1082,7 +1082,7 @@ bars:
     }
     ctx.post(m);
     m_view.parts[part].recording = slot;
-    m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now()};
+    m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now(), m_view.parts[part].takes};
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
@@ -1092,20 +1092,38 @@ bars:
         ctx.notice(QStringLiteral("Looping %1 in slot %2 · ↑↓ longer, shorter").arg(what).arg(slot + 1));
 }
 
-bool Session::adjustTake(int dir) {
-    LastTake &lt = m_lastTake;
-    const double t = now();
-    if (lt.part < 0 || lt.part != m_pages[size_t(m_page)]->part || t - lt.at > kRetakeSecs)
-        return false;
+double Session::retakeLength(int dir) const {
+    const LastTake &lt = m_lastTake;
+    if (lt.part < 0 || lt.part != m_pages[size_t(m_page)]->part || m_view.parts[lt.part].takes > lt.takes + 1)
+        return 0;
     // Whole bars, by doubling and halving, through the length Space chose.
     std::vector<double> lengths{4, 8, 16, 32, 64};
     if (std::find(lengths.begin(), lengths.end(), lt.length) == lengths.end())
         lengths.push_back(lt.length);
     std::sort(lengths.begin(), lengths.end());
-    const auto at = std::find(lengths.begin(), lengths.end(), lt.length);
-    const long i = std::clamp(long(at - lengths.begin()) + dir, 0L, long(lengths.size()) - 1);
-    const double length = lengths[size_t(i)];
-    lt.at = t; // each press keeps the window open
+    const long at = long(std::find(lengths.begin(), lengths.end(), lt.length) - lengths.begin()) + dir;
+    return at >= 0 && at < long(lengths.size()) ? lengths[size_t(at)] : 0;
+}
+
+int Session::loopBars(int dir) const {
+    std::lock_guard lock(m_lock);
+    return int(std::lround(retakeLength(dir) / kBeatsPerBar));
+}
+
+void Session::resizeLoop(int dir) {
+    std::lock_guard lock(m_lock);
+    if (retakeLength(0) > 0)
+        adjustTake(dir);
+}
+
+bool Session::adjustTake(int dir) {
+    LastTake &lt = m_lastTake;
+    const double t = now();
+    if (retakeLength(0) <= 0)
+        return false;
+    const double next = retakeLength(dir);
+    const double length = next > 0 ? next : lt.length;
+    lt.at = t; // each press keeps the arrows' window open
     Context &ctx = context(m_page);
     const int bars = int(std::lround(length / kBeatsPerBar));
     const QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);

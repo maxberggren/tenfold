@@ -92,6 +92,12 @@ public:
     // plays again. Ctrl+N: start over, every loop cleared (asks first).
     void undoTake();
     void redoTake(); // Ctrl+Shift+Z: what Ctrl+Z took back comes back
+    // The loop Space last made on this page, while it can still be made
+    // longer or shorter (until another loop of that part, Ctrl+Z or Ctrl+N):
+    // its bars now and one step each way (0 where there is none, or when
+    // nothing can be changed). The window's buttons use these.
+    int loopBars(int dir) const;
+    void resizeLoop(int dir); // the buttons: as ↑ / ↓ just after Space, at any time
     void startOver();
     // How many times Ctrl+Z took a loop back, for the tutorial.
     int undos() const { return m_undos; }
@@ -164,9 +170,11 @@ private:
     struct LastTake {
         int part = -1, slot = -1, into = -1;
         double end = 0, length = 0, since = -1e18, at = -1e9;
+        uint32_t takes = 0; // the part's take count before it; a later take ends its time to change
     } m_lastTake;
     static constexpr double kRetakeSecs = 3.0;
     bool adjustTake(int dir); // ↑ (+1) longer, ↓ (−1) shorter; false when there's nothing to adjust
+    double retakeLength(int dir) const; // the length one step that way, or 0
     bool m_mixRecording = false;
     Tutorial m_tutorial;
     Frame m_last;            // the last frame, as the pad sent it

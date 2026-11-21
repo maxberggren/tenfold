@@ -150,6 +150,8 @@ private:
     std::atomic<float> m_inMs{0}, m_outMs{0};
     int m_inSlack = 0;        // samples held back after an underrun, so the next doesn't come
     int m_inLow = 1 << 30;    // the least left waiting over the last second
+    uint64_t m_inCalm = 0;    // samples rendered since the last underrun
+    float m_inLast = 0;
     uint64_t m_inLowSince = 0;
     int m_quantum = 128;
     void pullInput(float *dst, int n);

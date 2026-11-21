@@ -94,7 +94,7 @@ void singWord(std::vector<float> &out, double at, double dur, float hz, float to
         v *= env;
         if (secs < 0.012f)
             v += 0.5f * rng.bipolar() * (1.0f - secs / 0.012f);
-        out[a + i] += v * level * 2.2f;
+        out[a + i] += v * level * 1.1f;
     }
 }
 

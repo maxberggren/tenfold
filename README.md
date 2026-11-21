@@ -28,7 +28,7 @@ pick a page with its number:
 | 5 | Arp | Hold notes on the left; the pads on the right set rate, rhythm, range, tone, groove and echo. Click to latch. |
 | 6 | Atmos | Five layers (drone, pad, choir, glass, air), one per finger; click to latch, F freezes, S swells. Scenes on Q–I. |
 | 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws. Click to drop now. |
-| 8 | Vocal | Your microphone, heard at once in the headphones. Each finger in the middle is your voice again at that note of the key (height the throat, giant to elf); the edges are filter, freeze and stutter, echo and reverb throws, radio and crush; click for tape stop. Hard tune, prism, choir, vocoder and robot on ← →. Space loops your last phrase as audio, cut in the breaths; Shift+Space layers it. |
+| 8 | Vocal | Your microphone, heard at once in the headphones. Each finger in the middle is your voice again as a harmony in the key (−8ve to +8ve, height the throat, giant to elf); touch a word on the tape and it plays again; the edges are filter, freeze and stutter, echo and reverb throws, radio and crush; click for tape stop. Hard tune, prism, choir, vocoder and robot on ← →. Space loops your last phrase as audio, cut in the breaths; Shift+Space layers it. |
 | 0 | Arrange | Every part's clips, scenes on the bar, a ten-finger mixer, a tension fader for builds and drops. I writes a whole track from your loops. |
 
 `?` shows the guide for the page you're on. Letter keys play most pages too.

@@ -77,7 +77,11 @@ enum ParamId {
     PReverb,  // f[0] across 0..1, f[1] pressure, f[2] on, f[3] shimmer
     PTape,    // f[0] on
     PStutter, // i[1]: the rate's index
+    PChop,    // i[1]: which (0..3), i[2], i[3]: the word's first sample (high, low 32 bits);
+              // f[0] on, f[1] its length in samples, f[2] level, f[3] semitones
+    PDemo,    // i[1]: a demo singer in place of the microphone
 };
+constexpr int kChops = 4;
 
 constexpr int kLoopIdBase = 0x100000; // a loop's sound: kLoopIdBase + its take's handle
 constexpr int kMaxVoices = 10;
@@ -87,7 +91,7 @@ constexpr float kLeft = 0.085f, kRight = 0.915f, kBottom = 0.12f, kTop = 0.86f;
 // The keys' lower part shows the tape: what Space would take.
 constexpr float kTapeTop = 0.32f;
 
-enum Zone { Keys, Filter, Freeze, Echo, Reverb, Radio, Crush };
+enum Zone { Keys, Filter, Freeze, Echo, Reverb, Radio, Crush, Chop };
 Zone zoneAt(float x, float y) {
     if (y >= kTop)
         return x < 0.5f ? Echo : Reverb;
@@ -97,8 +101,18 @@ Zone zoneAt(float x, float y) {
         return Filter;
     if (x >= kRight)
         return Freeze;
+    if (y < kTapeTop)
+        return Chop;
     return Keys;
 }
+
+// The harmony lanes, low to high: degrees from the note sung.
+const int kIntervals[] = {-7, -4, -2, 2, 4, 5, 7};
+const char *kIntervalNames[] = {"−8VE", "−5TH", "−3RD", "+3RD", "+5TH", "+6TH", "+8VE"};
+constexpr int kIntervalCount = 7;
+// Whether a preset's keys are harmonies of what you sing (the voice leads)
+// or notes of their own (the fingers lead: prism, the vocoder).
+bool harmonyKeys(int preset) { return preset != Prism && preset != Vocoder; }
 
 // The stutter's slices, in beats.
 const double kStutterBeats[] = {0.5, 1.0 / 3, 0.25, 1.0 / 6, 0.125};
@@ -131,7 +145,7 @@ enum {
 
 // The nearest note of the key, or of the chord when follow is on, to a
 // MIDI pitch.
-double snapMidi(const Harmony &h, double midi, bool chord) {
+double snapMidi(const tf::Harmony &h, double midi, bool chord) {
     const Tuning &t = h.tuning;
     double best = midi, bestD = 1e9;
     if (chord) {
@@ -158,11 +172,37 @@ double snapMidi(const Harmony &h, double midi, bool chord) {
     return best;
 }
 
+// The scale degree whose note is nearest a MIDI pitch.
+int degreeNear(const Harmony &h, double midi) {
+    const Tuning &t = h.tuning;
+    const int per = std::max(1, t.degreesPerOctave());
+    const int oct = int(std::floor((midi - t.baseMidi()) / 12.0));
+    int best = 0;
+    double bestD = 1e9;
+    for (int d = (oct - 1) * per; d <= (oct + 2) * per; ++d) {
+        const double dd = std::fabs(t.baseMidi() + t.degreeSemis(d) - midi);
+        if (dd < bestD) {
+            bestD = dd;
+            best = d;
+        }
+    }
+    return best;
+}
+
+// How a finger's note is meant: a degree of the key, a chord tone, or a
+// harmony: so many degrees above or below the note being sung.
+enum NoteMode { ScaleNote = 0, ChordNote = 1, HarmonyNote = 2 };
+
 // A note the page sends: a scale degree, or (follow) a chord tone counted
 // up from the chord's root, resolved now, so a held note follows the
-// chord as it changes.
-double noteMidi(const Harmony &h, int value, int mode) {
-    if (mode == 1) {
+// chord as it changes; or a harmony, `value` degrees from `ref` (the note
+// sung), in the key or (chord) on the chord's nearest tone.
+double noteMidi(const tf::Harmony &h, int value, int mode, double ref = 57, bool chord = false) {
+    if (mode == HarmonyNote) {
+        const double m = h.midi(degreeNear(h, ref) + value, 0);
+        return chord ? snapMidi(h, m, true) : m;
+    }
+    if (mode == ChordNote) {
         const int n = std::clamp(h.chordCount, 1, 4);
         const int oct = int(std::floor(double(value) / n));
         const int k = value - oct * n;
@@ -189,6 +229,64 @@ inline float polyBlep(float t, float dt) {
 
 // --- the engine -------------------------------------------------------------------
 
+// A voice for when there is no microphone: a short phrase, sung over and
+// over in the song's key (a glottal buzz through vowel formants, the way
+// the script player's `voice` sings), so the page can be learned, and its
+// loops tried, before a mic is plugged in.
+class DemoSinger {
+public:
+    void render(float *out, int n, const tf::Harmony &h, float rate) {
+        // Four words and a breath: degrees and lengths (seconds).
+        static const int degrees[] = {4, 5, 7, 5, 2, 4};
+        static const float lengths[] = {0.32f, 0.28f, 0.55f, 0.3f, 0.3f, 0.7f};
+        static const char vowels[] = {'a', 'e', 'o', 'i', 'a', 'o'};
+        constexpr int words = 6;
+        for (int i = 0; i < n; ++i) {
+            if (m_left <= 0) {
+                if (m_gap > 0) {
+                    --m_gap;
+                    out[i] = 0;
+                    continue;
+                }
+                m_word = (m_word + 1) % words;
+                m_len = m_left = int(lengths[m_word] * rate);
+                m_gap = int((m_word == words - 1 ? 0.9f : 0.12f) * rate);
+                m_hz = midiToHz(h.midi(degrees[m_word], 1));
+                setVowel(vowels[m_word], rate);
+            }
+            const float secs = float(m_len - m_left) / rate;
+            const float vib = secs > 0.15f ? std::exp2(0.2f / 12.0f * std::sin(kTwoPi * 5.5f * secs)) : 1.0f;
+            m_phase += m_hz * vib / rate;
+            m_phase -= std::floor(m_phase);
+            const float buzz = m_tilt.step(2.0f * m_phase - 1.0f) + 0.02f * m_rng.bipolar();
+            float v = m_f1.step(buzz).band + 0.5f * m_f2.step(buzz).band + 0.25f * m_f3.step(buzz).band;
+            const float env = std::min(1.0f, secs / 0.025f) * std::min(1.0f, float(m_left) / (0.06f * rate));
+            out[i] = v * env * 0.35f;
+            --m_left;
+        }
+    }
+
+private:
+    void setVowel(char v, float rate) {
+        float a = 800, b = 1150, c = 2900;
+        if (v == 'e')
+            a = 400, b = 2000, c = 2550;
+        else if (v == 'i')
+            a = 280, b = 2250, c = 2900;
+        else if (v == 'o')
+            a = 450, b = 800, c = 2830;
+        m_f1.set(a, 6, rate);
+        m_f2.set(b, 8, rate);
+        m_f3.set(c, 10, rate);
+        m_tilt.set(1400, rate);
+    }
+    Svf m_f1, m_f2, m_f3;
+    OnePoleLp m_tilt;
+    Rng m_rng{0xDE70};
+    float m_phase = 0, m_hz = 220;
+    int m_word = -1, m_left = 0, m_len = 1, m_gap = 0;
+};
+
 class Engine : public PartEngine {
 public:
     explicit Engine(std::shared_ptr<Tape> tape) : m_tape(std::move(tape)) {}
@@ -204,7 +302,7 @@ public:
         for (auto &v : m_voices) {
             v.level.setTime(0.02f, rate);
             v.level.reset(0);
-            v.ratio.setTime(0.035f, rate);
+            v.ratio.setTime(0.015f, rate);
             v.ratio.reset(1);
         }
         for (auto &c : m_choir) {
@@ -241,7 +339,8 @@ public:
         m_radioHp2.set(500.0f, 0.8f, rate);
         m_radioLp2.set(2600.0f, 0.9f, rate);
         m_freezeBuf.assign(size_t(rate * 0.75f), 0.0f);
-        m_recent.assign(size_t(1) << 16, 0.0f);
+        m_recent.assign(size_t(1) << 17, 0.0f);
+        m_howlHp.set(800.0f, 0.7f, rate);
         m_tapeL.assign(size_t(1) << 17, 0.0f);
         m_tapeR.assign(size_t(1) << 17, 0.0f);
     }
@@ -281,6 +380,8 @@ public:
                 if (v) {
                     v->id = c.id;
                     v->shifter.reset();
+                    v->fresh = true;
+                    v->midi = -1;
                 }
             }
             if (!v)
@@ -326,6 +427,22 @@ public:
             break;
         }
         case PStutter: m_stutter = std::clamp(c.i[1], 0, kStutterCount - 1); break;
+        case PChop: {
+            ChopVoice &v = m_chops[std::clamp(c.i[1], 0, kChops - 1)];
+            const int64_t start = int64_t(uint64_t(uint32_t(c.i[2])) << 32 | uint64_t(uint32_t(c.i[3])));
+            const bool on = c.f[0] > 0.5f;
+            if (on && (!v.on || start != v.start)) {
+                v.start = start;
+                v.pos = double(start);
+                v.fade = 0;
+            }
+            v.on = on;
+            v.length = std::max(256.0f, c.f[1]);
+            v.level = clampf(c.f[2], 0, 1.5f);
+            v.rate = std::exp2(clampf(c.f[3], -24, 24) / 12.0f);
+            break;
+        }
+        case PDemo: m_demo = c.i[1] != 0; break;
         default: break;
         }
     }
@@ -335,10 +452,20 @@ public:
         const Harmony &h = ctx.harmony();
         const float *in = ctx.input();
         m_hasInput = in != nullptr;
+        // No microphone (or a wish to hear how it goes): a demo singer,
+        // in the song's key, sings into the chain instead.
+        float demo[kBlock];
+        if (m_demo) {
+            m_singer.render(demo, n, ctx.harmony(), m_rate);
+            in = demo;
+        }
         Tape &tape = *m_tape;
         // No microphone and nothing still sounding from it (a tail, a
         // freeze, the tape): only the loops play.
-        if (!in && m_echoTail == 0 && m_revTail == 0 && m_frz.on < 0.5f && m_freezeLvl.y < 0.001f &&
+        bool chopping = false;
+        for (const auto &v : m_chops)
+            chopping |= v.on || v.fade > 0;
+        if (!in && !chopping && m_echoTail == 0 && m_revTail == 0 && m_frz.on < 0.5f && m_freezeLvl.y < 0.001f &&
             m_stutterOn.y < 0.001f && !m_tapeStop && m_tapeBack <= 0) {
             m_activeVoices = 0;
             tape.written.store(int64_t(tr.sample) + n, std::memory_order_release);
@@ -375,17 +502,56 @@ public:
             const float ay = std::fabs(y);
             m_compEnv += (ay - m_compEnv) * (ay > m_compEnv ? 0.01f : 0.0003f);
             const float comp = m_compEnv > 0.1f ? std::pow(0.1f / m_compEnv, 0.667f) : 1.0f;
-            y *= comp * 1.8f;
+            y *= comp * 1.25f;
             dry[i] = y;
             m_src.push(y);
             if (m_pitch.push(y, m_gate > 0.2f))
                 track();
+            // Feedback: a tone the speakers sing back is one frequency,
+            // steady; above 1 kHz the pitch tracker can't follow it, so its
+            // zero crossings are counted too (a voice's never hold still).
+            const float hi = m_howlHp.step(y).high;
+            if ((hi >= 0) != (m_howlSign >= 0))
+                ++m_howlCross;
+            m_howlSign = hi;
+            m_howlLevel = std::max(std::fabs(hi), m_howlLevel * 0.9995f);
+            if (++m_howlN >= 2048) {
+                const float freq = float(m_howlCross) * m_rate / (2.0f * 2048.0f);
+                const bool steady = freq > 900 && std::fabs(freq - m_howlFreq) < 0.015f * freq && m_howlLevel > 0.25f;
+                m_howlHi = steady ? m_howlHi + 2048 : 0;
+                m_howlFreq = freq;
+                m_howlCross = 0;
+                m_howlN = 0;
+                if (m_howlHi > int(m_rate * 0.6f) && m_monitor) {
+                    m_feedback = int(m_rate * 2);
+                    m_howlHi = 0;
+                }
+            }
+            // The voice's last sound, for the freeze to hold.
+            if (m_gate > 0.5f && m_gateEnv > m_noise * 6.0f)
+                m_lastVoiced = m_recentW + i + 1;
         }
 
         // 2. The voice itself, by the preset.
         float leadL[kBlock] = {}, leadR[kBlock] = {}, shifted[kBlock] = {};
-        const float hz = m_pitch.hz();
-        const bool voiced = hz > 0 && m_gate > 0.3f;
+        const float hzNow = m_pitch.hz();
+        const bool voicedNow = hzNow > 0 && m_gate > 0.3f;
+        // Through a consonant or a breath between syllables the pitch is
+        // held, so a harmony doesn't drop to the voice's own note and scoop
+        // back up on every word; after a quarter second it lets go. The
+        // first voiced estimate after a pause lands at once (onset).
+        bool onset = false;
+        if (voicedNow) {
+            onset = m_unvoiced > int(m_rate * 0.25f);
+            m_heldHz = hzNow;
+            m_heldPeriod = m_pitch.period();
+            m_unvoiced = 0;
+        } else {
+            m_unvoiced += n;
+        }
+        const bool voiced = voicedNow || (m_heldHz > 0 && m_unvoiced < int(m_rate * 0.25f) && m_gate > 0.1f);
+        const float hz = voiced ? m_heldHz : 0.0f;
+        const float period = voiced ? m_heldPeriod : 0.0f;
         const float sungMidi = voiced ? midiOfHz(hz) : -1.0f;
         bool anyFinger = false;
         for (const auto &v : m_voices)
@@ -393,7 +559,9 @@ public:
         float leadTarget = 1.0f; // pitch ratio of the shifted lead
         bool shift = m_formant != 0;
         if (m_preset == Tune || m_preset == Robot) {
-            shift = true;
+            // Only what has a pitch is tuned: consonants and breath go
+            // straight through, with none of the shifter's lag.
+            shift = voicedNow || m_formant != 0;
             if (voiced) {
                 double target;
                 if (m_preset == Tune) {
@@ -417,8 +585,7 @@ public:
             // The ratio moves fast (hard tune) but not in one step.
             for (int i = 0; i < n; ++i)
                 m_leadRatio.step(leadTarget);
-            m_lead.process(m_src, n, voiced ? m_pitch.period() : 0.0f, 0.5f * (ratioNow + m_leadRatio.y), formant, 1.0f,
-                           shifted);
+            m_lead.process(m_src, n, period, 0.5f * (ratioNow + m_leadRatio.y), formant, 1.0f, shifted);
         } else {
             m_lead.reset();
         }
@@ -464,7 +631,14 @@ public:
                     out += bd.s.step(car).band * bd.env;
                 }
                 const float sib = m_sib.step(dry[i]).high;
-                const float v = (out * 14.0f + sib * 0.7f + dry[i] * 0.12f) * mix;
+                // As loud as the voice it speaks for: the bands' sum is
+                // levelled against the dry voice, slowly.
+                const float raw = out * 14.0f;
+                m_vocIn += (dry[i] * dry[i] - m_vocIn) * 0.0005f;
+                m_vocOut += (raw * raw - m_vocOut) * 0.0005f;
+                const float match = clampf(std::sqrt((m_vocIn + 1e-9f) / (m_vocOut + 1e-7f)), 0.05f, 2.0f);
+                m_vocGain += (match - m_vocGain) * 0.0005f;
+                const float v = (raw * m_vocGain + sib * 0.5f + dry[i] * 0.12f) * mix;
                 leadL[i] += v;
                 leadR[i] += v;
             }
@@ -477,28 +651,42 @@ public:
             bus[1][i] = leadR[i];
         }
         m_activeVoices = 0;
+        int sounding = 0;
+        for (const auto &v : m_voices)
+            sounding += v.on;
+        // More voices, each a little quieter: a chord of ten isn't ten
+        // times as loud.
+        const float spread = 1.0f / std::sqrt(float(std::max(1, sounding)));
+        const double ref = m_leadMidi > 0 ? m_leadMidi : sungMidi;
         for (auto &v : m_voices) {
             if (!v.on && v.level.y < 0.0005f)
                 continue;
             ++m_activeVoices;
-            const float target = float(noteMidi(h, v.value, v.mode)) + v.detune * 0.3f;
-            v.midi = target;
+            if (v.mode == HarmonyNote && sungMidi <= 0 && v.midi > 0) {
+                // Nothing sung: a harmony keeps its last note.
+            } else {
+                v.midi = float(noteMidi(h, v.value, v.mode, ref, m_follow));
+            }
+            const float target = v.midi + v.detune * 0.3f;
             const float r = voiced ? std::exp2((target - sungMidi) / 12.0f) : 1.0f;
+            if (onset || v.fresh)
+                v.ratio.reset(r);
+            v.fresh = false;
             const float r0 = v.ratio.y;
             for (int i = 0; i < n; ++i)
                 v.ratio.step(r);
             const float lvl0 = v.level.y;
             float lvl1 = lvl0;
             for (int i = 0; i < n; ++i)
-                lvl1 = v.level.step(v.on && m_preset != Vocoder ? v.gain : 0.0f);
+                lvl1 = v.level.step(v.on && m_preset != Vocoder ? v.gain * spread : 0.0f);
             if (lvl0 < 0.0005f && lvl1 < 0.0005f)
                 continue;
             float tmp[kBlock] = {};
             const float vf = std::exp2((v.formant - 0.5f) * 1.4f);
-            v.shifter.process(m_src, n, voiced ? m_pitch.period() : 0.0f, 0.5f * (r0 + v.ratio.y), vf, 1.0f, tmp);
+            v.shifter.process(m_src, n, period, 0.5f * (r0 + v.ratio.y), vf, 1.0f, tmp);
             const float width = 0.6f + 0.4f * std::fabs(v.detune);
             const float pan = 0.5f + (v.pan - 0.5f) * width;
-            const float gl = std::sqrt(1 - pan) * 1.2f, gr = std::sqrt(pan) * 1.2f;
+            const float gl = std::sqrt(1 - pan), gr = std::sqrt(pan);
             for (int i = 0; i < n; ++i) {
                 const float g = lvl0 + (lvl1 - lvl0) * float(i + 1) / float(n);
                 bus[0][i] += tmp[i] * g * gl;
@@ -545,8 +733,7 @@ public:
                 for (int i = 0; i < n; ++i)
                     c.ratio.step(r);
                 float tmp[kBlock] = {};
-                c.shifter.process(m_src, n, voiced ? m_pitch.period() : 0.0f, 0.5f * (r0 + c.ratio.y), throats[k], 1.0f,
-                                  tmp);
+                c.shifter.process(m_src, n, period, 0.5f * (r0 + c.ratio.y), throats[k], 1.0f, tmp);
                 const float gl = std::sqrt(1 - pans[k]), gr = std::sqrt(pans[k]);
                 for (int i = 0; i < n; ++i) {
                     const float g = lvl0 + (lvl1 - lvl0) * float(i + 1) / float(n);
@@ -709,18 +896,59 @@ public:
             m_revTail = rs > 0 ? int(m_rate * 12) : std::max(0, m_revTail - n);
         }
 
+        // Words played back off the tape by the fingers on it: after the
+        // effects (they are on the tape already), before the tape, so a
+        // loop can take a chopped performance.
+        {
+            const int64_t written = tape.written.load(std::memory_order_relaxed);
+            for (auto &v : m_chops) {
+                if (!v.on && v.fade <= 0)
+                    continue;
+                for (int i = 0; i < n; ++i) {
+                    v.fade = v.on ? std::min(1.0f, v.fade + 0.004f) : v.fade - 0.002f;
+                    if (v.fade <= 0) {
+                        v.fade = 0;
+                        break;
+                    }
+                    const int64_t k = int64_t(v.pos);
+                    float a = 0, b = 0;
+                    if (k < written && written - k < kRing - 4096) {
+                        a = tape.wetL[size_t(k & kRingMask)];
+                        b = tape.wetR[size_t(k & kRingMask)];
+                    }
+                    // Each pass through the word is faded in and out, so a
+                    // held word repeats without a click.
+                    const double into = v.pos - double(v.start);
+                    const float edge = float(std::min(into, double(v.length) - into)) / 240.0f;
+                    const float g = v.level * v.fade * clampf(edge, 0, 1);
+                    bus[0][i] += a * g;
+                    bus[1][i] += b * g;
+                    v.pos += v.rate;
+                    if (v.pos >= double(v.start) + v.length)
+                        v.pos = double(v.start);
+                }
+            }
+        }
+
         // 5. Onto the tape for Space (always, heard or not), into the ears
         //    (when monitored), and the loops on top.
         float livePeak = 0;
         const float mon = m_monitor && m_feedback <= 0 ? 1.0f : m_monitor ? 0.06f : 0.0f;
+        // The live voice goes to the studio's monitor bus, round the
+        // limiter's look-ahead; the loops below go into the mix.
+        float *monL = ctx.monitor(0), *monR = ctx.monitor(1);
+        if (!monL || !monR) {
+            monL = outL;
+            monR = outR;
+        }
         for (int i = 0; i < n; ++i) {
             const float l = fastTanh(bus[0][i] * 0.9f) / 0.9f, r = fastTanh(bus[1][i] * 0.9f) / 0.9f;
             const int64_t s = int64_t(tr.sample) + i;
             tape.wetL[size_t(s & kRingMask)] = l;
             tape.wetR[size_t(s & kRingMask)] = r;
             const float g = m_monGain.step(mon);
-            outL[i] += l * g;
-            outR[i] += r * g;
+            monL[i] += l * g;
+            monR[i] += r * g;
             livePeak = std::max(livePeak, std::max(std::fabs(l), std::fabs(r)));
         }
         m_livePeak = std::max(livePeak, m_livePeak * 0.97f);
@@ -807,13 +1035,13 @@ private:
         // second is the speakers singing into the microphone, not a voice
         // (which always wavers a little). The voice ducks for two seconds.
         const float hz = m_pitch.hz();
-        if (hz > 0 && m_pitch.clarity() > 0.985f && m_gateEnv > 0.12f && m_howlHz > 0 &&
-            std::fabs(hz - m_howlHz) < 0.0025f * hz)
+        if (hz > 0 && m_pitch.clarity() > 0.99f && m_gateEnv > 0.15f && m_howlHz > 0 &&
+            std::fabs(hz - m_howlHz) < 0.0015f * hz)
             m_howl += 128;
         else
             m_howl = 0;
         m_howlHz = hz;
-        if (m_howl > int(m_rate * 0.5f) && m_monitor) {
+        if (m_howl > int(m_rate * 0.8f) && m_monitor) {
             m_feedback = int(m_rate * 2);
             m_howl = 0;
         }
@@ -821,10 +1049,14 @@ private:
 
     // --- freeze -----------------------------------------------------------------
     void startFreeze(AudioContext &) {
-        // The last three quarters of a second, held.
+        // Three quarters of a second, held: up to the last moment the voice
+        // sounded (a finger that comes a breath late still freezes the
+        // note, not the silence after it), or simply the latest.
         const size_t len = m_freezeBuf.size();
+        const int64_t since = m_recentW - m_lastVoiced;
+        const int64_t end = since >= 0 && since < int64_t(m_rate * 1.5f) ? m_lastVoiced : m_recentW;
         for (size_t i = 0; i < len; ++i)
-            m_freezeBuf[i] = m_recent[size_t(m_recentW - int64_t(len) + int64_t(i)) & (m_recent.size() - 1)];
+            m_freezeBuf[i] = m_recent[size_t(end - int64_t(len) + int64_t(i)) & (m_recent.size() - 1)];
         m_stutterK = -1;
         for (auto &g : m_cloud)
             g.left = 0;
@@ -977,6 +1209,13 @@ private:
     Source m_src;
     int m_howl = 0, m_feedback = 0;
     float m_howlHz = 0;
+    Svf m_howlHp;
+    float m_howlSign = 0, m_howlLevel = 0, m_howlFreq = 0;
+    int m_howlCross = 0, m_howlN = 0, m_howlHi = 0;
+    int64_t m_lastVoiced = -1000000;
+    float m_heldHz = 0, m_heldPeriod = 0;
+    int m_unvoiced = 1 << 30;
+    float m_vocIn = 0, m_vocOut = 0, m_vocGain = 0.3f;
 
     // The voice.
     int m_preset = Natural, m_formant = 0;
@@ -989,6 +1228,7 @@ private:
         bool on = false;
         int value = 0, mode = 0;
         float gain = 0, formant = 0.5f, detune = 0, pan = 0.5f, midi = 0;
+        bool fresh = false; // its first block: the ratio starts where it should
         Smooth level, ratio;
         Shifter shifter;
     };
@@ -1045,6 +1285,15 @@ private:
     int m_echoTail = 0, m_revTail = 0;
 
     Loop m_loops[16];
+    struct ChopVoice {
+        bool on = false;
+        int64_t start = 0;
+        double pos = 0;
+        float length = 0, level = 1, rate = 1, fade = 0;
+    };
+    ChopVoice m_chops[kChops];
+    bool m_demo = false;
+    DemoSinger m_singer;
 };
 
 // --- the page -------------------------------------------------------------------
@@ -1132,6 +1381,20 @@ public:
         if (want != m_monitorSent) {
             m_monitorSent = want;
             param(ctx, PMonitor, want ? 1 : 0);
+        }
+        // Auto level: the loudest of three seconds of singing lands at
+        // −10 dBFS (headroom for the shout).
+        if (m_autoUntil > 0) {
+            m_autoPeak = std::max(m_autoPeak, v.data[pub::InPeak]);
+            if (t >= m_autoUntil) {
+                m_autoUntil = -1;
+                if (m_autoPeak > 1e-4f) {
+                    const float peakDb = 20.0f * std::log10(m_autoPeak);
+                    setMicGain(m_micDb + (-10.0f - peakDb), ctx);
+                } else {
+                    ctx.notice(QStringLiteral("Heard nothing: is the microphone muted?"));
+                }
+            }
         }
         // A microphone still connecting after two seconds isn't coming.
         if (ctx.studio().input == StudioView::InputConnecting) {
@@ -1265,6 +1528,8 @@ public:
             return true;
         case Qt::Key_Delete: letGo(ctx); return true;
         case Qt::Key_M: cycleMonitor(ctx); return true;
+        case Qt::Key_V: setDemo(!m_demo, ctx); return true;
+        case Qt::Key_Z: autoLevel(ctx); return true;
         case Qt::Key_Comma: setMicGain(m_micDb - 3, ctx); return true;
         case Qt::Key_Period: setMicGain(m_micDb + 3, ctx); return true;
         default: return false;
@@ -1294,7 +1559,18 @@ public:
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
-    enum Spot { SpotPreset = 100, SpotMonitor = 200, SpotLatch, SpotFollow, SpotGainDown, SpotGainUp, SpotNew, SpotLayer };
+    enum Spot {
+        SpotPreset = 100,
+        SpotMonitor = 200,
+        SpotLatch,
+        SpotFollow,
+        SpotGainDown,
+        SpotGainUp,
+        SpotNew,
+        SpotLayer,
+        SpotDemo,
+        SpotAuto
+    };
     bool click(QPointF at, ControlContext &ctx) override {
         const int id = m_spots.at(at);
         if (id < 0)
@@ -1313,6 +1589,8 @@ public:
         case SpotGainUp: setMicGain(m_micDb + 3, ctx); return true;
         case SpotNew: space(ctx, false); return true;
         case SpotLayer: space(ctx, true); return true;
+        case SpotDemo: setDemo(!m_demo, ctx); return true;
+        case SpotAuto: autoLevel(ctx); return true;
         default: return false;
         }
     }
@@ -1331,10 +1609,15 @@ public:
             "Space again while a take waits\tcall it off\n"
             "with nothing else playing\tsing a phrase and press Space where it would start again: the loop sets the "
             "tempo\n"
-            "a finger in the middle\tyour voice again, at that note of the key (the vowels stay yours): low to high "
-            "across the pad, an octave either side of where you sing\n"
+            "a finger in the middle\tyour voice again, a harmony of what you sing, in the key: the lanes are −8ve, "
+            "−5th, −3rd, +3rd, +5th, +6th, +8ve, your own note on the line between the thirds (it follows your "
+            "melody, so it never clashes)\n"
+            "in PRISM and VOCODER\tthe lanes are notes of the key instead, two octaves around your voice: your "
+            "voice (or the vocoder) sings exactly the notes you hold\n"
             "its height · pressure · twist\tthe throat, giant low to elf high · its level · a detune that widens it\n"
             "more fingers\ta harmony, a chord, a ten-voice choir of you\n"
+            "the tape (the strip of waveform under the lanes)\tTOUCH A WORD and it plays again, over and over while "
+            "you hold; slide to another word; twist to pitch it; a loop can take what you chop\n"
             "left edge\ta resonant filter: slide up and down for a wah, press for more\n"
             "right edge, lower half\tFREEZE: the last sound held as a cloud you can sing over; twist to pitch it\n"
             "right edge, upper half\tSTUTTER: the last slice repeated on the grid, faster higher up; the voice "
@@ -1352,7 +1635,9 @@ public:
             "the key left of 1 (§)\tfollow the Chords page: the keys are the chord's notes, hard tune snaps to "
             "them\n"
             "Delete\tlet go: latched notes, freeze, every strip\n"
-            "A S D F G H J K L\tnotes from the keyboard, held as long as the key\n"
+            "A S D F G H J (K L)\tthe harmony lanes (in PRISM and VOCODER, notes) from the keyboard, held\n"
+            "V\ta demo singer in place of the microphone, to learn the page and loop it with no mic\n"
+            "Z (AUTO)\tsing for three seconds: the microphone's level sets itself\n"
             "Q · W · E · R · T\techo throw · reverb throw · freeze · stutter · tape stop, held\n"
             "M\tmonitor: on this page, always, or off (the loops still record what you sing)\n"
             ", and .\tthe microphone's level down, up (3 dB)\n"
@@ -1478,6 +1763,9 @@ private:
         float x = 0, y = 0, p = 0.5f, angle0 = 0, twist = 0;
         int voice = -1; // the engine's voice id (keys)
         int value = 0, mode = 0;
+        int chop = -1;  // the engine's chop voice (the tape)
+        int64_t word = INT64_MIN;
+        int wordLength = 0;
         bool key = false, clicker = false;
         float sent[4] = {-9, -9, -9, -9};
     };
@@ -1494,6 +1782,7 @@ private:
     static const char *zoneName(Zone z) {
         switch (z) {
         case Keys: return "VOICE";
+        case Chop: return "WORD";
         case Filter: return "FILTER";
         case Freeze: return "FREEZE";
         case Echo: return "ECHO";
@@ -1503,12 +1792,14 @@ private:
         }
         return "";
     }
-    static int homeLane(int key) {
+    // The home row: the harmony lanes (A to J, low to high), or the keys'
+    // middle notes (A to L).
+    int homeLane(int key) const {
         static const int keys[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G,
                                    Qt::Key_H, Qt::Key_J, Qt::Key_K, Qt::Key_L};
         for (int i = 0; i < 9; ++i)
             if (keys[i] == key)
-                return i + 3;
+                return harmonyLanes() ? (i < kIntervalCount ? i : -1) : i + 3;
         return -1;
     }
 
@@ -1518,7 +1809,10 @@ private:
         t.set(v.root, v.family, v.brightness, v.just);
         return t;
     }
+    bool harmonyLanes() const { return harmonyKeys(m_preset); }
     int laneCount(const StudioView &v) const {
+        if (harmonyLanes())
+            return kIntervalCount;
         if (m_follow)
             return std::clamp(v.chordCount, 1, 4) * 2 + 1;
         return tuningOf(v).degreesPerOctave() * 2 + 1;
@@ -1543,6 +1837,16 @@ private:
     double laneMidi(const StudioView &v, int lane) const {
         return noteMidi(harmonyOf(v), laneBase(v) + lane, m_follow ? 1 : 0);
     }
+    // What a finger at `lane` sends: an interval (harmony lanes) or a note.
+    void laneNote(const StudioView &v, int lane, int &value, int &mode) const {
+        if (harmonyLanes()) {
+            value = kIntervals[std::clamp(lane, 0, kIntervalCount - 1)];
+            mode = HarmonyNote;
+        } else {
+            value = laneBase(v) + lane;
+            mode = m_follow ? ChordNote : ScaleNote;
+        }
+    }
     int laneAt(const StudioView &v, float x) const {
         const int n = laneCount(v);
         return std::clamp(int((x - kLeft) / (kRight - kLeft) * float(n)), 0, n - 1);
@@ -1562,10 +1866,21 @@ private:
             if (m_nextVoice > 0xFFFF)
                 m_nextVoice = 1;
             const StudioView &v = ctx.studio();
-            h.value = laneBase(v) + laneAt(v, t.x);
-            h.mode = m_follow ? 1 : 0;
+            laneNote(v, laneAt(v, t.x), h.value, h.mode);
             sendNote(h, Command::On, ctx);
             ++m_notesPlayed;
+        } else if (h.zone == Chop) {
+            h.chop = -1;
+            for (int k = 0; k < kChops; ++k) {
+                bool used = false;
+                for (const Finger &o : m_fingers)
+                    used |= &o != &h && o.id >= 0 && o.zone == Chop && o.chop == k;
+                if (!used) {
+                    h.chop = k;
+                    break;
+                }
+            }
+            sendChop(h, true, ctx);
         } else {
             sendStrip(h, true, ctx);
         }
@@ -1584,11 +1899,18 @@ private:
             return;
         if (h.zone == Keys) {
             const StudioView &v = ctx.studio();
-            const int value = laneBase(v) + laneAt(v, t.x);
+            int value = 0, mode = 0;
+            laneNote(v, laneAt(v, t.x), value, mode);
             if (value != h.value || changed(h)) {
                 h.value = value;
+                h.mode = mode;
                 h.lastSend = time;
                 sendNote(h, Command::Move, ctx);
+            }
+        } else if (h.zone == Chop) {
+            if (changed(h)) {
+                h.lastSend = time;
+                sendChop(h, true, ctx);
             }
         } else if (changed(h)) {
             h.lastSend = time;
@@ -1612,6 +1934,8 @@ private:
                 m_latched.push_back(h.voice);
             else
                 release(h, ctx);
+        } else if (h.zone == Chop) {
+            sendChop(h, false, ctx);
         } else {
             sendStrip(h, false, ctx);
         }
@@ -1679,7 +2003,8 @@ private:
             c.f[0] = clampf(h.x, 0, 1);
             c.f[1] = p;
             break;
-        case Keys: return;
+        case Keys:
+        case Chop: return;
         }
         if (h.zone != Freeze)
             c.f[2] = on ? 1 : 0;
@@ -1693,6 +2018,67 @@ private:
         ctx.send(c);
         if (on)
             ++m_effectsUsed;
+    }
+    // A finger on the tape plays the word under it, from its first sound,
+    // over and over while held; sliding finds the next word; twist
+    // pitches it.
+    void sendChop(Finger &h, bool on, ControlContext &ctx) {
+        if (h.chop < 0)
+            return;
+        h.sent[0] = h.x, h.sent[1] = h.y, h.sent[2] = h.p, h.sent[3] = h.twist;
+        if (on) {
+            const StudioView &v = ctx.studio();
+            const Tape &tape = *m_tape;
+            const double rate = tape.rate;
+            const int64_t written = tape.written.load(std::memory_order_acquire);
+            const double nowT = v.time + (double(written) - double(v.sample)) / rate;
+            const double span = tapeSpan(v);
+            const double t = nowT - span * (1.0 - double((h.x - kLeft) / (kRight - kLeft)));
+            // The word nearest the finger (the envelope's words, without
+            // the latency: the tape is drawn as it was recorded).
+            Sung s;
+            s.hop = kHop / rate;
+            const int64_t last = written / kHop, first = std::max<int64_t>(0, last - int64_t(span / s.hop) - 64);
+            s.env.resize(size_t(std::max<int64_t>(0, last - first)));
+            for (int64_t k = first; k < last; ++k)
+                s.env[size_t(k - first)] = tape.env[size_t(k & (kEnvRing - 1))];
+            s.t0 = v.time + (double(first * kHop + kHop / 2) - double(v.sample)) / rate;
+            const auto words = findWords(s);
+            double bestD = 0.35, start = t, end = t + 0.25;
+            for (const Word &w : words) {
+                const double a = s.time(w.start), b = s.time(w.end);
+                const double d = t < a ? a - t : t > b ? t - b : 0;
+                if (d < bestD) {
+                    bestD = d;
+                    start = a - 0.01;
+                    end = b + 0.03;
+                }
+            }
+            h.word = int64_t(std::llround(double(v.sample) + (start - v.time) * rate));
+            h.wordLength = int(std::max(0.05, end - start) * rate);
+        }
+        Command c;
+        c.type = Command::Param;
+        c.flags = Command::NoRecord;
+        c.i[0] = PChop;
+        c.i[1] = h.chop;
+        c.i[2] = int32_t(uint32_t(uint64_t(h.word) >> 32));
+        c.i[3] = int32_t(uint32_t(uint64_t(h.word) & 0xFFFFFFFFu));
+        c.f[0] = on ? 1 : 0;
+        c.f[1] = float(h.wordLength);
+        c.f[2] = 0.4f + 0.9f * clampf(h.p, 0, 1);
+        c.f[3] = std::round(h.twist / 0.8f * 12.0f);
+        ctx.send(c);
+        if (on)
+            ++m_chopsPlayed;
+    }
+    // How much of the past the tape shows: eight bars with a clock, eight
+    // seconds without.
+    static double tapeSpan(const StudioView &sv) {
+        bool anyPlaying = sv.metronome;
+        for (int q = 0; q < sv.partCount; ++q)
+            anyPlaying |= sv.parts[q].playing >= 0 || sv.parts[q].queued >= 0;
+        return anyPlaying ? 8 * 4 * 60.0 / std::max(1.0, sv.bpm) : 8.0;
     }
     static bool sameStrip(Zone a, Zone b) { return a == b || ((a == Radio || a == Crush) && (b == Radio || b == Crush)); }
     void sendTape(ControlContext &ctx) {
@@ -1763,6 +2149,17 @@ private:
         param(ctx, PFollow, on ? 1 : 0);
         ctx.notice(on ? QStringLiteral("Following the Chords page: the keys are the chord's notes")
                       : QStringLiteral("The keys are the key's notes"));
+    }
+    void setDemo(bool on, ControlContext &ctx) {
+        m_demo = on;
+        param(ctx, PDemo, on ? 1 : 0);
+        ctx.notice(on ? QStringLiteral("A demo singer in place of the microphone: play over it, loop it (V again: off)")
+                      : QStringLiteral("Demo singer off"));
+    }
+    void autoLevel(ControlContext &ctx) {
+        m_autoUntil = ctx.now() + 3.0;
+        m_autoPeak = 0;
+        ctx.notice(QStringLiteral("Sing as loud as you will for three seconds: the level follows"));
     }
     void cycleMonitor(ControlContext &ctx) {
         m_monitorMode = (m_monitorMode + 1) % 3;
@@ -1844,8 +2241,8 @@ private:
             ctx.notice(QStringLiteral("Loop called off"));
             return;
         }
-        if (v.input == StudioView::NoInput) {
-            ctx.notice(QStringLiteral("No microphone: nothing to loop"));
+        if (v.input == StudioView::NoInput && !m_demo) {
+            ctx.notice(QStringLiteral("No microphone: nothing to loop (V: a demo singer)"));
             return;
         }
         const int into = layer ? pv.playing : -1;
@@ -1894,7 +2291,7 @@ private:
             for (const Word &w : words)
                 if (sung.time(w.start) <= now + 0.02)
                     heard.push_back(w);
-            for (const Word &w : phrasesOf(heard, int(0.35 / sung.hop)))
+            for (const Word &w : phrasesOf(heard, int(0.8 / sung.hop)))
                 m_last.starts.push_back(sung.time(w.start));
         }
         ++m_loopsMade;
@@ -2051,7 +2448,10 @@ private:
     double m_loopSince = -1e18;
     uint32_t m_takesSeen = 0;
     int m_playingSeen = -1;
-    int m_loopsMade = 0, m_notesPlayed = 0, m_effectsUsed = 0;
+    int m_loopsMade = 0, m_notesPlayed = 0, m_effectsUsed = 0, m_chopsPlayed = 0;
+    bool m_demo = false;
+    double m_autoUntil = -1;
+    float m_autoPeak = 0;
     static constexpr int kChordsPart = 2; // the Chords page, third in makeParts()
 
     LastTake m_last;
@@ -2062,7 +2462,9 @@ private:
     std::vector<int> m_pending;
     std::vector<std::pair<double, int>> m_graveyard;
     console::Hotspots m_spots;
-    Pick m_preview;
+    Pick m_preview, m_previewLayer;
+    float m_meterHold = -90;
+    double m_meterHoldAt = 0;
     bool m_previewFree = false;
     double m_previewAt = -1;
     friend void paintTape(Page &, QPainter &, const PaintContext &);
@@ -2104,7 +2506,7 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             p.restore();
         }
     };
-    bool lit[7] = {};
+    bool lit[8] = {};
     for (const Finger &h : m_fingers)
         if (h.id >= 0 && !h.clicker)
             lit[h.zone] = true;
@@ -2118,13 +2520,33 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     strip(kRight, 0.5f * (kBottom + kTop), 1, kTop,
           QStringLiteral("STUTTER %1+").arg(QString::fromLatin1(kStutterNames[m_stutter])), lit[Freeze], cold);
 
-    // The keys: a lane per note, its name at the foot, the root's lit.
+    // The keys: a lane per harmony (what it adds to your note), or per
+    // note of the key, its name at the foot, the root's lit.
     const int lanes = laneCount(sv);
     const Tuning tuning = tuningOf(sv);
     const float laneW = (kRight - kLeft) / float(lanes);
     const float sungHz = d[pub::Hz];
     const float sung = sungHz > 0 ? midiOfHz(sungHz) : -1.0f;
-    for (int k = 0; k < lanes; ++k) {
+    const bool harmony = harmonyLanes();
+    const int labelPx = int(std::clamp(H * 0.026, 9.0, 14.0));
+    if (harmony) {
+        for (int k = 0; k < lanes; ++k) {
+            const float x0 = kLeft + laneW * float(k);
+            const QRectF r = pc.rect(x0, kTapeTop, x0 + laneW, kTop);
+            if (k % 2 == 0)
+                p.fillRect(r, c::alpha(col, 0.035f));
+            p.setPen(QPen(c::alpha(col, 0.16f), 1));
+            p.drawLine(pc.at(x0, kTapeTop), pc.at(x0, kTop));
+            c::text(p, pc.rect(x0, kTapeTop, x0 + laneW, kTapeTop + 0.05f), QString::fromUtf8(kIntervalNames[k]),
+                    c::alpha(col, 0.75f), labelPx, true, Qt::AlignCenter);
+        }
+        // Your own note sits between the thirds.
+        const float ux = kLeft + laneW * 3.0f;
+        p.setPen(QPen(c::alpha(col, 0.5f), 1, Qt::DashLine));
+        p.drawLine(pc.at(ux, kTapeTop + 0.05f), pc.at(ux, kTop));
+        c::tag(p, QPointF(pc.at(ux, kTop).x(), pc.at(0, kTop - 0.035f).y()), QStringLiteral("YOU"), col, 10, true);
+    }
+    for (int k = 0; k < lanes && !harmony; ++k) {
         const double midi = laneMidi(sv, k);
         const int pc12 = ((int(std::lround(midi)) % 12) + 12) % 12;
         const bool root = pc12 == tuning.root();
@@ -2138,16 +2560,23 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         p.drawLine(pc.at(x0, kTapeTop), pc.at(x0, kTop));
         const QString name = QString::fromLatin1(Tuning::noteName(pc12));
         c::text(p, pc.rect(x0, kTapeTop, x0 + laneW, kTapeTop + 0.045f), name,
-                c::alpha(col, root ? 0.9f : 0.45f), int(std::clamp(H * 0.022, 8.0, 12.0)), root, Qt::AlignCenter);
+                c::alpha(col, root ? 0.9f : 0.5f), labelPx, root, Qt::AlignCenter);
     }
     // The throat, up the keys: giant at the foot, elf at the top.
-    c::text(p, pc.rect(kLeft + 0.005f, kTop - 0.05f, kLeft + 0.2f, kTop - 0.01f), QStringLiteral("ELF ↑"),
-            c::alpha(col, 0.35f), 9);
-    c::text(p, pc.rect(kLeft + 0.005f, kTapeTop + 0.05f, kLeft + 0.2f, kTapeTop + 0.09f), QStringLiteral("GIANT ↓"),
-            c::alpha(col, 0.35f), 9);
+    c::text(p, pc.rect(kLeft + 0.008f, kTop - 0.055f, kLeft + 0.25f, kTop - 0.01f), QStringLiteral("↑ ELF THROAT"),
+            c::alpha(col, 0.6f), labelPx - 1, true);
+    c::text(p, pc.rect(kLeft + 0.008f, kTapeTop + 0.055f, kLeft + 0.25f, kTapeTop + 0.1f),
+            QStringLiteral("↓ GIANT THROAT"), c::alpha(col, 0.6f), labelPx - 1, true);
 
     // The note sung: a trail rising up the keys, at its pitch across them.
+    const Harmony hv = harmonyOf(sv);
     auto xOfMidi = [&](float midi) -> float {
+        // Harmony lanes: your note on the line between the thirds, off it
+        // by how far from the key's note you are (a lane is a semitone).
+        if (harmony) {
+            const double near = hv.midi(degreeNear(hv, midi), 0);
+            return kLeft + laneW * (3.0f + clampf(float(midi - near), -0.5f, 0.5f));
+        }
         // Between lanes, by pitch: the lanes' own midi values interpolated.
         double lo = laneMidi(sv, 0), hi = laneMidi(sv, lanes - 1);
         if (midi <= lo)
@@ -2196,8 +2625,8 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             }
         }
     }
-    // The voices the fingers hold.
-    for (int k = 0; k < kMaxVoices; ++k) {
+    // The voices the fingers hold (in harmony lanes, the fingers show them).
+    for (int k = 0; k < kMaxVoices && !harmony; ++k) {
         if (d[pub::Voices + 3 * k] < 0.5f)
             continue;
         const float midi = d[pub::Voices + 3 * k + 1];
@@ -2221,8 +2650,12 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         QString label;
         if (h.clicker)
             label = QStringLiteral("TAPE");
-        else if (h.zone == Keys) {
-            const int m = int(std::lround(noteMidi(harmonyOf(sv), h.value, h.mode)));
+        else if (h.zone == Keys && h.mode == HarmonyNote) {
+            for (int k = 0; k < kIntervalCount; ++k)
+                if (kIntervals[k] == h.value)
+                    label = QString::fromUtf8(kIntervalNames[k]);
+        } else if (h.zone == Keys) {
+            const int m = int(std::lround(noteMidi(hv, h.value, h.mode)));
             label = QString::fromLatin1(Tuning::noteName(((m % 12) + 12) % 12));
         }
         else
@@ -2239,8 +2672,8 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     if (d[pub::Feedback] > 0.5f)
         c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, 0.8f).y()),
                QStringLiteral("FEEDBACK HEARD: VOICE DUCKED · USE HEADPHONES"), c::red(), 13, true);
-    if (noMic) {
-        const QRectF box = pc.rect(0.2f, 0.45f, 0.8f, 0.7f);
+    if (noMic && !m_demo) {
+        const QRectF box = pc.rect(0.2f, 0.45f, 0.8f, 0.72f);
         p.fillRect(box, QColor(0, 0, 0, 220));
         p.setPen(QPen(c::red(), 2));
         p.drawRect(box);
@@ -2251,8 +2684,13 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                             : sv.input == StudioView::InputConnecting
                                 ? QStringLiteral("Waiting for an input: plug a mic in, or pick one in the sound settings")
                                 : QStringLiteral("This session has no input (offline, or started without one)");
-        c::text(p, QRectF(box.left() + 10, box.center().y(), box.width() - 20, box.height() * 0.4), why,
+        c::text(p, QRectF(box.left() + 10, box.center().y() - 6, box.width() - 20, box.height() * 0.25), why,
                 c::alpha(QColor(255, 255, 255), 0.85f), 12, false, Qt::AlignCenter);
+        c::text(p, QRectF(box.left() + 10, box.center().y() + box.height() * 0.2, box.width() - 20, box.height() * 0.25),
+                QStringLiteral("V: A DEMO SINGER, TO PLAY AND LOOP MEANWHILE"), c::amber(), 12, true, Qt::AlignCenter);
+    } else if (m_demo) {
+        c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, kTop - 0.035f).y() + 22), QStringLiteral("DEMO SINGER · V"),
+               c::amber(), 10, true);
     }
     if (pc.view->recording >= 0)
         c::tag(p, QPointF(pc.pad.left() + 12, pc.at(0, kTop).y() + 14),
@@ -2271,30 +2709,40 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     const QRectF row = c::bandRow(pc, 1, 0, 1);
     const double w = row.width();
     auto at = [&](double x0, double x1) { return QRectF(row.left() + w * x0, row.top(), w * (x1 - x0) - 4, row.height()); };
-    c::chip(p, pc, at(0, 0.13), QStringLiteral("NEW LOOP  SPACE"), false, &m_spots, SpotNew);
-    c::chip(p, pc, at(0.13, 0.27), QStringLiteral("LAYER  ⇧SPACE"), false, &m_spots, SpotLayer);
-    static const char *mon[] = {"MONITOR: PAGE  M", "MONITOR: ALL  M", "MONITOR: OFF  M"};
-    c::chip(p, pc, at(0.27, 0.42), QString::fromLatin1(mon[m_monitorMode]), m_monitorMode != 2, &m_spots, SpotMonitor);
-    c::chip(p, pc, at(0.42, 0.51), QStringLiteral("LATCH  ↵"), m_latch, &m_spots, SpotLatch);
-    c::chip(p, pc, at(0.51, 0.61), QStringLiteral("FOLLOW  §"), m_follow, &m_spots, SpotFollow);
-    c::chip(p, pc, at(0.61, 0.655), QStringLiteral("−"), false, &m_spots, SpotGainDown);
+    c::chip(p, pc, at(0, 0.11), QStringLiteral("NEW  SPACE"), false, &m_spots, SpotNew);
+    c::chip(p, pc, at(0.11, 0.23), QStringLiteral("LAYER  ⇧SPACE"), false, &m_spots, SpotLayer);
+    static const char *mon[] = {"MONITOR PAGE  M", "MONITOR ALL  M", "MONITOR OFF  M"};
+    c::chip(p, pc, at(0.23, 0.36), QString::fromLatin1(mon[m_monitorMode]), m_monitorMode != 2, &m_spots, SpotMonitor);
+    c::chip(p, pc, at(0.36, 0.44), QStringLiteral("LATCH  ↵"), m_latch, &m_spots, SpotLatch);
+    c::chip(p, pc, at(0.44, 0.53), QStringLiteral("FOLLOW  §"), m_follow, &m_spots, SpotFollow);
+    c::chip(p, pc, at(0.53, 0.60), QStringLiteral("DEMO  V"), m_demo, &m_spots, SpotDemo);
+    c::chip(p, pc, at(0.60, 0.635), QStringLiteral("−"), false, &m_spots, SpotGainDown);
     {
-        // The microphone's level: a meter, red at the top.
-        const QRectF m = at(0.655, 0.81);
+        // The microphone's level: a meter, its peak held a moment, red
+        // only near the top; AUTO sets it from three seconds of singing.
+        const QRectF m = at(0.635, 0.76);
         const float pk = d[pub::InPeak];
         const float db = pk > 1e-6f ? 20.0f * std::log10(pk) : -90.0f;
+        if (db > m_meterHold || pc.time - m_meterHoldAt > 1.5) {
+            m_meterHold = db;
+            m_meterHoldAt = pc.time;
+        }
         c::text(p, QRectF(m.left(), m.top(), m.width(), 12),
-                QStringLiteral("MIC %1 dB").arg(m_micDb > 0 ? QStringLiteral("+%1").arg(double(m_micDb), 0, 'f', 0)
-                                                           : QString::number(double(m_micDb), 'f', 0)),
-                c::alpha(col, 0.8f), 9, true);
-        c::gauge(p, QRectF(m.left(), m.bottom() - 12, m.width(), 9), clampf((db + 60.0f) / 60.0f, 0, 1),
-                 db > -3 ? c::red() : col, 16);
+                QStringLiteral("MIC %1 dB · PEAK %2")
+                    .arg(m_micDb > 0 ? QStringLiteral("+%1").arg(double(m_micDb), 0, 'f', 0)
+                                     : QString::number(double(m_micDb), 'f', 0))
+                    .arg(m_meterHold > -60 ? QString::number(double(m_meterHold), 'f', 0) : QStringLiteral("—")),
+                m_meterHold > -1 ? c::red() : c::alpha(col, 0.8f), 9, true);
+        c::gauge(p, QRectF(m.left(), m.bottom() - 12, m.width(), 9), clampf((db + 48.0f) / 48.0f, 0, 1),
+                 db > -1 ? c::red() : db > -9 ? c::amber() : col, 16);
     }
-    c::chip(p, pc, at(0.81, 0.855), QStringLiteral("+"), false, &m_spots, SpotGainUp);
+    c::chip(p, pc, at(0.76, 0.795), QStringLiteral("+"), false, &m_spots, SpotGainUp);
+    c::chip(p, pc, at(0.795, 0.865), m_autoUntil > 0 ? QStringLiteral("LISTENING") : QStringLiteral("AUTO  Z"),
+            m_autoUntil > 0, &m_spots, SpotAuto);
     {
         // Latency: the trip from the microphone to the ears, as measured
         // by the server, and the studio's own part of it.
-        const QRectF m = at(0.86, 1.0);
+        const QRectF m = at(0.865, 1.0);
         const float total = sv.inputMs + sv.outputMs + sv.bufferMs;
         const QString line = sv.input == StudioView::InputLive && sv.inputMs + sv.outputMs > 0
                                  ? QStringLiteral("%1 ms").arg(double(total), 0, 'f', 1)
@@ -2302,6 +2750,10 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         c::text(p, QRectF(m.left(), m.top(), m.width(), 14), QStringLiteral("MIC → EAR"), c::alpha(col, 0.6f), 9, true);
         c::text(p, QRectF(m.left(), m.top() + 12, m.width(), 18), line,
                 total > 15 ? c::amber() : col, 13, true);
+        // A retuned or shifted voice comes a little after: say how much.
+        if (m_preset == Tune || m_preset == Robot || m_formant != 0)
+            c::text(p, QRectF(m.left() + m.width() * 0.55, m.top() + 12, m.width() * 0.45, 18),
+                    QStringLiteral("+%1").arg(double(d[pub::Lag]), 0, 'f', 1), c::alpha(col, 0.6f), 9, true);
     }
 }
 
@@ -2315,16 +2767,21 @@ void paintTape(Page &pg, QPainter &p, const PaintContext &pc) {
     p.fillRect(area, QColor(0, 0, 0, 120));
     p.setPen(QPen(c::alpha(col, 0.25f), 1));
     p.drawLine(area.topLeft(), area.topRight());
+    bool chopping = false;
+    for (const auto &h : pg.m_fingers)
+        chopping |= h.id >= 0 && h.zone == Chop;
+    c::text(p, area.adjusted(6, 2, -6, 0).translated(0, area.height() - 16).adjusted(0, 0, 0, -area.height() + 16),
+            QStringLiteral("THE TAPE · TOUCH A WORD TO PLAY IT"), c::alpha(col, chopping ? 0.9f : 0.45f), 9, true);
     const Tape &tape = *pg.m_tape;
     const int64_t written = tape.written.load(std::memory_order_acquire);
-    if (written <= 0 || sv.input == StudioView::NoInput)
+    if (written <= 0 || (sv.input == StudioView::NoInput && !pg.m_demo))
         return;
     // Eight bars back with a clock, eight seconds without.
     bool anyPlaying = sv.metronome;
     for (int q = 0; q < sv.partCount; ++q)
         anyPlaying |= sv.parts[q].playing >= 0 || sv.parts[q].queued >= 0;
     const double spb = 60.0 / std::max(1.0, sv.bpm);
-    const double span = anyPlaying ? 8 * 4 * spb : 8.0;
+    const double span = Page::tapeSpan(sv);
     const double rate = tape.rate;
     const double nowT = sv.time + (double(written) - double(sv.sample)) / rate;
     const double lat = Page::latency(sv);
@@ -2356,8 +2813,11 @@ void paintTape(Page &pg, QPainter &p, const PaintContext &pc) {
             p.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
         }
     }
-    // What Space would take now (or, just after it, what it took).
-    Pick pk;
+    // What Space would take now (or, just after it, what it took), and
+    // over a vocal loop, what Shift+Space would layer onto it.
+    const PartView &me = *pc.view;
+    const bool canLayer = me.playing >= 0 && me.clips[me.playing].lengthBeats > 0;
+    Pick pk, layer;
     bool taken = false;
     if (pg.m_last.active && pc.time - pg.m_last.at < 4.0) {
         pk = pg.m_last.pick;
@@ -2385,39 +2845,57 @@ void paintTape(Page &pg, QPainter &p, const PaintContext &pc) {
             req.fit = chords.clips[chords.playing].lengthBeats / 4.0;
         pg.m_preview = pick(s, req);
         pg.m_previewFree = req.free;
+        if (canLayer && !req.free) {
+            req.layerBase = me.clips[me.playing].lengthBeats / 4.0;
+            req.since = pg.m_loopSince;
+            pg.m_previewLayer = pick(s, req);
+        } else {
+            pg.m_previewLayer = Pick{};
+        }
         pg.m_previewAt = pc.time;
     }
-    if (!taken)
+    if (!taken) {
         pk = pg.m_preview;
-    if (!pk.ok)
-        return;
+        layer = pg.m_previewLayer;
+    }
     const bool free = taken ? pg.m_last.free : pg.m_previewFree;
-    const double t0 = free ? pk.b0 : sv.time + (pk.b0 - sv.beat) * spb;
-    const double t1 = free ? pk.b1 : sv.time + (pk.b1 - sv.beat) * spb;
-    const double x0 = std::max(area.left(), xOf(t0 + lat)), x1 = std::min(area.right(), xOf(t1 + lat));
-    if (x1 <= x0)
-        return;
-    const QColor bc = taken ? c::red() : c::alpha(QColor(255, 255, 255), 0.8f);
-    p.fillRect(QRectF(x0, area.top(), x1 - x0, area.height()), c::alpha(bc, taken ? 0.12f : 0.06f));
-    p.setPen(QPen(bc, 2));
-    p.drawLine(QPointF(x0, area.top()), QPointF(x0, area.bottom()));
-    p.drawLine(QPointF(x1, area.top()), QPointF(x1, area.bottom()));
-    p.drawLine(QPointF(x0, area.top()), QPointF(x0 + 8, area.top()));
-    p.drawLine(QPointF(x0, area.bottom()), QPointF(x0 + 8, area.bottom()));
-    p.drawLine(QPointF(x1, area.top()), QPointF(x1 - 8, area.top()));
-    p.drawLine(QPointF(x1, area.bottom()), QPointF(x1 - 8, area.bottom()));
-    QString what;
-    if (free)
-        what = QStringLiteral("%1 PHRASE%2 · SETS THE TEMPO").arg(std::max(1, pk.phrases)).arg(pk.phrases > 1 ? "S" : "");
-    else
-        what = (pk.bars == 1 ? QStringLiteral("1 BAR") : QStringLiteral("%1 BARS").arg(pk.bars)) +
-               (std::fabs(pk.delta) > 1e-6 ? QStringLiteral(" · CUT %1%2 BEAT")
-                                                 .arg(pk.delta > 0 ? "+" : "−")
-                                                 .arg(std::fabs(pk.delta), 0, 'g', 3)
-                                           : QString()) +
-               (pk.cutDb <= 3 ? QStringLiteral(" · IN THE GAPS") : QStringLiteral(" · NO GAP: QUIETEST"));
-    c::tag(p, QPointF(std::max(x0 + 4, area.left() + 4), area.top() + 10),
-           (taken ? QStringLiteral("TAKEN: ") : QStringLiteral("SPACE: ")) + what, bc, 10);
+    auto bracket = [&](const Pick &b, QColor bc, float fill, const QString &label, float tagRow) {
+        if (!b.ok)
+            return;
+        const double t0 = free ? b.b0 : sv.time + (b.b0 - sv.beat) * spb;
+        const double t1 = free ? b.b1 : sv.time + (b.b1 - sv.beat) * spb;
+        const double x0 = std::max(area.left(), xOf(t0 + lat)), x1 = std::min(area.right(), xOf(t1 + lat));
+        if (x1 <= x0)
+            return;
+        p.fillRect(QRectF(x0, area.top(), x1 - x0, area.height()), c::alpha(bc, fill));
+        p.setPen(QPen(bc, 2));
+        p.drawLine(QPointF(x0, area.top()), QPointF(x0, area.bottom()));
+        p.drawLine(QPointF(x1, area.top()), QPointF(x1, area.bottom()));
+        p.drawLine(QPointF(x0, area.top()), QPointF(x0 + 8, area.top()));
+        p.drawLine(QPointF(x0, area.bottom()), QPointF(x0 + 8, area.bottom()));
+        p.drawLine(QPointF(x1, area.top()), QPointF(x1 - 8, area.top()));
+        p.drawLine(QPointF(x1, area.bottom()), QPointF(x1 - 8, area.bottom()));
+        // The tag stays on the tape, inside the pad.
+        const QFont f = c::font(10, true);
+        const double tw = c::textWidth(f, label) + 14;
+        const double tx = std::clamp(x0 + 4, area.left() + 4, std::max(area.left() + 4, area.right() - tw - 4));
+        c::tag(p, QPointF(tx, area.top() + 10 + tagRow * 18), label, bc, 10);
+    };
+    auto describe = [&](const Pick &b) {
+        if (free)
+            return QStringLiteral("%1 PHRASE%2 · SETS THE TEMPO").arg(std::max(1, b.phrases)).arg(b.phrases > 1 ? "S" : "");
+        return (b.bars == 1 ? QStringLiteral("1 BAR") : QStringLiteral("%1 BARS").arg(b.bars)) +
+               (std::fabs(b.delta) > 1e-6 ? QStringLiteral(" · CUT %1%2 BEAT")
+                                                .arg(b.delta > 0 ? "+" : "−")
+                                                .arg(std::fabs(b.delta), 0, 'g', 3)
+                                          : QString()) +
+               (b.cutDb <= 3 ? QStringLiteral(" · IN THE GAPS") : QStringLiteral(" · NO GAP: QUIETEST"));
+    };
+    if (!taken && layer.ok)
+        bracket(layer, c::alpha(col, 0.9f), 0.05f, QStringLiteral("⇧SPACE LAYERS: ") + describe(layer), 1);
+    if (pk.ok)
+        bracket(pk, taken ? c::red() : c::alpha(QColor(255, 255, 255), 0.85f), taken ? 0.12f : 0.06f,
+                (taken ? QStringLiteral("TAKEN: ") : QStringLiteral("SPACE: ")) + describe(pk), 0);
 }
 
 }

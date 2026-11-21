@@ -303,7 +303,7 @@ private:
         g->left = int(std::ceil(2.0f * half));
     }
 
-    Grain m_grains[10];
+    Grain m_grains[16];
     double m_next = -1, m_mark = -1e18;
 };
 
@@ -331,10 +331,19 @@ inline std::vector<Word> findWords(const Sung &s, float *threshold = nullptr) {
     const int n = int(s.env.size());
     if (n == 0)
         return words;
-    // The noise floor: the quietest tenth of the last twenty seconds.
-    std::vector<float> sorted(s.env.end() - std::min(n, int(20.0 / s.hop)), s.env.end());
-    std::sort(sorted.begin(), sorted.end());
-    const float noise = std::max(1e-5f, sorted[sorted.size() / 10]);
+    // The noise floor: the quietest moment of each second of the last
+    // twenty, and of those a quiet one: a dense topline with hardly a gap
+    // still has its breaths, a second apart.
+    const int per = std::max(1, int(1.0 / s.hop));
+    std::vector<float> minima;
+    for (int a = std::max(0, n - 20 * per); a < n; a += per) {
+        float lo = 1e9f;
+        for (int h = a; h < std::min(n, a + per); ++h)
+            lo = std::min(lo, s.env[size_t(h)]);
+        minima.push_back(lo);
+    }
+    std::sort(minima.begin(), minima.end());
+    const float noise = std::max(1e-5f, minima[minima.size() / 4]);
     const float on = std::max(noise * 5.0f, 0.004f), off = on * 0.5f;
     if (threshold)
         *threshold = off;
@@ -446,7 +455,8 @@ inline Pick pick(const Sung &s, const PickRequest &r) {
     if (heard.empty())
         return out;
     const double spb = 60.0 / r.bpm;
-    const int gap = int(std::max(0.35, r.free ? 0.35 : 1.25 * spb) / s.hop);
+    // A breath inside a line is shorter than this; between lines, longer.
+    const int gap = int(std::max(0.8, r.free ? 0.8 : 1.25 * spb) / s.hop);
     const std::vector<Word> phrases = phrasesOf(heard, gap);
     const Word &last = phrases.back();
     out.words = int(heard.size());

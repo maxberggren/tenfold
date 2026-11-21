@@ -153,6 +153,13 @@ public:
     // they arrived (nothing added on the way), or null when there is no
     // microphone at all.
     virtual const float *input() const { return nullptr; }
+    // A part that monitors live input (PartSpec::monitors): where to add,
+    // in place of l and r, what must be heard the moment it arrives (the
+    // live voice), n frames per channel (0 left, 1 right), zeroed. It goes
+    // through the part's channel but round the master's look-ahead limiter.
+    // What can wait (its loops) goes into l and r and the mix as usual.
+    // Null for any other part.
+    virtual float *monitor(int channel) { (void)channel; return nullptr; }
 };
 
 class PartEngine {
@@ -460,9 +467,10 @@ struct PartSpec {
     std::unique_ptr<PartControl> control;
     std::unique_ptr<PartEngine> engine;
     float channel[ChannelCount] = {0.8f, 0.5f, 0.5f, 0.15f, 0.0f, 0.6f, 0.0f, 0.0f};
-    // A part that monitors live input (the microphone) is mixed after the
-    // master bus's look-ahead limiter, so the voice reaches the headphones
-    // without the limiter's delay; it still has its channel and the room.
+    // A part that monitors live input (the microphone) gets a second bus
+    // (AudioContext::monitor) mixed after the master bus's look-ahead
+    // limiter, so the voice reaches the headphones without the limiter's
+    // delay; it still has its channel and the room.
     bool monitors = false;
     // Whether what it plays depends on the chord of the moment (bass, arp,
     // pads…): Space then hears the same notes over a new chord as new

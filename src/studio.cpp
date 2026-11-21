@@ -59,7 +59,10 @@ const double kEchoBeats[] = {0.25, 0.5, 0.75, 1.0, 1.5, 2.0};
 
 struct Studio::PartState {
     std::unique_ptr<PartEngine> engine;
-    bool direct = false; // mixed after the limiter: a part that monitors the microphone
+    bool direct = false; // has a monitor bus, mixed after the limiter: a part that monitors the microphone
+    float monL[kBlock] = {}, monR[kBlock] = {};
+    Svf monFiltL, monFiltR;
+    float monFiltSet = -1;
     float channelTarget[ChannelCount] = {};
     float channelHome[ChannelCount] = {}; // as the part came: where starting over puts it
     float channel[ChannelCount] = {};
@@ -160,6 +163,9 @@ struct Studio::Impl : AudioContext {
     }
     const float *duck() const override { return duckEnv; }
     const float *input() const override { return inputLive ? inBlock : nullptr; }
+    float *monitor(int channel) override { return channel ? monitorR : monitorL; }
+    float *monitorL = nullptr, *monitorR = nullptr;
+    float directEnv = 0; // the monitor bus's own limiter
     float inBlock[kBlock] = {};
     bool inputLive = false;
     // The monitored parts' own path round the limiter: the master filter
@@ -311,6 +317,17 @@ static void startClip(Studio::PartState &p, Studio::Impl &s, int slot, double an
     p.queued = -1;
     p.stopQueued = false;
     p.catchUp = false;
+    // A clip of recorded audio started part way (launched at a bar its
+    // sound began before, a take landing off its bar line, one coming back
+    // with Ctrl+Z) joins its audio where it is, at once, rather than a pass
+    // later.
+    for (const auto &e : p.clips[slot].events)
+        if (e.c.flags & Command::Sampled) {
+            p.catchUp = true;
+            p.catchUpHeld = true;
+            p.catchFrom = 0;
+            break;
+        }
 }
 
 // Makes a clip from what the part played between beats b0 and b1. With
@@ -644,10 +661,8 @@ static void makeAudioClip(Studio::PartState &p, Studio::Impl &s, int slot, doubl
     ++p.takes;
     if (!play)
         return;
+    (void)joinedLate; // startClip joins a clip of audio in place, late or not
     startClip(p, s, slot, origin);
-    p.catchFrom = 0;
-    p.catchUp = joinedLate;
-    p.catchUpHeld = joinedLate;
 }
 
 static void debugClip(Studio::Impl &s, int part, const Studio::PartState &p, int slot, double b0, double b1) {
@@ -1089,8 +1104,12 @@ void Studio::pullInput(float *dst, int n) {
     int i = 0;
     for (; i < n && tail < head; ++i, ++tail)
         dst[i] = m_input[tail & (kInputRing - 1)];
+    // Run dry (the capture late this once): the last sample fades out
+    // rather than stepping to silence, which would click in the ears.
+    float last = i > 0 ? dst[i - 1] : m_inLast;
     for (; i < n; ++i)
-        dst[i] = 0;
+        dst[i] = last *= 0.97f;
+    m_inLast = n > 0 ? dst[n - 1] : m_inLast;
     m_inTail.store(tail, std::memory_order_release);
 }
 
@@ -1113,8 +1132,15 @@ void Studio::render(float *out, int frames) {
         if (head - tail > kInputRing - uint64_t(frames))
             tail = head - uint64_t(frames); // far behind (the stream stalled): start again from now
         const int waiting = int(head - tail);
-        if (waiting < frames && m_inState.load(std::memory_order_relaxed) == StudioView::InputLive && head > 0)
+        if (waiting < frames && m_inState.load(std::memory_order_relaxed) == StudioView::InputLive && head > 0) {
             m_inSlack = std::min(m_inSlack + 64, 2048);
+            m_inCalm = 0;
+        } else if ((m_inCalm += uint64_t(frames)) > uint64_t(m_rate) * 10 && m_inSlack > 0) {
+            // Ten seconds without one: the capture keeps its time again,
+            // and the slack it asked for goes back, a little at a time.
+            m_inSlack = std::max(0, m_inSlack - 32);
+            m_inCalm = 0;
+        }
         const int spare = std::max(0, waiting - frames);
         m_inLow = std::min(m_inLow, spare);
         if (m_sample - m_inLowSince >= uint64_t(m_rate)) {
@@ -1347,7 +1373,14 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
     for (auto &pp : m_parts) {
         std::fill(pp->bufL, pp->bufL + n, 0.0f);
         std::fill(pp->bufR, pp->bufR + n, 0.0f);
+        if (pp->direct) {
+            std::fill(pp->monL, pp->monL + n, 0.0f);
+            std::fill(pp->monR, pp->monR + n, 0.0f);
+            s.monitorL = pp->monL;
+            s.monitorR = pp->monR;
+        }
         pp->engine->render(pp->bufL, pp->bufR, n, s);
+        s.monitorL = s.monitorR = nullptr;
     }
 
     // Smoothed settings.
@@ -1388,8 +1421,11 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         const float panL = std::min(1.0f, 2.0f * (1.0f - ch[Pan])), panR = std::min(1.0f, 2.0f * ch[Pan]);
         const float filt = ch[Filter];
         const bool lp = filt < 0.49f, hp = filt > 0.51f;
-        if (lp || hp)
+        if (lp || hp) {
             setFilter(p.filtL, p.filtR, filt, p.filtSet);
+            if (p.direct)
+                setFilter(p.monFiltL, p.monFiltR, filt, p.monFiltSet);
+        }
         const float rs = ch[ReverbSend] * ch[ReverbSend], es = ch[EchoSend] * ch[EchoSend];
         float pk = 0, sq = 0;
         for (int i = 0; i < n; ++i) {
@@ -1405,8 +1441,26 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             const float gain = g * p.muteGain * (1.0f - ch[PumpDepth] * s.duckEnv[i]);
             L *= gain * panL;
             R *= gain * panR;
-            (p.direct ? directL : mixL)[i] += L;
-            (p.direct ? directR : mixR)[i] += R;
+            mixL[i] += L;
+            mixR[i] += R;
+            if (p.direct) {
+                // The monitor bus: the same channel, its own filter, into
+                // the path round the limiter.
+                float ML = p.monL[i], MR = p.monR[i];
+                if (lp) {
+                    ML = p.monFiltL.step(ML).low;
+                    MR = p.monFiltR.step(MR).low;
+                } else if (hp) {
+                    ML = p.monFiltL.step(ML).high;
+                    MR = p.monFiltR.step(MR).high;
+                }
+                ML *= gain * panL;
+                MR *= gain * panR;
+                directL[i] += ML;
+                directR[i] += MR;
+                L += ML;
+                R += MR;
+            }
             sendRL[i] += L * rs;
             sendRR[i] += R * rs;
             sendEL[i] += L * es;
@@ -1515,14 +1569,25 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 dl = s.directL.step(dl).high;
                 dr = s.directR.step(dr).high;
             }
+            // Its own limiter first, with no look-ahead: instant down, a
+            // tenth of a second back, holding the voice under −3 dBFS.
+            dl *= mgain * 1.8f;
+            dr *= mgain * 1.8f;
+            const float lvl = std::max(std::fabs(dl), std::fabs(dr));
+            s.directEnv = lvl > s.directEnv ? lvl : s.directEnv + (lvl - s.directEnv) * 0.0002f;
+            if (s.directEnv > 0.7f) {
+                const float lg = 0.7f / s.directEnv;
+                dl *= lg;
+                dr *= lg;
+            }
             auto ceiling = [](float x) {
                 const float a = std::fabs(x);
                 // (fastTanh overshoots 1 a little near its bound: held under it.)
                 return a <= 0.85f ? x
                                   : std::copysign(std::min(0.999f, 0.85f + 0.149f * fastTanh((a - 0.85f) / 0.149f)), x);
             };
-            L = ceiling(L + dl * mgain * 1.8f);
-            R = ceiling(R + dr * mgain * 1.8f);
+            L = ceiling(L + dl);
+            R = ceiling(R + dr);
         }
         outL[i] = L;
         outR[i] = R;

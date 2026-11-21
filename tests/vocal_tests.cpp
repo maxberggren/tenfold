@@ -241,14 +241,19 @@ private slots:
         // 1.73 s from the first word to Space is a bar at 139 BPM.
         QCOMPARE(int(std::lround(take.view.bpm)), 139);
         const double loop = 4 * 60.0 / take.view.bpm;
-        // The first word comes round at the same place every pass.
+        // The first word comes round at the same place every pass: the
+        // first pass where it was sung (the loop goes through the master's
+        // limiter, 64 samples behind the live voice, which doesn't), the
+        // others exactly a loop apart.
         const double first = onsetAfter(take, 0.2);
         QVERIFY(first > 0.45 && first < 0.56);
-        for (int k = 1; k <= 3; ++k) {
-            const double expect = first + k * loop;
+        const double pass1 = onsetAfter(take, first + loop - 0.1);
+        QVERIFY2(std::fabs(pass1 - (first + loop)) < 0.002, qPrintable(QString("pass 1 off by %1 ms").arg((pass1 - first - loop) * 1000)));
+        for (int k = 2; k <= 4; ++k) {
+            const double expect = pass1 + (k - 1) * loop;
             const double got = onsetAfter(take, expect - 0.1);
-            qInfo("pass %d: the first word at %.4f s, expected %.4f", k, got, expect);
-            QVERIFY2(std::fabs(got - expect) < 0.002, qPrintable(QString("off by %1 ms").arg((got - expect) * 1000)));
+            qInfo("pass %d: the first word at %.5f s, expected %.5f", k, got, expect);
+            QVERIFY2(std::fabs(got - expect) < 0.0002, qPrintable(QString("off by %1 ms").arg((got - expect) * 1000)));
         }
         // And it is the same sound each time.
         QVERIFY(std::fabs(rmsBetween(take, first + loop, first + 2 * loop) -
@@ -277,6 +282,68 @@ private slots:
         const double a = onsetAfter(take, 7.0, 0.1), b = onsetAfter(take, a + 1.8, 0.1);
         QVERIFY(a > 0 && b > 0);
         QVERIFY2(std::fabs((b - a) - 2.0) < 0.002, qPrintable(QString("period %1").arg(b - a)));
+    }
+
+    void aLoopCutOffTheBarSoundsFromItsFirstPass() {
+        // A pickup a beat before the bar: the cuts move off the bar lines.
+        // The loop must sound as it lands, not bars later from mid-word.
+        const std::string script = std::string(kPage) +
+                                   "tempo 0.01 120\nkey 0.02 Ctrl+M\n"
+                                   "voice 3.55 0.4 hz=220 vowel=a\nvoice 4.05 0.35 hz=247 vowel=e\n"
+                                   "voice 4.5 0.5 hz=262 vowel=o\nvoice 5.2 0.9 hz=294 to=262 vowel=a\n"
+                                   "voice 6.4 0.5 hz=247 vowel=u\n"
+                                   "key 7.3 Space\nkey 7.6 Ctrl+M\nend 12\n";
+        const auto take = testkit::play(script);
+        QCOMPARE(take.view.parts[kVocal].playing, 0);
+        // Every half second of the first pass after the take has the voice.
+        for (double t = 7.75; t < 10.5; t += 0.5)
+            QVERIFY2(take.rms(t, t + 0.5) > 0.03, qPrintable(QString("silent at %1 s").arg(t)));
+    }
+
+    void aFingerOnTheTapePlaysAWordBack() {
+        // Two words sung, then silence: a finger on the tape where the
+        // second was plays it again, over and over while held.
+        const std::string sing = std::string(kPage) + "voice 0.5 0.4 hz=220\nvoice 1.4 0.4 hz=330\n";
+        // The tape shows the last eight seconds; at 3.0 s the second word
+        // (1.4 s) is 1.6 s back: x = 0.085 + 0.83 × (1 − 1.6 / 8).
+        const auto quiet = testkit::play(sing + "end 4.5\n");
+        const auto chopped = testkit::play(sing + "down 3.0 1 0.75 0.2 p=0.7\nup 4.4 1\nend 4.5\n");
+        QVERIFY(quiet.rms(3.2, 4.3) < 0.005);
+        QVERIFY2(chopped.rms(3.2, 4.3) > 0.03, qPrintable(QString("rms %1").arg(chopped.rms(3.2, 4.3))));
+    }
+
+    void withNoMicrophoneTheDemoSingerSingsAndLoops() {
+        const auto take = testkit::play(std::string(kPage) + "key 0.2 V\nkey 6.0 Space\nend 9\n");
+        QCOMPARE(take.view.input, int(StudioView::NoInput));
+        QVERIFY(take.rms(1.0, 5.5) > 0.02);
+        QCOMPARE(take.view.parts[kVocal].playing, 0);
+    }
+
+    void aHarmonyHoldsItsNoteFromTheFirstSyllable() {
+        // A third above (the +3RD lane) over sung A3: from a word's first
+        // moments the harmony is at C4, not at A3 sliding up.
+        std::string s = std::string(kPage);
+        for (int w = 0; w < 4; ++w)
+            s += "voice " + std::to_string(0.5 + w * 0.6) + " 0.4 hz=220 vowel=a\n";
+        // The lanes: seven across 0.085..0.915; +3RD is the fourth.
+        s += "down 0.2 1 " + std::to_string(0.085 + 0.83 * 3.5 / 7) + " 0.6 p=0.7\nend 3.0\n";
+        const auto take = testkit::play(s);
+        auto power = [&](double from, double len, double hz) {
+            const size_t a = size_t(from * 48000), n = size_t(len * 48000);
+            const double w = kTwoPi * hz / 48000.0, c = 2 * std::cos(w);
+            double s1 = 0, s2 = 0;
+            for (size_t i = 0; i < n; ++i) {
+                const double s0 = take.left[a + i] + c * s1 - s2;
+                s2 = s1;
+                s1 = s0;
+            }
+            return s1 * s1 + s2 * s2 - c * s1 * s2;
+        };
+        // The third word's first 80 ms (after the 25 ms rise): C4 is there
+        // already, and stronger than anything between A3 and C4.
+        const double at = 0.5 + 2 * 0.6 + 0.03;
+        const double c4 = power(at, 0.08, 261.6), between = power(at, 0.08, 240.0);
+        QVERIFY2(c4 > 4 * between, qPrintable(QString("C4 %1, between %2").arg(c4).arg(between)));
     }
 
     void spaceMakesANewLoopAndShiftSpaceLayers() {
@@ -317,13 +384,13 @@ private slots:
         // Two phrases, the loop set from the last; ↑ takes both.
         const std::string script = std::string(kPage) +
                                    "voice 0.3 0.3 hz=220\nvoice 0.7 0.3 hz=247\n"
-                                   "voice 1.5 0.3 hz=262\nvoice 1.9 0.3 hz=247\n"
-                                   "key 2.6 Space\nkey 3.0 Up\nend 5\n";
+                                   "voice 2.0 0.3 hz=262\nvoice 2.4 0.3 hz=247\n"
+                                   "key 3.1 Space\nkey 3.5 Up\nend 5.5\n";
         const auto take = testkit::play(script);
         QCOMPARE(take.view.parts[kVocal].playing, 0);
-        // One phrase is 1.1 s (a bar at 2 × 109 BPM… doubled until ≥ 88):
-        // with both, 2.33 s is a bar at 103.
-        QVERIFY2(take.view.bpm < 110, qPrintable(QString("bpm %1").arg(take.view.bpm)));
+        // The last phrase alone is 1.13 s (a bar at 106 BPM); with both,
+        // 2.83 s is two bars at 170.
+        QVERIFY2(take.view.bpm > 160, qPrintable(QString("bpm %1").arg(take.view.bpm)));
         QCOMPARE(take.view.parts[kVocal].takes, 1u); // one take, made again
     }
 
@@ -360,8 +427,8 @@ private slots:
         // Ten fingers at once over a sung phrase: every strip, keys, the
         // click; nothing blows up, nothing goes silent for good.
         std::string s = std::string(kPage) + "voice 0.3 3.0 hz=196 vowel=a\n";
-        const float xs[] = {0.03f, 0.97f, 0.97f, 0.25f, 0.75f, 0.25f, 0.75f, 0.3f, 0.5f, 0.7f};
-        const float ys[] = {0.5f, 0.3f, 0.7f, 0.93f, 0.93f, 0.05f, 0.05f, 0.5f, 0.6f, 0.7f};
+        const float xs[] = {0.03f, 0.97f, 0.97f, 0.25f, 0.75f, 0.25f, 0.75f, 0.3f, 0.5f, 0.5f};
+        const float ys[] = {0.5f, 0.3f, 0.7f, 0.93f, 0.93f, 0.05f, 0.05f, 0.5f, 0.6f, 0.2f};
         for (int f = 0; f < 10; ++f) {
             s += "down " + std::to_string(0.5 + 0.05 * f) + " " + std::to_string(10 + f) + " " + std::to_string(xs[f]) +
                  " " + std::to_string(ys[f]) + " p=0.7\n";

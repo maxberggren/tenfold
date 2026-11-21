@@ -28,6 +28,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <algorithm>
+#include <cstring>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -90,11 +91,23 @@ const char *labelName(int l) {
     return names[std::clamp(l, 0, int(LabelCount) - 1)];
 }
 
+// How long until something happens, said one way everywhere: whole bars
+// while there are more than one, then the beats of the last.
+QString countdown(double beats) {
+    if (beats > kBeatsPerBar) {
+        const int bars = int(std::ceil(beats / kBeatsPerBar - 1e-9));
+        return QStringLiteral("%1 BARS").arg(bars);
+    }
+    const int n = std::max(1, int(std::ceil(beats - 1e-9)));
+    return n == 1 ? QStringLiteral("1 BEAT") : QStringLiteral("%1 BEATS").arg(n);
+}
+
 struct SongBar {
     int8_t slot[P];       // the clip each part plays, -1 none
     uint8_t relaunch = 0; // parts whose clip starts from its top at this bar
     uint8_t label = LNone;
     bool join = false;    // continues the section before (two sections joined)
+    bool head = false;    // starts a section of its own (one moved or doubled there)
     SongBar() { std::fill(std::begin(slot), std::end(slot), int8_t(-1)); }
 };
 
@@ -104,6 +117,7 @@ struct SongMove {
     int step; // sixteenths from the song's top
     uint8_t kind;
     int param; // build: bars; break: muted parts; cut: sixteenths; lift: semitones
+    int take = 0; // the recording it was made in (not saved): a punch-in keeps its own
 };
 
 struct Song {
@@ -439,6 +453,20 @@ public:
         };
         if (name == QLatin1String("songBars"))
             return float(m_song.length());
+        // The song's sections, for tests: how many, and section i's label
+        // (as Label) or bars ("sectionLabel2", "sectionBars2"); which is picked.
+        if (name == QLatin1String("sectionCount"))
+            return float(m_sections.size());
+        if (name == QLatin1String("pickedSection"))
+            return float(m_selSection);
+        for (const char *what : {"sectionLabel", "sectionBars"})
+            if (name.startsWith(QLatin1String(what))) {
+                const int i = name.mid(int(std::strlen(what))).toInt();
+                if (i < 0 || i >= int(m_sections.size()))
+                    return -1;
+                const Section &sec = m_sections[size_t(i)];
+                return float(std::strcmp(what, "sectionLabel") == 0 ? sec.label : sec.bars);
+            }
         if (name == QLatin1String("songPlaying"))
             return m_playing ? 1.0f : 0.0f;
         if (name == QLatin1String("songSection")) {
@@ -1630,6 +1658,7 @@ private:
             // Its first bar starts every loop from its top, wherever it lands now.
             SongBar &first = out.bars[size_t(at)];
             first.join = false;
+            first.head = true;
             for (int p = 0; p < P; ++p)
                 if (first.slot[p] >= 0)
                     first.relaunch |= uint8_t(1 << p);
@@ -1860,7 +1889,7 @@ private:
         Song &take = *m_rec;
         auto at = std::upper_bound(take.moves.begin(), take.moves.end(), step,
                                    [](int s, const SongMove &m) { return s < m.step; });
-        take.moves.insert(at, {step, kind, param});
+        take.moves.insert(at, {step, kind, param, m_takeNo});
     }
 
     // Everything comes back on the next ONE, after half a beat of air if
@@ -2400,6 +2429,8 @@ private:
                     bar[QStringLiteral("label")] = QString::fromUtf8(labelName(b.label));
                 if (b.join)
                     bar[QStringLiteral("join")] = true;
+                if (b.head)
+                    bar[QStringLiteral("head")] = true;
                 if (!play.isEmpty())
                     bar[QStringLiteral("play")] = play;
                 if (!fromTop.isEmpty())
@@ -2524,6 +2555,7 @@ private:
                     if (label == QLatin1String(labelName(l)))
                         sb.label = uint8_t(l);
                 sb.join = o.value(QStringLiteral("join")).toBool(false);
+                sb.head = o.value(QStringLiteral("head")).toBool(false);
                 const QJsonObject play = o.value(QStringLiteral("play")).toObject();
                 for (auto it = play.begin(); it != play.end(); ++it) {
                     const int p = partOf(it.key()), slot = index(it.value(), 0, kClipSlots);
@@ -2714,8 +2746,11 @@ private:
                 addMove(m, ctx);
                 break;
             case MUnbreak:
-                if (Move *b = active(MBreak))
-                    b->b1 = std::min(b->b1, at);
+                // Everything comes back: every breakdown still going ends
+                // (a doubled one has two, and the second has no end of its own).
+                for (auto &b : m_moves)
+                    if (b.kind == MBreak && m_beat < b.b1)
+                        b.b1 = std::min(b.b1, at);
                 break;
             case MEchoOut:
                 m.kind = MEchoOut;
@@ -2787,6 +2822,14 @@ private:
         if (bar > m_recBarDone && bar >= m_recStartBar) {
             m_recBarDone = bar;
             const int sb = bar - m_origin;
+            // A punch-in replaces the bar: the moves the song had in it go
+            // (a breakdown played over is gone), the take's own stay.
+            take.moves.erase(std::remove_if(take.moves.begin(), take.moves.end(),
+                                            [&](const SongMove &m) {
+                                                return m.take != m_takeNo && m.step >= sb * kSteps &&
+                                                       m.step < (sb + 1) * kSteps;
+                                            }),
+                             take.moves.end());
             if (sb >= 0 && sb < take.length()) {
                 SongBar &sbar = take.bars[size_t(sb)];
                 sbar.relaunch = 0;
@@ -2818,6 +2861,7 @@ private:
         }
         m_recArmBar = nextBar();
         m_recBarDone = m_recArmBar - 1;
+        ++m_takeNo;
         if (!m_playing) {
             const StudioView &v = ctx.studio();
             m_take = Song{};
@@ -2964,14 +3008,18 @@ private:
         const int drums = role(RDrums), bass = role(RBass);
         const size_t un = static_cast<size_t>(n);
         std::vector<int> energy(un), flags(un);
-        std::vector<uint8_t> moveAt(un, 255), inBuild(un), inBreak(un), echo(un);
+        std::vector<uint8_t> moveAt(un, 255), inBuild(un), inBreak(un), echo(un), dropAt(un);
+        for (const auto &sm : m_song.moves)
+            if (sm.kind == MDrop && sm.step / kSteps >= 0 && sm.step / kSteps < n)
+                dropAt[size_t(sm.step / kSteps)] = 1;
         for (const auto &sm : m_song.moves) {
             const int b = sm.step / kSteps;
             if (b < 0 || b >= n)
                 continue;
             moveAt[size_t(b)] = sm.kind;
+            // A build lasts as planned, or until a drop cuts it short.
             if (sm.kind == MBuild)
-                for (int k = b; k < std::min(n, b + std::max(1, sm.param)); ++k)
+                for (int k = b; k < std::min(n, b + std::max(1, sm.param)) && !(k > b && dropAt[size_t(k)]); ++k)
                     inBuild[size_t(k)] = 1;
             if (sm.kind == MEchoOut)
                 for (int k = b; k < std::min(n, b + 1); ++k)
@@ -3023,6 +3071,9 @@ private:
             // A drop goes on until something else happens.
             if (l == LGroove && b > 0 && m_song.bars[size_t(b - 1)].label == LDrop && energy[size_t(b)] >= maxE - 2)
                 l = LDrop;
+            // Once anything else has happened, it is no intro any more.
+            if (l != LIntro)
+                intro = false;
             if (l == LDrop) {
                 hadDrop = true;
                 lastDrop = b;
@@ -3045,7 +3096,7 @@ private:
             // A section breaks where the label changes, and long drops at
             // eight bars, so the timeline reads in phrases.
             const bool join = m_song.bars[size_t(b)].join && !m_sections.empty();
-            if (!join && (m_sections.empty() || m_sections.back().label != l ||
+            if (!join && (m_sections.empty() || m_sections.back().label != l || m_song.bars[size_t(b)].head ||
                           (l == LDrop && m_song.bars[size_t(b)].relaunch && m_sections.back().bars >= 8)))
                 m_sections.push_back({b, 1, l});
             else
@@ -3373,6 +3424,7 @@ private:
     int m_origin = 0, m_jumpBar = -1;
     int m_recArmBar = -1, m_recStopBar = -1, m_recStartBar = 0, m_recBarDone = -1000000;
     long m_recStep = -1;
+    int m_takeNo = 0; // counts recordings, so a punch-in knows its own moves
     size_t m_moveCursor = 0;
     int m_moveCursorOrigin = -1;
 };
@@ -3791,8 +3843,7 @@ void ArrangeControl::paintTop(QPainter &p, const PaintContext &pc, int parts) {
         QString sub = QStringLiteral("B");
         if (b) {
             const double left = b->b1 - pc.beat;
-            sub = left > 4 ? QStringLiteral("DROP IN %1").arg(int(std::ceil(left / 4))) + QStringLiteral(" BARS")
-                           : QStringLiteral("DROP IN %1").arg(int(std::ceil(left)));
+            sub = QStringLiteral("DROP IN ") + countdown(left);
         }
         c::text(p, r.adjusted(6, 22, -4, -2), sub, c::alpha(c::orange(), b ? 1.0f : 0.5f), 11, true);
     }
@@ -3857,7 +3908,7 @@ void ArrangeControl::paintTop(QPainter &p, const PaintContext &pc, int parts) {
         QString sub = QStringLiteral("RETURN");
         if (d) {
             const double left = d->b0 - pc.beat;
-            sub = left > 4 ? QStringLiteral("IN %1 BARS").arg(int(std::ceil(left / 4))) : QStringLiteral("IN %1").arg(int(std::ceil(left)));
+            sub = QStringLiteral("IN ") + countdown(left);
         }
         c::text(p, r.adjusted(6, 22, -4, -2), sub, c::alpha(pc.color, d ? 1.0f : 0.5f), 11, true);
     }
@@ -4177,7 +4228,7 @@ QString ArrangeControl::movesText() const {
         case MBuild:
             if (m_beat < m.b1)
                 out << (e < 0 ? QStringLiteral("BUILD ON THE BAR")
-                              : QStringLiteral("BUILD → DROP IN %1").arg(int(std::ceil(m.b1 - m_beat))));
+                              : QStringLiteral("BUILD → DROP IN ") + countdown(m.b1 - m_beat));
             break;
         case MBreak:
             if (m_beat < m.b1)

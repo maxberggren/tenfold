@@ -38,6 +38,13 @@ double barAt(int n) { return kBar0 + 2.0 * n; }
 
 std::string loops(const std::string &rest) { return std::string(kLoops) + rest; }
 
+// The song from Space at 17 (bars from 18.5): two bars as it plays, a
+// breakdown from 22.5 (N at 21), everything back at 30.5 (N at 29), a build
+// from 32.5 (B at 31) into its drop, and Space at 45 ends it at 46.5:
+// fourteen bars.
+std::string recordedSong() { return loops("key 17.0 Space\nkey 21.0 N\nkey 29.0 N\nkey 31.0 B\nkey 45.0 Space\n"); }
+float probeAt(tf::Session &s, const char *name) { return s.probe(s.arrangePage(), QLatin1String(name)); }
+
 // The pad's lanes: seven parts under the scene strip (y 0..0.885).
 // A lane per part, all eight of them.
 float laneY(int part) { return 0.885f * (1.0f - (part + 0.5f) / float(kMaxParts)); }
@@ -511,6 +518,71 @@ private slots:
         QVERIFY2(std::fabs(mutes[3].first - 28.6) < 0.15, qPrintable(QString::number(mutes[3].first)));
         QVERIFY2(std::fabs(mutes[4].first - 32.6) < 0.15, qPrintable(QString::number(mutes[4].first)));
         QCOMPARE(take.view.parts[0].channel.value[Mute], 0.0f);
+    }
+
+    // Punching in replaces what was there: a breakdown played over with
+    // nothing is gone from the song.
+    void aPunchInReplacesTheMovesItPlaysOver() {
+        // P at 47 plays the song from 48.5 (its bar 2, the breakdown, from
+        // 52.5); Space at 49 punches in from 50.5 to 60.5, hands off. P at
+        // 77.5 plays it again from 78.5: its breakdown would be 82.5–90.5.
+        float breakdown = -1;
+        watch(recordedSong() + "key 47.0 P\nkey 49.0 Space\nkey 59.0 Space\nkey 77.5 P\nend 88\n",
+              [&](double t, Session &s) {
+                  if (breakdown < 0 && t >= 86.0)
+                      breakdown = probeAt(s, "breakdown");
+              });
+        QCOMPARE(breakdown, 0.0f);
+    }
+
+    // A breakdown doubled is twice as long, and the song comes back after it.
+    void aDoubledBreakdownEndsWhereItsCopyDoes() {
+        // Stopped, → → picks the breakdown (the third section) and D doubles
+        // it: eight bars of breakdown from the song's bar 2. P at 49 plays it
+        // from 50.5: broken down 54.5–70.5, back from 70.5.
+        float picked = -1, pickedLabel = -1, during = -1, after = -1;
+        watch(recordedSong() + "key 47.0 Right\nkey 47.2 Right\nkey 47.6 D\nkey 49.0 P\nend 74\n",
+              [&](double t, Session &s) {
+                  if (picked < 0 && t >= 48.0) {
+                      picked = probeAt(s, "pickedSection");
+                      pickedLabel = probeAt(s, ("sectionLabel" + std::to_string(int(picked))).c_str());
+                  }
+                  if (during < 0 && t >= 68.0)
+                      during = probeAt(s, "breakdown");
+                  if (after < 0 && t >= 72.0)
+                      after = probeAt(s, "breakdown");
+              });
+        // The copy is picked, a breakdown of its own.
+        QCOMPARE(int(pickedLabel), 5); // Break
+        QCOMPARE(during, 1.0f);
+        QCOMPARE(after, 0.0f);
+    }
+
+    // What comes back after a breakdown is no intro, and a build cut short
+    // by Return is as long as it was, its drop as long as it is.
+    void sectionsAreNamedForWhatHappened() {
+        QList<int> labels, bars;
+        testkit::play(recordedSong() + "end 47\n", [&](Session &s) {
+            for (int i = 0; i < int(probeAt(s, "sectionCount")); ++i)
+                labels << int(probeAt(s, ("sectionLabel" + std::to_string(i)).c_str()));
+        });
+        QVERIFY2(labels.size() >= 3, qPrintable(QString::number(labels.size())));
+        for (int i = 1; i < labels.size(); ++i)
+            QVERIFY2(labels[i] != 1, qPrintable(QStringLiteral("section %1 is an intro").arg(i))); // Intro
+
+        // B at 17 builds from 18.5; Return at 21 drops it at 22.5: two bars
+        // of build, then the drop to the end (34.5).
+        labels.clear();
+        testkit::play(loops("key 15.2 Space\nkey 17.0 B\nkey 21.0 Return\nkey 33.0 Space\nend 36\n"), [&](Session &s) {
+            for (int i = 0; i < int(probeAt(s, "sectionCount")); ++i) {
+                labels << int(probeAt(s, ("sectionLabel" + std::to_string(i)).c_str()));
+                bars << int(probeAt(s, ("sectionBars" + std::to_string(i)).c_str()));
+            }
+        });
+        const int build = int(labels.indexOf(3)), drop = int(labels.indexOf(4));
+        QVERIFY2(build >= 0 && drop == build + 1, qPrintable(QString("%1 / %2").arg(build).arg(drop)));
+        QCOMPARE(bars[build], 2);
+        QVERIFY2(bars[drop] >= 5, qPrintable(QString::number(bars[drop])));
     }
 
     void aRecordedBuildReplays() {

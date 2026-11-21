@@ -341,6 +341,26 @@ private slots:
         testkit::play("key 0.1 Ctrl+T\nkey 0.3 Ctrl+T\nend 0.5\n", [](Session &s) { QVERIFY(!s.tutorial().active()); });
     }
 
+    void itStartsFromACleanStudioAndAsksFirstOverLoops() {
+        // A drum loop, muted on the Song page, in another key: Ctrl+T once
+        // only asks; again, the loops are gone, the drums unmuted, the key
+        // A minor and the tempo 124.
+        const std::string loop = "page 0 1\ntap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
+                                 "key 2.5 Space\npage 3.0 0\nkey 3.2 Q\nkey 3.4 Ctrl+Right\n";
+        testkit::play(loop + "key 4.0 Ctrl+T\nend 4.5\n", [](Session &s) {
+            QVERIFY(!s.tutorial().active());
+            QCOMPARE(s.view().parts[0].playing, 0);
+        });
+        const auto take = testkit::play(loop + "key 4.0 Ctrl+T\nkey 4.5 Ctrl+T\nend 5.5\n", [](Session &s) {
+            QVERIFY(s.tutorial().active());
+        });
+        QCOMPARE(take.view.parts[0].playing, -1);
+        QVERIFY(take.view.parts[0].clips[0].state == ClipView::Empty);
+        QVERIFY(take.view.parts[0].channel.value[Mute] < 0.5f);
+        QCOMPARE(take.view.root, 9);
+        QCOMPARE(int(std::lround(take.view.bpm)), 124);
+    }
+
     void nextSkipsAndBackReturns() {
         testkit::play("key 0.1 Ctrl+T\nkey 0.3 Ctrl+Return\nkey 0.5 Ctrl+Return\nkey 0.7 Ctrl+Shift+Return\nend 1\n",
                       [](Session &s) { QCOMPARE(s.tutorial().index(), 1); });

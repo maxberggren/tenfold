@@ -333,10 +333,30 @@ float Session::probe(int page, const QString &name) const {
 
 void Session::toggleTutorial() {
     std::lock_guard lock(m_lock);
-    if (m_tutorial.active())
+    if (m_tutorial.active()) {
         m_tutorial.stop();
-    else
-        m_tutorial.start(*this);
+        return;
+    }
+    // The guide builds a song from silence, in A minor at 124: it starts
+    // from a cleared studio with the mix at home, so nothing left muted or
+    // playing from before hides what a step asks for. Loops made already
+    // are asked about first.
+    bool anyLoop = false;
+    for (int p = 0; p < m_view.partCount; ++p)
+        for (const auto &c : m_view.parts[p].clips)
+            anyLoop |= c.state != ClipView::Empty;
+    const double t = now();
+    if (anyLoop && (m_tutorialAsked < 0 || t - m_tutorialAsked > 3.0)) {
+        m_tutorialAsked = t;
+        context(m_page).notice(QStringLiteral("The tutorial starts from silence: Ctrl+T again clears every loop"));
+        return;
+    }
+    m_tutorialAsked = -1;
+    m_startOverAsked = -1;
+    clearEverything();
+    context(m_page).setKey(9, 0, 4);
+    context(m_page).setTempo(124);
+    m_tutorial.start(*this);
 }
 void Session::tutorialNext() {
     std::lock_guard lock(m_lock);
@@ -1036,13 +1056,25 @@ void Session::startOver() {
     const double t = now();
     if (m_startOverAsked < 0 || t - m_startOverAsked > 3.0) {
         m_startOverAsked = t;
-        context(m_page).notice(QStringLiteral("Ctrl+N again to clear every loop"));
+        context(m_page).notice(QStringLiteral("Ctrl+N again to clear every loop and set the mix back"));
         return;
     }
     m_startOverAsked = -1;
+    clearEverything();
+    context(m_page).notice(QStringLiteral("Starting over: the next loop sets the tempo"));
+}
+
+void Session::clearEverything() {
     StudioMsg m;
     m.kind = StudioMsg::ClearAll;
     m_studio->post(m);
+    // The mix as the studio is about to set it, so the pages see it now.
+    for (auto &page : m_pages)
+        if (page->part >= 0 && page->part < m_view.partCount)
+            for (int c = 0; c < ChannelCount; ++c)
+                m_view.parts[page->part].channel.value[c] = page->spec.channel[c];
+    for (auto &page : m_pages)
+        page->spec.control->startOver(*page->ctx);
     // A fresh start: what was played before it is no phrase for Space.
     for (auto &page : m_pages)
         if (page->ctx) {
@@ -1055,7 +1087,6 @@ void Session::startOver() {
         for (auto &c : m_view.parts[p].clips)
             c.state = ClipView::Empty;
     }
-    context(m_page).notice(QStringLiteral("Starting over: the next loop sets the tempo"));
 }
 
 void Session::shiftTempo(double delta) {

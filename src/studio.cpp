@@ -58,6 +58,7 @@ const double kEchoBeats[] = {0.25, 0.5, 0.75, 1.0, 1.5, 2.0};
 struct Studio::PartState {
     std::unique_ptr<PartEngine> engine;
     float channelTarget[ChannelCount] = {};
+    float channelHome[ChannelCount] = {}; // as the part came: where starting over puts it
     float channel[ChannelCount] = {};
     float muteGain = 1;
     Svf filtL, filtR;
@@ -208,7 +209,7 @@ int Studio::addPart(std::unique_ptr<PartEngine> engine, const float *channel) {
     engine->init(m_rate);
     p->engine = std::move(engine);
     for (int i = 0; i < ChannelCount; ++i)
-        p->channel[i] = p->channelTarget[i] = channel ? channel[i] : kDefaultChannel[i];
+        p->channel[i] = p->channelTarget[i] = p->channelHome[i] = channel ? channel[i] : kDefaultChannel[i];
     p->history.resize(kHistory);
     for (auto &u : p->undo)
         u.events.reserve(kClipEvents);
@@ -817,7 +818,13 @@ void Studio::apply(const StudioMsg &m) {
                 c.length = 0;
             }
             q->engine->silence(false);
+            // The mix goes home too: no part left muted, soloed or turned
+            // down from the song before.
+            for (int i = 0; i < ChannelCount; ++i)
+                q->channelTarget[i] = q->channelHome[i];
         }
+        for (int i = 0; i < MasterCount; ++i)
+            s.masterTarget[i] = kDefaultMaster[i];
         break;
     case StudioMsg::Silence:
         for (int i = 0; i < s.pendingCount;)

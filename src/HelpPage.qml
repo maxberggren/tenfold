@@ -24,9 +24,9 @@ Rectangle {
         "Ctrl ⌫\t" + qsTr("stop every clip at the next bar"),
         "Shift Space\t" + qsTr("a new loop of what you just played, in place of this part's playing loop"),
         "Ctrl Z\t" + qsTr("take back the newest loop, on any page; what played before plays again"),
-        "Ctrl N, Ctrl N\t" + qsTr("start over: every loop cleared, the next one sets the tempo"),
+        "Ctrl N, Ctrl N\t" + qsTr("start over: every loop cleared, every part unmuted and the mix set back, the next loop sets the tempo"),
         "Ctrl R\t" + qsTr("record to ~/Music/tenfold"),
-        "Ctrl T\t" + qsTr("the tutorial: a whole track, step by step, from silence (Ctrl Return next, Ctrl Shift Return back, Esc leaves)"),
+        "Ctrl T\t" + qsTr("the tutorial: a whole track, step by step, from a cleared studio (with loops made, press it twice; Ctrl Return next, Ctrl Shift Return back, Esc leaves)"),
         "Ctrl Q\t" + qsTr("quit")
     ]
 

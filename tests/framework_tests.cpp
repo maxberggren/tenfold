@@ -134,6 +134,17 @@ private slots:
         QVERIFY(twice.view.parts[0].clips[0].state == ClipView::Empty);
     }
 
+    void startingOverSetsTheMixBack() {
+        // Drums looped, then muted on the Song page with Q: Ctrl+N twice
+        // clears the loop and unmutes them, so the next beat is heard.
+        const auto take = testkit::play(std::string(kBeat) + "page 3.0 0\nkey 3.2 Q\nend 4.0\n");
+        QVERIFY(take.view.parts[0].channel.value[Mute] > 0.5f);
+        const auto over = testkit::play(std::string(kBeat) + "page 3.0 0\nkey 3.2 Q\n"
+                                        "key 4.0 Ctrl+N\nkey 4.5 Ctrl+N\nend 6\n");
+        QVERIFY(over.view.parts[0].channel.value[Mute] < 0.5f);
+        QCOMPARE(over.view.parts[0].playing, -1);
+    }
+
     void ctrlNTwiceStartsOver() {
         // Once only asks; twice clears every loop, and the next loop sets a
         // new tempo of its own.

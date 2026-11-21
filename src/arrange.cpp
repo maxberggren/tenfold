@@ -2134,6 +2134,28 @@ private:
         }
     }
 
+    void startOver(ControlContext &ctx) override {
+        (void)ctx;
+        if (m_playing)
+            stopSong();
+        m_playing = m_loop = m_recording = false;
+        m_recArmBar = m_recStopBar = -1;
+        m_song = Song{};
+        m_take = Song{};
+        m_moves.clear();
+        for (int p = 0; p < P; ++p) {
+            std::fill(std::begin(m_trim[p]), std::end(m_trim[p]), 0.0f);
+            m_muteFlip[p] = false;
+            m_muteAtBar[p] = -1;
+            m_muteHold[p] = 0;
+            m_heldSolo[p] = false;
+        }
+        m_tensionLive = 0;
+        m_tensionHeld = false;
+        // Take the studio's mix as home again once it has been set back.
+        m_ready = false;
+    }
+
     void stopSong() {
         // What the song had set becomes home: the song's own values where it
         // stands, with the hands' trims, but not what its moves add. An

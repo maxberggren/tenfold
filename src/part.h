@@ -353,6 +353,9 @@ public:
     virtual QString help() const = 0;
     // One line under the pad: what the fingers are doing right now.
     virtual QString status() const { return {}; }
+    // Ctrl+N twice (or the tutorial starting): the studio has been cleared,
+    // its mix set back home. Drop whatever belongs to the old song.
+    virtual void startOver(ControlContext &ctx) { (void)ctx; }
     // A number about what the player has done on this page, for the
     // tutorial to tell when a step is done: a state ("follow": 1 or 0) or a
     // count that only goes up ("rolls": how many rolls were ever started),

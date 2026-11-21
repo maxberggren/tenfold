@@ -154,7 +154,8 @@ private:
     // started): a layer takes only what was played since.
     double m_loopSince[kMaxParts] = {};
     int m_lastPlaying[kMaxParts] = {};
-    double m_startOverAsked = -1;
+    double m_startOverAsked = -1, m_tutorialAsked = -1;
+    void clearEverything(); // every loop, the mix home, each page's song state
     int m_undos = 0;
     bool m_mixRecording = false;
     Tutorial m_tutorial;

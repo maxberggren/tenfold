@@ -32,7 +32,7 @@ pick a page with its number:
 
 `?` shows the guide for the page you're on. Letter keys play most pages too.
 
-**New here?** Ctrl+T (or the Tutorial button) walks you from silence to a
+**New here?** Ctrl+T (or the Tutorial button) clears the studio and walks you from silence to a
 finished, recorded track: a beat, chords, a bassline that follows them, a
 melody, an arp, an atmosphere, a build and its drop looped for the track,
 then the mix, a song of your own and the whole written track, heard through
@@ -52,7 +52,8 @@ Arrange, pick two loops of a part and press M to layer
 them, Shift+M to chain them.
 
 **Changed your mind?** Ctrl+Z takes back the newest loop on any page, and
-what was playing before comes back. Ctrl+N twice starts over.
+what was playing before comes back. Ctrl+N twice starts over: every loop
+cleared, the mix set back, nothing left muted.
 
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
 metronome, Ctrl+R record to `~/Music/tenfold`, Ctrl+Q quit.

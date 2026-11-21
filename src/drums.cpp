@@ -258,12 +258,25 @@ public:
         case Qt::Key_Delete:
             if (toggleLanes(ctx))
                 return true;
-            for (int p = 0; p < PadCount; ++p)
-                if (m_edit[p].any()) {
-                    m_edit[p] = {};
-                    sendEdit(p, ctx);
-                }
-            ctx.notice(QStringLiteral("Every drum back to the kit's sound"));
+            {
+                // With no loop to take a held drum out of, Delete still
+                // means that drum: only its shaping goes back to the kit.
+                uint32_t held = 0;
+                for (const auto &h : m_holders)
+                    if (h.used && h.mode != Mode::Repeat)
+                        held |= 1u << h.pad;
+                QStringList names;
+                for (int p = 0; p < PadCount; ++p)
+                    if ((!held || (held >> p & 1u)) && m_edit[p].any()) {
+                        m_edit[p] = {};
+                        sendEdit(p, ctx);
+                    }
+                for (int p = 0; p < PadCount; ++p)
+                    if (held >> p & 1u)
+                        names << QString::fromUtf8(padName(p, m_kit)).toUpper();
+                ctx.notice(held ? QStringLiteral("%1 back to the kit's sound").arg(names.join('+'))
+                                : QStringLiteral("Every drum back to the kit's sound"));
+            }
             return true;
         case Qt::Key_Backspace:
             ctx.stop();
@@ -321,7 +334,8 @@ public:
             "[ / ]\tless or more swing\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
             "Shift+Enter\toverdub on or off: what you play joins the loop\n"
-            "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in)\n"
+            "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in); with no loop, only its "
+            "shaping goes back to the kit's\n"
             "Delete\tevery drum back to the kit's own sound\n"
             "F1–F8 · Shift+F1–F8\tlaunch a slot at the next bar · empty it\n"
             "Backspace\tstop the beat at the next bar");

@@ -200,7 +200,7 @@ ApplicationWindow {
 
                     PanelBox {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 128
+                        Layout.preferredHeight: backend.tutorialActive ? 108 : 128
                         title: qsTr("Transport")
                         color: win.amber
                         Column {
@@ -233,7 +233,7 @@ ApplicationWindow {
                     TutorialPanel {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.minimumHeight: 380
+                        Layout.minimumHeight: 240
                         visible: backend.tutorialActive
                         tint: backend.pageColors[backend.tutorialPage]
                         onPage: backend.page === backend.tutorialPage

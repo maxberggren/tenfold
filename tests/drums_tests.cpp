@@ -396,6 +396,20 @@ private slots:
         QCOMPARE(reset.view.parts[0].data[40 + 3 * drums::Kick], 0.0f);
     }
 
+    void deleteWithAPadHeldAndNoLoopResetsOnlyThatDrum() {
+        // The kick and the snare are both shaped; Delete with the snare
+        // held (and no loop to take it out of) puts back only the snare.
+        const auto take = testkit::play("page 0 1\n"
+                                        "down 1.0 1 " + at(drums::Kick) + "\nclick 1.05 len=0.6\n"
+                                        "glide 1.2 1.5 1 0.225 0.225\nup 1.8 1\n"
+                                        "down 2.0 2 " + at(drums::Snare) + "\nclick 2.05 len=0.6\n"
+                                        "glide 2.2 2.5 2 0.475 0.225\nup 2.8 2\n"
+                                        "down 3.0 3 " + at(drums::Snare) + "\nkey 3.2 Delete\nup 3.4 3\nend 3.6\n");
+        const float *data = take.view.parts[0].data;
+        QCOMPARE(int(std::lround(data[40 + 3 * drums::Kick])), 2);
+        QCOMPARE(data[40 + 3 * drums::Snare], 0.0f);
+    }
+
     void the808HoldsAndGlidesThroughTheScale() {
         const auto take = testkit::play("page 0 1\n"
                                         "down 1.0 1 " + at(drums::Sub) + "\nglide 1.5 1.7 1 0.225 0.375\nend 2.5\n");

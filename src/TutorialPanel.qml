@@ -107,6 +107,7 @@ Item {
         // The step itself; a long one scrolls rather than pushing the
         // buttons off the panel.
         Flickable {
+            id: flick
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -167,47 +168,6 @@ Item {
                     font.pixelSize: 14
                     lineHeight: 1.12
                     wrapMode: Text.Wrap
-                }
-
-                // The checks, ticking off, side by side where they fit.
-                Flow {
-                    Layout.fillWidth: true
-                    Layout.leftMargin: 12
-                    Layout.rightMargin: 12
-                    Layout.topMargin: 10
-                    spacing: 14
-                    Repeater {
-                        model: backend.tutorialChecks
-                        delegate: Row {
-                            required property var modelData
-                            spacing: 8
-                            Rectangle {
-                                width: 16
-                                height: 16
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: modelData.done ? panel.green : "transparent"
-                                border.color: modelData.done ? panel.green : panel.tint
-                                border.width: 2
-                                Text {
-                                    anchors.centerIn: parent
-                                    visible: modelData.done
-                                    text: "✓"
-                                    color: "#0a0806"
-                                    font.pixelSize: 13
-                                    font.weight: Font.Black
-                                }
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.label
-                                color: modelData.done ? panel.green : panel.tint
-                                font.family: panel.mono
-                                font.pixelSize: 14
-                                font.weight: Font.DemiBold
-                                font.capitalization: Font.MixedCase
-                            }
-                        }
-                    }
                 }
 
                 // The keys the step uses, as keycaps.
@@ -278,6 +238,69 @@ Item {
                     font.family: panel.mono
                     font.pixelSize: 13
                     wrapMode: Text.WrapAnywhere
+                }
+            }
+            // More below: a fade and an arrow, while there is.
+            Rectangle {
+                visible: flick.contentY + flick.height < flick.contentHeight - 4
+                y: flick.contentY + flick.height - height
+                width: flick.width
+                height: 26
+                gradient: Gradient {
+                    GradientStop { position: 0; color: "#00000000" }
+                    GradientStop { position: 1; color: "#000000" }
+                }
+                Text {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.bottom: parent.bottom
+                    text: "▼ " + qsTr("more")
+                    color: panel.amber
+                    font.family: panel.mono
+                    font.pixelSize: 11
+                    font.capitalization: Font.AllUppercase
+                }
+            }
+        }
+
+        // The checks, ticking off, side by side where they fit: always in view,
+        // under the instruction however long it is.
+        Flow {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            Layout.topMargin: 10
+            spacing: 14
+            Repeater {
+                model: backend.tutorialChecks
+                delegate: Row {
+                    required property var modelData
+                    spacing: 8
+                    Rectangle {
+                        width: 16
+                        height: 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: modelData.done ? panel.green : "transparent"
+                        border.color: modelData.done ? panel.green : panel.tint
+                        border.width: 2
+                        Text {
+                            anchors.centerIn: parent
+                            visible: modelData.done
+                            text: "✓"
+                            color: "#0a0806"
+                            font.pixelSize: 13
+                            font.weight: Font.Black
+                        }
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.label
+                        color: modelData.done ? panel.green : panel.tint
+                        font.family: panel.mono
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                        font.capitalization: Font.MixedCase
+                    }
                 }
             }
         }

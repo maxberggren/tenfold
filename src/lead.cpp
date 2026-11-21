@@ -2277,7 +2277,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         }
         return out;
     };
-    auto chipWant = [&](const QString &label) { return chipFont.horizontalAdvance(label) + 12; };
+    auto chipWant = [&](const QString &label) { return console::textWidth(c::font(12, true), label) + 12; };
     c::clips(p, c::bandRow(pc, 0, 0, 0.42), pv, col, pc.time, &m_spots);
     {
         std::vector<qreal> want;
@@ -2321,7 +2321,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         std::vector<qreal> want;
         for (const auto &st : steppers)
             want.push_back(2 * end + std::max(nameFont.horizontalAdvance(QStringLiteral("GLIDE")),
-                                              nameFont.horizontalAdvance(st.name)) + 4);
+                                              console::textWidth(c::font(11, true), st.name)) + 4);
         for (const auto &sw : switches)
             want.push_back(chipWant(sw.label));
         const auto cells = lay(c::bandRow(pc, 1), want, 6);
@@ -2347,7 +2347,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     // edge after it.
     {
         const QFont legend = c::font(13, true);
-        const qreal lw = QFontMetricsF(legend).horizontalAdvance(QStringLiteral("Lead")) + 16;
+        const qreal lw = console::textWidth(legend, QStringLiteral("Lead")) + 16;
         const QRectF lr(pc.pad.left() + 16, pc.pad.top() - 9, lw, 18);
         p.fillRect(lr, QColor(0, 0, 0));
         c::text(p, lr, QStringLiteral("Lead"), col, 13, true, Qt::AlignCenter);
@@ -2359,7 +2359,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                 x = r.right() + 8;
             } else {
                 const QFont f = c::font(12, true);
-                const qreal w = QFontMetricsF(f).horizontalAdvance(name) + 12;
+                const qreal w = console::textWidth(f, name) + 12;
                 p.fillRect(QRectF(x, pc.pad.top() - 9, w, 18), QColor(0, 0, 0));
                 c::text(p, QRectF(x, pc.pad.top() - 9, w, 18), name, c::alpha(col, 0.55f), 12, true, Qt::AlignCenter);
                 x += w + 8;

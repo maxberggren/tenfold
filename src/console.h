@@ -31,6 +31,17 @@ inline QColor dim() { return QColor(255, 255, 255, 60); }
 
 // A condensed monospace in capitals.
 QFont font(int px, bool bold = false);
+
+// Arrows and key symbols (← → ↑ ↓ ⇧ ↵ ⏎ ◀ ▶ ▲ ▼ ↕ ↔) are drawn by the
+// console itself, as line art in the text's colour, rather than taken from
+// fonts that lack them or render them as emoji. drawText and textWidth know
+// them; everything the console writes goes through them.
+bool isIcon(QChar c);
+void drawIcon(QPainter &p, QChar c, const QRectF &box, QColor color);
+qreal textWidth(const QFont &f, const QString &s);
+// One line of `s` in `r` with Qt alignment flags (no wrapping), elided with
+// … when it doesn't fit.
+void drawText(QPainter &p, const QRectF &r, int flags, const QString &s);
 QColor alpha(QColor c, float a);
 
 // The pad: black, its frame in the part's colour, a legend cut into the top

@@ -38,7 +38,9 @@ Rectangle {
         spacing: 16
         Text {
             Layout.preferredWidth: 300
-            text: line.split("\t")[0]
+            // Arrows and key symbols are the console's own drawings.
+            textFormat: Text.StyledText
+            text: backend.rich(line.split("\t")[0], tint, 16)
             color: tint
             font.family: "Noto Sans Mono"
             font.pixelSize: 16
@@ -48,7 +50,8 @@ Rectangle {
         }
         Text {
             Layout.fillWidth: true
-            text: line.split("\t").slice(1).join(" ")
+            textFormat: Text.StyledText
+            text: backend.rich(line.split("\t").slice(1).join(" "), tint, 16)
             color: tint
             font.family: "Noto Sans Mono"
             font.pixelSize: 16

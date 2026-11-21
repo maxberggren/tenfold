@@ -18,6 +18,161 @@ QFont font(int px, bool bold) {
     return f;
 }
 
+bool isIcon(QChar c) {
+    switch (c.unicode()) {
+    case 0x2190: case 0x2191: case 0x2192: case 0x2193: // ← ↑ → ↓
+    case 0x2194: case 0x2195:                           // ↔ ↕
+    case 0x21E7:                                        // ⇧
+    case 0x21B5: case 0x23CE:                           // ↵ ⏎
+    case 0x25C0: case 0x25B6: case 0x25B2: case 0x25BC: // ◀ ▶ ▲ ▼
+        return true;
+    default:
+        return false;
+    }
+}
+
+// An icon's box is as wide as it is tall, the height of a capital: it sits
+// on the line like a letter.
+static qreal iconSize(const QFont &f) { return QFontMetricsF(f).capHeight() * 1.18; }
+static qreal iconAdvance(const QFont &f) { return iconSize(f) + QFontMetricsF(f).horizontalAdvance(QLatin1Char(' ')) * 0.35; }
+
+void drawIcon(QPainter &p, QChar c, const QRectF &box, QColor color) {
+    const qreal s = std::min(box.width(), box.height());
+    const QRectF b(box.center().x() - s / 2, box.center().y() - s / 2, s, s);
+    // Strokes as heavy as the console's bold letters, square-ended, mitred:
+    // the same line as the frames and the type.
+    const qreal w = std::max(1.25, s * 0.15);
+    QPen pen(color, w, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    const qreal l = b.left() + w / 2, r = b.right() - w / 2, t = b.top() + w / 2, bt = b.bottom() - w / 2;
+    const qreal cx = b.center().x(), cy = b.center().y(), head = s * 0.38;
+    auto arrow = [&](QPointF from, QPointF to) {
+        // A shaft and an open chevron head.
+        p.drawLine(from, to);
+        const QPointF d = to - from;
+        const qreal len = std::hypot(d.x(), d.y());
+        const QPointF u = d / len, n(-u.y(), u.x());
+        QPolygonF h;
+        h << to - u * head + n * head << to << to - u * head - n * head;
+        p.drawPolyline(h);
+    };
+    auto triangle = [&](QPolygonF tri) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(color);
+        p.drawPolygon(tri);
+    };
+    switch (c.unicode()) {
+    case 0x2190: arrow({r, cy}, {l, cy}); break;
+    case 0x2192: arrow({l, cy}, {r, cy}); break;
+    case 0x2191: arrow({cx, bt}, {cx, t}); break;
+    case 0x2193: arrow({cx, t}, {cx, bt}); break;
+    case 0x2194:
+        arrow({cx, cy}, {l, cy});
+        arrow({cx, cy}, {r, cy});
+        break;
+    case 0x2195:
+        arrow({cx, cy}, {cx, t});
+        arrow({cx, cy}, {cx, bt});
+        break;
+    case 0x21E7: {
+        // Shift: the keycap's outlined arrow, a roof over a stem.
+        const qreal stem = s * 0.2;
+        QPolygonF a;
+        a << QPointF(cx, t) << QPointF(r, cy) << QPointF(cx + stem, cy) << QPointF(cx + stem, bt)
+          << QPointF(cx - stem, bt) << QPointF(cx - stem, cy) << QPointF(l, cy);
+        p.drawPolygon(a);
+        break;
+    }
+    case 0x21B5:
+    case 0x23CE: {
+        // Return: down from the top right, then left, into the line.
+        const qreal y = cy + s * 0.12;
+        p.drawPolyline(QPolygonF{QPointF(r, t), QPointF(r, y), QPointF(l + w, y)});
+        QPolygonF h;
+        h << QPointF(l + head, y - head) << QPointF(l, y) << QPointF(l + head, y + head);
+        p.drawPolyline(h);
+        break;
+    }
+    case 0x25C0: triangle(QPolygonF{QPointF(r, t), QPointF(l, cy), QPointF(r, bt)}); break;
+    case 0x25B6: triangle(QPolygonF{QPointF(l, t), QPointF(r, cy), QPointF(l, bt)}); break;
+    case 0x25B2: triangle(QPolygonF{QPointF(l, bt), QPointF(cx, t), QPointF(r, bt)}); break;
+    case 0x25BC: triangle(QPolygonF{QPointF(l, t), QPointF(cx, bt), QPointF(r, t)}); break;
+    default: break;
+    }
+    p.restore();
+}
+
+qreal textWidth(const QFont &f, const QString &s) {
+    const QFontMetricsF m(f);
+    qreal w = 0;
+    QString run;
+    for (const QChar c : s) {
+        if (isIcon(c)) {
+            w += m.horizontalAdvance(run) + iconAdvance(f);
+            run.clear();
+        } else {
+            run += c;
+        }
+    }
+    return w + m.horizontalAdvance(run);
+}
+
+void drawText(QPainter &p, const QRectF &r, int flags, const QString &text) {
+    const QFont f = p.font();
+    const QFontMetricsF m(f);
+    QString s = text;
+    bool hasIcon = false;
+    for (const QChar c : s)
+        hasIcon |= isIcon(c);
+    if (!hasIcon) {
+        p.drawText(r, flags, m.elidedText(s, Qt::ElideRight, r.width()));
+        return;
+    }
+    // Too long: letters go from the end until it fits, then an ellipsis.
+    if (textWidth(f, s) > r.width() + 0.5) {
+        const QString dots = QStringLiteral("…");
+        while (!s.isEmpty() && textWidth(f, s + dots) > r.width() + 0.5)
+            s.chop(1);
+        s += dots;
+    }
+    const qreal total = textWidth(f, s);
+    qreal x = r.left();
+    if (flags & Qt::AlignHCenter)
+        x = r.center().x() - total / 2;
+    else if (flags & Qt::AlignRight)
+        x = r.right() - total;
+    // The baseline where Qt would put one line with the same flags.
+    qreal base = r.top() + m.ascent();
+    if (flags & Qt::AlignVCenter)
+        base = r.center().y() - m.height() / 2 + m.ascent();
+    else if (flags & Qt::AlignBottom)
+        base = r.bottom() - m.descent();
+    const qreal size = iconSize(f);
+    QString run;
+    auto flush = [&] {
+        if (run.isEmpty())
+            return;
+        p.drawText(QPointF(x, base), run);
+        x += m.horizontalAdvance(run);
+        run.clear();
+    };
+    const QColor color = p.pen().color();
+    for (const QChar c : s) {
+        if (!isIcon(c)) {
+            run += c;
+            continue;
+        }
+        flush();
+        const qreal adv = iconAdvance(f);
+        drawIcon(p, c, QRectF(x + (adv - size) / 2, base - m.capHeight() / 2 - size / 2, size, size), color);
+        x += adv;
+    }
+    flush();
+}
+
 QColor alpha(QColor c, float a) {
     c.setAlphaF(std::clamp(a, 0.0f, 1.0f));
     return c;
@@ -36,17 +191,17 @@ void pad(QPainter &p, const PaintContext &pc, const QString &legend) {
     const QRectF r(pc.pad.left() + 16, pc.pad.top() - 9, w, 18);
     p.fillRect(r, QColor(0, 0, 0));
     p.setPen(pc.color);
-    p.drawText(r, Qt::AlignCenter, legend);
+    drawText(p, r, Qt::AlignCenter, legend);
 }
 
 QRectF tag(QPainter &p, QPointF at, const QString &s, QColor color, int px, bool centred) {
     const QFont f = font(px, true);
     p.setFont(f);
-    const qreal w = QFontMetricsF(f).horizontalAdvance(s) + 12, h = px + 7;
+    const qreal w = textWidth(f, s) + 12, h = px + 7;
     QRectF r(centred ? at.x() - w / 2 : at.x(), at.y() - h / 2, w, h);
     p.fillRect(r, color);
     p.setPen(QColor::fromRgb(kInk));
-    p.drawText(r, Qt::AlignCenter, s);
+    drawText(p, r, Qt::AlignCenter, s);
     return r;
 }
 
@@ -54,7 +209,7 @@ void text(QPainter &p, const QRectF &r, const QString &s, QColor color, int px, 
     const QFont f = font(px, bold);
     p.setFont(f);
     p.setPen(color);
-    p.drawText(r, int(align), QFontMetricsF(f).elidedText(s, Qt::ElideRight, r.width()));
+    drawText(p, r, int(align), s);
 }
 
 void gauge(QPainter &p, const QRectF &r, float value, QColor color, int segments, bool bipolar) {

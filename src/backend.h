@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QElapsedTimer>
 #include <QObject>
+#include <QQuickImageProvider>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -20,6 +21,15 @@
 // The app's state for QML: owns the studio, the session (the pages), the
 // touch helper, the audio stream and the recorder, and turns them into
 // properties.
+// The console's arrows and key symbols for the window's text: QML asks for
+// "image://icon/<hex code point>/<rrggbb>" and gets the same line art the
+// pages draw (console::drawIcon).
+class IconProvider : public QQuickImageProvider {
+public:
+    IconProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
+    QImage requestImage(const QString &id, QSize *size, const QSize &requested) override;
+};
+
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(int padState READ padState NOTIFY changed)
@@ -146,6 +156,12 @@ public:
     Q_INVOKABLE void undoTake() { m_session->undoTake(); }
     Q_INVOKABLE void redoTake() { m_session->redoTake(); }
     Q_INVOKABLE void resizeLoop(int dir) { m_session->resizeLoop(dir); }
+    // Text for a QML Text with textFormat StyledText: the console's own
+    // arrows and key symbols as inline images in `color`, `px` the font's
+    // pixel size. hasIcons says whether a string needs it (plain text can
+    // elide; styled text can't).
+    Q_INVOKABLE QString rich(const QString &text, const QColor &color, int px) const;
+    Q_INVOKABLE bool hasIcons(const QString &text) const;
     int loopBeats() const { return m_session->loopBeats(0); }
     int loopShorterBeats() const { return m_session->loopBeats(-1); }
     int loopLongerBeats() const { return m_session->loopBeats(1); }

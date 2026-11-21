@@ -162,7 +162,8 @@ Item {
                     Layout.leftMargin: 12
                     Layout.rightMargin: 12
                     Layout.topMargin: 6
-                    text: backend.tutorialText
+                    textFormat: Text.StyledText
+                    text: backend.rich(backend.tutorialText, panel.paper, font.pixelSize)
                     color: panel.paper
                     font.family: panel.mono
                     // A small window keeps the whole instruction in view.
@@ -202,7 +203,8 @@ Item {
                                 id: keyText
                                 anchors.centerIn: parent
                                 anchors.verticalCenterOffset: -1
-                                text: modelData
+                                textFormat: Text.StyledText
+                                text: backend.rich(modelData, panel.amber, 13)
                                 color: panel.amber
                                 font.family: panel.mono
                                 font.pixelSize: 13
@@ -219,7 +221,7 @@ Item {
                     Layout.rightMargin: 12
                     Layout.topMargin: 10
                     visible: backend.tutorialTip !== ""
-                    text: "<b>" + qsTr("Try") + "</b>  " + backend.tutorialTip
+                    text: "<b>" + qsTr("Try") + "</b>  " + backend.rich(backend.tutorialTip, "#2EE6FF", 13)
                     textFormat: Text.StyledText
                     color: "#2EE6FF"
                     font.family: panel.mono
@@ -255,7 +257,8 @@ Item {
                     anchors.right: parent.right
                     anchors.rightMargin: 14
                     anchors.bottom: parent.bottom
-                    text: "▼ " + qsTr("more")
+                    textFormat: Text.StyledText
+                    text: backend.rich("▼ " + qsTr("more"), panel.amber, 11)
                     color: panel.amber
                     font.family: panel.mono
                     font.pixelSize: 11

@@ -2967,7 +2967,7 @@ void ArpControl::paintFingers(QPainter &p, const PaintContext &pc) {
         if (t.x > 0.8f && !label.isEmpty()) {
             c::finger(p, pc, t, color, QString(), glow);
             const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
-            const qreal w = QFontMetricsF(c::font(12, true)).horizontalAdvance(label) + 12;
+            const qreal w = console::textWidth(c::font(12, true), label) + 12;
             const QPointF at = pc.at(t.x, t.y);
             c::tag(p, QPointF(at.x() - r - 6 - w, at.y() - r * 0.6), label, color, 12);
         } else {

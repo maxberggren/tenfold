@@ -6,9 +6,12 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <chrono>
+#include <QPainter>
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 
+#include "console.h"
 #include "device.h"
 #include "offline.h"
 
@@ -380,4 +383,56 @@ bool Backend::simulate(const std::string &script, double until, std::string *err
     setScriptClock(until);
     this->tick();
     return true;
+}
+
+QImage IconProvider::requestImage(const QString &id, QSize *size, const QSize &requested) {
+    // Drawn three times over and scaled down by the text: crisp at any scale.
+    const QStringList parts = id.split('/');
+    const int px = std::clamp(requested.height() > 0 ? requested.height() : 16, 6, 128) * 3;
+    QImage img(px, px, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    if (parts.size() == 2) {
+        bool ok = false;
+        const uint code = parts[0].toUInt(&ok, 16);
+        const QColor color(QLatin1Char('#') + parts[1]);
+        if (ok && color.isValid()) {
+            QPainter p(&img);
+            tf::console::drawIcon(p, QChar(char16_t(code)), QRectF(0, 0, px, px), color);
+        }
+    }
+    if (size)
+        *size = img.size();
+    return img;
+}
+
+bool Backend::hasIcons(const QString &text) const {
+    for (const QChar c : text)
+        if (tf::console::isIcon(c))
+            return true;
+    return false;
+}
+
+QString Backend::rich(const QString &text, const QColor &color, int px) const {
+    // An icon is as tall as a capital, set in the middle of the line.
+    const int size = std::max(6, int(std::lround(px * 0.82)));
+    const QString hex = color.name(QColor::HexRgb).mid(1);
+    QString out;
+    for (const QChar c : text) {
+        if (tf::console::isIcon(c)) {
+            out += QStringLiteral("<img src=\"image://icon/%1/%2\" width=\"%3\" height=\"%3\" align=\"middle\">")
+                       .arg(QString::number(c.unicode(), 16), hex)
+                       .arg(size);
+        } else if (c == QLatin1Char('&')) {
+            out += QStringLiteral("&amp;");
+        } else if (c == QLatin1Char('<')) {
+            out += QStringLiteral("&lt;");
+        } else if (c == QLatin1Char('>')) {
+            out += QStringLiteral("&gt;");
+        } else if (c == QLatin1Char('\n')) {
+            out += QStringLiteral("<br>");
+        } else {
+            out += c;
+        }
+    }
+    return out;
 }

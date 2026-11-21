@@ -1476,7 +1476,7 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
 // The largest console font size, up to px, that fits s into width.
 int fitPx(const QString &s, qreal width, int px) {
     for (; px > 8; --px)
-        if (QFontMetricsF(c::font(px, true)).horizontalAdvance(s) <= width)
+        if (console::textWidth(c::font(px, true), s) <= width)
             break;
     return px;
 }
@@ -1507,8 +1507,8 @@ void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QStrin
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(overL || overR ? pc.color : c::alpha(pc.color, 0.6f), 1.5));
     p.drawRect(r);
-    const qreal keyW = std::max(QFontMetricsF(c::font(12, true)).horizontalAdvance(down),
-                                QFontMetricsF(c::font(12, true)).horizontalAdvance(up)) + 4;
+    const qreal keyW = std::max(console::textWidth(c::font(12, true), down),
+                                console::textWidth(c::font(12, true), up)) + 4;
     const QRectF bottom(r.left() + 4, r.top() + 13, r.width() - 8, 16);
     c::text(p, QRectF(r.left() + 3, r.top() + 1, r.width() - 6, 13), name, c::alpha(pc.color, 0.65f),
             fitPx(name, r.width() - 6, 10), true, Qt::AlignCenter);

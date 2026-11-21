@@ -1132,7 +1132,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         // the pad.
         const QPointF at = pc.at(t.x, t.y);
         const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
-        const qreal w = QFontMetricsF(c::font(12, true)).horizontalAdvance(label) + 12;
+        const qreal w = console::textWidth(c::font(12, true), label) + 12;
         const bool left = at.x() + r + 6 + w > pc.pad.right() - 4;
         const qreal x = left ? at.x() - r - 6 - w : at.x() + r + 6;
         if (!label.isEmpty())

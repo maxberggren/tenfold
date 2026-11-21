@@ -2710,7 +2710,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         const QPointF at = pc.at(h.x, h.y);
         const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t->size, 0.6f, 4.0f);
         const int tpx = 12;
-        const qreal w = QFontMetricsF(c::font(tpx, true)).horizontalAdvance(label) + 12;
+        const qreal w = console::textWidth(c::font(tpx, true), label) + 12;
         const bool left = at.x() + r + 6 + w > pc.pad.right() - 4;
         c::tag(p, QPointF(left ? at.x() - r - 6 - w : at.x() + r + 6, at.y() - r * 0.6), label, fc, tpx);
     }
@@ -2730,7 +2730,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
             }
         };
         auto lit = [&](const QString &s, bool on, QColor cc) {
-            const qreal w = QFontMetricsF(fnt).horizontalAdvance(s) + 12;
+            const qreal w = console::textWidth(fnt, s) + 12;
             room(w);
             if (on)
                 c::tag(p, QPointF(x, y), s, cc, px);
@@ -2820,7 +2820,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
         std::vector<double> w;
         double sum = 0;
         for (const Item &it : items) {
-            w.push_back(fm.horizontalAdvance(it.label) + 12);
+            w.push_back(console::textWidth(c::font(tpx, true), it.label) + 12);
             sum += w.back();
         }
         const double spare = r.width() - sum - gap * double(items.size() - 1);

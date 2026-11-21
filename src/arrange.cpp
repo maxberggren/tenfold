@@ -2947,7 +2947,7 @@ void ArrangeControl::paint(QPainter &p, const PaintContext &pc) {
             c::finger(p, pc, t, col, QString(), glow);
             if (!label.isEmpty()) {
                 const QFont fnt = c::font(12, true);
-                const qreal w = QFontMetricsF(fnt).horizontalAdvance(label) + 12;
+                const qreal w = console::textWidth(fnt, label) + 12;
                 const QPointF at = pc.at(t.x, t.y);
                 const qreal r = pc.pad.height() / 10.0 * 0.32 * std::clamp(t.size, 0.6f, 4.0f);
                 c::tag(p, QPointF(at.x() - r - 6 - w, at.y() - r * 0.6), label, col, 12);
@@ -3035,7 +3035,7 @@ void ArrangeControl::paintPointer(QPainter &p, const PaintContext &pc) {
         const QString hint = targetHint(t, mouse);
         if (!hint.isEmpty()) {
             const QFont f = c::font(10, true);
-            const qreal tw = QFontMetricsF(f).horizontalAdvance(hint) + 12;
+            const qreal tw = console::textWidth(f, hint) + 12;
             qreal x = std::clamp(r.center().x() - tw / 2, pc.pad.left() + 2, pc.pad.right() - tw - 2);
             const qreal y = t.kind == Target::Section ? r.top() - 10 : r.bottom() + 9;
             c::tag(p, QPointF(x, y), hint, w, 10);
@@ -3172,7 +3172,7 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
                 ink = col;
             auto label = [&](const QString &t, int size, Qt::Alignment align, qreal dx, qreal dy) {
                 const QFont f = c::font(size, true);
-                const qreal w = QFontMetricsF(f).horizontalAdvance(t) + 6, h = size + 4;
+                const qreal w = console::textWidth(f, t) + 6, h = size + 4;
                 const qreal x = (align & Qt::AlignRight) ? cell.right() - dx - w : cell.left() + dx;
                 const qreal y = (align & Qt::AlignBottom) ? cell.bottom() - dy - h : cell.top() + dy;
                 const QRectF r(x, y, w, h);
@@ -3241,7 +3241,7 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
                                  : QStringLiteral("D DOUBLE   ·   [ ] MOVE   ·   DEL CLEAR   ·   HOLD ANOTHER TO MERGE");
         const QString line = QStringLiteral("PICKED %1   ·   ").arg(pickText().toUpper()) + keys + QStringLiteral("   ·   CTRL+Z UNDOES");
         const QFont f = c::font(10, true);
-        const qreal w = QFontMetricsF(f).horizontalAdvance(line) + 14;
+        const qreal w = console::textWidth(f, line) + 14;
         const QRectF r(pc.pad.center().x() - w / 2, pc.pad.bottom() - 9, w, 18);
         p.fillRect(r, QColor(0, 0, 0));
         c::text(p, r, line, Qt::white, 10, true, Qt::AlignCenter);
@@ -3490,7 +3490,7 @@ void ArrangeControl::paintHeader(QPainter &p, const PaintContext &pc) {
     if (!mv.isEmpty())
         s += QStringLiteral("   ▸ ") + mv;
     const QFont f = c::font(12, true);
-    const qreal w = std::min(QFontMetricsF(f).horizontalAdvance(s) + 16, pc.pad.width() - 260);
+    const qreal w = std::min(console::textWidth(f, s) + 16, pc.pad.width() - 260);
     const QRectF r(pc.pad.left() + 120, pc.pad.top() - 9, w, 18);
     p.fillRect(r, QColor(0, 0, 0));
     const QColor ink = armed ? (std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.55f))

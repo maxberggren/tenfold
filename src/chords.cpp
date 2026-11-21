@@ -72,7 +72,7 @@ void chordText(QPainter &p, const QRectF &r, const QString &s, QColor color, int
     f.setCapitalization(QFont::MixedCase);
     p.setFont(f);
     p.setPen(color);
-    p.drawText(r, int(align), s);
+    console::drawText(p, r, int(align), s);
 }
 
 // A chord's name from what it is made of: the intervals of its tones above
@@ -122,11 +122,11 @@ QRectF nameTag(QPainter &p, QPointF at, const QString &s, QColor color, int px) 
     QFont f = console::font(px, true);
     f.setCapitalization(QFont::MixedCase);
     p.setFont(f);
-    const qreal w = QFontMetricsF(f).horizontalAdvance(s) + 12, h = px + 7;
+    const qreal w = console::textWidth(f, s) + 12, h = px + 7;
     const QRectF r(at.x(), at.y() - h / 2, w, h);
     p.fillRect(r, color);
     p.setPen(QColor::fromRgb(console::kInk));
-    p.drawText(r, Qt::AlignCenter, s);
+    console::drawText(p, r, Qt::AlignCenter, s);
     return r;
 }
 
@@ -151,7 +151,7 @@ QString roman(const Tuning &t, int degree) {
 // Chips as the console draws them, each as wide as its label needs: the
 // width a row of them needs, and the row laid out across r with the room
 // left over shared out evenly.
-qreal chipWidth(const QString &label) { return QFontMetricsF(console::font(12, true)).horizontalAdvance(label) + 10; }
+qreal chipWidth(const QString &label) { return console::textWidth(console::font(12, true), label) + 10; }
 
 qreal chipsWidth(const QStringList &labels, qreal gap) {
     qreal w = gap * qreal(std::max<qsizetype>(0, labels.size() - 1));
@@ -1111,7 +1111,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         for (int i = m_ribbonCount - 1; i >= 0; --i) {
             const Shape &s = m_ribbon[(m_ribbonHead - m_ribbonCount + i + 2 * kRibbon) % kRibbon];
             const QString name = chordName(t, s);
-            const qreal w = fm.horizontalAdvance(name) + 12;
+            const qreal w = console::textWidth(f, name) + 12;
             if (x - w < std::max(pc.pad.left() + pc.pad.width() * 0.42, tagsRight))
                 break;
             x -= w;

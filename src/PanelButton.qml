@@ -45,8 +45,11 @@ Item {
         width: parent.width - 20
         elide: button.roomy ? Text.ElideNone : Text.ElideRight
         maximumLineCount: button.roomy ? 3 : 1
-        text: button.label
-        color: button.lit ? "#0a0806" : button.color
+        // Arrows and key symbols are the console's own drawings.
+        readonly property color ink: button.lit ? "#0a0806" : button.color
+        textFormat: backend.hasIcons(button.label) ? Text.StyledText : Text.PlainText
+        text: textFormat === Text.StyledText ? backend.rich(button.label, ink, button.labelSize) : button.label
+        color: ink
         font.family: "Noto Sans Mono"
         font.pixelSize: button.labelSize
         font.weight: Font.DemiBold
@@ -59,8 +62,10 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 6
-        text: button.key
-        color: button.lit ? "#0a0806" : button.color
+        readonly property color ink: button.lit ? "#0a0806" : button.color
+        textFormat: backend.hasIcons(button.key) ? Text.StyledText : Text.PlainText
+        text: textFormat === Text.StyledText ? backend.rich(button.key, ink, 11) : button.key
+        color: ink
         opacity: 0.7
         font.family: "Noto Sans Mono"
         font.pixelSize: 11

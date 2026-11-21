@@ -548,11 +548,23 @@ ApplicationWindow {
                 verticalAlignment: Text.AlignVCenter
                 wrapMode: Text.NoWrap
                 maximumLineCount: 1
-                fontSizeMode: Text.HorizontalFit
-                minimumPixelSize: 9
-                text: backend.notice
+                // The size that fits one line, worked out here rather than by
+                // fontSizeMode, so the console's arrows (inline images) can
+                // shrink with the letters.
+                TextMetrics {
+                    id: noticeMetrics
+                    font.family: win.wide
+                    font.pixelSize: 56
+                    font.weight: Font.Black
+                    font.letterSpacing: 1
+                    font.capitalization: Font.AllUppercase
+                    text: backend.notice.replace(/[←→↑↓⇧↵⏎◀▶▲▼↕↔]/g, "M")
+                }
+                readonly property int fitted: Math.max(9, Math.min(56, Math.floor(56 * width / Math.max(1, noticeMetrics.advanceWidth * 1.04))))
+                textFormat: Text.StyledText
+                text: backend.rich(backend.notice, win.pageColor, fitted)
                 font.family: win.wide
-                font.pixelSize: 56
+                font.pixelSize: fitted
                 font.weight: Font.Black
                 font.letterSpacing: 1 // fixed pixels: kept small so a shrunk line still fits
                 font.capitalization: Font.AllUppercase

@@ -633,10 +633,10 @@ public:
                 const float sib = m_sib.step(dry[i]).high;
                 // As loud as the voice it speaks for: the bands' sum is
                 // levelled against the dry voice, slowly.
-                const float raw = out * 14.0f;
+                const float raw = out * 2.0f;
                 m_vocIn += (dry[i] * dry[i] - m_vocIn) * 0.0005f;
                 m_vocOut += (raw * raw - m_vocOut) * 0.0005f;
-                const float match = clampf(std::sqrt((m_vocIn + 1e-9f) / (m_vocOut + 1e-7f)), 0.05f, 2.0f);
+                const float match = clampf(std::sqrt((m_vocIn + 1e-9f) / (m_vocOut + 1e-9f)), 0.01f, 8.0f);
                 m_vocGain += (match - m_vocGain) * 0.0005f;
                 const float v = (raw * m_vocGain + sib * 0.5f + dry[i] * 0.12f) * mix;
                 leadL[i] += v;
@@ -1215,7 +1215,7 @@ private:
     int64_t m_lastVoiced = -1000000;
     float m_heldHz = 0, m_heldPeriod = 0;
     int m_unvoiced = 1 << 30;
-    float m_vocIn = 0, m_vocOut = 0, m_vocGain = 0.3f;
+    float m_vocIn = 0, m_vocOut = 0, m_vocGain = 0.5f;
 
     // The voice.
     int m_preset = Natural, m_formant = 0;

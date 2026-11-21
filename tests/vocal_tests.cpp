@@ -423,6 +423,18 @@ private slots:
         QVERIFY(withFinger.finite());
     }
 
+    void theVocoderIsAsLoudAsTheVoice() {
+        const std::string sing = "voice 0.5 3 hz=220 level=0.1 vowel=a\nend 4\n";
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        // Four steps right: NATURAL → HARD TUNE → PRISM → CHOIR → VOCODER.
+        const auto vocoder =
+            testkit::play(std::string(kPage) + "key 0.1 Right\nkey 0.15 Right\nkey 0.2 Right\nkey 0.25 Right\n" + sing);
+        const double a = natural.rms(1.5, 3.4), b = vocoder.rms(1.5, 3.4);
+        const double db = 20 * std::log10(b / a);
+        qInfo("the vocoder is %.1f dB from the natural voice", db);
+        QVERIFY2(std::fabs(db) < 3, qPrintable(QString("%1 dB").arg(db)));
+    }
+
     void everyStripAndTheClickPlayWithoutTrouble() {
         // Ten fingers at once over a sung phrase: every strip, keys, the
         // click; nothing blows up, nothing goes silent for good.

@@ -675,6 +675,25 @@ private slots:
         // A click beside the menu only closes it.
         const auto closed = testkit::play(loops(rclick(15.2, 0) + "button 15.4 0.95 0.95\n" + item(15.6, 0, 0) + "end 16\n"));
         QVERIFY(closed.view.parts[1].clips[1].state == ClipView::Empty);
+        // A right click on an empty slot, a lane's name or the mixer opens
+        // nothing: a click where the menu's first item would be does nothing.
+        for (const std::string &x : {num(cellX(3)), num(0.05), num(0.8)}) {
+            const auto none = testkit::play(loops("rbutton 15.2 " + x + " " + num(laneY(1)) + "\n" + item(15.4, 3, 0) +
+                                                  item(15.5, 0, 0) + "end 16\n"));
+            for (int s = 1; s < 8; ++s)
+                QVERIFY(none.view.parts[1].clips[s].state == ClipView::Empty);
+        }
+        // ...and it only closes an open menu, keeping the pick.
+        const auto kept = testkit::play(loops(rclick(15.2, 0) + "rbutton 15.4 " + num(cellX(3)) + " " + num(laneY(1)) +
+                                              "\n" + item(15.6, 0, 0) + "key 15.8 D\nend 16.2\n"));
+        QVERIFY(kept.view.parts[1].clips[1].state != ClipView::Empty);
+        QVERIFY(kept.view.parts[1].clips[2].state == ClipView::Empty);
+        // With a clip picked, a right click on its lane's name opens no menu
+        // there either: a click where its first item would be is no DOUBLE.
+        const std::string onName = "rbutton 15.4 0.05 " + num(laneY(1)) + "\nbutton 15.6 " + num(0.05 + dx) + " " +
+                                   num(laneY(1) - dy) + "\n";
+        const auto named = testkit::play(loops(rclick(15.2, 0) + onName + "end 16\n"));
+        QVERIFY(named.view.parts[1].clips[1].state == ClipView::Empty);
         // Doubled, then a right click on the copy adds it to the pick: the
         // menu's first item now layers it into slot 1.
         const auto layered =

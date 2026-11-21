@@ -1395,25 +1395,25 @@ private:
     }
 
 public:
+    // Only a clip with a loop in it, or a song section, opens the menu; a
+    // right click anywhere else (an empty slot, a lane's name or mixer, the
+    // buttons, around the pad) only closes a menu that is open.
     bool menu(QPointF at, ControlContext &ctx) override {
+        const bool was = m_menu.open;
         m_menu.open = false;
         prunePick(ctx.studio());
         const QPointF q = padPoint(at);
-        const Target t = targetAt(float(q.x()), float(q.y()));
-        if (t.kind == Target::Clip) {
-            if (ctx.studio().parts[t.a].clips[t.b].state == ClipView::Empty) {
-                ctx.notice(QStringLiteral("%1 is empty").arg(clipName(t.a, t.b)));
-                return true;
-            }
+        const bool onX = q.x() >= 0 && q.x() <= 1;
+        const Target t = onX && q.y() <= 1 ? targetAt(float(q.x()), float(q.y())) : Target{};
+        if (t.kind == Target::Clip && ctx.studio().parts[t.a].clips[t.b].state != ClipView::Empty) {
             const bool in = t.a == m_selPart && std::find(m_selSlots.begin(), m_selSlots.end(), t.b) != m_selSlots.end();
             if (!in)
                 selectClip(t.a, t.b, ctx);
         } else if (t.kind == Target::Section) {
             m_selSection = t.a;
             m_selSlots.clear();
-        } else if (!clipsPicked() && m_selSection < 0) {
-            ctx.notice(QStringLiteral("Right-click a clip or a song section to edit it"));
-            return true;
+        } else {
+            return was;
         }
         ctx.log(QStringLiteral("SONG MENU at %1,%2 on %3")
                     .arg(q.x(), 0, 'f', 3)

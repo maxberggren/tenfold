@@ -540,7 +540,11 @@ public:
         case Command::On: {
             Entry e;
             e.id = c.id;
-            e.degree = c.i[0];
+            // The page plays degrees 0 to 7; a song's clip comes from a file
+            // that may say anything, and a degree far out of the keyboard
+            // would overflow the harmony's sums and spin the doublings'
+            // octave search, so it is kept to a few octaves of the key.
+            e.degree = std::clamp(c.i[0], 0, 31);
             e.colour = std::clamp(c.i[1], 0, ColourCount - 1);
             e.style = std::clamp(c.i[2], 0, StyleCount - 1);
             e.reg = std::clamp(c.i[3], -4, 4);

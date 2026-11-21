@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "touch.h"
 #include "tuning.h"
@@ -461,6 +462,21 @@ public:
     // name the page doesn't know is ignored, a missing one keeps the page's
     // default, and every value is checked and clamped to its range.
     virtual void load(const QJsonObject &in, ControlContext &ctx) { (void)in, (void)ctx; }
+    // Ctrl+S, for a page whose clips play audio the page keeps itself (the
+    // Vocal page's loops): whatever those clips need to sound again, which
+    // the file holds as the part's "audio". `sounds` is every command in the
+    // part's clips, as the file will hold them.
+    virtual void saveAudio(const std::vector<const Command *> &sounds, QJsonObject &out) const {
+        (void)sounds, (void)out;
+    }
+    // Ctrl+O, after startOver() and before the studio has the clips: the
+    // page takes back what saveAudio() wrote, and may change the commands in
+    // place so they name the audio as the page now keeps it. A file without
+    // it (or with it broken) still opens: those clips are silent, and the
+    // page says so.
+    virtual void openAudio(const QJsonObject &in, const std::vector<Command *> &sounds, ControlContext &ctx) {
+        (void)in, (void)sounds, (void)ctx;
+    }
     // Ctrl+Z, before the studio takes back a step: a change the page has
     // promised but not yet made (a roll kept for the next bar line) is the
     // newest thing done, so taking it back is the page's. True if it did.

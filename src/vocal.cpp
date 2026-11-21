@@ -27,6 +27,7 @@
 
 #include "vocal.h"
 
+#include <QJsonArray>
 #include <QPainter>
 #include <QPainterPath>
 #include <Qt>
@@ -1679,6 +1680,138 @@ public:
         m_last = {};
     }
     void undone(ControlContext &) override { m_last = {}; }
+
+    // --- songs ------------------------------------------------------------------
+    // The page's own choices: the style, the throat, the stutter, where the
+    // keys sit and whether they follow the chords. Not the latch: that is
+    // what a hand is doing.
+    // The styles by the names a file gives them (the page's are for show).
+    static constexpr const char *kStyleNames[PresetCount] = {"natural", "tune", "prism", "choir", "vocoder", "robot"};
+    void save(QJsonObject &out) const override {
+        out[QStringLiteral("style")] = QLatin1String(kStyleNames[std::clamp(m_preset, 0, PresetCount - 1)]);
+        out[QStringLiteral("formant")] = m_formant;
+        out[QStringLiteral("stutter")] = m_stutter;
+        out[QStringLiteral("octave")] = m_octave;
+        out[QStringLiteral("follow")] = m_follow;
+    }
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        m_preset = Natural;
+        const QString style = in.value(QStringLiteral("style")).toString();
+        for (int p = 0; p < PresetCount; ++p)
+            if (style == QLatin1String(kStyleNames[p]))
+                m_preset = p;
+        m_formant = std::clamp(in.value(QStringLiteral("formant")).toInt(0), -6, 6);
+        m_stutter = std::clamp(in.value(QStringLiteral("stutter")).toInt(2), 0, kStutterCount - 1);
+        m_octave = std::clamp(in.value(QStringLiteral("octave")).toInt(0), -2, 2);
+        m_follow = in.value(QStringLiteral("follow")).toBool(false);
+        // To the engine at once, with no notice for each.
+        param(ctx, PPreset, m_preset);
+        param(ctx, PStutter, m_stutter);
+        param(ctx, PFormant, m_formant);
+        param(ctx, PFollow, m_follow ? 1 : 0);
+        m_sentAll = true;
+    }
+
+    // The loops' audio: every take a clip plays, as 16-bit stereo PCM. A
+    // take still being recorded (a layer whose bar hasn't come) has no
+    // audio yet and is left out; its clip opens silent.
+    void saveAudio(const std::vector<const Command *> &sounds, QJsonObject &out) const override {
+        QJsonArray takes;
+        bool done[kMaxTakes] = {};
+        for (const Command *c : sounds) {
+            if (c->type != Command::On || !(c->flags & Command::Sampled))
+                continue;
+            const int h = c->i[0];
+            if (h <= 0 || h >= kMaxTakes || done[h] || !m_used[h])
+                continue;
+            done[h] = true;
+            const std::vector<float> &buf = m_audio[h];
+            const int frames = int(buf.size() / 2);
+            if (frames <= 0)
+                continue;
+            QByteArray pcm(qsizetype(frames) * 4, Qt::Uninitialized);
+            auto *p = reinterpret_cast<unsigned char *>(pcm.data());
+            for (size_t k = 0; k < size_t(2 * frames); ++k) {
+                const int v = int(std::lround(std::clamp(buf[k], -1.0f, 1.0f) * 32767.0f));
+                p[2 * k] = uint8_t(v & 0xff);
+                p[2 * k + 1] = uint8_t((v >> 8) & 0xff);
+            }
+            QJsonObject take;
+            take[QStringLiteral("handle")] = h;
+            take[QStringLiteral("rate")] = int(std::lround(m_tape->rate));
+            take[QStringLiteral("frames")] = frames;
+            take[QStringLiteral("pcm")] = QString::fromLatin1(pcm.toBase64());
+            takes.append(take);
+        }
+        if (!takes.isEmpty())
+            out[QStringLiteral("takes")] = takes;
+    }
+
+    // Each take gets a handle of its own here (the old song's are still let
+    // go of), and the clips are pointed at it. Audio at another rate is
+    // resampled to the tape's.
+    void openAudio(const QJsonObject &in, const std::vector<Command *> &sounds, ControlContext &ctx) override {
+        int fresh[kMaxTakes] = {}; // the file's handle → this one's
+        bool known[kMaxTakes] = {};
+        for (const QJsonValue &tv : in.value(QStringLiteral("takes")).toArray()) {
+            const QJsonObject t = tv.toObject();
+            const int h = t.value(QStringLiteral("handle")).toInt(0);
+            const int frames = t.value(QStringLiteral("frames")).toInt(0);
+            const double rate = t.value(QStringLiteral("rate")).toDouble(0);
+            if (h <= 0 || h >= kMaxTakes || known[h] || frames <= 0 || frames > kRing || !(rate >= 8000 && rate <= 384000))
+                continue;
+            const QByteArray pcm = QByteArray::fromBase64(t.value(QStringLiteral("pcm")).toString().toLatin1());
+            if (pcm.size() != qsizetype(frames) * 4)
+                continue;
+            const int nh = allocHandle();
+            if (nh <= 0)
+                break;
+            known[h] = true;
+            fresh[h] = nh;
+            const auto *p = reinterpret_cast<const unsigned char *>(pcm.constData());
+            auto sample = [&](int k, int ch) {
+                const int i = 2 * k + ch;
+                return float(int16_t(uint16_t(p[2 * i] | (p[2 * i + 1] << 8)))) / 32767.0f;
+            };
+            std::vector<float> &buf = m_audio[nh];
+            const double step = rate / double(m_tape->rate);
+            const int len = std::max(1, int(std::lround(frames / step)));
+            buf.assign(size_t(2 * len), 0.0f);
+            for (int k = 0; k < len; ++k) {
+                const double x = k * step;
+                const int a = std::min(int(x), frames - 1), b = std::min(a + 1, frames - 1);
+                const float w = float(x - a);
+                for (int ch = 0; ch < 2; ++ch)
+                    buf[size_t(2 * k + ch)] = sample(a, ch) * (1 - w) + sample(b, ch) * w;
+            }
+            Tape::Take &take = m_tape->takes[nh];
+            take.start = 0;
+            take.length = len;
+            m_zeroBefore[nh] = INT64_MIN;
+            take.data.store(buf.data(), std::memory_order_release);
+        }
+        // The clips name the new handles; a take the file had no audio for
+        // names none, and its clip is silent.
+        constexpr int kIdBits = 0xFFFFFF; // a replayed id's own (see replayId)
+        bool played[kMaxTakes] = {};
+        for (const Command *c : sounds)
+            if (c->type == Command::On && (c->flags & Command::Sampled) && c->i[0] > 0 && c->i[0] < kMaxTakes)
+                played[c->i[0]] = true;
+        int missing = 0;
+        for (int h = 1; h < kMaxTakes; ++h)
+            missing += played[h] && !known[h];
+        for (Command *c : sounds) {
+            const int h = (c->id & kIdBits) - kLoopIdBase;
+            if (h <= 0 || h >= kMaxTakes || !played[h])
+                continue;
+            c->id = (c->id & ~kIdBits) | (kLoopIdBase + fresh[h]);
+            if (c->flags & Command::Sampled)
+                c->i[0] = fresh[h];
+        }
+        if (missing > 0)
+            ctx.notice(missing == 1 ? QStringLiteral("A vocal loop came without its audio: it is silent")
+                                    : QStringLiteral("%1 vocal loops came without their audio: they are silent").arg(missing));
+    }
 
     int loopBeats(int dir) const override {
         if (!m_last.active)

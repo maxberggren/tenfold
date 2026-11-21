@@ -2,11 +2,15 @@
 // loops of recorded audio that replay in time.
 
 #include <QDir>
+#include <functional>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QTemporaryDir>
 #include <cmath>
 #include <numeric>
 
 #include "dsp.h"
+#include "songfile.h"
 #include "testkit.h"
 #include "vocal.h"
 #include "wav.h"
@@ -61,6 +65,55 @@ double onsetAfter(const testkit::Take &t, double from, double thr = 0.02) {
 }
 
 double rmsBetween(const testkit::Take &t, double a, double b) { return t.rms(a, b); }
+
+// Saves the song at the end of `script`, then opens `doc` (that song, or
+// what `edit` makes of it) in a fresh studio and listens for `secs`: the
+// RMS of what it plays, from the second second on.
+struct Reopened {
+    QJsonObject doc;
+    float rms = 0;
+    QString notice;
+    int playing = -1;
+    QJsonObject settings;
+};
+Reopened reopenVocal(const std::string &script, double secs, const std::function<void(QJsonObject &)> &edit = {}) {
+    Reopened out;
+    testkit::play(script, [&](Session &before) {
+        QString error;
+        out.doc = before.saveSong(&error);
+        QVERIFY2(!out.doc.isEmpty(), qPrintable(error));
+        QJsonObject doc = QJsonDocument::fromJson(songJson(out.doc)).object();
+        if (edit)
+            edit(doc);
+        const double t0 = scriptClock();
+        Studio studio(48000.0f);
+        studio.setTimeOrigin(t0);
+        Session opened(&studio);
+        opened.setClock(&scriptClock);
+        QVERIFY2(opened.openSong(doc, &error), qPrintable(error));
+        out.notice = opened.notice(nullptr);
+        float buf[384 * 2];
+        double sum = 0;
+        long n = 0;
+        for (int tick = 0; tick <= int(secs * 125); ++tick) {
+            setScriptClock(t0 + tick / 125.0);
+            opened.refresh();
+            opened.idle(scriptClock());
+            studio.render(buf, 384);
+            if (tick >= 125)
+                for (float x : buf) {
+                    sum += double(x) * x;
+                    ++n;
+                }
+        }
+        opened.refresh();
+        out.rms = n ? float(std::sqrt(sum / double(n))) : 0;
+        out.playing = opened.view().parts[kVocal].playing;
+        QJsonObject again = opened.saveSong();
+        out.settings = again[QStringLiteral("parts")].toArray()[kVocal].toObject()[QStringLiteral("settings")].toObject();
+    });
+    return out;
+}
 
 }
 
@@ -433,6 +486,48 @@ private slots:
         const double db = 20 * std::log10(b / a);
         qInfo("the vocoder is %.1f dB from the natural voice", db);
         QVERIFY2(std::fabs(db) < 3, qPrintable(QString("%1 dB").arg(db)));
+    }
+
+    // --- songs ---------------------------------------------------------------------
+
+    void aSongKeepsTheVocalLoopsAndTheirAudio() {
+        // A loop and a layer on it, the style one step on: saved, opened in
+        // a fresh studio (no tape, no takes of its own), the loops sound as
+        // they did, and the style is back.
+        const std::string script = std::string(kPage) + "key 0.1 Right\n"
+                                   "voice 0.5 0.35 hz=220\nvoice 0.95 0.3 hz=247\nvoice 1.35 0.5 hz=262\n"
+                                   "key 2.2 Space\n"
+                                   "voice 2.5 0.3 hz=330\nvoice 2.95 0.3 hz=294\nvoice 3.3 0.3 hz=262\n"
+                                   "key 3.85 Shift+Space\nend 9\n";
+        const auto played = testkit::play(script);
+        QCOMPARE(played.view.parts[kVocal].clips[0].events, 2);
+        const float heard = played.rms(5.0, 9.0);
+        QVERIFY(heard > 0.02);
+
+        const Reopened song = reopenVocal(script, 6.0);
+        const QJsonObject part = song.doc[QStringLiteral("parts")].toArray()[kVocal].toObject();
+        QCOMPARE(part[QStringLiteral("name")].toString(), QStringLiteral("Vocal"));
+        const QJsonArray takes = part[QStringLiteral("audio")].toObject()[QStringLiteral("takes")].toArray();
+        QCOMPARE(takes.size(), 2);
+        for (const QJsonValue &t : takes)
+            QVERIFY(t.toObject()[QStringLiteral("frames")].toInt() > 48000);
+        QCOMPARE(song.playing, 0);
+        qInfo("played %.4f, opened %.4f", heard, song.rms);
+        QVERIFY2(song.rms > 0.6f * heard && song.rms < 1.6f * heard,
+                 qPrintable(QString("played %1, opened %2").arg(heard).arg(song.rms)));
+        QCOMPARE(song.settings[QStringLiteral("style")].toString(), QStringLiteral("tune"));
+        QVERIFY(song.notice.isEmpty() || !song.notice.contains(QStringLiteral("without")));
+
+        // A file without the audio opens, silent, and says so.
+        const Reopened bare = reopenVocal(script, 4.0, [](QJsonObject &doc) {
+            QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+            QJsonObject vocal = parts[kVocal].toObject();
+            vocal.remove(QStringLiteral("audio"));
+            parts[kVocal] = vocal;
+            doc[QStringLiteral("parts")] = parts;
+        });
+        QVERIFY(bare.rms < 0.002);
+        QVERIFY2(bare.notice.contains(QStringLiteral("without their audio")), qPrintable(bare.notice));
     }
 
     void everyStripAndTheClickPlayWithoutTrouble() {

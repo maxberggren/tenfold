@@ -165,6 +165,12 @@ about 60 times a second and the page reads as `pc.view->data`.
    0.5%) and at most about 60 Hz per finger. A clip holds 2048 events.
 6. **Ids** stay below `1 << 24`.
 7. **`leave()`** ends every sound a finger or key holds. Clips keep playing.
+7b. **Songs.** `save(out)` writes the page's own settings for Ctrl+S, and
+   `load(in, ctx)` takes them back on Ctrl+O, every value checked, a missing
+   one the default. The studio saves the clips. A page whose clips play
+   audio it keeps itself writes that audio with `saveAudio` and takes it
+   back with `openAudio`, which may change the clips' commands to name it
+   anew. The Vocal page is the example.
 8. **CPU:** the whole studio runs in one 128-frame callback (2.7 ms). Keep your
    part under about 6% of that at its busiest (`tenfold bench` and your own
    renders report load). No allocation on the audio thread.

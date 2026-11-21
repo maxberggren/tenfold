@@ -19,8 +19,9 @@ namespace tf {
 namespace {
 
 // A song file bigger than this is not one tenfold wrote: every clip of
-// every part full is a few megabytes.
-constexpr qint64 kMaxFileBytes = 64ll * 1024 * 1024;
+// every part full is a few megabytes, and the Vocal page's audio about a
+// megabyte for every four seconds of loops.
+constexpr qint64 kMaxFileBytes = 512ll * 1024 * 1024;
 
 // The order keys are written in, so a file reads top down: what it is, the
 // song's settings, then the parts, and in each the small things before the
@@ -28,7 +29,7 @@ constexpr qint64 kMaxFileBytes = 64ll * 1024 * 1024;
 const char *const kKeyOrder[] = {
     "tenfold", "name", "tempo", "key", "metronome", "page", "master", "slot", "beats", "anchor",
     "at", "type", "flags", "layer", "id", "i", "f", "root", "family", "brightness",
-    "mix", "settings", "playing", "clips", "events", "parts", "song",
+    "mix", "settings", "playing", "clips", "audio", "events", "parts", "song",
 };
 
 int keyRank(const QString &key) {

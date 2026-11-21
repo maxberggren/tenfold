@@ -1630,6 +1630,16 @@ QJsonObject Session::saveSong(QString *error) {
             if (clips.clips[p][c].length > 0)
                 list.append(clipToJson(c, clips.clips[p][c]));
         part[QStringLiteral("clips")] = list;
+        if (known) {
+            std::vector<const Command *> sounds;
+            for (int c = 0; c < kClipSlots; ++c)
+                for (const ClipEvent &e : clips.clips[p][c].events)
+                    sounds.push_back(&e.c);
+            QJsonObject audio;
+            page->spec.control->saveAudio(sounds, audio);
+            if (!audio.isEmpty())
+                part[QStringLiteral("audio")] = audio;
+        }
         parts.append(part);
     }
     doc[QStringLiteral("parts")] = parts;
@@ -1662,7 +1672,7 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
 
     struct PartIn {
         int page = -1;
-        QJsonObject mix, settings;
+        QJsonObject mix, settings, audio;
         int playing = -1;
     };
     std::vector<PartIn> partsIn;
@@ -1710,6 +1720,7 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
         in.page = page;
         in.mix = po.value(QStringLiteral("mix")).toObject();
         in.settings = po.value(QStringLiteral("settings")).toObject();
+        in.audio = po.value(QStringLiteral("audio")).toObject();
         const int playing = po.value(QStringLiteral("playing")).toInt(-1);
         in.playing = playing >= 0 && playing < kClipSlots && filled[playing] ? playing : -1;
         partsIn.push_back(in);
@@ -1724,6 +1735,16 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
     Page &showing = *m_pages[size_t(m_page)];
     showing.spec.control->leave(*showing.ctx);
     clearEverything(false);
+    // A page that keeps its clips' audio takes it back now, started over
+    // and before the studio has the clips that play it.
+    for (const PartIn &in : partsIn) {
+        Page &page = *m_pages[size_t(in.page)];
+        std::vector<Command *> sounds;
+        for (int c = 0; c < kClipSlots; ++c)
+            for (ClipEvent &e : set->clips[page.part][c].events)
+                sounds.push_back(&e.c);
+        page.spec.control->openAudio(in.audio, sounds, *page.ctx);
+    }
     float lengths[kMaxParts][kClipSlots] = {};
     int counts[kMaxParts][kClipSlots] = {};
     for (int p = 0; p < m_partCount && p < kMaxParts; ++p)

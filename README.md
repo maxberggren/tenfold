@@ -100,8 +100,8 @@ cleared, the mix set back, nothing left muted.
 metronome, Ctrl+R record to `~/Music/tenfold`, Ctrl+Q quit.
 
 **Songs.** Ctrl+S saves the song to a `.tenfold` file to pick up where you
-left off: tempo, key and mode, every part's loops (layers too), which ones
-play, the mix, each page's sounds and settings, and the Song page's song and
+left off: tempo, key and mode, every part's loops (layers too, and the Vocal
+page's recorded singing), which ones play, the mix, each page's sounds and settings, and the Song page's song and
 scenes. Ctrl+Shift+S saves it under a new name, Ctrl+O opens one (the
 buttons beside the pad do the same). Quitting keeps the song in
 `~/.local/state/tenfold/last.tenfold`, and the next start offers it back:

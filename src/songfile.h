@@ -21,7 +21,10 @@
 //             {"at": 0, "type": "on", "id": 1, "i": [0], "f": [0.9]},
 //             {"at": 0.5, "type": 17, "flags": 1, "layer": 1, "id": 2, "i": [3, 1], "f": [0.7, 0.25]}
 //           ]}
-//         ]
+//         ],
+//         "audio": {...}                  what clips of recorded audio play (the
+//                                         page's saveAudio; the Vocal page's
+//                                         loops, as 16-bit PCM in base64)
 //       }
 //     ],
 //     "song": {...}                       the Song page's own (its save)

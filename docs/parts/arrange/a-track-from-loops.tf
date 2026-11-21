@@ -2,7 +2,7 @@
 #
 # Seven loops (two drum grooves, bass, chords, atmos, lead, arp) and one key: I.
 # The page writes intro, groove, build, drop, breakdown, build, drop and
-# outro from them (74 bars), with the producer's moves: drums rising out of
+# outro from them (76 bars), with the producer's moves: drums rising out of
 # a high-pass, builds with an echo roll and a breath before each drop, a
 # breakdown with no pump, lead throws, an echo-out ending.
 #

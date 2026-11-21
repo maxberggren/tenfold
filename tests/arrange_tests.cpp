@@ -680,13 +680,13 @@ private slots:
             return n;
         };
         // The long form: intro 8, groove 8, build 4, drop 8 + 8, break 8, build 4,
-        // drop 8 + 8, outro 8, end 2 = 74 bars. Right picks the intro, Right
+        // drop 8 + 8, outro 8, end 4 = 76 bars. Right picks the intro, Right
         // again the groove.
-        QCOMPARE(lengthAfter(""), 74);
-        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 Delete\n"), 66);
-        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 D\n"), 82);
-        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 Delete\nkey 17.5 Shift+O\n"), 74);
-        QCOMPARE(lengthAfter("key 16.5 Right\nkey 17.0 [\n"), 74);
+        QCOMPARE(lengthAfter(""), 76);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 Delete\n"), 68);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 D\n"), 84);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 16.7 Right\nkey 17.0 Delete\nkey 17.5 Shift+O\n"), 76);
+        QCOMPARE(lengthAfter("key 16.5 Right\nkey 17.0 [\n"), 76);
         // Joining keeps the bars and makes one section of two.
         QString picked;
         watch(loops("key 15.2 I\nkey 15.4 I\nkey 16.0 P\nkey 16.5 Right\nkey 17.0 M\nkey 17.5 Right\nend 18\n"),
@@ -764,6 +764,47 @@ private slots:
         }
     }
 
+    void aWrittenTrackEndsInSilenceAndGivesTheSendsBack() {
+        // Drums and bass, the short form from 8.5: 40 bars, to 88.5. Its
+        // echo-out dies away inside the song's end bars, and afterwards
+        // every channel's echo send is what it was before the track.
+        const std::string start = "page 0 1\ntap 0.5 0.12 0.12\ntap 1.0 0.38 0.12\ntap 1.5 0.12 0.12\n"
+                                  "tap 2.0 0.38 0.12\nkey 2.5 Space\n"
+                                  "page 3.0 2\ntap 4.5 0.03 0.5 len=0.3\ntap 5.0 0.03 0.5 len=0.15\n"
+                                  "tap 5.5 0.36 0.5 len=0.3\ntap 6.0 0.3 0.5 len=0.15\nkey 6.6 Space\n";
+        float before[2] = {-1, -1};
+        const auto take = watch(start + "page 7.0 0\nkey 7.1 I\nkey 7.3 I\nend 95\n", [&](double t, Session &s) {
+            if (at(t, 7.0))
+                for (int p = 0; p < 2; ++p)
+                    before[p] = s.view().parts[p].channel.value[EchoSend];
+        });
+        for (int p = 0; p < 2; ++p)
+            QVERIFY2(std::fabs(take.view.parts[p].channel.value[EchoSend] - before[p]) < 0.02f,
+                     qPrintable(QString("part %1 echo %2, was %3").arg(p).arg(take.view.parts[p].channel.value[EchoSend]).arg(before[p])));
+        // The echo rings into the end bars and is gone by the song's end.
+        QVERIFY(take.rms(80.5, 81.5) > 0.002);
+        QVERIFY2(take.rms(88.0, 88.5) < 0.1 * take.rms(80.5, 81.5),
+                 qPrintable(QString("%1 %2").arg(take.rms(88.0, 88.5)).arg(take.rms(80.5, 81.5))));
+    }
+
+    void anArmedSongTakeShowsBeforeItsBar() {
+        // Space at 15.2 arms a take for the bar at 16.5: armed, and saying
+        // so, until then; recording after.
+        float armed = 0, recording = 0;
+        QString status;
+        watch(loops("key 15.2 Space\nend 17\n"), [&](double t, Session &s) {
+            if (at(t, 15.6)) {
+                armed = s.probe(s.arrangePage(), QStringLiteral("songArmed"));
+                status = s.pageStatus();
+            }
+            if (at(t, 16.8))
+                recording = s.probe(s.arrangePage(), QStringLiteral("songRecording"));
+        });
+        QCOMPARE(armed, 1.0f);
+        QVERIFY2(status.contains(QStringLiteral("from the next bar")), qPrintable(status));
+        QCOMPARE(recording, 1.0f);
+    }
+
     void songsSurviveSlipsOfTheHand() {
         // A written song; then Space twice (a take armed and called off), and
         // P still plays it. A take recorded over it can be undone with Shift+O.
@@ -786,7 +827,7 @@ private slots:
                       lengthAfterUndo = st.mid(slash + 1, sp - slash - 1).toInt();
               });
         QCOMPARE(lengthAfterTake, 2);
-        QCOMPARE(lengthAfterUndo, 74);
+        QCOMPARE(lengthAfterUndo, 76);
     }
 
     void storedScenesRecallTheMix() {

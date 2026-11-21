@@ -42,6 +42,10 @@ constexpr int P = kMaxParts;
 constexpr int kSteps = 16;        // song steps per bar: sixteenths
 constexpr int kMaxSongBars = 256; // about eight minutes at 124
 constexpr double kGap = 0.5;      // the breath before a drop, in beats
+// An echo-out: its bar pours into the echo, the echo rings at full feedback
+// for a bar, then dies away over three, so a written track's four end bars
+// finish in silence rather than cut a ringing echo off.
+constexpr double kEchoOutBeats = 20;
 
 // EchoTime settings that pick a quarter, an eighth and a sixteenth note
 // (the studio picks from 1/16, 1/8, dotted 1/8, 1/4, dotted 1/4, 1/2).
@@ -409,6 +413,39 @@ public:
 
     void paint(QPainter &p, const PaintContext &pc) override;
 
+    // What the tutorial asks about the song and the moves.
+    float tutorialProbe(const QString &name) const override {
+        auto moving = [&](uint8_t kind) {
+            for (const auto &m : m_moves)
+                if (m.kind == kind && m_beat < m.b1)
+                    return 1.0f;
+            return 0.0f;
+        };
+        if (name == QLatin1String("songBars"))
+            return float(m_song.length());
+        if (name == QLatin1String("songPlaying"))
+            return m_playing ? 1.0f : 0.0f;
+        if (name == QLatin1String("songSection")) {
+            // The label of the bar the song is in (1 intro … 4 drop, 5 break,
+            // 6 outro, 7 end), 0 while no song plays.
+            const long bar = long(std::floor(m_beat / kBeatsPerBar)) - m_origin;
+            if (!m_playing || bar < 0 || bar >= m_song.length())
+                return 0.0f;
+            return float(m_song.bars[size_t(bar)].label);
+        }
+        if (name == QLatin1String("songRecording"))
+            return m_recording ? 1.0f : 0.0f;
+        if (name == QLatin1String("songArmed"))
+            return m_recArmBar >= 0 && !m_recording ? 1.0f : 0.0f;
+        if (name == QLatin1String("breakdown"))
+            return moving(MBreak);
+        if (name == QLatin1String("building"))
+            return moving(MBuild);
+        if (name == QLatin1String("drops"))
+            return float(m_drops);
+        return PartControl::tutorialProbe(name);
+    }
+
     QString help() const override {
         return QStringLiteral(
             "one finger\tmoves the pointer (like a trackpad cursor: slow for fine, fast to cross) and lights what it is on; "
@@ -440,7 +477,7 @@ public:
             "Z\tfilter the mix out; again to open it back onto a bar\n"
             "L\tlift the key a whole tone on the bar (Shift: down)\n"
             "V\tevery part to its next clip on the bar\n"
-            "I\twrite a whole track from the loops and play it (Shift: a short one; twice while clips play)\n"
+            "I\twrite a whole track from the loops and play it: the long form (2½ minutes) with four parts or more, the short one with fewer; Shift: always the short one; twice while clips play\n"
             "Space or O\trecord the song from the next bar (punch in while it plays); again to stop\n"
             "Shift+O\tback to the song before the last take, write, clear or edit (eight deep)\n"
             "P\tplay the song from the top (Shift: loop it); again to stop\n"
@@ -755,9 +792,9 @@ private:
         case MEchoOut: {
             // The last bar pours everything into the echo (the sends are
             // squared by the mixer, so they go all the way), the clips stop
-            // on the line, and the echo carries on at full feedback for two
-            // bars, slowing like tape to quarter notes, in a wide room, before
-            // it fades over four more.
+            // on the line, and the echo carries on at full feedback for a
+            // bar, slowing like tape to quarter notes, in a wide room, before
+            // it dies away over three more.
             const double e = b - mv.b0;
             const float fbTop = std::max(0.0f, 0.9f - m_masterHome[EchoFeedback]);
             if (e < 4) {
@@ -769,8 +806,8 @@ private:
                 }
                 m.master[EchoFeedback] += fbTop * pour;
                 m.master[RoomSize] += 0.5f * u;
-            } else if (e < 28) {
-                const float hold = e < 12 ? 1.0f : 1.0f - smooth01(float((e - 12) / 16.0));
+            } else if (e < kEchoOutBeats) {
+                const float hold = e < 8 ? 1.0f : 1.0f - smooth01(float((e - 8) / (kEchoOutBeats - 8)));
                 m.master[EchoFeedback] += fbTop * hold;
                 m.master[RoomSize] += 0.5f * hold;
                 m.echoTime = kEcho4;
@@ -894,8 +931,26 @@ private:
             if (i > 0 && lines[i] - lines[i - 1] < 1e-9)
                 continue;
             Mods mods;
-            for (const auto &mv : m_moves)
+            bool drop = false;
+            for (const auto &mv : m_moves) {
                 applyMove(mv, lines[i] + 1e-7, mods);
+                drop = drop || (mv.kind == MDrop && std::fabs(mv.b0 - lines[i]) < 1e-9);
+            }
+            // On a drop's line the master bus lands as this page wants it,
+            // timed for the line itself. The FX page hands back what its build
+            // took over just before the line; if it took that over while this
+            // page's own build was moving it, what it hands back is that
+            // build's high-pass, and nothing else would put it right. In step
+            // with this page, the message repeats what it has sent already.
+            if (drop) {
+                const double when = ctx.timeAt(lines[i]);
+                for (int m = 0; m < MasterCount; ++m) {
+                    float val = clampf01(m_masterHome[m] + mods.master[m]);
+                    if (m == EchoTime && mods.echoTime >= 0)
+                        val = mods.echoTime;
+                    ctx.setMaster(m, val, when);
+                }
+            }
             for (int p = 0; p < m_parts; ++p) {
                 const float m = (in[p][Mute] > 0.5f || mods.mute[p]) ? 1.0f : 0.0f;
                 if (m == m_sent[p][Mute])
@@ -1859,7 +1914,7 @@ private:
         Move m;
         m.kind = MEchoOut;
         m.b0 = nextBar() * double(kBeatsPerBar);
-        m.b1 = m.b0 + 28;
+        m.b1 = m.b0 + kEchoOutBeats;
         addMove(m, ctx);
         ctx.notice(QStringLiteral("ECHO-OUT: one more bar"));
     }
@@ -2012,6 +2067,8 @@ private:
             for (auto &m : m_moves) {
                 if (std::fabs(m.b0 - line) > 1e-6)
                     continue;
+                if (m.kind == MDrop)
+                    ++m_drops;
                 if (m.kind == MLift) {
                     const StudioView &v = ctx.studio();
                     ctx.setKey(v.root + m.param, v.family, v.brightness);
@@ -2078,11 +2135,15 @@ private:
     }
 
     void stopSong() {
-        // What the song had set becomes home.
+        // What the song had set becomes home: the song's own values where it
+        // stands, with the hands' trims, but not what its moves add. An
+        // echo-out pours every channel into the echo as a track ends; kept as
+        // home, everything played after it would drown in echo.
+        const Step *st = songStep(m_beat);
         for (int p = 0; p < m_parts; ++p) {
             for (int c = 0; c < ChannelCount; ++c)
                 if (c != Mute && c != Solo)
-                    m_home[p][c] = clampf01(m_sent[p][c]);
+                    m_home[p][c] = clampf01(st ? dq8(st->ch[p][c]) + m_trim[p][c] : m_sent[p][c]);
             m_home[p][Mute] = m_home[p][Solo] = 0;
             std::fill(std::begin(m_trim[p]), std::end(m_trim[p]), 0.0f);
             m_muteFlip[p] = false;
@@ -2142,7 +2203,7 @@ private:
                 break;
             case MEchoOut:
                 m.kind = MEchoOut;
-                m.b1 = at + 28;
+                m.b1 = at + kEchoOutBeats;
                 addMove(m, ctx);
                 break;
             case MCut:
@@ -2511,8 +2572,8 @@ private:
     // Writes a whole track from whatever loops the parts hold, with the
     // moves a producer would make, and plays it from the next bar. The form
     // follows the material: with four parts or more, intro, groove, build,
-    // drop, breakdown, build, drop, outro (74 bars); with fewer (or Shift),
-    // the short form without the groove (38 bars). Every section is made of
+    // drop, breakdown, build, drop, outro (76 bars); with fewer (or Shift),
+    // the short form without the groove (40 bars). Every section is made of
     // what exists, so no bar before the outro is silent: a breakdown with no
     // chords, atmos or melody is the bass under a low-pass, or the drums
     // high-passed in the room.
@@ -2575,7 +2636,7 @@ private:
         plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RLead, RFx}, {}, MBuild});
         plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos}, {}, -1, true});
         plan.push_back({LOutro, 4 * u, {RDrums, RAtmos, RChords, RBass}, {}, MEchoOut});
-        plan.push_back({LEnd, 2, {}, {}});
+        plan.push_back({LEnd, int(kEchoOutBeats / kBeatsPerBar) - 1, {}, {}});
 
         Step base;
         for (int p = 0; p < P; ++p)
@@ -2609,14 +2670,6 @@ private:
                     for (int r = 0; r < RoleCount; ++r)
                         if (Role(r) != RLead || filled == 1)
                             add(Role(r));
-                // The FX part: its calm clip rises through the builds, its
-                // strongest hits the first bar of each drop.
-                if (has(RFx)) {
-                    if (sec.label == LBuild)
-                        sb.slot[role(RFx)] = int8_t(calm[RFx]);
-                    if (drop && k == 0)
-                        sb.slot[role(RFx)] = int8_t(strong[RFx]);
-                }
                 // The outro thins out: the bass and the chords leave half way.
                 if (sec.label == LOutro && k >= sec.bars / 2) {
                     if (has(RBass) && filled > 2)
@@ -2639,7 +2692,7 @@ private:
                     // Everything before a drop (but the build, which the
                     // high-pass already thins) sits about 3 dB under it, so
                     // the drop arrives bigger than what led to it.
-                    if (!drop && sec.label != LBuild)
+                    if (!drop && sec.label != LBuild && sec.label != LEnd)
                         for (int p = 0; p < m_parts; ++p)
                             st.ch[p][Gain] = q8(m_home[p][Gain] * 0.84f);
                     // Intro: the drums come up out of a high-pass.
@@ -2679,6 +2732,34 @@ private:
             }
             if (sec.move == MEchoOut)
                 song.moves.push_back({(bar - 1) * kSteps, MEchoOut, 0});
+        }
+        // The FX part leads into each drop. Its loops are builds with their
+        // drop on their last bar (that is how the FX page loops a build), so
+        // each is launched that many bars ahead and plays once, landing its
+        // drop on the drop's ONE: the calm one into the first drop, the
+        // strongest into the last.
+        if (has(RFx)) {
+            const int fx = role(RFx);
+            int floor = 0;
+            for (int b = 0; b < int(song.bars.size()); ++b) {
+                const bool dropStarts = song.bars[size_t(b)].label == LDrop &&
+                                        (b == 0 || song.bars[size_t(b - 1)].label != LDrop);
+                if (!dropStarts)
+                    continue;
+                bool last = true;
+                for (int a = b + 1; a < int(song.bars.size()); ++a)
+                    if (song.bars[size_t(a)].label == LDrop && song.bars[size_t(a - 1)].label != LDrop)
+                        last = false;
+                const int clip = last ? strong[RFx] : calm[RFx];
+                const int len = std::max(1, int(std::lround(v.parts[fx].clips[clip].lengthBeats / kBeatsPerBar)));
+                const int start = b - (len - 1);
+                if (start < floor)
+                    continue; // no room before this drop for the whole build
+                for (int a = start; a <= b; ++a)
+                    song.bars[size_t(a)].slot[fx] = int8_t(clip);
+                song.bars[size_t(start)].relaunch |= uint8_t(1 << fx);
+                floor = b + 1;
+            }
         }
         m_song = std::move(song);
         m_recording = false;
@@ -2770,6 +2851,7 @@ private:
     std::vector<Song> m_songUndo; // newest last, eight at most
     Song *m_rec = &m_song; // where a recording goes: the song, or a new take
     double m_confirmI = -1e9, m_confirmClear = -1e9;
+    int m_drops = 0; // drops that have landed, live or the song's, for the tutorial
     std::vector<Section> m_sections;
     bool m_playing = false, m_loop = false, m_recording = false;
     int m_origin = 0, m_jumpBar = -1;
@@ -3148,16 +3230,17 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
         for (const auto &cv : v.parts[i].clips)
             anyClip = anyClip || cv.state != ClipView::Empty;
     if (!anyClip) {
-        const QRectF box = pc.rect(kNameW + 0.04f, kTopY * 0.3f, kCellsR - 0.04f, kTopY * 0.7f);
+        // Tall enough for its words in a small window too.
+        const QRectF box = pc.rect(kNameW + 0.04f, kTopY * 0.22f, kCellsR - 0.04f, kTopY * 0.78f);
         p.fillRect(box, QColor(0, 0, 0, 225));
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(pc.color, 1.5));
         p.drawRect(box);
-        c::text(p, box.adjusted(16, 10, -16, -box.height() * 0.62), QStringLiteral("NO LOOPS YET"), pc.color, 18, true);
+        c::text(p, QRectF(box.left() + 16, box.top() + 10, box.width() - 32, 26), QStringLiteral("NO LOOPS YET"), pc.color, 18, true);
         const QFont f = c::font(12, false);
         p.setFont(f);
         p.setPen(c::alpha(pc.color, 0.85f));
-        p.drawText(box.adjusted(16, box.height() * 0.38, -16, -10), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+        p.drawText(box.adjusted(16, 44, -16, -10), Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
                    QStringLiteral("Loops are made on the part pages, keys 1 to 7: play, then Space loops what you "
                                   "just played. Each appears here in its page's row, in the slot it went into, "
                                   "with its length and whether it plays."));
@@ -3322,6 +3405,17 @@ void ArrangeControl::paintMoments(QPainter &p, const PaintContext &pc) {
         p.setPen(c::alpha(col, a));
         p.drawText(area, Qt::AlignCenter, s);
     };
+    // A song take armed: the pad's frame pulses red and the beats to its
+    // bar count down, so Space visibly did something before the bar comes.
+    if (m_recArmBar >= 0 && !m_recording) {
+        const double left = m_recArmBar * double(kBeatsPerBar) - pc.beat;
+        const float pulse = float(1 - fract(pc.beat));
+        p.setPen(QPen(c::alpha(c::red(), 0.35f + 0.55f * pulse), 4));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(pc.pad.adjusted(1, 1, -1, -1));
+        if (left > 0)
+            big(QStringLiteral("● %1").arg(int(std::ceil(left))), c::red(), 0.25f + 0.35f * pulse);
+    }
     for (const auto &m : m_moves) {
         const double e = pc.beat - m.b0;
         if (m.kind == MDrop) {
@@ -3335,8 +3429,8 @@ void ArrangeControl::paintMoments(QPainter &p, const PaintContext &pc) {
             }
         } else if (m.kind == MBreak && e >= 0 && e < 2) {
             big(QStringLiteral("BREAK"), c::violet(), float(1 - e / 2) * 0.8f);
-        } else if (m.kind == MEchoOut && e >= 4 && e < 12) {
-            big(QStringLiteral("ECHO"), c::cyan(), float(1 - (e - 4) / 8) * 0.7f);
+        } else if (m.kind == MEchoOut && e >= 4 && e < kEchoOutBeats) {
+            big(QStringLiteral("ECHO"), c::cyan(), float(1 - (e - 4) / (kEchoOutBeats - 4)) * 0.7f);
         } else if (m.kind == MCut && e >= 0 && pc.beat < m.b1 && !pending(MDrop)) {
             p.fillRect(area, QColor(0, 0, 0, 140));
         } else if (m.kind == MLift && e >= 0 && e < 2) {
@@ -3352,7 +3446,15 @@ void ArrangeControl::paintHeader(QPainter &p, const PaintContext &pc) {
     const long bar = long(std::floor(pc.beat / kBeatsPerBar));
     const int beatIn = int(std::floor(pc.beat - bar * kBeatsPerBar)) + 1;
     QString s;
-    if (m_playing && !m_song.empty()) {
+    const bool armed = m_recArmBar >= 0 && !m_recording;
+    if (armed) {
+        // Space was pressed: the take begins on the coming bar line. Count
+        // down to it, so the wait is never mistaken for nothing happening.
+        const double left = std::max(0.0, m_recArmBar * double(kBeatsPerBar) - pc.beat);
+        s = QStringLiteral("● %1 IN %2").arg(m_playing ? QStringLiteral("PUNCH") : QStringLiteral("REC")).arg(int(std::ceil(left)));
+        if (m_playing)
+            s += QStringLiteral("  ") + songText();
+    } else if (m_playing && !m_song.empty()) {
         s = songText();
     } else if (m_recording) {
         s = QStringLiteral("● REC BAR %1.%2").arg(bar - m_origin + 1).arg(beatIn);
@@ -3369,7 +3471,9 @@ void ArrangeControl::paintHeader(QPainter &p, const PaintContext &pc) {
     const qreal w = std::min(QFontMetricsF(f).horizontalAdvance(s) + 16, pc.pad.width() - 260);
     const QRectF r(pc.pad.left() + 120, pc.pad.top() - 9, w, 18);
     p.fillRect(r, QColor(0, 0, 0));
-    c::text(p, r.adjusted(8, 0, -4, 0), s, m_recording ? c::red() : pc.color, 12, true);
+    const QColor ink = armed ? (std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.55f))
+                       : m_recording ? c::red() : pc.color;
+    c::text(p, r.adjusted(8, 0, -4, 0), s, ink, 12, true);
 }
 
 void ArrangeControl::paintSong(QPainter &p, const PaintContext &pc) {
@@ -3556,10 +3660,13 @@ QString ArrangeControl::status() const {
     const QString mv = movesText();
     if (!mv.isEmpty())
         parts << mv.toLower();
+    if (m_recArmBar >= 0 && !m_recording)
+        parts << (m_playing ? QStringLiteral("● punching in from the next bar (Space again calls it off)")
+                            : QStringLiteral("● recording the song from the next bar (Space again calls it off)"));
     if (m_playing)
         parts << songText().toLower();
     else if (m_recording)
-        parts << QStringLiteral("recording the song");
+        parts << QStringLiteral("● recording the song (Space stops on the bar)");
     if (parts.isEmpty() && !m_anyClip)
         return QStringLiteral("no loops yet: on pages 1–7, play, then Space loops it");
     if (parts.isEmpty())

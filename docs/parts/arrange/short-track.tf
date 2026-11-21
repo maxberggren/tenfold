@@ -1,6 +1,6 @@
 # tenfold, page 0 Arrange: a short track (Shift+I)
 #
-# Shift+I writes a radio-edit arrangement of the same loops: 38 bars.
+# Shift+I writes a radio-edit arrangement of the same loops: 40 bars.
 #
 # The loops are made on the part pages the way every page makes them: play,
 # then Space loops what was just played (the first, with nothing playing,

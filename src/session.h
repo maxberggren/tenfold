@@ -186,6 +186,12 @@ private:
     Tutorial m_tutorial;
     Frame m_last;            // the last frame, as the pad sent it
     std::vector<int> m_ignored; // fingers down when the page changed, until they lift
+    // Just after Space makes a loop, the hand steps aside: fingers down
+    // then, and any that land before this time, are ignored until they
+    // lift, so the loop takes over without the hand doubling it.
+    double m_quietUntil = -1;
+    static constexpr double kHandOverSecs = 0.18; // a tap already on its way, not the next one played
+    void handOver();
     QString m_notice;
     uint32_t m_noticeSeq = 0;
     double (*m_clock)() = nullptr;

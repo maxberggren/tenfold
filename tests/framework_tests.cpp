@@ -230,6 +230,21 @@ private slots:
         testkit::play(s + "key 9 Ctrl+Z\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBeats(0), 0); });
     }
 
+    void theHandStepsAsideWhenSpaceMakesALoop() {
+        // A bass bar over the beat, Space, and a tap a tenth of a second
+        // later: the hand was still going, so it isn't heard over the loop
+        // that just started. A tap half a second later is new playing.
+        const std::string s = std::string(kBeat) + "page 3.0 2\n"
+                              "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                              "key 6.6 Space\n";
+        const auto without = testkit::play(s + "end 8\n");
+        const auto early = testkit::play(s + "tap 6.7 0.9 0.5\nend 8\n");
+        const auto later = testkit::play(s + "tap 7.1 0.9 0.5\nend 8\n");
+        QVERIFY2(std::fabs(early.rms(6.7, 6.95) - without.rms(6.7, 6.95)) < 0.002,
+                 qPrintable(QString("%1 vs %2").arg(early.rms(6.7, 6.95)).arg(without.rms(6.7, 6.95))));
+        QVERIFY(later.rms(7.1, 7.35) > without.rms(7.1, 7.35) + 0.005);
+    }
+
     void aWaitBeforeSpaceKeepsTheTempo() {
         // Nothing playing: a few chords tried at no steady pace, then a long
         // wait, then Space. No pattern, not in the flow: the tempo stays at

@@ -418,7 +418,8 @@ void Session::deliver(const Frame &f) {
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
-    if (m_ignored.empty()) {
+    const bool quiet = f.t < m_quietUntil;
+    if (m_ignored.empty() && !quiet) {
         p.spec.control->frame(f, *p.ctx);
         return;
     }
@@ -427,13 +428,29 @@ void Session::deliver(const Frame &f) {
     std::vector<int> still;
     for (int i = 0; i < f.count; ++i) {
         const int id = f.touches[i].id;
-        if (std::find(m_ignored.begin(), m_ignored.end(), id) != m_ignored.end())
+        // A finger landing in the quiet moment after Space is ignored too,
+        // until it lifts: it was the hand still going, not new playing.
+        if (quiet || std::find(m_ignored.begin(), m_ignored.end(), id) != m_ignored.end())
             still.push_back(id);
         else
             g.touches[g.count++] = f.touches[i];
     }
     m_ignored = still;
     p.spec.control->frame(g, *p.ctx);
+}
+
+void Session::handOver() {
+    // Every finger on the pad now steps aside; the page hears them lift at
+    // once, so what they held ends as the loop starts.
+    const Frame f = withMouse(m_last);
+    for (int i = 0; i < f.count; ++i)
+        if (std::find(m_ignored.begin(), m_ignored.end(), f.touches[i].id) == m_ignored.end())
+            m_ignored.push_back(f.touches[i].id);
+    const double t = now();
+    m_quietUntil = t + kHandOverSecs;
+    Frame lifted = f;
+    lifted.t = t;
+    deliver(lifted);
 }
 
 void Session::idle(double t) {
@@ -974,6 +991,7 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
              first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
         ctx.capture(slot, start, stop, 0.85f);
         m_view.parts[part].recording = slot;
+        handOver();
         m_lastTake = {};
         m_lastTake.part = part;
         m_lastTake.slot = slot;
@@ -1095,6 +1113,7 @@ bars:
     }
     ctx.post(m);
     m_view.parts[part].recording = slot;
+    handOver();
     m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now(), m_view.parts[part].takes};
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)

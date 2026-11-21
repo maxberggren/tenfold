@@ -458,7 +458,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     text: backend.padState === Backend.Ready
                           ? qsTr("The trackpad is yours again and the sound keeps playing. Take it back with the button below.")
-                          : qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Reading the pad needs your password once. Esc gives it back at any time.")
+                          : qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Esc gives it back at any time. Meanwhile the mouse plays the pad too.")
                     color: win.amber
                     font.family: win.mono
                     font.pixelSize: 15

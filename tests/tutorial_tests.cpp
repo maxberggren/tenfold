@@ -124,91 +124,92 @@ std::string walkthrough() {
     s.add("up %.3f 32", bar(40) + 1.6);
     s.add("up %.3f 33", bar(40) + 1.6);
 
-    s.comment("Enter: on the chords. A two-bar melody, twice; Space.");
+    s.comment("Enter: on the chords. A melody across the four chords, twice round; Space.");
     s.key(bar(41) + 0.5, "Return");
     struct Note {
         double at, len, x;
     };
-    const Note melody[] = {{0, 0.9, 0.6100}, {1, 0.9, 0.7140}, {2, 1.9, 0.8180},
-                           {4, 1.4, 0.7660}, {5.5, 0.4, 0.7140}, {6, 1.9, 0.6100}};
+    const Note melody[] = {{0, 0.9, 0.6100},  {1, 0.9, 0.7140},  {2, 1.9, 0.8180}, {4, 1.4, 0.7660},
+                           {5.5, 0.4, 0.7140}, {6, 1.9, 0.6100}, {8, 0.9, 0.7140}, {9, 0.9, 0.8180},
+                           {10, 1.9, 0.9220}, {12, 1.4, 0.8700}, {13.5, 0.4, 0.8180}, {14, 1.9, 0.7660}};
     for (int round = 0; round < 2; ++round)
         for (const Note &n : melody) {
-            const double t = beat(42 * 4 + round * 8 + n.at);
+            const double t = beat(44 * 4 + round * 16 + n.at);
             s.add("down %.3f 34 %.4f 0.6 p=0.65", t, n.x);
             s.add("up %.3f 34", t + beat(n.len));
         }
-    s.key(bar(46) + 0.05, "Space");
+    s.key(bar(52) + 0.05, "Space");
 
     s.comment("5 Arp. M follows the chords; two notes held run.");
-    s.key(bar(47), "5");
-    s.key(bar(47) + 0.2, "M");
-    s.add("down %.3f 40 0.0360 0.32 p=0.6", bar(48));
-    s.add("down %.3f 41 0.3260 0.70 p=0.5", bar(48) + 0.01);
+    s.key(bar(53), "5");
+    s.key(bar(53) + 0.2, "M");
+    s.add("down %.3f 40 0.0360 0.32 p=0.6", bar(54));
+    s.add("down %.3f 41 0.3260 0.70 p=0.5", bar(54) + 0.01);
 
     s.comment("A pattern chip, a click to latch, the fingers lift, Space.");
-    s.tap(bar(49), 0.181, 0.93);
-    s.add("click %.3f", bar(49) + 0.6);
-    s.add("up %.3f 40", bar(49) + 1.2);
-    s.add("up %.3f 41", bar(49) + 1.2);
-    s.key(bar(51) + 0.05, "Space");
-
-    s.comment("6 Atmos. Drone, pad and choir; a click latches them.");
-    s.key(bar(52), "6");
-    s.add("down %.3f 50 0.06 0.25 p=0.6", bar(53));
-    s.add("down %.3f 51 0.25 0.40 p=0.6", bar(53) + 0.05);
-    s.add("down %.3f 52 0.45 0.40 p=0.5", bar(53) + 0.1);
-    s.add("click %.3f", bar(53) + 0.4);
-    s.add("up %.3f 50", bar(53) + 1.0);
-    s.add("up %.3f 51", bar(53) + 1.0);
-    s.add("up %.3f 52", bar(53) + 1.0);
-
-    s.comment("S swells it; Space loops the bed.");
-    s.add("key %.3f S down", bar(55));
-    s.add("key %.3f S up", bar(55) + 2.5);
+    s.tap(bar(55), 0.181, 0.93);
+    s.add("click %.3f", bar(55) + 0.6);
+    s.add("up %.3f 40", bar(55) + 1.2);
+    s.add("up %.3f 41", bar(55) + 1.2);
     s.key(bar(57) + 0.05, "Space");
 
+    s.comment("6 Atmos. Drone, pad and choir; a click latches them.");
+    s.key(bar(58), "6");
+    s.add("down %.3f 50 0.06 0.25 p=0.6", bar(59));
+    s.add("down %.3f 51 0.25 0.40 p=0.6", bar(59) + 0.05);
+    s.add("down %.3f 52 0.45 0.40 p=0.5", bar(59) + 0.1);
+    s.add("click %.3f", bar(59) + 0.4);
+    s.add("up %.3f 50", bar(59) + 1.0);
+    s.add("up %.3f 51", bar(59) + 1.0);
+    s.add("up %.3f 52", bar(59) + 1.0);
+
+    s.comment("S swells it; Space loops the bed.");
+    s.add("key %.3f S down", bar(61));
+    s.add("key %.3f S up", bar(61) + 2.5);
+    s.key(bar(63) + 0.05, "Space");
+
     s.comment("7 FX. NOISE in the 2-bar row: a riser; a click drops on the next bar.");
-    s.key(bar(58), "7");
-    s.tap(bar(59), 0.10, 0.44, 0.6, 0.2);
-    s.add("click %.3f", bar(60) + 0.5);
+    s.key(bar(64), "7");
+    s.tap(bar(65), 0.10, 0.44, 0.6, 0.2);
+    s.add("click %.3f", bar(66) + 0.5);
 
     s.comment("0 Arrange. The mouse clicks the bass loop: it stops on the bar; again: back.");
-    s.key(bar(62), "0");
+    s.key(bar(68), "0");
     const double laneH = 0.885 / 7;
     const double bassY = 0.885 - 1.5 * laneH, clipX = 0.12 + 0.07625 / 2;
-    s.add("mouse %.3f %.4f %.4f down", bar(63), clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f up", bar(63) + 0.1, clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f down", bar(65), clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f up", bar(65) + 0.1, clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f down", bar(69), clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f up", bar(69) + 0.1, clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f down", bar(71), clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f up", bar(71) + 0.1, clipX, bassY);
 
     s.comment("Q mutes the drums; Q again brings them back.");
-    s.key(bar(67), "Q");
-    s.key(bar(68), "Q");
+    s.key(bar(73), "Q");
+    s.key(bar(74), "Q");
 
     s.comment("N: a breakdown; N again: back.");
-    s.key(bar(69) + 0.5, "N");
-    s.key(bar(72) + 0.5, "N");
+    s.key(bar(75) + 0.5, "N");
+    s.key(bar(78) + 0.5, "N");
 
     s.comment("B: build to the end of the phrase, and the drop.");
-    s.key(bar(75) + 0.5, "B");
+    s.key(bar(81) + 0.5, "B");
 
     s.comment("Space records the song from the next bar: a groove, a breakdown, back; Space stops.");
-    s.key(bar(83) + 0.5, "Space");
-    s.key(bar(87) + 0.5, "N");
-    s.key(bar(91) + 0.5, "N");
-    s.key(bar(95) + 0.5, "Space");
+    s.key(bar(89) + 0.5, "Space");
+    s.key(bar(93) + 0.5, "N");
+    s.key(bar(97) + 0.5, "N");
+    s.key(bar(101) + 0.5, "Space");
 
     s.comment("Ctrl+R records the mix; I, I writes the whole track and plays it.");
-    s.key(bar(98), "Ctrl+R");
-    s.key(bar(98) + 0.5, "I");
-    s.key(bar(98) + 0.9, "I");
+    s.key(bar(104), "Ctrl+R");
+    s.key(bar(104) + 0.5, "I");
+    s.key(bar(104) + 0.9, "I");
 
     s.comment("The track plays to its end (74 bars from the next bar); Ctrl+R saves it.");
-    s.key(bar(99 + 75), "Ctrl+R");
+    s.key(bar(105 + 75), "Ctrl+R");
 
     s.comment("The end: Ctrl+Return finishes the tutorial.");
-    s.key(bar(99 + 75) + 2.5, "Ctrl+Return");
-    s.add("end %.3f", bar(99 + 75) + 3.5);
+    s.key(bar(105 + 75) + 2.5, "Ctrl+Return");
+    s.add("end %.3f", bar(105 + 75) + 3.5);
     return s.text;
 }
 
@@ -369,6 +370,10 @@ private slots:
                 clips += c.state != ClipView::Empty;
             QVERIFY2(clips >= 1, qPrintable(QStringLiteral("part %1 has no loop").arg(p + 1)));
         }
+        // The progression and the melody over it loop as four bars, one
+        // round each, without the tries before them.
+        QCOMPARE(int(w.take.view.parts[2].clips[0].lengthBeats), 16);
+        QCOMPARE(int(w.take.view.parts[3].clips[0].lengthBeats), 16);
         // The written track, the full form.
         QVERIFY(w.songBars >= 70);
         QVERIFY(w.take.finite());

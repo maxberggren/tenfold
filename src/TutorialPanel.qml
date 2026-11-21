@@ -104,159 +104,183 @@ Item {
             }
         }
 
-        // Not on the step's page: which number goes there.
-        Rectangle {
+        // The step itself; a long one scrolls rather than pushing the
+        // buttons off the panel.
+        Flickable {
             Layout.fillWidth: true
-            Layout.leftMargin: 10
-            Layout.rightMargin: 10
-            Layout.topMargin: 10
-            Layout.preferredHeight: 40
-            visible: !panel.onPage
-            color: panel.tint
-            SequentialAnimation on opacity {
-                running: !panel.onPage
-                loops: Animation.Infinite
-                NumberAnimation { to: 0.55; duration: 450 }
-                NumberAnimation { to: 1; duration: 450 }
-            }
-            Text {
-                anchors.centerIn: parent
-                text: qsTr("Press %1 · %2").arg(panel.pageKey).arg(panel.pageName)
-                color: "#0a0806"
-                font.family: panel.mono
-                font.pixelSize: 20
-                font.weight: Font.Black
-                font.letterSpacing: 2
-                font.capitalization: Font.AllUppercase
-            }
-        }
+            Layout.fillHeight: true
+            clip: true
+            contentHeight: body.implicitHeight + 10
+            boundsBehavior: Flickable.StopAtBounds
+            ColumnLayout {
+                id: body
+                width: parent.width
+                spacing: 0
+                // Not on the step's page: which number goes there.
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 10
+                    Layout.rightMargin: 10
+                    Layout.topMargin: 10
+                    Layout.preferredHeight: 40
+                    visible: !panel.onPage
+                    color: panel.tint
+                    SequentialAnimation on opacity {
+                        running: !panel.onPage
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.55; duration: 450 }
+                        NumberAnimation { to: 1; duration: 450 }
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        text: qsTr("Press %1 · %2").arg(panel.pageKey).arg(panel.pageName)
+                        color: "#0a0806"
+                        font.family: panel.mono
+                        font.pixelSize: 20
+                        font.weight: Font.Black
+                        font.letterSpacing: 2
+                        font.capitalization: Font.AllUppercase
+                    }
+                }
 
-        Text {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            Layout.topMargin: 10
-            text: backend.tutorialTitle
-            color: panel.tint
-            font.family: panel.mono
-            font.pixelSize: 21
-            font.weight: Font.Black
-            font.capitalization: Font.AllUppercase
-            wrapMode: Text.Wrap
-        }
-        Text {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            Layout.topMargin: 6
-            text: backend.tutorialText
-            color: panel.paper
-            font.family: panel.mono
-            font.pixelSize: 14
-            lineHeight: 1.12
-            wrapMode: Text.Wrap
-        }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.topMargin: 10
+                    text: backend.tutorialTitle
+                    color: panel.tint
+                    font.family: panel.mono
+                    font.pixelSize: 21
+                    font.weight: Font.Black
+                    font.capitalization: Font.AllUppercase
+                    wrapMode: Text.Wrap
+                }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.topMargin: 6
+                    text: backend.tutorialText
+                    color: panel.paper
+                    font.family: panel.mono
+                    font.pixelSize: 14
+                    lineHeight: 1.12
+                    wrapMode: Text.Wrap
+                }
 
-        // The checks, ticking off.
-        Column {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            Layout.topMargin: 10
-            spacing: 5
-            Repeater {
-                model: backend.tutorialChecks
-                delegate: Row {
-                    required property var modelData
-                    spacing: 8
-                    Rectangle {
-                        width: 16
-                        height: 16
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: modelData.done ? panel.green : "transparent"
-                        border.color: modelData.done ? panel.green : panel.tint
-                        border.width: 2
-                        Text {
-                            anchors.centerIn: parent
-                            visible: modelData.done
-                            text: "✓"
-                            color: "#0a0806"
-                            font.pixelSize: 13
-                            font.weight: Font.Black
+                // The checks, ticking off, side by side where they fit.
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.topMargin: 10
+                    spacing: 14
+                    Repeater {
+                        model: backend.tutorialChecks
+                        delegate: Row {
+                            required property var modelData
+                            spacing: 8
+                            Rectangle {
+                                width: 16
+                                height: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: modelData.done ? panel.green : "transparent"
+                                border.color: modelData.done ? panel.green : panel.tint
+                                border.width: 2
+                                Text {
+                                    anchors.centerIn: parent
+                                    visible: modelData.done
+                                    text: "✓"
+                                    color: "#0a0806"
+                                    font.pixelSize: 13
+                                    font.weight: Font.Black
+                                }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.label
+                                color: modelData.done ? panel.green : panel.tint
+                                font.family: panel.mono
+                                font.pixelSize: 14
+                                font.weight: Font.DemiBold
+                                font.capitalization: Font.MixedCase
+                            }
                         }
                     }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: panel.width - 60
-                        text: modelData.label
-                        color: modelData.done ? panel.green : panel.tint
-                        font.family: panel.mono
-                        font.pixelSize: 14
-                        font.weight: Font.DemiBold
-                        font.capitalization: Font.AllUppercase
-                        elide: Text.ElideRight
+                }
+
+                // The keys the step uses, as keycaps.
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.topMargin: 10
+                    spacing: 6
+                    visible: backend.tutorialKeys.length > 0
+                    Repeater {
+                        model: backend.tutorialKeys
+                        delegate: Rectangle {
+                            required property string modelData
+                            width: Math.max(34, keyText.implicitWidth + 16)
+                            height: 30
+                            color: "transparent"
+                            border.color: panel.amber
+                            border.width: 2
+                            radius: 3
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 4
+                                anchors.bottomMargin: 6
+                                color: "transparent"
+                                border.color: Qt.darker(panel.amber, 2.2)
+                                border.width: 1
+                                radius: 2
+                            }
+                            Text {
+                                id: keyText
+                                anchors.centerIn: parent
+                                anchors.verticalCenterOffset: -1
+                                text: modelData
+                                color: panel.amber
+                                font.family: panel.mono
+                                font.pixelSize: 13
+                                font.weight: Font.Bold
+                                font.capitalization: Font.AllUppercase
+                            }
+                        }
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.topMargin: 10
+                    visible: backend.tutorialTip !== ""
+                    text: "<b>" + qsTr("Try") + "</b>  " + backend.tutorialTip
+                    textFormat: Text.StyledText
+                    color: "#2EE6FF"
+                    font.family: panel.mono
+                    font.pixelSize: 13
+                    wrapMode: Text.Wrap
+                }
+
+                // At the end, where the track went.
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    Layout.topMargin: 10
+                    visible: panel.last && backend.lastRecording !== ""
+                    text: qsTr("Saved %1").arg(backend.lastRecording)
+                    color: panel.green
+                    font.family: panel.mono
+                    font.pixelSize: 13
+                    wrapMode: Text.WrapAnywhere
                 }
             }
         }
-
-        // The keys the step uses, as keycaps.
-        Flow {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            Layout.topMargin: 10
-            spacing: 6
-            visible: backend.tutorialKeys.length > 0
-            Repeater {
-                model: backend.tutorialKeys
-                delegate: Rectangle {
-                    required property string modelData
-                    width: Math.max(34, keyText.implicitWidth + 16)
-                    height: 30
-                    color: "transparent"
-                    border.color: panel.amber
-                    border.width: 2
-                    radius: 3
-                    Rectangle {
-                        anchors.fill: parent
-                        anchors.margins: 4
-                        anchors.bottomMargin: 6
-                        color: "transparent"
-                        border.color: Qt.darker(panel.amber, 2.2)
-                        border.width: 1
-                        radius: 2
-                    }
-                    Text {
-                        id: keyText
-                        anchors.centerIn: parent
-                        anchors.verticalCenterOffset: -1
-                        text: modelData
-                        color: panel.amber
-                        font.family: panel.mono
-                        font.pixelSize: 13
-                        font.weight: Font.Bold
-                        font.capitalization: Font.AllUppercase
-                    }
-                }
-            }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            Layout.leftMargin: 12
-            Layout.rightMargin: 12
-            Layout.topMargin: 10
-            visible: backend.tutorialTip !== ""
-            text: "<b>" + qsTr("Try") + "</b>  " + backend.tutorialTip
-            textFormat: Text.StyledText
-            color: "#2EE6FF"
-            font.family: panel.mono
-            font.pixelSize: 13
-            wrapMode: Text.Wrap
-        }
-
-        Item { Layout.fillHeight: true }
 
         RowLayout {
             Layout.fillWidth: true

@@ -296,8 +296,9 @@ void Tutorial::build() {
 
     add({QStringLiteral("Lead"), Lead, QStringLiteral("Your melody"),
          QStringLiteral("Press Enter: the lead lands on the notes of the chord playing, so nothing clashes. Play a "
-                        "short melody, a bar or two, play it once more, and press Space: one round of it loops."),
-         QStringLiteral("Played it a few times? Space keeps the last round you repeated, not the tries before."),
+                        "melody across the four chords, then play it once more and press Space as it ends: one "
+                        "round of it loops."),
+         QStringLiteral("Space keeps the round you repeated, not the tries before it."),
          QStringLiteral("That's the hook."),
          {QStringLiteral("Enter"), QStringLiteral("Space")},
          {},
@@ -387,8 +388,18 @@ void Tutorial::build() {
          {},
          {},
          {spot(0.12f, 0.885f - 2 * lane, 0.12f + 0.07625f, 0.885f - lane, QStringLiteral("BASS 1"))},
-         {{QStringLiteral("The bass stops"), [](Look &l) { return !l.playing(Bass) && l.view().parts[Bass].queued < 0; }},
-          {QStringLiteral("…and comes back"), [](Look &l) { return l.checked(0) && l.playing(Bass); }}}});
+         // Any loop will do, the bass or another: the one stopped is the one
+         // that has to come back.
+         {{QStringLiteral("A loop stops"),
+           [](Look &l) {
+               for (int p = Drums; p <= Atmos; ++p)
+                   if (l.base.parts[p].playing >= 0 && !l.playing(p) && l.view().parts[p].queued < 0) {
+                       l.acc[1] = p;
+                       return true;
+                   }
+               return false;
+           }},
+          {QStringLiteral("…and comes back"), [](Look &l) { return l.checked(0) && l.playing(int(l.acc[1])); }}}});
 
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Mute and back"),
@@ -585,11 +596,12 @@ void Tutorial::paint(QPainter &p, const PaintContext &pc, int page, const QStrin
         const QString key = st.page == Arrange ? QStringLiteral("0") : QString::number(st.page + 1);
         const QRectF box(pc.pad.center().x() - 240, pc.pad.center().y() - 70, 480, 140);
         p.fillRect(box, QColor(0, 0, 0, 230));
-        p.setPen(QPen(console::amber(), 3));
+        p.setPen(QPen(hot, 3));
         p.drawRect(box);
-        console::text(p, box.adjusted(0, 12, 0, -60), QStringLiteral("TUTORIAL"), console::amber(), 14, true, Qt::AlignCenter);
-        console::text(p, box.adjusted(0, 40, 0, -10), QStringLiteral("PRESS %1 · %2").arg(key, pageName.toUpper()),
-                      console::amber(), 34, true, Qt::AlignCenter);
+        console::text(p, box.adjusted(0, 12, 0, -60), QStringLiteral("TUTORIAL · NEXT"), console::amber(), 14, true,
+                      Qt::AlignCenter);
+        console::text(p, box.adjusted(0, 40, 0, -10), QStringLiteral("PRESS %1 · %2").arg(key, pageName.toUpper()), hot,
+                      34, true, Qt::AlignCenter);
         p.restore();
         return;
     }
@@ -647,8 +659,14 @@ void Tutorial::paint(QPainter &p, const PaintContext &pc, int page, const QStrin
                 }
             }
         }
-        if (!s.label.isEmpty())
-            console::tag(p, r.center(), s.label, hot, 16, true);
+        if (!s.label.isEmpty()) {
+            // In the middle of the spot, or beside a thin one, where it
+            // would cover what the spot shows.
+            QPointF at = r.center();
+            if (r.height() < 80)
+                at.setY(r.bottom() + 18 < pc.pad.bottom() ? r.bottom() + 18 : r.top() - 18);
+            console::tag(p, at, s.label, hot, 16, true);
+        }
     }
     p.restore();
 }

@@ -104,7 +104,8 @@ public:
     double latencyMs() const;
     bool audioOk() const { return m_audio->running(); }
     QString audioError() const { return QString::fromStdString(m_audio->error()); }
-    bool recording() const { return m_recording; }
+    // Recording the mix; a simulated window shows what its script asked for.
+    bool recording() const { return m_recording || (m_simulated && m_session->mixRecording()); }
     double recordSeconds() const;
     QString lastRecording() const { return m_lastRecording; }
     double level() const { return m_session->view().rms; }

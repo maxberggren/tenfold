@@ -32,6 +32,13 @@ pick a page with its number:
 
 `?` shows the guide for the page you're on. Letter keys play most pages too.
 
+**New here?** Ctrl+T (or the Tutorial button) walks you from silence to a
+finished, recorded track: a beat, chords, a bassline that follows them, a
+melody, an arp, an atmosphere, a riser and a drop, then the mix, a song and
+the whole track, every feature met when the song needs it. Each step lights
+where the fingers go and moves on by itself once you've done it;
+Ctrl+Return skips ahead, Ctrl+Shift+Return goes back, Esc leaves.
+
 **Loops.** Play something, then press **Space**. With nothing else playing,
 press it where your phrase would start again: that loop sets the tempo. Over
 something playing, Space finds the bars you repeated and loops them from the

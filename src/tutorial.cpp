@@ -361,7 +361,7 @@ void Tutorial::build() {
     add({QStringLiteral("Atmos"), Atmos, QStringLiteral("A bed of sound"),
          QStringLiteral("Lay three fingers on DRONE, PAD and CHOIR: they sing the chord of the moment, wide and soft. "
                         "Click while they're down: they latch and stay when you lift."),
-         QStringLiteral("Q to I are whole scenes at a key: dawn, ocean, cathedral, stardust…"),
+         QStringLiteral("Q to P are whole scenes at a key: dawn, ocean, cathedral… neon, dub"),
          QStringLiteral("Space opens up."),
          {QStringLiteral("click")},
          {},

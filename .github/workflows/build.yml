@@ -1,0 +1,87 @@
+# Builds tenfold, runs every test and packages it, on Arch Linux for x86_64
+# and arm64 (Asahi). A version tag (v0.2.0) also publishes a release with
+# both packages and their checksums, which the install script fetches.
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            image: archlinux:latest
+          # Arch Linux ARM has no official image; this community one is
+          # kept current and is what most ALARM builds on GitHub use.
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: menci/archlinuxarm:latest
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    timeout-minutes: 45
+    steps:
+      - name: Install what it builds with
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git \
+            qt6-base qt6-declarative qt6-wayland libpipewire pipewire polkit \
+            noto-fonts ttf-jetbrains-mono-nerd
+
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: bin/build
+
+      - name: Test
+        run: bin/test
+
+      # makepkg won't run as root; the package is built by a user of its own.
+      # On a tag the package takes the tag's version (v0.2.0 → 0.2.0).
+      - name: Package
+        run: |
+          case "$GITHUB_REF" in
+          refs/tags/v*) sed -i "s/^pkgver=.*/pkgver=${GITHUB_REF_NAME#v}/" pkgbuild/PKGBUILD ;;
+          esac
+          useradd -m builder
+          chown -R builder .
+          su builder -c 'cd pkgbuild && PKGEXT=.pkg.tar.zst makepkg -f --nodeps'
+          ls -l pkgbuild/*.pkg.tar.zst
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenfold-${{ matrix.arch }}
+          path: pkgbuild/*.pkg.tar.zst
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # A checksum beside each package, which the install script checks.
+      - name: Checksums
+        working-directory: dist
+        run: for f in *.pkg.tar.zst; do sha256sum "$f" >"$f.sha256"; done
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "tenfold ${GITHUB_REF_NAME#v}" --generate-notes

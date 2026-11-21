@@ -14,6 +14,22 @@ plays in one key and on one clock, and every kick pumps the mix.
 All of it is synthesized from scratch, with no samples, at 48 kHz in
 128-frame PipeWire callbacks (2.7 ms).
 
+## Install
+
+On an Arch-based Linux (Omarchy, Arch, or Arch Linux ARM on an Asahi Mac),
+x86_64 or arm64:
+
+```bash
+curl -fsSL https://maxberggren.github.io/tenfold/install.sh | sh
+```
+
+It installs the latest release with pacman, checked against its checksum.
+The package adds a udev rule so you can read your own trackpad without a
+password. [Read the script](site/install.sh) first if you like, or take the
+package from [the releases](https://github.com/maxberggren/tenfold/releases).
+macOS and Windows need ports of their own (the trackpad and the audio are
+read in each system's own way), so they aren't there yet.
+
 ## Playing
 
 Click **Take pad** to hand the trackpad to tenfold (Esc gives it back), then
@@ -165,3 +181,14 @@ bin/test -h                                             # more
 ```
 
 Needs Qt 6 (base, declarative), PipeWire and polkit.
+
+Every push to master builds and tests tenfold on Arch for x86_64 and arm64
+(`.github/workflows/build.yml`). A version tag publishes a release with both
+packages and their checksums:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The install page and its script live in `site/` and are published to
+GitHub Pages by `.github/workflows/site.yml`.

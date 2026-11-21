@@ -3,3 +3,5 @@
 /pkgbuild/src/
 *.pkg.tar.*
 docs/*.wav
+# Copied in when the site is published (.github/workflows/site.yml).
+/site/screenshot.png

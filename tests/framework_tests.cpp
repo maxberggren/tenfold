@@ -174,6 +174,21 @@ private slots:
         QCOMPARE(other.view.parts[1].clips[0].events, 8);
     }
 
+    void aLineSlidWithOneFingerLoopsWhole() {
+        // Over the beat (120 BPM, bars every 2 s from 4.5 s), one bass finger
+        // lands and slides through four columns, a bar on each, without
+        // lifting; Space just after: all four bars loop, not the bar after
+        // the one note that landed.
+        std::string s = std::string(kBeat) + "page 3.0 2\ndown 4.55 1 0.21 0.4\n";
+        const double cols[4] = {0.21, 0.37, 0.29, 0.46};
+        for (int b = 1; b < 4; ++b)
+            s += "move " + std::to_string(4.55 + 2.0 * b) + " 1 " + std::to_string(cols[b]) + " 0.4\n";
+        s += "key 12.6 Space\nup 12.7 1\nend 14\n";
+        const auto take = testkit::play(s);
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 16);
+    }
+
     void startingOverSetsTheMixBack() {
         // Drums looped, then muted on the Song page with Q: Ctrl+N twice
         // clears the loop and unmutes them, so the next beat is heard.

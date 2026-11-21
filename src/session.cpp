@@ -43,6 +43,8 @@ public:
             ++onsetHead;
         }
         if (!(c.flags & Command::NoRecord)) {
+            if (c.type == Command::Move && heldCount > 0)
+                lastShaped = c.t > 0 ? c.t : now();
             if (c.type == Command::On && heldCount < int(held.size())) {
                 held[size_t(heldCount++)] = c.id;
             } else if (c.type == Command::Off) {
@@ -167,6 +169,9 @@ public:
     // playing, so the phrase hasn't paused.
     std::array<int32_t, 64> held{};
     int heldCount = 0;
+    // When a held sound was last shaped (slid, pressed, turned): playing
+    // that goes on without new notes.
+    double lastShaped = -1;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
 
 private:
@@ -962,7 +967,12 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     // held through the bar): the loop ends at the bar line after that note,
     // not wherever Space came, so it stays whole bars on the bar lines.
     if (ctx.heldCount > 0 && lastReal >= 0) {
-        const double bar = std::ceil((ctx.beatAt(lastReal) + 0.5) / kBeatsPerBar) * kBeatsPerBar;
+        // A held sound still being shaped (slid, pressed, its tone turned)
+        // is still being played: the phrase runs on to the last of it.
+        double played = lastReal;
+        if (ctx.lastShaped > played && ctx.lastShaped <= nowT + 0.05)
+            played = ctx.lastShaped;
+        const double bar = std::ceil((ctx.beatAt(played) + 0.5) / kBeatsPerBar) * kBeatsPerBar;
         end = std::min(bar, std::round(beatNow * 4.0) / 4.0);
     }
     // Whatever the rounding, the last note played is in the take: Space
@@ -1143,6 +1153,7 @@ void Session::clearEverything() {
         if (page->ctx) {
             page->ctx->onsetHead = 0;
             page->ctx->heldCount = 0;
+            page->ctx->lastShaped = -1;
         }
     m_takeOrder.clear();
     m_redoOrder.clear();

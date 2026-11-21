@@ -555,6 +555,11 @@ private:
             mv.type = Command::Move;
             mv.id = h.id;
             mv.t = time;
+            // A slide to another column is a new note of the line, played
+            // with the same finger: Space hears it as one, and a loop pulls
+            // it to the grid like one.
+            if (slide)
+                mv.flags = Command::Quantize;
             mv.i[0] = h.degree;
             mv.i[1] = h.octave;
             mv.f[0] = clampf(0.3f + 0.8f * t.pressure, 0, 1);

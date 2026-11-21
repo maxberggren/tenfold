@@ -331,6 +331,8 @@ const Walk &theWalk() {
 
 class TutorialTests : public QObject {
     Q_OBJECT
+    // Both look at the one walk through the tutorial, rendered once.
+    Q_CLASSINFO("together", "everyStepFinishesByItself theSongHasEveryPart")
 private slots:
     void ctrlTStartsItOnItsFirstPageAndAgainLeaves() {
         testkit::play("page 0.05 3\nkey 0.1 Ctrl+T\nend 0.5\n", [](Session &s) {

@@ -121,4 +121,14 @@ bin/test       # every page's tests and the studio's
 bin/install    # package and install, so it shows up in the launcher
 ```
 
+`bin/test` runs the tests in parallel on every core, the slowest first, and
+shows only what failed. One suite or one test runs on its own, with QtTest's
+output:
+
+```bash
+bin/test DrumsTests                                     # one suite
+bin/test DrumsTests::kicksPlayedAlongArentLayeredTwice  # one test
+bin/test -h                                             # more
+```
+
 Needs Qt 6 (base, declarative), PipeWire and polkit.

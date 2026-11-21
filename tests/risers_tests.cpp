@@ -94,6 +94,8 @@ struct FxAudio : AudioContext {
 
 class RisersTests : public QObject {
     Q_OBJECT
+    // Times the studio against the clock: bin/test runs it with the machine to itself.
+    Q_CLASSINFO("alone", "tenFingersStayInsideBudget")
 private slots:
     void aLoopsFallDropsOnlyItsOwnLayersRisers() {
         // A riser from the hand and one replayed by a loop's second layer;

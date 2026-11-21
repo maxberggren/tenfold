@@ -139,6 +139,8 @@ constexpr int A = 9, C = 0, D = 2, E = 4, F = 5, G = 7, B = 11;
 
 class AtmosTests : public QObject {
     Q_OBJECT
+    // Times the studio against the clock: bin/test runs it with the machine to itself.
+    Q_CLASSINFO("alone", "tenLayersStayClearOfTheSubAndInBudget")
 private slots:
     void oneClickOverALatchedBedLoopsOneBar() {
         // An old swell held and let go, three layers latched, then a while

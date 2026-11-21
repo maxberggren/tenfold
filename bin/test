@@ -1,5 +1,26 @@
 #!/bin/sh
+# Builds the tests and runs them.
+#
+#   bin/test                       every test, spread over all the cores
+#   bin/test DrumsTests            one suite, in order, with QtTest's own output
+#   bin/test DrumsTests someTest   one test of it (or DrumsTests::someTest, as a
+#                                  failure prints it); QtTest's options work
+#                                  after the suite, e.g. bin/test DrumsTests -v2
+#   bin/test -h                    this help
+#
+# The full run starts the tests in parallel, the slowest first (by how long
+# each took last time), on as many cores as nproc says, or TENFOLD_JOBS.
+# The tests that time the studio against the clock run afterwards, one at a
+# time, so the others don't eat into the budget they measure. Only the
+# failures' output is shown; every test's is in build/tests/out.
 set -eu
+
+case "${1:-}" in
+-h | --help)
+    sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
+    exit 0
+    ;;
+esac
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 mkdir -p "$ROOT/build/tests"
@@ -7,4 +28,92 @@ cd "$ROOT/build/tests"
 
 qmake6 "$ROOT/tests/tenfold_tests.pro"
 make -j"$(nproc)"
-QT_QPA_PLATFORM=offscreen ./tenfold_tests
+export QT_QPA_PLATFORM=offscreen
+
+# One suite, or one test of it: "DrumsTests someTest", or
+# "DrumsTests::someTest()" as a failure prints it.
+if [ $# -gt 0 ]; then
+    suite=${1%%::*}
+    test=${1#"$suite"}
+    test=${test#::}
+    test=${test%"()"}
+    shift
+    if [ -n "$test" ]; then set -- "$test" "$@"; fi
+    TENFOLD_TESTS=$suite exec ./tenfold_tests "$@"
+fi
+
+start=$(date +%s%N)
+out="$PWD/out"
+rm -rf "$out"
+mkdir -p "$out"
+
+# Every test as a line: "parallel Class fn…" or "alone Class fn". Each
+# line runs in a process of its own, the slowest first by how long its
+# tests took last time (new ones, not timed yet, before them all). Tests
+# that took under 0.3 s share a process with others of their suite, about a
+# second's worth, as starting a process costs a tenth of a second.
+./tenfold_tests --list >"$out/list"
+touch times
+order() {
+    grep "^$1 " "$out/list" | cut -d' ' -f2- |
+        awk 'FILENAME == ARGV[1] { took[$2 " " $3] = $1; next }
+             function flush(c) { if (n[c]) print sum[c] "\t" c batch[c]; n[c] = sum[c] = 0; batch[c] = "" }
+             {
+                 t = 0
+                 for (i = 2; i <= NF; ++i) t += ($1 " " $i) in took ? took[$1 " " $i] : 1e9
+                 if (NF > 2 || t >= 0.3) { print t "\t" $0; next }
+                 batch[$1] = batch[$1] " " $2; sum[$1] += t; ++n[$1]
+                 if (sum[$1] >= 1) flush($1)
+             }
+             END { for (c in n) flush(c) }' times - |
+        sort -t"$(printf '\t')" -k1,1 -gr | cut -f2-
+}
+
+# Runs one line's tests in a process of their own, keeping QtTest's output
+# and its timings, and noting whether anything failed.
+cat >"$out/run" <<'RUN'
+#!/bin/sh
+out=$1
+set -- $2
+suite=$1 name=$1.$2
+shift
+if TENFOLD_TESTS=$suite ./tenfold_tests -o "$out/$name.txt,txt" -o "$out/$name.xml,junitxml" "$@" \
+    >"$out/$name.log" 2>&1; then :; else touch "$out/$name.failed"; fi
+RUN
+chmod +x "$out/run"
+
+jobs=${TENFOLD_JOBS:-$(nproc)}
+count=$(awk '{ n += NF - 2 } END { print n }' "$out/list")
+echo "Running $count tests on $jobs cores…"
+order parallel | xargs -d '\n' -n 1 -P "$jobs" "$out/run" "$out"
+order alone | while IFS= read -r line; do "$out/run" "$out" "$line"; done
+
+# Seconds per test, for the next run.
+cat "$out"/*.xml | sed -n 's/.*<testcase name="\([^"]*\)" classname="\([^"]*\)" time="\([^"]*\)".*/\3 \2 \1/p' |
+    grep -v ' initTestCase$\| cleanupTestCase$' >times || true
+
+# The failures' output in full; a test that crashed has no FAIL line, so
+# it counts as one failure of its own.
+fails=0
+for f in "$out"/*.failed; do
+    [ -e "$f" ] || continue
+    echo
+    cat "${f%.failed}.txt" 2>/dev/null || true
+    n=$(grep -c '^FAIL!  :' "${f%.failed}.txt" 2>/dev/null || true)
+    if [ "${n:-0}" -eq 0 ]; then
+        # A crash: its signal and test, without QtTest's long stack dump.
+        sed '/=== Stack trace ===/q' "${f%.failed}.log"
+        echo "(all of it in ${f%.failed}.log)"
+        n=1
+    fi
+    fails=$((fails + n))
+done
+results=$(cat "$out"/*.txt | grep -v 'initTestCase()\|cleanupTestCase()')
+# A data-driven test passes once per row; count it once.
+passed=$(printf '%s\n' "$results" | grep '^PASS   :' | sed 's/(.*//' | sort -u | wc -l)
+skipped=$(printf '%s\n' "$results" | grep -c '^SKIP   :' || true)
+echo
+printf '%s\n' "$results" | grep '^SKIP   :' || true
+took=$((($(date +%s%N) - start) / 100000000))
+echo "$passed passed, $fails failed, $skipped skipped in $((took / 10)).$((took % 10)) s"
+[ "$fails" -eq 0 ]

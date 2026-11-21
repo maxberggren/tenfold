@@ -19,6 +19,8 @@ const char *kBeat = "page 0 1\n"
 
 class FrameworkTests : public QObject {
     Q_OBJECT
+    // Times the studio against the clock: bin/test runs it with the machine to itself.
+    Q_CLASSINFO("alone", "theBenchRunsWellInsideRealTime")
 private slots:
     void spaceLoopsWhatWasJustPlayedAndSetsTheTempo() {
         const auto take = testkit::play(std::string(kBeat) + "end 8\n");

@@ -3,9 +3,11 @@
 // Helpers for testing pages: play a script through the real session and
 // studio and look at the sound and the studio's view afterwards.
 
+#include <QMetaMethod>
 #include <QObject>
 #include <QtTest>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <vector>
@@ -114,14 +116,18 @@ inline Take watch(const std::string &script, const std::function<void(double, tf
 }
 
 // Every test class registers itself; the test binary runs them all.
-inline std::vector<std::function<int(int, char **)>> &registry() {
-    static std::vector<std::function<int(int, char **)>> r;
+struct Suite {
+    const QMetaObject *meta;
+    std::function<int(int, char **)> run;
+};
+inline std::vector<Suite> &registry() {
+    static std::vector<Suite> r;
     return r;
 }
 template <typename T>
 struct Register {
     Register() {
-        registry().push_back([](int argc, char **argv) {
+        auto run = [](int argc, char **argv) {
             // TENFOLD_TESTS=Name,Other runs only those classes, for a quick
             // look at one page's tests.
             const QByteArray only = qgetenv("TENFOLD_TESTS");
@@ -129,9 +135,61 @@ struct Register {
                 return 0;
             T t;
             return QTest::qExec(&t, argc, argv);
-        });
+        };
+        registry().push_back({&T::staticMetaObject, run});
     }
 };
+
+// A class's test functions, the way QtTest finds them: its private slots
+// that take nothing, without the set-up and tear-down ones and the data
+// tables.
+inline QStringList testFunctions(const QMetaObject &mo) {
+    static const QStringList special = {"initTestCase", "cleanupTestCase", "init", "cleanup"};
+    QStringList r;
+    for (int i = mo.methodOffset(); i < mo.methodCount(); ++i) {
+        const QMetaMethod m = mo.method(i);
+        const QString name = QString::fromLatin1(m.name());
+        if (m.methodType() == QMetaMethod::Slot && m.access() == QMetaMethod::Private && m.parameterCount() == 0 &&
+            !special.contains(name) && !name.endsWith(QLatin1String("_data")))
+            r << name;
+    }
+    return r;
+}
+
+// The test functions a class names in a Q_CLASSINFO, space-separated.
+inline QStringList classInfo(const QMetaObject &mo, const char *key) {
+    const int i = mo.indexOfClassInfo(key);
+    return i < 0 ? QStringList() : QString::fromLatin1(mo.classInfo(i).value()).split(' ', Qt::SkipEmptyParts);
+}
+
+// Prints every test for bin/test, a line for each that needs a process of
+// its own: "parallel Class fn" for one that runs beside the others, or
+// "alone Class fn" for one that measures the studio against the clock and
+// so runs after them, with the machine to itself. A class lists those in
+// Q_CLASSINFO("alone", "fn other"), and tests that share work (a long take
+// rendered once) in Q_CLASSINFO("together", "fn other"): they share a line,
+// "parallel Class fn other", so the work is done once.
+inline void list() {
+    for (const Suite &s : registry()) {
+        const QStringList alone = classInfo(*s.meta, "alone"), shared = classInfo(*s.meta, "together");
+        const QString cls = QString::fromLatin1(s.meta->className());
+        bool sharedDone = false;
+        for (const QString &fn : testFunctions(*s.meta)) {
+            QString line;
+            if (alone.contains(fn)) {
+                line = "alone " + cls + ' ' + fn;
+            } else if (shared.contains(fn)) {
+                if (sharedDone)
+                    continue;
+                sharedDone = true;
+                line = "parallel " + cls + ' ' + shared.join(' ');
+            } else {
+                line = "parallel " + cls + ' ' + fn;
+            }
+            std::printf("%s\n", qPrintable(line));
+        }
+    }
+}
 
 }
 

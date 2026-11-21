@@ -14,6 +14,10 @@
 //   Ctrl+Backspace          stop every clip at the next bar
 //   Ctrl+Z                  take back the newest loop (on any page)
 //   Ctrl+N, Ctrl+N          start over: every loop cleared
+//   Ctrl+T                  the tutorial, on or off; while it runs Ctrl+Return
+//                           goes to its next step, Ctrl+Shift+Return back
+//   Ctrl+R                  (scripts only: the window keeps it) marks the mix as
+//                           recording, as the window's recorder would
 //   Space                   record a loop on this page from the next bar; Space
 //                           again closes it (unless the page records its own way)
 // Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
@@ -26,6 +30,7 @@
 
 #include "part.h"
 #include "studio.h"
+#include "tutorial.h"
 
 namespace tf {
 
@@ -48,6 +53,9 @@ public:
     QColor pageColor(int page) const;
     QString pageHelp(int page) const;
     QString pageStatus() const;
+    QString pageStatus(int page) const;
+    // A page's tutorialProbe() (NaN when it doesn't know the name).
+    float probe(int page, const QString &name) const;
 
     // FrameSink: touch thread.
     void frame(const Frame &f) override;
@@ -78,6 +86,23 @@ public:
     // plays again. Ctrl+N: start over, every loop cleared (asks first).
     void undoTake();
     void startOver();
+    // How many times Ctrl+Z took a loop back, for the tutorial.
+    int undos() const { return m_undos; }
+    // Whether the window records the mix to a file (the window says so; a
+    // script's Ctrl+R toggles it).
+    bool mixRecording() const { return m_mixRecording; }
+    void setMixRecording(bool on) { m_mixRecording = on; }
+
+    // The walk from silence to a track. The session drives it: every
+    // refresh() ticks it, paint() draws its spots over the pad.
+    Tutorial &tutorial() { return m_tutorial; }
+    const Tutorial &tutorial() const { return m_tutorial; }
+    void toggleTutorial();
+    void tutorialNext();
+    void tutorialBack();
+    // Locks the session for a caller that reads the tutorial from another
+    // thread than the UI's.
+    std::recursive_mutex &lock() const { return m_lock; }
     // Space: arm a loop on this part from the next bar, or close it.
     void toggleRecording(ControlContext &ctx, bool layer = false);
 
@@ -116,6 +141,9 @@ private:
     double lastSounding(int part, double since) const;
     uint32_t m_takesSeen[kMaxParts] = {};
     double m_startOverAsked = -1;
+    int m_undos = 0;
+    bool m_mixRecording = false;
+    Tutorial m_tutorial;
     Frame m_last;            // the last frame, as the pad sent it
     std::vector<int> m_ignored; // fingers down when the page changed, until they lift
     QString m_notice;

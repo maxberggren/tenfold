@@ -29,6 +29,7 @@
 #include <QColor>
 #include <QRectF>
 #include <QString>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 
@@ -352,6 +353,13 @@ public:
     virtual QString help() const = 0;
     // One line under the pad: what the fingers are doing right now.
     virtual QString status() const { return {}; }
+    // A number about what the player has done on this page, for the
+    // tutorial to tell when a step is done: a state ("follow": 1 or 0) or a
+    // count that only goes up ("rolls": how many rolls were ever started),
+    // so a quick gesture between two screen frames is never missed. NaN
+    // when the page doesn't know the name; each page lists its names in its
+    // own override.
+    virtual float tutorialProbe(const QString &name) const { (void)name; return std::nanf(""); }
 };
 
 // One part, as the studio and the session know it.

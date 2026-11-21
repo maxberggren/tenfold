@@ -363,6 +363,15 @@ public:
             "F1–F8 (Shift clears)  F10  Backspace\tlaunch a slot   overdub   stop the loop");
     }
 
+    // For the tutorial: whether the bass follows the chords, and its sound.
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("follow"))
+            return m_follow ? 1.0f : 0.0f;
+        if (name == QLatin1String("sound"))
+            return float(m_sound);
+        return PartControl::tutorialProbe(name);
+    }
+
     QString status() const override {
         QStringList parts;
         const QString take = loopState(m_beat);

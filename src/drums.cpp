@@ -367,6 +367,30 @@ public:
         return parts.join(QStringLiteral(" · "));
     }
 
+    // For the tutorial: hits ever played, by pad and in all; rolls and
+    // grooves ever started and how many play under fingers now; clicks
+    // that kept something.
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("hits"))
+            return float(m_hits);
+        if (name == QLatin1String("pads"))
+            return float(m_padsHit);
+        if (name == QLatin1String("rolls"))
+            return float(m_rolls);
+        if (name == QLatin1String("grooves"))
+            return float(m_grooves);
+        if (name == QLatin1String("keeps"))
+            return float(m_keeps);
+        if (name == QLatin1String("rolling") || name == QLatin1String("grooving")) {
+            const Mode want = name == QLatin1String("rolling") ? Mode::Roll : Mode::Groove;
+            int n = 0;
+            for (const auto &h : m_holders)
+                n += h.used && h.mode == want;
+            return float(n);
+        }
+        return PartControl::tutorialProbe(name);
+    }
+
 private:
     enum class Mode : uint8_t {
         Pending, // just landed: a tap, unless it stays
@@ -548,6 +572,7 @@ private:
         hit(h.pad, h.vel, h.x0 * kCols - float(h.pad % kCols), h.y0 * kRows - float(h.pad / kCols), t, ctx);
         Gen *g = newGen(h, ctx.now(), ctx);
         h.mode = Mode::Roll;
+        ++m_rolls;
         h.rate = rate;
         if (g) {
             g->setRoll(rate);
@@ -838,6 +863,7 @@ private:
     void becomeRoll(Holder &h, double now, ControlContext &ctx) {
         Gen *g = newGen(h, now, ctx);
         h.mode = Mode::Roll;
+        ++m_rolls;
         h.rate = std::clamp(defaultRate(h.pad) + (h.key ? m_keyRate : 0), 0, kRates - 1);
         if (g)
             g->setRoll(h.rate);
@@ -849,6 +875,7 @@ private:
             sendOff(h, now, ctx);
         Gen *g = newGen(h, now, ctx);
         h.mode = Mode::Groove;
+        ++m_grooves;
         h.density = 1;
         if (g) {
             g->groove = true;
@@ -948,6 +975,7 @@ private:
             g.holder = -1;
         }
         m_keep = k;
+        ++m_keeps;
         ctx.notice(k.overdub ? QStringLiteral("Into the loop from the bar, for one pass")
                              : QStringLiteral("The last %1 into slot %2 at the bar").arg(barsText(k.length)).arg(k.slot + 1));
     }
@@ -1154,6 +1182,8 @@ private:
             c.f[5] = 0.25f;
         stamp(c);
         ctx.send(c);
+        ++m_hits;
+        m_padsHit |= 1u << pad;
     }
 
     void sendSubOn(const Holder &h, double t, ControlContext &ctx) {
@@ -1232,6 +1262,7 @@ private:
     double m_lastTick = 0, m_tickGap = 0; // when schedule() last ran, and the longest recent gap
     int m_playing = -1, m_recording = -1; // this part's clips, as the studio last said
     uint32_t m_muted[kClipSlots] = {};  // per slot, the pads taken out of its loop
+    uint32_t m_hits = 0, m_padsHit = 0, m_rolls = 0, m_grooves = 0, m_keeps = 0; // for the tutorial
     Frame m_frame;
 };
 

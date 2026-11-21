@@ -256,6 +256,30 @@ QString Session::pageStatus() const {
     std::lock_guard lock(m_lock);
     return m_pages[size_t(m_page)]->spec.control->status();
 }
+QString Session::pageStatus(int page) const {
+    std::lock_guard lock(m_lock);
+    return page >= 0 && page < pageCount() ? m_pages[size_t(page)]->spec.control->status() : QString();
+}
+float Session::probe(int page, const QString &name) const {
+    std::lock_guard lock(m_lock);
+    return page >= 0 && page < pageCount() ? m_pages[size_t(page)]->spec.control->tutorialProbe(name) : std::nanf("");
+}
+
+void Session::toggleTutorial() {
+    std::lock_guard lock(m_lock);
+    if (m_tutorial.active())
+        m_tutorial.stop();
+    else
+        m_tutorial.start(*this);
+}
+void Session::tutorialNext() {
+    std::lock_guard lock(m_lock);
+    m_tutorial.next(*this);
+}
+void Session::tutorialBack() {
+    std::lock_guard lock(m_lock);
+    m_tutorial.back(*this);
+}
 
 void Session::frame(const Frame &f) {
     std::lock_guard lock(m_lock);
@@ -358,6 +382,14 @@ bool Session::key(const KeyEvent &k) {
         case Qt::Key_Backspace: stopAll(); return true;
         case Qt::Key_Z: undoTake(); return true;
         case Qt::Key_N: startOver(); return true;
+        case Qt::Key_T: toggleTutorial(); return true;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            if (!m_tutorial.active())
+                return false;
+            shift ? tutorialBack() : tutorialNext();
+            return true;
+        case Qt::Key_R: m_mixRecording = !m_mixRecording; return true;
         default: return false;
         }
     }
@@ -400,6 +432,7 @@ void Session::refresh() {
             m_soundBin[p] = bin;
         }
     }
+    m_tutorial.update(*this);
 }
 
 // No stretch longer than maxGap in [t0, t1] where the part was silent.
@@ -447,6 +480,11 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     painter.save();
     p.spec.control->paint(painter, pc);
     painter.restore();
+    if (m_tutorial.active()) {
+        // Spots in the colour of the page the step happens on.
+        pc.color = pageColor(m_tutorial.step().page);
+        m_tutorial.paint(painter, pc, m_page, pageName(m_tutorial.step().page));
+    }
 }
 
 QString Session::notice(uint32_t *seq) const {
@@ -740,6 +778,7 @@ void Session::undoTake() {
     }
     const int part = m_takeOrder.back();
     m_takeOrder.pop_back();
+    ++m_undos;
     StudioMsg m;
     m.kind = StudioMsg::UndoTake;
     m.part = int8_t(part);

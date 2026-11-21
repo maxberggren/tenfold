@@ -34,6 +34,7 @@ HEADERS += \
     src/touchsource.h \
     src/translator.h \
     src/tuning.h \
+    src/tutorial.h \
     src/wav.h
 
 # One file per part: each page's controls and engine.
@@ -63,6 +64,7 @@ SOURCES += \
     src/touchsource.cpp \
     src/translator.cpp \
     src/tuning.cpp \
+    src/tutorial.cpp \
     $$PARTS
 
 # Part headers are not all listed above; this makes edits to them rebuild.

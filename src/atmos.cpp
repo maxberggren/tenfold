@@ -1776,6 +1776,7 @@ public:
             if (k.repeat)
                 return true;
             m_swellHeld = k.down;
+            m_swells += k.down;
             param(PSwell, k.down ? 1.0f : 0.0f, ctx);
             return true;
         }
@@ -1884,6 +1885,17 @@ public:
     void paint(QPainter &p, const PaintContext &pc) override;
     QString help() const override;
     QString status() const override;
+    // For the tutorial: layers latched now (by click, hold or a scene), the
+    // scene, and swells ever started with S.
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("latched"))
+            return float(m_latched.size());
+        if (name == QLatin1String("scene"))
+            return float(m_scene);
+        if (name == QLatin1String("swells"))
+            return float(m_swells);
+        return PartControl::tutorialProbe(name);
+    }
 
 private:
     struct Layer {
@@ -2203,6 +2215,7 @@ private:
     int m_nextId = 0, m_scene = -1, m_takeSlot = -1, m_lastPlaying = -1;
     double m_spaceAt = 0;
     bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false;
+    uint32_t m_swells = 0; // for the tutorial
 };
 
 QString AtmosControl::help() const {

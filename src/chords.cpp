@@ -337,6 +337,17 @@ public:
     void paint(QPainter &p, const PaintContext &pc) override;
     QString help() const override;
     QString status() const override;
+    // For the tutorial: chords ever played by hand, and which columns
+    // (degrees, one bit each); whether hold is on.
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("chords"))
+            return float(m_chordsPlayed);
+        if (name == QLatin1String("columns"))
+            return float(m_columnsPlayed);
+        if (name == QLatin1String("hold"))
+            return m_hold ? 1.0f : 0.0f;
+        return PartControl::tutorialProbe(name);
+    }
 
 private:
     struct Held {
@@ -391,6 +402,8 @@ private:
         h.filter0 = m_filter[h.style];
         h.lastMove = t;
         m_heard = true;
+        ++m_chordsPlayed;
+        m_columnsPlayed |= 1u << std::clamp(h.degree, 0, 15);
         // In hold mode the chord this one replaces lets go now.
         if (m_latched != 0 && m_latched != h.cmd) {
             sendOff(m_latched, t, ctx);
@@ -865,6 +878,7 @@ private:
     int m_override = -1, m_rate = 1;
     bool m_hold = false, m_overdub = false;
     int m_latched = 0, m_latchedOrder = 0;
+    uint32_t m_chordsPlayed = 0, m_columnsPlayed = 0; // for the tutorial
 
     static constexpr int kOnsets = 128;
     double m_onsets[kOnsets] = {};

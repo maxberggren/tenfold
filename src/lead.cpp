@@ -1349,6 +1349,22 @@ public:
     }
 
     QString status() const override { return m_status; }
+    // For the tutorial: glides ever played (a slide into another note, or a
+    // second finger's legato), hand vibratos (a finger rocked to and fro on
+    // a note), notes sung with a harmony voice, and follow and sound.
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("glides"))
+            return float(m_glides);
+        if (name == QLatin1String("wiggles"))
+            return float(m_wiggles);
+        if (name == QLatin1String("harmonized"))
+            return float(m_harmonized);
+        if (name == QLatin1String("follow"))
+            return m_follow ? 1.0f : 0.0f;
+        if (name == QLatin1String("sound"))
+            return float(m_sound);
+        return PartControl::tutorialProbe(name);
+    }
 
 private:
     enum class Role : uint8_t { None, Note, Harmony, Bend, Throw };
@@ -1364,6 +1380,8 @@ private:
         double lastSend = 0;
         float sent[8] = {};
         float shown = 0;    // what the finger's tag says (bend amount, row)
+        float wigPos = 0;   // a rocking finger, for the tutorial: where it last turned,
+        int wigDir = 0, wigTurns = 0; // which way it goes, how often it turned
     };
     struct KeyHeld {
         bool down = false;
@@ -1488,7 +1506,12 @@ private:
         h.lastSend = now;
         if (t.x >= kColumn) {
             h.role = Role::Note;
+            if (notesHeld(&h) > 0)
+                ++m_glides; // legato
+            if (harmonyOn())
+                ++m_harmonized;
             const float pos = neckPosition(t.x, m_per);
+            h.wigPos = pos;
             h.q = std::clamp(int(std::lround(pos)), 0, neckCells(m_per) - 1);
             h.motion.update(pos, now);
             h.abs = (m_neckOct + m_shift) * m_per + h.q;
@@ -1520,6 +1543,8 @@ private:
                 return; // three voices of harmony is all there is; this finger rests
             h.role = Role::Harmony;
             h.slot = slot;
+            if (notesHeld(&h) > 0)
+                ++m_harmonized;
             const float row = harmonyRow(t.y);
             h.motion.update(row, now);
             Slot &s = m_slots[slot];
@@ -1571,6 +1596,19 @@ private:
             // a finger that happens to sit a little turned stays in tune.
             twist = rounded(twist, h.twistMotion.update(twist * 4.0f, now));
             const int abs = (m_neckOct + m_shift) * m_per + h.q;
+            if (abs != h.abs)
+                ++m_glides;
+            // Rocked to and fro by more than a tenth of a cell, four turns
+            // over: the player's own vibrato.
+            if (std::fabs(pos - h.wigPos) > 0.1f) {
+                const int dir = pos > h.wigPos ? 1 : -1;
+                if (h.wigDir != 0 && dir != h.wigDir && ++h.wigTurns == 4) {
+                    ++m_wiggles;
+                    h.wigTurns = 0;
+                }
+                h.wigDir = dir;
+                h.wigPos = pos;
+            }
             Command mv;
             mv.type = Command::Move;
             mv.id = t.id;
@@ -1706,6 +1744,20 @@ private:
     }
 
     QString describe() const;
+    int notesHeld(const Held *besides) const {
+        int n = 0;
+        for (const auto &o : m_held)
+            n += &o != besides && o.id >= 0 && o.role == Role::Note;
+        for (const auto &k : m_keys)
+            n += k.down;
+        return n;
+    }
+    bool harmonyOn() const {
+        for (const auto &sl : m_slots)
+            if (sl.on)
+                return true;
+        return false;
+    }
 
     std::array<Held, 16> m_held{};
     std::array<KeyHeld, 36> m_keys{};
@@ -1721,6 +1773,7 @@ private:
     Frame m_frame;
     int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;
     bool m_follow = false, m_latch = false, m_click = false;
+    uint32_t m_glides = 0, m_wiggles = 0, m_harmonized = 0; // for the tutorial
     QString m_status;
     std::array<TrailPoint, kTrail> m_trail{};
     long m_trailHead = 0;

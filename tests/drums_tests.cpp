@@ -356,6 +356,26 @@ private slots:
         QVERIFY(take.rms(7, 9) > 0.02);
     }
 
+    // Space while a groove plays under the fingers keeps it the way a click
+    // does: whole bars of the groove on the clock, the tempo unchanged, and
+    // none of the taps and rolls tried before it.
+    void spaceKeepsTheHeldGrooveWithoutWhatCameBefore() {
+        const auto take = testkit::play("page 0 1\n"
+                                        "tap 0.3 " + at(drums::Rim) + "\ntap 0.8 " + at(drums::Crash) +
+                                        "\ndown 1.2 7 " + at(drums::Shaker) + "\nup 2.6 7\n" // a roll tried
+                                        "down 3.00 1 " + at(drums::Kick) + "\ndown 3.02 2 " + at(drums::Clap) +
+                                        "\ndown 3.04 3 " + at(drums::Hat) +
+                                        "\nkey 6.2 Space\nup 7.0 1\nup 7.0 2\nup 7.0 3\nend 12\n");
+        const auto &part = take.view.parts[0];
+        QCOMPARE(part.playing, 0);
+        // Held two bars and more: two bars of it.
+        QCOMPARE(int(part.clips[0].lengthBeats), 8);
+        // Kick 4, clap 2, hats 8 a bar: nothing of the rim, crash or shaker.
+        QCOMPARE(part.clips[0].events, 28);
+        QCOMPARE(int(std::lround(take.view.bpm)), 124);
+        QVERIFY(take.rms(10, 12) > 0.02);
+    }
+
     void aThumbThatComesDownToClickOnlyClicks() {
         // Two fingers groove; a thumb lands and clicks: the groove is kept,
         // nothing is grabbed for shaping.

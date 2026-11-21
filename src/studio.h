@@ -45,6 +45,7 @@ struct StudioMsg {
     int8_t slot = 0;
     int32_t value = 0;
     double d0 = 0, d1 = 0;
+    double d2 = -1e18; // TakeBars layered: nothing played before this beat goes in (it is in the loop already)
     float f = 0;
     Command cmd;
 };
@@ -83,6 +84,19 @@ public:
     void setRecording(bool on) { m_recording.store(on, std::memory_order_release); }
     bool recording() const { return m_recording.load(std::memory_order_acquire); }
     size_t drainRecording(float *out, size_t maxFrames);
+
+    // Debugging: every On a part hears (live or replayed from a slot) and
+    // every take made, in a ring the session drains into its log.
+    struct DebugEvent {
+        int kind = 0;  // 0 an On heard, 1 a take made, 2 one of its events
+        int part = -1;
+        int src = -1;  // kind 0: −1 live, else the slot it replayed from; kinds 1/2: the slot
+        double t = 0, heard = 0, beat = 0; // kind 0
+        double a = 0, b = 0, len = 0, anchor = 0; // kind 1: the window; kind 2: a = pos
+        int id = 0, i0 = 0, flags = 0, type = 0, events = 0;
+        float v = 0;
+    };
+    bool popDebug(DebugEvent &e);
 
     double lastBlockLoad() const { return m_lastLoad; }
     uint64_t samples() const { return m_sample; }

@@ -107,6 +107,7 @@ struct Studio::PartState {
     int recording = -1;
     double recStart = 0, recEnd = -1, recOrigin = 0;
     int recLayerInto = -1; // a take that lands layered into this slot's clip
+    double recFrom = -1e18; // a layer leaves out what was played before this beat
     int recMaxBars = 16;
     int held[kReplayHeld] = {};
     int heldCount = 0;
@@ -159,6 +160,7 @@ struct Studio::Impl : AudioContext {
     // Messages timed later than the coming block (a part scheduling ahead, a
     // mixer move set for the bar line), held until their block.
     static constexpr int kPending = 1024;
+    SpscQueue<Studio::DebugEvent, 16384> debug;
     StudioMsg pending[kPending];
     int pendingCount = 0;
     bool dispatching = false;
@@ -289,8 +291,29 @@ static void startClip(Studio::PartState &p, Studio::Impl &s, int slot, double an
 // Makes a clip from what the part played between beats b0 and b1. With
 // stretch, the take is scaled to the snapped length (a rhythm tapped in its
 // own time); without, it is cut to it (a recording in the studio's time).
+static void debugOn(Studio::Impl &s, int part, int src, const Command &c) {
+    if (c.type != Command::On && c.type < Command::User)
+        return;
+    Studio::DebugEvent e;
+    e.kind = 0;
+    e.part = part;
+    e.src = src;
+    e.t = c.t > 0 ? c.t : s.blockTime;
+    e.heard = std::max(e.t, s.blockTime);
+    const Transport &tr = s.transportState;
+    e.beat = tr.beat + (e.heard - s.blockTime) / tr.secondsPerBeat();
+    e.id = c.id;
+    e.i0 = c.i[0];
+    e.flags = c.flags;
+    e.v = c.f[0];
+    e.type = int(c.type);
+    s.debug.push(e);
+}
+
+static void debugClip(Studio::Impl &s, int part, const Studio::PartState &p, int slot, double b0, double b1);
+
 static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0, double b1, float quantize,
-                     double anchor, bool stretch) {
+                     double anchor, bool stretch, double playedFrom = -1e18) {
     const double raw = b1 - b0;
     if (slot < 0 || slot >= kClipSlots || raw < 0.2)
         return;
@@ -341,7 +364,9 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             if (lg.beat >= b0 - early - eps)
                 break;
             const Command &c = lg.c;
-            if (c.type == Command::On && !(c.flags & Command::Quantize)) {
+            // A layer carries in no sound begun before it: that one is the
+            // loop's own, and it would sound twice.
+            if (c.type == Command::On && !(c.flags & Command::Quantize) && lg.beat >= playedFrom - eps) {
                 if (heldCount < 32) {
                     heldMoved[heldCount] = false;
                     held[heldCount++] = c;
@@ -385,6 +410,10 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         if (lg.beat >= b1 - 0.12 && (lg.c.type == Command::On || (lg.c.flags & Command::Quantize)))
             playedOnTheOne = true;
         if (lg.beat < b0 - early - eps || lg.beat >= b1 - early - eps)
+            continue;
+        // A layer holds only what was played over the loop, never the
+        // playing the loop was made from.
+        if (lg.beat < playedFrom - eps && lg.c.type != Command::Param)
             continue;
         if (int(clip.events.size()) >= kClipEvents - 64)
             break;
@@ -505,6 +534,42 @@ static bool mergeInto(Studio::PartState &p, Studio::Impl &s, int a, int b, bool 
     return true;
 }
 
+static void debugClip(Studio::Impl &s, int part, const Studio::PartState &p, int slot, double b0, double b1) {
+    if (slot < 0 || slot >= kClipSlots)
+        return;
+    const auto &clip = p.clips[slot];
+    Studio::DebugEvent e;
+    e.kind = 1;
+    e.part = part;
+    e.src = slot;
+    e.a = b0;
+    e.b = b1;
+    e.len = clip.length;
+    e.anchor = clip.anchor;
+    e.events = int(clip.events.size());
+    e.heard = s.blockTime;
+    e.beat = s.transportState.beat;
+    s.debug.push(e);
+    int n = 0;
+    for (const auto &ev : clip.events) {
+        if (++n > 400)
+            break;
+        Studio::DebugEvent x;
+        x.kind = 2;
+        x.part = part;
+        x.src = slot;
+        x.a = ev.pos;
+        x.type = int(ev.c.type);
+        x.id = ev.c.id;
+        x.i0 = ev.c.i[0];
+        x.flags = ev.c.flags;
+        x.v = ev.c.f[0];
+        s.debug.push(x);
+    }
+}
+
+bool Studio::popDebug(DebugEvent &e) { return d->debug.pop(e); }
+
 void Studio::apply(const StudioMsg &m) {
     Impl &s = *d;
     Transport &tr = s.transportState;
@@ -547,6 +612,7 @@ void Studio::apply(const StudioMsg &m) {
             s.pending[s.pendingCount++] = m;
             break;
         }
+        debugOn(s, m.part, -1, c);
         p->engine->command(c, s);
         break;
     }
@@ -577,10 +643,12 @@ void Studio::apply(const StudioMsg &m) {
                 for (auto &lg : q->history)
                     lg.beat = tr.beat + (lg.beat - oldBeat) * bpm / oldBpm;
             makeClip(*p, s, m.slot, bar - secs * bpm / 60.0, bar, m.f, bar, true);
+            debugClip(s, m.part, *p, m.slot, bar - secs * bpm / 60.0, bar);
             break;
         }
         const double anchor = std::round(b1);
         makeClip(*p, s, m.slot, b0, b1, m.f, anchor, true);
+        debugClip(s, m.part, *p, m.slot, b0, b1);
         break;
     }
     case StudioMsg::Record:
@@ -613,6 +681,7 @@ void Studio::apply(const StudioMsg &m) {
         p->recStart = m.d0;
         p->recEnd = m.d1;
         p->recLayerInto = m.value > 0 ? m.value - 1 : -1;
+        p->recFrom = p->recLayerInto >= 0 ? m.d2 : -1e18;
         {
             // The clip's anchor: the window's start rounded down to the grid
             // its length lives on (the bar, or the beat for shorter loops).
@@ -814,8 +883,10 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 const StudioMsg due = m;
                 s.pending[i] = s.pending[--s.pendingCount];
                 if (due.kind == StudioMsg::ToPart) {
-                    if (due.part >= 0 && due.part < int(m_parts.size()))
+                    if (due.part >= 0 && due.part < int(m_parts.size())) {
+                        debugOn(s, due.part, -1, due.cmd);
                         m_parts[size_t(due.part)]->engine->command(due.cmd, s);
+                    }
                 } else {
                     apply(due);
                 }
@@ -830,6 +901,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
     // the events that fall in it.
     for (auto &pp : m_parts) {
         PartState &p = *pp;
+        const int pi = int(&pp - m_parts.data());
         if (p.stopQueued && p.stopAt < b1)
             stopClip(p, s);
         if (p.queued >= 0 && p.queuedAt < b1)
@@ -840,7 +912,9 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             if (end < b1) {
                 const int slot = p.recording;
                 p.recording = -1;
-                makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false);
+                makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false, p.recFrom);
+                p.recFrom = -1e18;
+                debugClip(s, pi, p, slot, p.recStart, end);
                 // Layered onto the loop that was playing: the take goes into
                 // that clip, which plays on with both, and its own slot is
                 // freed. One Ctrl+Z takes the layer back off.
@@ -856,6 +930,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                     p.clips[slot].events.clear();
                     p.clips[slot].length = 0;
                     startClip(p, s, into, p.clips[into].anchor);
+                    debugClip(s, pi, p, into, p.recStart, end);
                 }
             }
         }
@@ -872,6 +947,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             Command c = e.c;
             c.id = replayId(c.id, p.playing);
             c.t = s.blockTime + (pos - pos0) * spb;
+            debugOn(s, pi, p.playing, c);
             if (c.type == Command::On) {
                 bool already = false;
                 for (int i = 0; i < p.heldCount; ++i)

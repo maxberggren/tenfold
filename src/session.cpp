@@ -4,6 +4,7 @@
 #include <Qt>
 #include <algorithm>
 #include <array>
+#include <cstdarg>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -208,9 +209,64 @@ Session::Session(Studio *studio) : m_studio(studio) {
         for (int c = 0; c < ChannelCount; ++c)
             m_view.parts[i].channel.value[c] = m_pages[size_t(i)]->spec.channel[c];
     m_pages[0]->spec.control->enter(*m_pages[0]->ctx);
+    if (const char *log = std::getenv("TENFOLD_DEBUG_LOG"))
+        setDebugLog(QString::fromLocal8Bit(log));
 }
 
-Session::~Session() = default;
+Session::~Session() {
+    if (m_debugLog)
+        std::fclose(m_debugLog);
+}
+
+void Session::setDebugLog(const QString &path) {
+    std::lock_guard lock(m_lock);
+    if (m_debugLog)
+        std::fclose(m_debugLog);
+    m_debugLog = std::fopen(path.toLocal8Bit().constData(), "w");
+    dlog("tenfold debug log: ON = a hit a part heard (src live, or the slot it replayed from); TAKE = a loop made");
+}
+
+void Session::dlog(const char *fmt, ...) {
+    if (!m_debugLog)
+        return;
+    std::fprintf(m_debugLog, "[%10.4f] ", now());
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(m_debugLog, fmt, ap);
+    va_end(ap);
+    std::fputc('\n', m_debugLog);
+    std::fflush(m_debugLog);
+}
+
+void Session::drainDebug() {
+    Studio::DebugEvent e;
+    bool any = false;
+    while (m_studio->popDebug(e)) {
+        any = true;
+        if (!m_debugLog)
+            continue;
+        const char *name = e.part >= 0 && e.part < int(m_pages.size()) ? "" : "?";
+        if (e.kind == 0) {
+            char src[16];
+            if (e.src < 0)
+                std::snprintf(src, sizeof src, "live");
+            else
+                std::snprintf(src, sizeof src, "slot%d", e.src + 1);
+            dlog("ON   part=%d%s %-6s beat=%9.4f (bar %d + %6.3f) t=%9.4f late=%6.1fms type=%d id=%d i0=%d fl=%d v=%.2f", e.part,
+                 name, src, e.beat, int(std::floor(e.beat / kBeatsPerBar)) + 1,
+                 e.beat - std::floor(e.beat / kBeatsPerBar) * kBeatsPerBar, e.t, (e.heard - e.t) * 1000.0, e.type, e.id, e.i0,
+                 e.flags, double(e.v));
+        } else if (e.kind == 1) {
+            dlog("TAKE part=%d slot=%d window %.4f..%.4f (%.3f beats) -> clip len=%.3f anchor=%.4f events=%d (clock beat %.4f)",
+                 e.part, e.src + 1, e.a, e.b, e.b - e.a, e.len, e.anchor, e.events, e.beat);
+        } else {
+            dlog("  EV slot=%d pos=%8.4f type=%d id=%d i0=%d fl=%d v=%.2f", e.src + 1, e.a, e.type, e.id, e.i0, e.flags,
+                 double(e.v));
+        }
+    }
+    if (any && m_debugLog)
+        std::fflush(m_debugLog);
+}
 
 double Session::now() const {
     if (m_clock)
@@ -341,6 +397,7 @@ void Session::deliver(const Frame &f) {
 
 void Session::idle(double t) {
     std::lock_guard lock(m_lock);
+    drainDebug();
     for (auto &page : m_pages)
         page->spec.control->background(t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
@@ -419,6 +476,11 @@ void Session::refresh() {
             while (m_takesSeen[p] < m_view.parts[p].takes) {
                 ++m_takesSeen[p];
                 m_takeOrder.push_back(p);
+                m_loopSince[p] = m_view.beat;
+            }
+            if (m_view.parts[p].playing != m_lastPlaying[p]) {
+                m_lastPlaying[p] = m_view.parts[p].playing;
+                m_loopSince[p] = m_view.beat;
             }
         }
         if (m_takeOrder.size() > 64)
@@ -567,6 +629,23 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     Context &ctx = static_cast<Context &>(base);
     const int part = ctx.part();
     const PartView &v = m_view.parts[part];
+    if (m_debugLog) {
+        const double nowT = now();
+        dlog("SPACE part=%d layer=%d now=%.4f beat=%.4f bpm=%.2f playing=%d recording=%d held=%d voices=%d", part,
+             int(layer), nowT, ctx.beatAt(nowT), m_view.bpm, v.playing, v.recording, ctx.heldCount, v.voices);
+        for (int q = 0; q < m_view.partCount; ++q)
+            if (m_view.parts[q].playing >= 0)
+                dlog("  part %d plays slot %d len=%.3f", q, m_view.parts[q].playing + 1,
+                     double(m_view.parts[q].clips[m_view.parts[q].playing].lengthBeats));
+        dlog("  page says: %s", qPrintable(pageStatus()));
+        const size_t n = std::min(ctx.onsetHead, ctx.onsets.size());
+        for (size_t i = n; i-- > 0;) {
+            const auto &o = ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()];
+            const double b = ctx.beatAt(o.t);
+            if (b > ctx.beatAt(nowT) - 64)
+                dlog("  onset beat=%9.4f t=%9.4f real=%d key=%08x", b, o.t, int(o.real), o.key);
+        }
+    }
     if (v.recording >= 0) {
         StudioMsg m;
         m.kind = StudioMsg::CancelRecord;
@@ -586,10 +665,18 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     // The phrase: what was played back from the latest, until a pause of two
     // bars. It starts at its earliest real onset; carried-on sounds bridge
     // pauses and mark where it ends.
+    // Layering onto this part's own loop: only what was played since the
+    // loop last changed. What came before is in it already.
+    const bool layering = layer && m_view.parts[part].playing >= 0;
+    const double since = layering ? m_loopSince[part] : -1e18;
     std::vector<Context::Onset> times;
     const size_t n = std::min(ctx.onsetHead, ctx.onsets.size());
-    for (size_t i = 0; i < n; ++i)
-        times.push_back(ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()]);
+    for (size_t i = 0; i < n; ++i) {
+        const auto &o = ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()];
+        if (!layering || ctx.beatAt(o.t) >= since - 0.02)
+            times.push_back(o);
+    }
+    dlog("  layering=%d since=%.4f onsets kept=%d", int(layering), since, int(times.size()));
     std::sort(times.begin(), times.end(), [](const auto &x, const auto &y) { return x.t < y.t; });
     double first = -1, earliest = -1, last = -1, lastReal = -1;
     bool clocked = false; // sounds carried on through the phrase: it already runs on the clock
@@ -616,7 +703,9 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     }
     if (first < 0)
         first = earliest;
-    if (first < 0 && m_view.parts[part].voices > 0) {
+    // (A layer with nothing new played has nothing to add: the loop is what
+    // sounds.)
+    if (first < 0 && m_view.parts[part].voices > 0 && !(layering && ctx.heldCount == 0)) {
         // Nothing played lately, but the part is sounding (a bed latched a
         // while ago, an arp left running): loop the bar that just went by,
         // or the one now ending. The take carries in what was held across
@@ -635,6 +724,8 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
         ctx.notice(QStringLiteral("Looping what is sounding: 1 bar in slot %1").arg(slot + 1));
         return;
     }
+    dlog("  phrase: first=%.4f earliest=%.4f last=%.4f lastReal=%.4f clocked=%d", first, earliest, last, lastReal,
+         int(clocked));
     if (first < 0) {
         ctx.notice(QStringLiteral("Play something, then Space loops it"));
         return;
@@ -677,6 +768,9 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
                 break;
             }
         }
+        dlog("  decided (free, sets the tempo): first=%.4f start=%.4f now=%.4f -> capture %.4f s (%.4f beats at the old "
+             "tempo) settled=%d hits=%d slot=%d",
+             first, start, nowT, nowT - start, (nowT - start) / spb, int(settled), int(hits.size()), slot + 1);
         ctx.capture(slot, start, nowT, 0.85f);
         m_view.parts[part].recording = slot;
         ctx.notice(settled ? QStringLiteral("Loop of what you repeated, slot %1: it sets the tempo").arg(slot + 1)
@@ -717,7 +811,11 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     // played twice.
     double length = 0, bestScore = 0.75;
     for (double p : {4.0, 8.0, 16.0, 32.0, 64.0}) {
-        if (end - 2 * p < beatFirst - 0.125 - 0.2)
+        // Two cycles must fit in what was played. The end sits a beat
+        // after the last note, so a phrase whose notes come every other
+        // beat ends before its cycle does: the first cycle may start a
+        // little before the first note (the score still checks the match).
+        if (end - 2 * p < beatFirst - std::max(0.325, std::min(2.0, 0.3 * p)))
             break;
         const double score = repeats(hits, end - p, end, p, 0.2, 0.125);
         if (score >= 0.9) {
@@ -754,11 +852,16 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     m.slot = int8_t(slot);
     m.d0 = end - length;
     m.d1 = end;
+    dlog("  decided: first=%.4f last=%.4f lastReal=%.4f end=%.4f length=%.3f settled=%d -> TakeBars %.4f..%.4f slot=%d",
+         ctx.beatAt(first), ctx.beatAt(last), lastReal >= 0 ? ctx.beatAt(lastReal) : -1.0, end, length, int(settled),
+         m.d0, m.d1, slot + 1);
     // Space: on top of this part's playing loop, as one loop (Shift+Space
     // asks for a new loop instead).
     const int into = m_view.parts[part].playing;
-    if (layer && into >= 0)
+    if (layer && into >= 0) {
         m.value = into + 1;
+        m.d2 = since;
+    }
     ctx.post(m);
     m_view.parts[part].recording = slot;
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);

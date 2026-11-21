@@ -196,6 +196,20 @@ public:
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const bool shift = k.modifiers & Qt::ShiftModifier;
+        if (k.key == Qt::Key_Space) {
+            // Space while a roll or groove plays under a finger or key keeps
+            // it, as a click does: whole bars of it on the clock, from when
+            // it began, so the taps and rolls tried before it stay out and
+            // the tempo stays. It plays on to the bar line and the loop takes
+            // over from there, without the hand doubling it. Over a playing
+            // loop it goes into that loop; Shift+Space makes a new one.
+            // Otherwise Space is the session's, as on every page.
+            if (!holdingGen() && !m_keep.active)
+                return false;
+            if (k.down && !k.repeat && !m_keep.active)
+                keepHeld(ctx.now(), ctx, shift);
+            return true;
+        }
         if (k.key == Qt::Key_B || k.key == Qt::Key_N) {
             // REPEAT, as long as it's held: pads roll the moment they land.
             const uint8_t bit = k.key == Qt::Key_B ? 1 : 2;
@@ -321,8 +335,8 @@ public:
             "land fingers together and hold\ta groove: each pad plays its part in the kit's style; "
             "slide one up for busier, sideways to shift it\n"
             "hold another pad while grooving\tadds its drum to the groove\n"
-            "click while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it was held "
-            "(or overdubs into the loop playing)\n"
+            "click or Space while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it "
+            "was held, without what you tried before it (or overdubs into the loop playing; Shift+Space: a new loop)\n"
             "click a pad you just touched, drag\twith nothing rolling, shape that drum: sideways tunes, up lengthens, "
             "twist changes its tone\n"
             "run a finger fast across pads\tplays each one it crosses: a fill\n"
@@ -902,21 +916,30 @@ private:
 
     // --- the click -------------------------------------------------------------
 
+    bool holdingGen() const {
+        for (const auto &g : m_gens)
+            if (g.active && !g.preview && g.holder >= 0)
+                return true;
+        return false;
+    }
+
+    // Keeps what rolls and grooves under the hand: a click, or Space.
+    void keepHeld(double now, ControlContext &ctx, bool fresh = false) {
+        for (auto &h : m_holders)
+            if (h.used && !h.key && h.mode == Mode::Pending) {
+                if (h.pad == Sub)
+                    sendOff(h, now, ctx);
+                h.mode = Mode::Kept;
+            }
+        keep(now, ctx, fresh);
+    }
+
     void click(double now, ControlContext &ctx) {
         // While anything rolls or grooves under a finger, a click keeps it,
         // whichever finger pressed: a thumb that came down to click is only
         // the click.
-        bool holding = false;
-        for (const auto &g : m_gens)
-            holding |= g.active && !g.preview && g.holder >= 0;
-        if (holding) {
-            for (auto &h : m_holders)
-                if (h.used && !h.key && h.mode == Mode::Pending) {
-                    if (h.pad == Sub)
-                        sendOff(h, now, ctx);
-                    h.mode = Mode::Kept;
-                }
-            keep(now, ctx);
+        if (holdingGen()) {
+            keepHeld(now, ctx);
             return;
         }
         // Otherwise fresh fingers grab their drums' sounds.
@@ -943,7 +966,7 @@ private:
     // Keeps every held roll and groove: they play on by themselves to the
     // next bar line, and that bar becomes a loop (or, with a loop playing,
     // they are overdubbed into one whole pass of it).
-    void keep(double now, ControlContext &ctx) {
+    void keep(double now, ControlContext &ctx, bool fresh = false) {
         if (m_keep.active)
             return;
         double first = 1e18;
@@ -959,7 +982,7 @@ private:
         const PartView &pv = ctx.studio().parts[ctx.part()];
         Keep k;
         k.active = true;
-        if (pv.playing >= 0 && pv.clips[pv.playing].lengthBeats > 0) {
+        if (!fresh && pv.playing >= 0 && pv.clips[pv.playing].lengthBeats > 0) {
             k.overdub = true;
             k.from = std::ceil(beat / kBeatsPerBar - 1e-6) * kBeatsPerBar;
             k.until = k.from + pv.clips[pv.playing].lengthBeats;

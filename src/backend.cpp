@@ -23,6 +23,10 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         m_session->setClock(&scriptClock);
 
     if (live) {
+        // Debugging Space takes: ~/.cache/tenfold/debug.log, fresh each run.
+        const QString cache = QDir::homePath() + "/.cache/tenfold";
+        QDir().mkpath(cache);
+        m_session->setDebugLog(cache + "/debug.log");
         m_audio->start();
         const auto pads = Device::findTouchpads();
         if (!pads.isEmpty())

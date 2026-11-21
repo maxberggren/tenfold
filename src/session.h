@@ -26,6 +26,7 @@
 // record the mix, quit). The pad is taken with the window's Play button.
 
 #include <QString>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -55,6 +56,9 @@ public:
     QColor pageColor(int page) const;
     QString pageHelp(int page) const;
     QString pageStatus() const;
+    // Debugging: writes what Space decided and every hit the parts hear to
+    // this file (truncated), drained from the studio as the session idles.
+    void setDebugLog(const QString &path);
     QString pageStatus(int page) const;
     // A page's tutorialProbe() (NaN when it doesn't know the name).
     float probe(int page, const QString &name) const;
@@ -122,6 +126,9 @@ private:
     Context &context(int page);
 
     Studio *m_studio;
+    std::FILE *m_debugLog = nullptr;
+    void drainDebug();
+    void dlog(const char *fmt, ...);
     std::vector<std::unique_ptr<Page>> m_pages;
     int m_partCount = 0;
     int m_page = 0;
@@ -143,6 +150,10 @@ private:
     bool soundedThrough(int part, double t0, double t1, double maxGap) const;
     double lastSounding(int part, double since) const;
     uint32_t m_takesSeen[kMaxParts] = {};
+    // The beat each part's loop last changed (a take landed, another slot
+    // started): a layer takes only what was played since.
+    double m_loopSince[kMaxParts] = {};
+    int m_lastPlaying[kMaxParts] = {};
     double m_startOverAsked = -1;
     int m_undos = 0;
     bool m_mixRecording = false;

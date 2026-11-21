@@ -33,6 +33,8 @@
 // Everything a key does, the band under the pad does for the mouse.
 
 #include <QFontMetricsF>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -42,6 +44,7 @@
 #include "bass.h"
 #include "console.h"
 #include "parts.h"
+#include "songfile.h"
 
 namespace tf {
 
@@ -241,6 +244,164 @@ public:
                 sendShaper(Shaper(s), 0, restB(Shaper(s)), ctx.now(), ctx, true);
         m_frame = Frame{};
         m_button = false;
+    }
+
+    // --- the song file ------------------------------------------------------
+
+    // What the player set up and would want back: the sound and how each
+    // sound is shaped, the register, tone, slide and follow the next notes
+    // take, where each shaper starts, and the shapers latched on (they bend
+    // the loops that play on). Sounds, patterns and rates go by name, so a
+    // list that grows or reorders still opens an old song as it was.
+    void save(QJsonObject &out) const override {
+        out[QStringLiteral("sound")] = QString::fromUtf8(recipe(m_sound).name);
+        out[QStringLiteral("octave")] = m_octave;
+        out[QStringLiteral("tone")] = tidyFloat(m_keyTone);
+        out[QStringLiteral("slide")] = tidyFloat(m_glide);
+        out[QStringLiteral("follow")] = m_follow;
+        QJsonObject morph;
+        QJsonArray square;
+        for (int s = 0; s < SoundCount; ++s) {
+            morph[QString::fromUtf8(recipe(s).name)] = tidyFloat(m_morph[s]);
+            if (m_square[s])
+                square.append(QString::fromUtf8(recipe(s).name));
+        }
+        out[QStringLiteral("morph")] = morph;
+        out[QStringLiteral("square")] = square;
+        out[QStringLiteral("roll")] = rollJson(m_pattern, m_gate);
+        out[QStringLiteral("wobble")] = wobbleJson(m_rate, m_depth);
+        out[QStringLiteral("grit")] = gritJson(m_grit, m_gritChar);
+        QJsonObject latched;
+        if (m_latched[ShapeOct])
+            latched[QStringLiteral("octave")] = int(m_sent[ShapeOct][0]);
+        if (m_latched[ShapeRoll])
+            latched[QStringLiteral("roll")] = rollJson(int(m_sent[ShapeRoll][1]), m_sent[ShapeRoll][0]);
+        if (m_latched[ShapeWob])
+            latched[QStringLiteral("wobble")] = wobbleJson(int(m_sent[ShapeWob][1]), m_sent[ShapeWob][0]);
+        if (m_latched[ShapeGrit])
+            latched[QStringLiteral("grit")] = gritJson(m_sent[ShapeGrit][0], m_sent[ShapeGrit][1]);
+        if (m_latched[ShapeFilter])
+            latched[QStringLiteral("filter")] = QJsonObject{{QStringLiteral("cutoff"), tidyFloat(m_sent[ShapeFilter][0])},
+                                                            {QStringLiteral("morph"), tidyFloat(m_sent[ShapeFilter][1])}};
+        out[QStringLiteral("latched")] = latched;
+    }
+
+    // Everything missing or unreadable falls back to how a new page starts,
+    // never to what the song open before had. The page's own settings reach
+    // the engine with the next note it plays; the latches are sent now, as a
+    // latch from the rail would be, and every other shaper springs back.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        const Control home;
+        const int sound = soundNamed(in.value(QStringLiteral("sound")));
+        m_sound = sound >= 0 ? sound : home.m_sound;
+        m_octave = int(std::lround(number(in, "octave", float(home.m_octave), 0, 2)));
+        m_keyTone = number(in, "tone", home.m_keyTone, 0, 1);
+        m_glide = number(in, "slide", home.m_glide, 0, 1);
+        const QJsonValue follow = in.value(QStringLiteral("follow"));
+        m_follow = follow.isBool() ? follow.toBool() : home.m_follow;
+        const QJsonObject morph = in.value(QStringLiteral("morph")).toObject();
+        for (int s = 0; s < SoundCount; ++s) {
+            m_morph[s] = number(morph, recipe(s).name, home.m_morph[s], 0, 1);
+            m_square[s] = false;
+        }
+        for (const QJsonValue &v : in.value(QStringLiteral("square")).toArray()) {
+            // A sound with no saw has none to turn square, as its key says.
+            const int s = soundNamed(v);
+            if (s >= 0 && recipe(s).saw > 0)
+                m_square[s] = true;
+        }
+        const QJsonObject roll = in.value(QStringLiteral("roll")).toObject();
+        const int pattern = patternNamed(roll.value(QStringLiteral("pattern")));
+        m_pattern = pattern >= 0 ? pattern : home.m_pattern;
+        m_gate = number(roll, "gate", home.m_gate, 0.15f, 1);
+        const QJsonObject wobble = in.value(QStringLiteral("wobble")).toObject();
+        const int rate = rateNamed(wobble.value(QStringLiteral("rate")));
+        m_rate = rate >= 0 ? rate : home.m_rate;
+        m_depth = number(wobble, "depth", home.m_depth, 0.05f, 1);
+        const QJsonObject grit = in.value(QStringLiteral("grit")).toObject();
+        m_grit = number(grit, "amount", home.m_grit, 0.02f, 1);
+        m_gritChar = number(grit, "character", home.m_gritChar, 0, 1);
+
+        // The latches: each shaper goes where the file had it latched, or
+        // back to rest. A latch whose pattern or rate is unknown takes the
+        // one its shaper starts with.
+        const QJsonObject latched = in.value(QStringLiteral("latched")).toObject();
+        auto shaper = [&](const char *name) { return latched.value(QLatin1String(name)).toObject(); };
+        auto has = [&](const char *name) { return latched.value(QLatin1String(name)).isObject(); };
+        float a[ShaperCount] = {}, b[ShaperCount] = {};
+        bool on[ShaperCount] = {};
+        if (latched.value(QStringLiteral("octave")).isDouble()) {
+            on[ShapeOct] = true;
+            a[ShapeOct] = std::round(number(latched, "octave", 0, 0, 2));
+        }
+        if (has("roll")) {
+            const int p = patternNamed(shaper("roll").value(QStringLiteral("pattern")));
+            on[ShapeRoll] = true;
+            a[ShapeRoll] = number(shaper("roll"), "gate", m_gate, 0.15f, 1);
+            b[ShapeRoll] = float(p >= 0 ? p : m_pattern);
+        }
+        if (has("wobble")) {
+            const int r = rateNamed(shaper("wobble").value(QStringLiteral("rate")));
+            on[ShapeWob] = true;
+            a[ShapeWob] = number(shaper("wobble"), "depth", m_depth, 0.05f, 1);
+            b[ShapeWob] = float(r >= 0 ? r : m_rate);
+        }
+        if (has("grit")) {
+            on[ShapeGrit] = true;
+            a[ShapeGrit] = number(shaper("grit"), "amount", m_grit, 0.02f, 1);
+            b[ShapeGrit] = number(shaper("grit"), "character", m_gritChar, 0, 1);
+        }
+        if (has("filter")) {
+            on[ShapeFilter] = true;
+            a[ShapeFilter] = number(shaper("filter"), "cutoff", 0, -0.7f, 0.7f);
+            b[ShapeFilter] = number(shaper("filter"), "morph", 0, -1, 1);
+        }
+        m_latchNext = false;
+        const double now = ctx.now();
+        for (int s = 0; s < ShaperCount; ++s) {
+            m_latched[s] = on[s];
+            sendShaper(Shaper(s), on[s] ? a[s] : 0.0f, on[s] ? b[s] : restB(Shaper(s)), now, ctx, true);
+        }
+        // The engine still keeps each slot's shapers from the song before (a
+        // slot full in both was never seen to empty): the new loops start
+        // clean and set their own as they play.
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        for (int k = 0; k < kClipSlots; ++k) {
+            resetSlot(k, ctx);
+            m_slotFull[k] = pv.clips[k].state != ClipView::Empty;
+        }
+    }
+
+    // A number from the file, clamped to its range; anything else (missing,
+    // a string, a bool) is the default.
+    static float number(const QJsonObject &o, const char *key, float def, float lo, float hi) {
+        const QJsonValue v = o.value(QLatin1String(key));
+        if (!v.isDouble() || !std::isfinite(v.toDouble()))
+            return def;
+        return float(std::clamp(v.toDouble(), double(lo), double(hi)));
+    }
+    // A sound, pattern or rate by its name, in any case; −1 if none has it.
+    template <typename Name>
+    static int named(const QJsonValue &v, int count, Name name) {
+        const QString s = v.toString();
+        for (int k = 0; k < count && !s.isEmpty(); ++k)
+            if (s.compare(QString::fromUtf8(name(k)), Qt::CaseInsensitive) == 0)
+                return k;
+        return -1;
+    }
+    static int soundNamed(const QJsonValue &v) { return named(v, SoundCount, [](int k) { return recipe(k).name; }); }
+    static int patternNamed(const QJsonValue &v) { return named(v, kPatternCount, [](int k) { return kPatterns[k].name; }); }
+    static int rateNamed(const QJsonValue &v) { return named(v, kRateCount, [](int k) { return kRateNames[k]; }); }
+    static QJsonObject rollJson(int pattern, float gate) {
+        return {{QStringLiteral("pattern"), QString::fromUtf8(kPatterns[std::clamp(pattern, 0, kPatternCount - 1)].name)},
+                {QStringLiteral("gate"), tidyFloat(gate)}};
+    }
+    static QJsonObject wobbleJson(int rate, float depth) {
+        return {{QStringLiteral("rate"), QString::fromUtf8(kRateNames[std::clamp(rate, 0, kRateCount - 1)])},
+                {QStringLiteral("depth"), tidyFloat(depth)}};
+    }
+    static QJsonObject gritJson(float amount, float character) {
+        return {{QStringLiteral("amount"), tidyFloat(amount)}, {QStringLiteral("character"), tidyFloat(character)}};
     }
 
     // --- keys ---------------------------------------------------------------

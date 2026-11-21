@@ -320,14 +320,14 @@ void Tutorial::build() {
          {{QStringLiteral("A note with a harmony"), [](Look &l) { return l.probe(Lead, "harmonized") >= 1; }}}});
 
     add({QStringLiteral("Lead"), Lead, QStringLiteral("Your melody"),
-         QStringLiteral("Press Enter: the lead now lands on the chord's notes, so nothing clashes. Play a melody across "
+         QStringLiteral("Press § (the key left of 1): the lead now lands on the chord's notes, so nothing clashes. Play a melody across "
                         "the four chords, play it once more, and press Space as it ends: one round of it loops."),
          QStringLiteral("No tune in mind? Three notes rising on each chord, the last one held."),
          QStringLiteral("That's the hook."),
-         {QStringLiteral("Enter"), QStringLiteral("Space")},
+         {QStringLiteral("§"), QStringLiteral("Space")},
          {},
          {neck},
-         {{QStringLiteral("Enter: on the chord"), [](Look &l) { return l.probe(Lead, "follow") > 0.5f; }},
+         {{QStringLiteral("§: on the chord"), [](Look &l) { return l.probe(Lead, "follow") > 0.5f; }},
           {QStringLiteral("A lead loop plays"), [](Look &l) { return l.playing(Lead); }}}});
 
     // --- Arp --------------------------------------------------------------------

@@ -126,8 +126,8 @@ std::string walkthrough() {
     s.add("up %.3f 32", bar(40) + 1.6);
     s.add("up %.3f 33", bar(40) + 1.6);
 
-    s.comment("Enter: on the chords. A melody across the four chords, twice round; Space.");
-    s.key(bar(41) + 0.5, "Return");
+    s.comment("§: on the chords. A melody across the four chords, twice round; Space.");
+    s.key(bar(41) + 0.5, "§");
     struct Note {
         double at, len, x;
     };

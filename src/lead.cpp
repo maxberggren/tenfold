@@ -26,6 +26,7 @@
 #include <QPainter>
 #include <array>
 #include <cmath>
+#include <vector>
 
 #include "console.h"
 #include "electro.h"
@@ -153,6 +154,7 @@ struct Line {
     float harmRow[kHarmSlots] = {}, harmLevel[kHarmSlots] = {};
     float bend = 0, throwAmt = 0, octave = 0, glideScale = 1;
     int gate = 0;
+    int tone = 0; // steps darker or brighter (- =)
     const NoteIn *top() const { return count > 0 ? &notes[count - 1] : nullptr; }
 };
 
@@ -310,6 +312,7 @@ private:
             n.vel = clampf(c.f[0], 0.1f, 1.0f);
             n.follow = (c.i[3] & kFollow) != 0;
             line.gate = (c.i[3] >> kGateShift) & 3;
+            line.tone = unpackTone(c.i[3]);
             // The harmony held when the note landed, so a clip taken in the
             // middle of a held harmony plays it too.
             for (int s = 0; s < kHarmSlots; ++s) {
@@ -360,6 +363,9 @@ private:
                 break;
             case PGlide:
                 line.glideScale = clampf(c.f[0], 0.1f, 6.0f);
+                break;
+            case PTone:
+                line.tone = std::clamp(c.i[1], -kToneSteps, kToneSteps);
                 break;
             default:
                 break;
@@ -549,7 +555,7 @@ private:
             k.layer.phase = v.rng.unit();
             k.layer2.phase = v.rng.unit();
         }
-        v.cut = cutoffFor(v, s, 1.0f);
+        v.cut = cutoffFor(v, s, 1.0f, line.tone);
         strike(v, n.vel, true);
     }
 
@@ -660,11 +666,11 @@ private:
         return t;
     }
 
-    static float cutoffFor(const Voice &v, const Sound &s, float fe) {
+    static float cutoffFor(const Voice &v, const Sound &s, float fe, int tone) {
         const float note = v.banks[0].pitch;
         float c = s.cutoff + s.cutoffY * (2.0f * v.y - 1.0f) + 0.16f * (v.press - 0.5f) +
                   s.envAmt * fe * (0.6f + 0.5f * v.vel);
-        c = c * 8.1f + s.keyTrack * (note - 72.0f) / 12.0f;
+        c = c * 8.1f + s.keyTrack * (note - 72.0f) / 12.0f + float(tone) * kToneOctaves;
         return clampf(c, 0.5f, 8.6f);
     }
 
@@ -813,7 +819,7 @@ private:
 
         // The filter, set once a segment from smoothed numbers.
         const float fe = v.filt.v;
-        v.cut += (cutoffFor(v, s, fe) - v.cut) * (1.0f - std::exp(-dt / 0.004f));
+        v.cut += (cutoffFor(v, s, fe, m_lines[size_t(v.from)].tone) - v.cut) * (1.0f - std::exp(-dt / 0.004f));
         const float fc = std::min(60.0f * std::exp2(v.cut), rate * (0.45f - 0.12f * s.res));
         v.fL.set(fc, s.res, rate);
         v.fR.set(fc, s.res, rate);
@@ -1191,11 +1197,7 @@ public:
         }
         if (m_latch) {
             m_latch = false;
-            for (int s = 0; s < kHarmSlots; ++s)
-                if (m_slots[s].on && !m_slots[s].held) {
-                    m_slots[s].on = false;
-                    param(ctx, PHarmony, s, m_slots[s].row, 0, ctx.now());
-                }
+            releaseHeldHarmony(ctx);
         }
         m_frame = Frame{};
     }
@@ -1252,76 +1254,178 @@ public:
             }
             return true;
         }
+        // The shared keys first (docs/PARTS.md 4b), each with the older
+        // keys this page had for the same thing as second keys.
+        const bool shift = k.modifiers & Qt::ShiftModifier;
         switch (k.key) {
         case Qt::Key_Backspace:
             ctx.stop();
             return true;
         case Qt::Key_Left:
         case Qt::Key_Right:
-            m_sound = (m_sound + (k.key == Qt::Key_Left ? kSounds - 1 : 1)) % kSounds;
-            ctx.notice(QString::fromUtf8(sound(m_sound).name));
+            // Shift with ← →: the trance gate, the shared rhythm keys.
+            if (shift)
+                stepGate(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            else
+                setSound((m_sound + (k.key == Qt::Key_Left ? kSounds - 1 : 1)) % kSounds, ctx);
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down:
-            if (k.modifiers & Qt::ShiftModifier) {
-                // Shift with ↑ ↓: the glide, from a quarter of the sound's own to four times it.
-                m_glide = std::clamp(m_glide + (k.key == Qt::Key_Up ? 1 : -1), -2, 2);
-                param(ctx, PGlide, 0, std::exp2(float(m_glide)), 0, ctx.now());
-                ctx.notice(QStringLiteral("Glide ×%1").arg(double(std::exp2(float(m_glide)))));
-                return true;
-            }
-            m_shift = std::clamp(m_shift + (k.key == Qt::Key_Up ? 1 : -1), -1, 1);
-            ctx.notice(m_shift == 0 ? QStringLiteral("Middle octave")
-                                    : QStringLiteral("Octave %1%2").arg(m_shift > 0 ? "+" : "−").arg(std::abs(m_shift)));
+            // Shift with ↑ ↓: the glide, from a quarter of the sound's own to four times it.
+            if (shift)
+                shiftGlide(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            else
+                shiftOctave(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_Minus:
+        case Qt::Key_Plus:  // its own key on a Nordic keyboard, Shift+= on a US one
+        case Qt::Key_Equal: // a second key: Shift+0 on a Nordic keyboard
+            shiftTone(k.key == Qt::Key_Minus ? -1 : 1, ctx);
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (k.modifiers & Qt::ShiftModifier)
-                return toggleLatch(ctx);
-            [[fallthrough]];
+            if (shift)
+                toggleOverdub(ctx);
+            else
+                toggleLatch(ctx);
+            return true;
+        case Qt::Key_section:   // the key left of 1: § on a Nordic keyboard,
+        case Qt::Key_QuoteLeft: // ` on a US one
+        case Qt::Key_Backslash: // AltGr on a Nordic keyboard, so a second key
         case Qt::Key_F11:
         case Qt::Key_AsciiTilde: // Shift+` on a US keyboard
         case Qt::Key_onehalf:    // Shift+§ on a Nordic one
-            m_follow = !m_follow;
-            ctx.notice(m_follow ? QStringLiteral("Following the chord") : QStringLiteral("Free in the scale"));
+            toggleFollow(ctx);
             return true;
-        case Qt::Key_Backslash:
         case Qt::Key_F12:
-            return toggleLatch(ctx);
-        case Qt::Key_QuoteLeft:
-        case Qt::Key_section: // the key left of 1: ` on a US keyboard, § on a Nordic one
-            m_gate = (m_gate + 1) % kGates;
-            {
-                Command c;
-                c.type = Command::Param;
-                c.t = ctx.now();
-                c.i[0] = PGate;
-                c.i[1] = m_gate;
-                ctx.send(c);
-            }
-            ctx.notice(m_gate ? QStringLiteral("Gate %1").arg(QString::fromUtf8(gateName(m_gate)))
-                              : QStringLiteral("Gate off"));
+            toggleLatch(ctx);
             return true;
-        case Qt::Key_F10: {
-            const bool on = !ctx.studio().parts[ctx.part()].overdub;
-            ctx.overdub(on);
-            ctx.notice(on ? QStringLiteral("Overdub on") : QStringLiteral("Overdub off"));
+        case Qt::Key_F10:
+            toggleOverdub(ctx);
             return true;
-        }
+        case Qt::Key_Delete:
+            letGo(ctx);
+            return true;
         default:
             return false;
         }
     }
 
+    // --- settings, from a key or a chip under the pad ---
+
+    void setSound(int snd, ControlContext &ctx) {
+        m_sound = std::clamp(snd, 0, kSounds - 1);
+        ctx.notice(QString::fromUtf8(sound(m_sound).name));
+    }
+
+    void shiftOctave(int step, ControlContext &ctx) {
+        m_shift = std::clamp(m_shift + step, -1, 1);
+        ctx.notice(m_shift == 0 ? QStringLiteral("Middle octave")
+                                : QStringLiteral("Octave %1%2").arg(m_shift > 0 ? "+" : "−").arg(std::abs(m_shift)));
+    }
+
+    void shiftGlide(int step, ControlContext &ctx) {
+        m_glide = std::clamp(m_glide + step, -2, 2);
+        param(ctx, PGlide, 0, std::exp2(float(m_glide)), 0, ctx.now());
+        ctx.notice(QStringLiteral("Glide ×%1").arg(double(std::exp2(float(m_glide)))));
+    }
+
+    void stepGate(int step, ControlContext &ctx) {
+        m_gate = (m_gate + step + kGates) % kGates;
+        param(ctx, PGate, m_gate, 0, 0, ctx.now());
+        ctx.notice(m_gate ? QStringLiteral("Gate %1").arg(QString::fromUtf8(gateName(m_gate)))
+                          : QStringLiteral("Gate off"));
+    }
+
+    void shiftTone(int step, ControlContext &ctx) {
+        m_tone = std::clamp(m_tone + step, -kToneSteps, kToneSteps);
+        param(ctx, PTone, m_tone, 0, 0, ctx.now());
+        ctx.notice(m_tone == 0 ? QStringLiteral("Tone: the sound's own")
+                               : QStringLiteral("Tone %1%2").arg(m_tone > 0 ? "+" : "−").arg(std::abs(m_tone)));
+    }
+
+    void toggleFollow(ControlContext &ctx) {
+        m_follow = !m_follow;
+        ctx.notice(m_follow ? QStringLiteral("Following the chord") : QStringLiteral("Free in the scale"));
+    }
+
+    void toggleOverdub(ControlContext &ctx) {
+        const bool on = !ctx.studio().parts[ctx.part()].overdub;
+        ctx.overdub(on);
+        ctx.notice(on ? QStringLiteral("Overdub on") : QStringLiteral("Overdub off"));
+    }
+
+    // Lets go of the harmony voices that only the hold keeps; a finger
+    // still on a harmony row keeps its own.
+    bool releaseHeldHarmony(ControlContext &ctx) {
+        bool any = false;
+        for (int s = 0; s < kHarmSlots; ++s)
+            if (m_slots[s].on && !m_slots[s].held) {
+                m_slots[s].on = false;
+                param(ctx, PHarmony, s, m_slots[s].row, 0, ctx.now());
+                any = true;
+            }
+        return any;
+    }
+
+    void letGo(ControlContext &ctx) {
+        ctx.notice(releaseHeldHarmony(ctx) ? QStringLiteral("Held harmony let go")
+                                           : QStringLiteral("No harmony held"));
+    }
+
     bool toggleLatch(ControlContext &ctx) {
         m_latch = !m_latch;
         if (!m_latch)
-            for (int s = 0; s < kHarmSlots; ++s)
-                if (m_slots[s].on && !m_slots[s].held) {
-                    m_slots[s].on = false;
-                    param(ctx, PHarmony, s, m_slots[s].row, 0, ctx.now());
-                }
+            releaseHeldHarmony(ctx);
         ctx.notice(m_latch ? QStringLiteral("Harmony holds") : QStringLiteral("Harmony follows the fingers"));
+        return true;
+    }
+
+    // The mouse on the band under the pad: the clips and the sounds, then
+    // every setting the keys reach.
+    enum Spot {
+        SpotSound = 100,
+        SpotOctDown = 200,
+        SpotOctUp,
+        SpotGlideDown,
+        SpotGlideUp,
+        SpotDarker,
+        SpotBrighter,
+        SpotGateDown,
+        SpotGateUp,
+        SpotFollow,
+        SpotHold,
+        SpotOverdub,
+        SpotLetGo
+    };
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int id = m_spots.at(at);
+        if (id < 0)
+            return false;
+        if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+            return true;
+        if (id >= SpotSound && id < SpotSound + kSounds) {
+            if (id - SpotSound != m_sound)
+                setSound(id - SpotSound, ctx);
+            m_status = describe();
+            return true;
+        }
+        switch (id) {
+        case SpotOctDown: shiftOctave(-1, ctx); break;
+        case SpotOctUp: shiftOctave(1, ctx); break;
+        case SpotGlideDown: shiftGlide(-1, ctx); break;
+        case SpotGlideUp: shiftGlide(1, ctx); break;
+        case SpotDarker: shiftTone(-1, ctx); break;
+        case SpotBrighter: shiftTone(1, ctx); break;
+        case SpotGateDown: stepGate(-1, ctx); break;
+        case SpotGateUp: stepGate(1, ctx); break;
+        case SpotFollow: toggleFollow(ctx); break;
+        case SpotHold: toggleLatch(ctx); break;
+        case SpotOverdub: toggleOverdub(ctx); break;
+        case SpotLetGo: letGo(ctx); break;
+        default: return false;
+        }
+        m_status = describe();
         return true;
     }
 
@@ -1329,6 +1433,18 @@ public:
 
     QString help() const override {
         return QStringLiteral(
+            "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room\n"
+            "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
+            "Shift+← →\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
+            "- and + (or =)\ttone: darker, brighter\n"
+            "Return (or F12)\tharmony holds after the fingers lift\n"
+            "Shift+Return (or F10)\toverdub onto the playing loop\n"
+            "the key left of 1: § (` on US; or \\, F11)\tfollow the chord: notes and harmony land on chord tones\n"
+            "Delete\tlet the held harmony go\n"
+            "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
+            "Backspace\tstop this part at the next bar\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds; octave, glide, tone, gate, "
+            "follow, hold, overdub, let go\n"
             "finger on the neck\ta note of the scale; one voice, singing\n"
             "second finger while one is held\tlegato: glides there, lift to fall back (trills, runs)\n"
             "slide\tglide through the scale; rest and it settles in tune\n"
@@ -1343,16 +1459,7 @@ public:
             "THROW\tinto the echo; higher throws harder; lift and the repeats ring out\n"
             "Space, after playing\tloops it (the studio's key): alone, press it on the phrase's next ONE and it sets the tempo; over a loop, what you repeated (or the whole phrase) loops at once. The pad says what it took\n"
             "Space again\tcalls a waiting take off\n"
-            "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents\n"
-            "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room\n"
-            "↑ ↓\toctave of the neck and the keys\n"
-            "Shift+↑ ↓\tglide longer, shorter\n"
-            "Enter (or F11, Shift+§)\tfollow the chord: notes and harmony land on chord tones\n"
-            "Shift+Enter (or \\, F12)\tharmony holds after the fingers lift\n"
-            "§ (or `)\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
-            "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
-            "F10\toverdub onto the playing loop\n"
-            "Backspace\tstop this part at the next bar");
+            "Z X C … / A S D … / Q W E …\tthe scale on three rows, an octave apart; overlap keys for legato; Shift accents");
     }
 
     QString status() const override { return m_status; }
@@ -1422,7 +1529,7 @@ private:
         int rows[kHarmSlots];
         for (int s = 0; s < kHarmSlots; ++s)
             rows[s] = m_slots[s].on ? int(std::lround(m_slots[s].row)) : -1;
-        return (m_follow ? kFollow : 0) | (m_gate << kGateShift) | packRows(rows);
+        return (m_follow ? kFollow : 0) | (m_gate << kGateShift) | packTone(m_tone) | packRows(rows);
     }
 
     void param(ControlContext &ctx, int which, int slot, float a, float b, double t) {
@@ -1733,8 +1840,10 @@ private:
              Qt::Key_Semicolon, Qt::Key_Apostrophe, 0},
             {Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R, Qt::Key_T, Qt::Key_Y, Qt::Key_U, Qt::Key_I, Qt::Key_O,
              Qt::Key_P, Qt::Key_BracketLeft, Qt::Key_BracketRight}};
+        // - is the shared tone key (docs/PARTS.md 4b), so the Nordic Z row
+        // ends before it.
         static const int nordic[3][12] = {
-            {0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Minus, 0, 0},
+            {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
             {0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Odiaeresis, Qt::Key_Adiaeresis, 0},
             {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Aring, 0}};
         for (int r = 0; r < 3; ++r)
@@ -1778,7 +1887,8 @@ private:
     long m_onsetHead = 0;
     QString m_loopText, m_loopHint; // the take on its way; what Space would do now
     Frame m_frame;
-    int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0;
+    int m_per = 7, m_neckOct = 1, m_shift = 0, m_sound = 0, m_glide = 0, m_gate = 0, m_tone = 0;
+    console::Hotspots m_spots; // what paint() drew to be clicked
     bool m_follow = false, m_latch = false, m_click = false;
     uint32_t m_glides = 0, m_wiggles = 0, m_harmonized = 0; // for the tutorial
     QString m_status;
@@ -2053,7 +2163,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         m_loopText = m_landed;
     // The loop machinery, at the top of the neck where it can't be missed:
     // a loop counting down to its bar line, a recording armed or running,
-    // or, quietly, what Enter would loop right now.
+    // or, quietly, what Space would loop right now.
     {
         const QPointF at(neck.center().x(), neck.top() + 16 * unit);
         if (!m_loopText.isEmpty()) {
@@ -2081,6 +2191,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         mode(m_shift > 0 ? QStringLiteral("oct +1") : QStringLiteral("oct −1"), m_shift != 0);
         mode(QStringLiteral("glide ×%1").arg(double(std::exp2(float(m_glide)))), m_glide != 0);
         mode(QStringLiteral("gate %1").arg(QString::fromUtf8(gateName(m_gate))), m_gate != 0);
+        mode(QStringLiteral("tone %1%2").arg(m_tone > 0 ? "+" : "−").arg(std::abs(m_tone)), m_tone != 0);
         mode(QStringLiteral("8va"), m_click);
         mode(QStringLiteral("harmony held"), m_latch);
         if (live[14] > 0.02f)
@@ -2145,7 +2256,93 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
                   label, glow);
     }
     c::beats(p, pc, col);
-    c::clips(p, QRectF(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width(), 30), pv, col, pc.time);
+    // Below the pad, every one clickable: the clips and the sounds, then
+    // every setting the keys reach. A setting stepped by two keys is a
+    // stepper whose two ends are those keys; a switch is a chip lit when
+    // on, showing its key.
+    m_spots.clear();
+    const QFontMetricsF chipFont(c::font(12, true)), nameFont(c::font(11, true));
+    // Shares a row out between items in proportion to the room each
+    // wants, so the longest names keep their letters on a narrow window.
+    auto lay = [](const QRectF &row, const std::vector<qreal> &want, qreal gap) {
+        qreal total = 0;
+        for (qreal w : want)
+            total += w;
+        const qreal scale = (row.width() - gap * qreal(want.size() - 1)) / total;
+        std::vector<QRectF> out;
+        qreal x = row.left();
+        for (qreal w : want) {
+            out.emplace_back(x, row.top(), w * scale, row.height());
+            x += w * scale + gap;
+        }
+        return out;
+    };
+    auto chipWant = [&](const QString &label) { return chipFont.horizontalAdvance(label) + 12; };
+    c::clips(p, c::bandRow(pc, 0, 0, 0.42), pv, col, pc.time, &m_spots);
+    {
+        std::vector<qreal> want;
+        for (int s = 0; s < kSounds; ++s)
+            want.push_back(chipWant(QString::fromUtf8(sound(s).name).toUpper()));
+        const auto cells = lay(c::bandRow(pc, 0, 0.43, 1), want, 4);
+        for (int s = 0; s < kSounds; ++s)
+            c::chip(p, pc, cells[size_t(s)], QString::fromUtf8(sound(s).name).toUpper(), s == m_sound, &m_spots,
+                    SpotSound + s);
+    }
+    {
+        struct Stepper {
+            QString name, down, up;
+            int downId, upId;
+            float value; // where the gauge stands, 0..1
+            int segments;
+            bool bipolar;
+        };
+        struct Switch {
+            QString label;
+            bool lit;
+            int id;
+        };
+        const Stepper steppers[] = {
+            {QStringLiteral("OCT"), QStringLiteral("↓"), QStringLiteral("↑"), SpotOctDown, SpotOctUp,
+             (float(m_shift) + 1) / 2, 2, true},
+            {QStringLiteral("GLIDE"), QStringLiteral("⇧↓"), QStringLiteral("⇧↑"), SpotGlideDown, SpotGlideUp,
+             (float(m_glide) + 2) / 4, 4, true},
+            {QStringLiteral("TONE"), QStringLiteral("-"), QStringLiteral("+"), SpotDarker, SpotBrighter,
+             (float(m_tone) + kToneSteps) / (2 * kToneSteps), 2 * kToneSteps, true},
+            {m_gate ? QString::fromUtf8(gateName(m_gate)) : QStringLiteral("GATE"), QStringLiteral("⇧←"),
+             QStringLiteral("⇧→"), SpotGateDown, SpotGateUp, float(m_gate) / (kGates - 1), kGates - 1, false},
+        };
+        const Switch switches[] = {
+            {QStringLiteral("FOLLOW §"), m_follow, SpotFollow},
+            {QStringLiteral("HOLD ↵"), m_latch, SpotHold},
+            {QStringLiteral("OVERDUB ⇧↵"), pv.overdub, SpotOverdub},
+            {QStringLiteral("LET GO DEL"), false, SpotLetGo},
+        };
+        const qreal end = chipWant(QStringLiteral("⇧↓"));
+        std::vector<qreal> want;
+        for (const auto &st : steppers)
+            want.push_back(2 * end + std::max(nameFont.horizontalAdvance(QStringLiteral("GLIDE")),
+                                              nameFont.horizontalAdvance(st.name)) + 4);
+        for (const auto &sw : switches)
+            want.push_back(chipWant(sw.label));
+        const auto cells = lay(c::bandRow(pc, 1), want, 6);
+        size_t i = 0;
+        for (const auto &st : steppers) {
+            const QRectF g = cells[i++];
+            const qreal e = std::min(end, g.width() * 0.3);
+            // A faint frame makes the two keys and the gauge read as one control.
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(col, 0.3f), 1));
+            p.drawRect(g);
+            c::chip(p, pc, QRectF(g.left(), g.top(), e, g.height()), st.down, false, &m_spots, st.downId);
+            c::chip(p, pc, QRectF(g.right() - e, g.top(), e, g.height()), st.up, false, &m_spots, st.upId);
+            const QRectF mid(g.left() + e, g.top(), g.width() - 2 * e, g.height());
+            c::text(p, mid.adjusted(0, 0, 0, -11), st.name, col, 11, true, Qt::AlignCenter);
+            c::gauge(p, QRectF(mid.left() + 4, mid.bottom() - 9, mid.width() - 8, 6), st.value, col, st.segments,
+                     st.bipolar);
+        }
+        for (const auto &sw : switches)
+            c::chip(p, pc, cells[i++], sw.label, sw.lit, &m_spots, sw.id);
+    }
     // The legend again, over the column, and the sounds cut into the top
     // edge after it.
     {
@@ -2202,10 +2399,16 @@ QString LeadControl::describe() const {
     }
     if (m_click)
         parts << QStringLiteral("an octave up");
+    if (m_shift)
+        parts << (m_shift > 0 ? QStringLiteral("neck an octave up") : QStringLiteral("neck an octave down"));
     if (m_follow)
         parts << QStringLiteral("on the chord");
     if (m_gate)
         parts << QStringLiteral("gated ") + QString::fromUtf8(gateName(m_gate));
+    if (m_tone)
+        parts << QStringLiteral("tone %1%2").arg(m_tone > 0 ? "+" : "−").arg(std::abs(m_tone));
+    if (m_latch)
+        parts << QStringLiteral("harmony held");
     return parts.join(QStringLiteral(" · "));
 }
 

@@ -60,7 +60,7 @@ inline int neckOctave(int root) {
 // On and Move (a note, from a finger on the neck or a key):
 //   i[0] scale degree within the octave, i[1] octave (as Harmony::midi)
 //   i[2] sound (On)
-//   i[3] flags (On): kFollow, and the harmony rows held when it landed
+//   i[3] flags (On): kFollow, the gate, the tone, and the harmony rows held when it landed
 //   f[0] velocity (On), f[1] brightness 0..1 (the finger's height)
 //   f[2] the finger's offset from the degree, in degrees
 //   f[3] motion 0..1: how much the pitch follows the finger rather than the degree
@@ -73,7 +73,8 @@ inline int neckOctave(int root) {
 //   POctave   f[0] 0 or 1 (the click)
 //   PGlide    f[0] glide time scale
 //   PGate     i[1] gate pattern (see kGates)
-enum ParamKind { PHarmony = 0, PBend, PThrow, POctave, PGlide, PGate };
+//   PTone     i[1] tone step (see kToneSteps)
+enum ParamKind { PHarmony = 0, PBend, PThrow, POctave, PGlide, PGate, PTone };
 constexpr int kFollow = 1;
 // The trance gate: off, or chopping the line in time, so a held note
 // pulses. Steps per beat; the On flags carry it in bits 1–2.
@@ -87,6 +88,21 @@ inline const char *gateName(int g) {
     return names[std::clamp(g, 0, kGates - 1)];
 }
 constexpr int kGateShift = 1;
+// The tone (- and =): steps darker or brighter than the sound's own, each
+// moving its filter about a third of an octave. The On flags carry it in
+// bits 3–6, 0 meaning the sound's own, so a clip keeps the tone it was
+// played with.
+constexpr int kToneSteps = 4;
+constexpr float kToneOctaves = 0.3f;
+constexpr int kToneShift = 3;
+inline int packTone(int step) {
+    step = std::clamp(step, -kToneSteps, kToneSteps);
+    return (step == 0 ? 0 : step + 8) << kToneShift;
+}
+inline int unpackTone(int flags) {
+    const int v = (flags >> kToneShift) & 15;
+    return v == 0 ? 0 : std::clamp(v - 8, -kToneSteps, kToneSteps);
+}
 // The harmony rows a note landed with: three bits per slot from bit 8, row + 1.
 inline int packRows(const int rows[kHarmSlots]) {
     int v = 0;

@@ -32,8 +32,12 @@ jobs:
     container: ${{ matrix.image }}
     timeout-minutes: 45
     steps:
+      # pacman's download sandbox (Landlock) can't be set up inside some
+      # containers (the ARM runner's), so it is turned off: the packages
+      # are still checked against their signatures.
       - name: Install what it builds with
         run: |
+          grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
           pacman -Syu --noconfirm --needed base-devel git \
             qt6-base qt6-declarative qt6-wayland libpipewire pipewire polkit \
             noto-fonts ttf-jetbrains-mono-nerd

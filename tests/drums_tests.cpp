@@ -142,6 +142,129 @@ double fizz(const Dry &d) {
     return all > 0 ? hi / all : 0;
 }
 
+// A dry sound's brightness: the RMS frequency of its spectrum, from how fast
+// it moves against how big it is (sqrt of the derivative's power over the
+// signal's), in Hz.
+double rmsHz(const Dry &d) {
+    double dx = 0, x = 0;
+    for (size_t i = 1; i < d.l.size(); ++i) {
+        const double a = 0.5 * (d.l[i] + d.r[i]), b = 0.5 * (d.l[i - 1] + d.r[i - 1]);
+        dx += (a - b) * (a - b);
+        x += a * a;
+    }
+    return x > 0 ? std::sqrt(dx / x) * kRate / (2 * M_PI) : 0;
+}
+
+// How long a dry sound takes to fall 30 dB below its peak, in seconds.
+double fallTime(const Dry &d) {
+    const float top = d.peak();
+    size_t last = 0;
+    for (size_t i = 0; i < d.l.size(); ++i)
+        if (std::max(std::fabs(d.l[i]), std::fabs(d.r[i])) > top * 0.0316f)
+            last = i;
+    return double(last) / kRate;
+}
+
+// Where a dry sound is loudest, in seconds.
+double peakTime(const Dry &d) {
+    size_t at = 0;
+    float top = 0;
+    for (size_t i = 0; i < d.l.size(); ++i)
+        if (std::fabs(d.l[i]) > top) {
+            top = std::fabs(d.l[i]);
+            at = i;
+        }
+    return double(at) / kRate;
+}
+
+// The RMS of one channel of a dry sound between two times.
+double dryRms(const Dry &d, double from, double to) {
+    double s = 0;
+    int n = 0;
+    for (size_t i = size_t(from * kRate); i < size_t(to * kRate) && i < d.l.size(); ++i, ++n)
+        s += double(d.l[i]) * d.l[i];
+    return n ? std::sqrt(s / n) : 0;
+}
+
+// A kit's groove (kick, snare, clap, hat and its bass at density 1, swung
+// as the page swings it) played straight into an engine for four bars at
+// 120 BPM, in the key of ctx. The engine's output, both ears.
+Dry grooveTake(int kit, Ctx &ctx) {
+    drums::Engine e;
+    e.init(kRate);
+    Command k;
+    k.type = Command::Param;
+    k.i[0] = drums::ParamKit;
+    k.i[1] = kit;
+    e.command(k, ctx);
+    struct Ev {
+        long at;
+        int pad, degree;
+        float vel;
+    };
+    std::vector<Ev> evs;
+    const double spb = 0.5, swing = drums::kitSwing(kit);
+    for (int pad : {drums::Kick, drums::Snare, drums::Clap, drums::Hat, drums::Sub}) {
+        const drums::Pattern p = drums::groovePattern(pad, kit, 1, 0);
+        bool sixteenths = true;
+        for (int i = 0; i < p.count; ++i)
+            sixteenths &= p.steps[i].tick % 6 == 0;
+        for (int bar = 0; bar < 4; ++bar)
+            for (int i = 0; i < p.count; ++i) {
+                const drums::Step &s = p.steps[i];
+                double beat = bar * 4 + s.tick / 24.0;
+                if (p.triplet && s.tick % 24 == 12)
+                    beat += swing - 0.5;
+                else if (!p.triplet && sixteenths && s.tick % 12 == 6)
+                    beat += (swing - 0.5) * 0.5;
+                evs.push_back({long(beat * spb * kRate), pad, s.degree, s.vel});
+            }
+    }
+    Dry d;
+    float l[kBlock], r[kBlock];
+    for (long b = 0; b < long(16 * spb * kRate) / kBlock; ++b) {
+        for (const Ev &ev : evs)
+            if (ev.at >= b * kBlock && ev.at < (b + 1) * kBlock) {
+                Command c;
+                c.type = drums::Hit;
+                c.i[0] = ev.pad;
+                c.i[1] = ev.degree;
+                c.f[0] = ev.vel;
+                c.f[1] = c.f[2] = 0.5f;
+                c.f[5] = float((kit == drums::Brushes || kit == drums::Cr78 ? 0.95 : 0.4) * spb); // as the page holds it
+                c.t = ctx.time + double(ev.at - b * kBlock) / kRate;
+                e.command(c, ctx);
+            }
+        std::fill(l, l + kBlock, 0.0f);
+        std::fill(r, r + kBlock, 0.0f);
+        e.render(l, r, kBlock, ctx);
+        d.l.insert(d.l.end(), l, l + kBlock);
+        d.r.insert(d.r.end(), r, r + kBlock);
+    }
+    return d;
+}
+
+// How loud a take sounds, roughly as an ear (and a laptop) hears it: the
+// lows below 100 Hz rolled off, the presence above 1.5 kHz lifted, its RMS
+// over the last three bars in dB.
+double loudness(const Dry &d) {
+    Svf hp, hp2, shelf;
+    hp.set(100.0f, 0.7f, kRate);
+    hp2.set(100.0f, 0.7f, kRate);
+    shelf.set(1500.0f, 0.7f, kRate);
+    double sum = 0;
+    size_t n = 0;
+    for (size_t i = 0; i < d.l.size(); ++i) {
+        const float x = hp2.step(hp.step(0.5f * (d.l[i] + d.r[i])).high).high;
+        const float y = x + 0.6f * shelf.step(x).high;
+        if (i >= d.l.size() / 4) {
+            sum += double(y) * y;
+            ++n;
+        }
+    }
+    return 10 * std::log10(sum / double(std::max<size_t>(n, 1)) + 1e-20);
+}
+
 // The energy of a take between two times.
 double energy(const testkit::Take &take, double from, double to) {
     const double r = take.rms(from, to);
@@ -545,12 +668,12 @@ private slots:
                                            std::to_string(space + 6) + " Down\nkey " + std::to_string(space + 7) +
                                            " Down\nend 14\n");
         QCOMPARE(int(shorter.view.parts[0].clips[0].lengthBeats), beats / 2);
-        // The chips under the pad do the same: LOOP + is the last of the
-        // five in row 1 of the band, LOOP − the one before it.
-        const auto clicked = testkit::play(script + "button " + std::to_string(space + 5) + " 0.495 -0.119\nend 14\n");
+        // The chips under the pad do the same: LOOP + is the fifth of the
+        // seven in row 1 of the band, LOOP − the one before it.
+        const auto clicked = testkit::play(script + "button " + std::to_string(space + 5) + " 0.30 -0.119\nend 14\n");
         QCOMPARE(int(clicked.view.parts[0].clips[0].lengthBeats), 2 * beats);
         const auto clickedShorter =
-            testkit::play(script + "button " + std::to_string(space + 5) + " 0.385 -0.119\nend 14\n");
+            testkit::play(script + "button " + std::to_string(space + 5) + " 0.225 -0.119\nend 14\n");
         QCOMPARE(int(clickedShorter.view.parts[0].clips[0].lengthBeats), beats / 2);
     }
 
@@ -612,17 +735,21 @@ private slots:
         }
     }
 
-    // The mouse reaches what the keys do: a click on TECHNO under the pad
-    // changes the kit, SWING + adds swing, a filled clip slot launches.
+    // The mouse reaches what the keys do: a click on TECHNO or JUNGLE under
+    // the pad changes the kit, swing's + adds swing, a filled clip slot
+    // launches.
     void theBandUnderThePadIsClickable() {
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
-        // is 0.048 of it under the pad, row 1 0.119. The kits fill row 0
-        // from 0.57 of the width, five across; row 1 starts with five chips
-        // across 0.55 of it (swing −, the swing, swing +, loop −, loop +).
+        // is 0.048 of it under the pad, row 1 0.119. The kits fill both rows
+        // from 0.57 of the width, five across; row 1's left 0.55 holds
+        // swing −, the swing, swing + (0.14..0.19), loop −, loop +, overdub and back.
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 1\nbutton 0.2 0.275 -0.119\nbutton 0.3 0.275 -0.119\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 1\nbutton 0.2 0.70 -0.119\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("jungle"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 1\nbutton 0.2 0.162 -0.119\nbutton 0.3 0.162 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
         });
     }
@@ -710,8 +837,9 @@ private slots:
     void arrowsChangeTheKit() {
         const auto take = testkit::play("page 0 1\nkey 0.1 Right\nkey 0.2 Right\nend 0.5\n");
         QCOMPARE(int(take.view.parts[0].data[34]), int(drums::Trap));
+        // Left from the first kit wraps round to the last.
         const auto back = testkit::play("page 0 1\nkey 0.1 Left\nend 0.5\n");
-        QCOMPARE(int(back.view.parts[0].data[34]), int(drums::Garage));
+        QCOMPARE(int(back.view.parts[0].data[34]), int(drums::KitCount - 1));
     }
 
     void leavingThePageStopsWhatFingersHold() {
@@ -1022,7 +1150,8 @@ private slots:
     }
 
     void swingLeavesThirtySecondsEven() {
-        // Garage swings 62%, but a rim rolling in thirty-seconds stays even.
+        // The brushes swing a full triplet (66%), but a cross-stick rolling
+        // in thirty-seconds stays even.
         const auto take = testkit::play("page 0 1\nkey 0.1 Left\n"
                                         "down 1.0 1 0.38 0.27 p=0.6\nglide 1.3 1.4 1 0.38 0.56\nup 4.0 1\nend 4.5\n");
         const auto on = onsets(take, 2.0, 3.9, 0.02);
@@ -1175,6 +1304,237 @@ private slots:
             e.render(l, r, kBlock, ctx);
         }
         QCOMPARE(e.voices(), 1);
+    }
+
+    // --- the kits beyond the dance floor ----------------------------------------
+
+    void everyNewKitSoundsItsOwn() {
+        // Heard blind, each of the five new kits differs from every other
+        // kit in at least three of its main drums, in brightness or in how
+        // long they ring.
+        static const int pads[] = {drums::Kick,  drums::Snare, drums::Clap, drums::Hat,
+                                   drums::Perc, drums::Ride,  drums::Zap};
+        struct Look {
+            double hz, fall;
+        };
+        std::vector<std::vector<Look>> looks(drums::KitCount);
+        for (int kit = 0; kit < drums::KitCount; ++kit)
+            for (int pad : pads) {
+                Ctx ctx;
+                const Dry d = strike(pad, kit, 1.0f, 1.5, ctx);
+                looks[size_t(kit)].push_back({rmsHz(d), fallTime(d)});
+            }
+        for (int a = drums::BoomBap; a < drums::KitCount; ++a)
+            for (int b = 0; b < drums::KitCount; ++b) {
+                if (a == b)
+                    continue;
+                int differ = 0;
+                for (size_t i = 0; i < std::size(pads); ++i) {
+                    const Look &x = looks[size_t(a)][i], &y = looks[size_t(b)][i];
+                    differ += std::fabs(std::log2(x.hz / y.hz)) > 0.2 || std::fabs(std::log2(x.fall / y.fall)) > 0.3;
+                }
+                QVERIFY2(differ >= 3, qPrintable(QStringLiteral("%1 and %2 alike in all but %3")
+                                                     .arg(drums::kitName(a), drums::kitName(b))
+                                                     .arg(differ)));
+            }
+    }
+
+    void theLinnSnareIsGated() {
+        // Its room fills the first tenth of a second and more, then a gate
+        // shuts it: the Linn's snare is louder than a house snare there,
+        // and a few hundredths of a second after the gate it is all but
+        // gone, where the house snare only fades.
+        Ctx ctx;
+        const Dry linn = strike(drums::Snare, drums::Linn, 1.0f, 0.5, ctx);
+        const Dry house = strike(drums::Snare, drums::House, 1.0f, 0.5, ctx);
+        const double held = dryRms(linn, 0.1, 0.16), after = dryRms(linn, 0.2, 0.26);
+        QVERIFY2(held > 1.4 * dryRms(house, 0.1, 0.16), qPrintable(QString::number(held)));
+        QVERIFY2(after < 0.15 * held, qPrintable(QString::number(after / held)));
+        QVERIFY(dryRms(house, 0.2, 0.26) > 0.15 * dryRms(house, 0.1, 0.16));
+        // The gate shuts on the snare's own tail too: a chop to silence,
+        // 50 dB down within a tenth of a second.
+        const double gone = dryRms(linn, 0.27, 0.5);
+        QVERIFY2(gone < 0.003 * held, qPrintable(QString::number(20 * std::log10(gone / held))));
+    }
+
+    void theBrushSlapsAndSwishes() {
+        // The slap speaks at once; the swish swells for most of a tenth of
+        // a second; both are darker than a house snare.
+        Ctx ctx;
+        const Dry slap = strike(drums::Snare, drums::Brushes, 1.0f, 0.5, ctx);
+        const Dry swish = strike(drums::Clap, drums::Brushes, 1.0f, 0.8, ctx);
+        QVERIFY2(peakTime(slap) < 0.03, qPrintable(QString::number(peakTime(slap))));
+        QVERIFY2(peakTime(swish) > 0.05, qPrintable(QString::number(peakTime(swish))));
+        QVERIFY(rmsHz(swish) < rmsHz(strike(drums::Snare, drums::House, 1.0f, 0.5, ctx)));
+    }
+
+    void theBoomBapKitIsDusty() {
+        // Through the sampler's dark filter: every drum that has a house
+        // twin is duller than it.
+        for (int pad : {drums::Snare, drums::Hat, drums::Ride, drums::Shaker}) {
+            Ctx ctx;
+            const double dusty = rmsHz(strike(pad, drums::BoomBap, 1.0f, 0.6, ctx));
+            const double clean = rmsHz(strike(pad, drums::House, 1.0f, 0.6, ctx));
+            QVERIFY2(dusty < clean * 0.9, drums::padName(pad));
+        }
+    }
+
+    void theNewTunedPercussionIsInKey() {
+        // In A minor the vibes play the fifth and the clave the root, each
+        // where the kit puts it; the Simmons falls all the way down onto
+        // its root as it fades, never settling into a hum above it.
+        Ctx ctx;
+        const Dry vibes = strike(drums::Perc, drums::Brushes, 1.0f, 0.8, ctx);
+        const double v = drums::degreeHz(ctx.h, 4, 520.0f);
+        QVERIFY2(std::fabs(settledHz(vibes.l, 0.3, 0.7) / v - 1.0) < 0.02, qPrintable(QString::number(settledHz(vibes.l, 0.3, 0.7))));
+        const Dry simmons = strike(drums::Zap, drums::Linn, 1.0f, 1.2, ctx);
+        const double s = drums::degreeHz(ctx.h, 0, 150.0f);
+        const double early = settledHz(simmons.l, 0.01, 0.08), mid = settledHz(simmons.l, 0.25, 0.45),
+                     late = settledHz(simmons.l, 0.6, 1.0);
+        QVERIFY2(early > 2.5 * s && mid > late * 1.08 && late > s * 0.99 && late < s * 1.3,
+                 qPrintable(QStringLiteral("%1 %2 %3 / %4").arg(early).arg(mid).arg(late).arg(s)));
+        const Dry clave = strike(drums::Zap, drums::Cr78, 1.0f, 0.2, ctx);
+        const double c = drums::degreeHz(ctx.h, 0, 2100.0f);
+        QVERIFY2(std::fabs(settledHz(clave.l, 0.005, 0.04) / c - 1.0) < 0.03, qPrintable(QString::number(settledHz(clave.l, 0.005, 0.04))));
+    }
+
+    void everyKitGroovesAsLoudAsHouse() {
+        // Changing kit never jumps the mix: each kit's groove is within
+        // 2 dB of house's, as an ear hears loudness.
+        Ctx ctx;
+        const double house = loudness(grooveTake(drums::House, ctx));
+        QString all;
+        for (int kit = 0; kit < drums::KitCount; ++kit)
+            all += QStringLiteral(" %1 %2").arg(drums::kitName(kit)).arg(loudness(grooveTake(kit, ctx)) - house, 0, 'f', 1);
+        for (int kit = 0; kit < drums::KitCount; ++kit) {
+            const double d = loudness(grooveTake(kit, ctx)) - house;
+            QVERIFY2(std::fabs(d) < 2.0, qPrintable(QStringLiteral("%1:%2").arg(drums::kitName(kit), all)));
+        }
+    }
+
+    void theLowEndReachesALaptop() {
+        // A laptop's speakers start near 150 Hz: above it, the CR-78's
+        // kick and the brushes' upright carry nearly as much as house's
+        // kick and 808.
+        auto above = [](const Dry &d) {
+            Svf a, b;
+            a.set(150.0f, 0.7f, kRate);
+            b.set(150.0f, 0.7f, kRate);
+            double e = 0;
+            for (size_t i = 0; i < d.l.size(); ++i) {
+                const float y = b.step(a.step(0.5f * (d.l[i] + d.r[i])).high).high;
+                e += double(y) * y;
+            }
+            return 10 * std::log10(e + 1e-20);
+        };
+        Ctx ctx;
+        const double kick = above(strike(drums::Kick, drums::House, 1.0f, 0.6, ctx));
+        const double cr78 = above(strike(drums::Kick, drums::Cr78, 1.0f, 0.6, ctx));
+        QVERIFY2(cr78 > kick - 6.0, qPrintable(QString::number(cr78 - kick)));
+        const double sub = above(strike(drums::Sub, drums::House, 1.0f, 0.6, ctx));
+        const double upright = above(strike(drums::Sub, drums::Brushes, 1.0f, 0.6, ctx));
+        QVERIFY2(upright > sub - 3.0, qPrintable(QString::number(upright - sub)));
+    }
+
+    void theUprightWalksTheChord() {
+        // On the chord of the fourth (D minor in A minor) the upright's
+        // root is D3, an octave up from where an 808 would sit; its fifth
+        // is the chord's fifth, A3.
+        Ctx ctx;
+        ctx.h.chordRoot = 3;
+        ctx.h.chordTones[0] = 3;
+        ctx.h.chordTones[1] = 5;
+        ctx.h.chordTones[2] = 7;
+        ctx.h.chordCount = 3;
+        auto played = [&](int degree, double expect) {
+            drums::Engine e;
+            e.init(kRate);
+            drums::Strike s;
+            s.pad = drums::Sub;
+            s.kit = drums::Brushes;
+            s.degrees = degree;
+            s.hold = 0.4f;
+            e.strike(s, ctx.h);
+            Dry d;
+            float l[kBlock], r[kBlock];
+            for (int b = 0; b < int(0.4 * kRate) / kBlock; ++b) {
+                std::fill(l, l + kBlock, 0.0f);
+                std::fill(r, r + kBlock, 0.0f);
+                e.render(l, r, kBlock, ctx);
+                d.l.insert(d.l.end(), l, l + kBlock);
+            }
+            // The fundamental alone, below the harmonics.
+            Svf lp, lp2;
+            lp.set(float(expect * 1.2), 0.7f, kRate);
+            lp2.set(float(expect * 1.2), 0.7f, kRate);
+            for (float &x : d.l)
+                x = lp2.step(lp.step(x).low).low;
+            return settledHz(d.l, 0.1, 0.35);
+        };
+        const double root = played(0, 146.83), fifth = played(4, 220.0);
+        QVERIFY2(std::fabs(root / 146.83 - 1.0) < 0.03, qPrintable(QString::number(root)));
+        QVERIFY2(std::fabs(fifth / 220.0 - 1.0) < 0.03, qPrintable(QString::number(fifth)));
+    }
+
+    void theBrushesSwingMovesTheTripletEighth() {
+        // Block and hat held together in the brushes kit: the block's
+        // euclidean part, on the triplet grid, has an "a" that lands two
+        // thirds through its beat at the kit's 66%, and on the straight
+        // eighth once the swing is taken down to 50%.
+        auto where = [](const std::string &extra) {
+            const auto take = testkit::play("page 0 1\nkey 0.1 Left\n" + extra +
+                                            "key 1.0 P down\nkey 1.0 V down\nkey 6.0 P up\nkey 6.0 V up\nend 6.2\n");
+            double sum = 0;
+            int n = 0;
+            for (double t : onsets(take, 2.5, 5.8, 0.05)) {
+                const double f = t / kSpb - std::floor(t / kSpb);
+                if (f > 0.42 && f < 0.85) {
+                    sum += f;
+                    ++n;
+                }
+            }
+            return n ? sum / n : -1.0;
+        };
+        const double swung = where(""), straight = where("key 0.2 Shift+Left\nkey 0.25 Shift+Left\nkey 0.3 Shift+Left\n"
+                                                          "key 0.35 Shift+Left\nkey 0.4 Shift+Left\nkey 0.45 Shift+Left\n"
+                                                          "key 0.5 Shift+Left\nkey 0.55 Shift+Left\n");
+        QVERIFY2(std::fabs(swung - 2.0 / 3.0) < 0.04, qPrintable(QString::number(swung)));
+        QVERIFY2(std::fabs(straight - 0.5) < 0.04, qPrintable(QString::number(straight)));
+    }
+
+    void theNewKitsGrooveTheirOwnWay() {
+        auto ticks = [](const drums::Pattern &p) {
+            std::vector<int> t;
+            for (int i = 0; i < p.count; ++i)
+                t.push_back(p.steps[i].tick);
+            return t;
+        };
+        // Brushes: the ride's spang-a-lang in triplets (each beat's last
+        // triplet written on the eighth, for the swing to place), the hat's
+        // foot on two and four, the bass walking the chord with an approach
+        // into the next bar; the euclidean parts on the triplet grid too.
+        const auto ride = drums::groovePattern(drums::Ride, drums::Brushes, 1, 0);
+        QVERIFY(ride.triplet);
+        QCOMPARE(ticks(ride), (std::vector<int>{0, 24, 36, 48, 72, 84}));
+        QCOMPARE(ticks(drums::groovePattern(drums::Hat, drums::Brushes, 1, 0)), (std::vector<int>{24, 72}));
+        const auto walk = drums::groovePattern(drums::Sub, drums::Brushes, 1, 0);
+        QCOMPARE(walk.count, 4);
+        for (int i = 0; i < 4; ++i)
+            QCOMPARE(int(walk.steps[i].degree), (std::vector<int>{0, 2, 4, -1})[size_t(i)]);
+        const auto vibes = drums::groovePattern(drums::Perc, drums::Brushes, 1, 0);
+        QVERIFY(vibes.triplet);
+        for (int i = 0; i < vibes.count; ++i)
+            QVERIFY(vibes.steps[i].tick % 24 == 0 || vibes.steps[i].tick % 24 == 8 || vibes.steps[i].tick % 24 == 12);
+        // The Linn's tambourine has a part of its own: the backbeat.
+        QCOMPARE(ticks(drums::groovePattern(drums::Perc, drums::Linn, 0, 0)), (std::vector<int>{24, 72}));
+        // The CR-78's rim plays the son clave.
+        QCOMPARE(ticks(drums::groovePattern(drums::Rim, drums::Cr78, 1, 0)), (std::vector<int>{0, 18, 36, 60, 72}));
+        // Jungle's busiest snare rushes into the bar in thirty-seconds.
+        const auto rush = ticks(drums::groovePattern(drums::Snare, drums::Jungle, 2, 0));
+        QCOMPARE((std::vector<int>(rush.end() - 3, rush.end())), (std::vector<int>{87, 90, 93}));
+        // Every kit's swing is one the page can set.
+        for (int kit = 0; kit < drums::KitCount; ++kit)
+            QVERIFY(drums::kitSwing(kit) >= 0.5f && drums::kitSwing(kit) <= 0.7f);
     }
 
     void patternsAreWhatTheKitsPromise() {

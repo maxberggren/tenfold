@@ -178,7 +178,8 @@ void Tutorial::build() {
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Three fingers: a groove"),
          QStringLiteral("Land three fingers together on KICK, CLAP and HAT and leave them down (or hold Z, C and V). Each "
                         "drum plays its part of a house groove, in time. Slide one up for a busier part."),
-         QStringLiteral("Left and right arrows change the kit: house, techno, trap, breaks, garage."),
+         QStringLiteral("Left and right arrows change the kit: house, techno, trap, breaks, garage, and beyond the dance "
+                        "floor boom bap, jungle, an 80s Linn, a CR-78 and jazz brushes."),
          QStringLiteral("Now it grooves by itself."),
          {},
          {},

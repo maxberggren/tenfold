@@ -1,5 +1,5 @@
 // Drums: a ten-finger beat machine. Sixteen synthesised drums in four rows
-// (the beat nearest the player, cymbals at the far edge), five kits, and a
+// (the beat nearest the player, cymbals at the far edge), ten kits, and a
 // way of playing where every finger means something:
 //
 //   * a tap is a hit, as hard as it was pressed, coloured by where on the
@@ -490,7 +490,7 @@ public:
             "hold to roll, Shift for an accent, hold several together for a groove\n"
             "Up / Down\tthe loop longer or shorter, any time (as the Loop longer / shorter buttons: the loop Space "
             "last made here, in whole bars); with keys held rolling, their roll faster or slower\n"
-            "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
+            "Left / Right\tthe kit: house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, the loop shorter or longer, "
             "overdub, sounds back\n"
@@ -619,9 +619,11 @@ private:
         bool first = true; // its first step hasn't gone out yet
         bool strip = false; // REPEAT started it: it follows the strip's rate
         bool swing = true; // a pattern finer than sixteenths isn't swung
+        bool eighths = false; // a triplet part: the swing moves its offbeat eighths
         Pattern pattern;
         void setPattern(const Pattern &p) {
             pattern = p;
+            eighths = p.triplet;
             swing = true;
             for (int i = 0; i < p.count; ++i)
                 swing &= p.steps[i].tick % 6 == 0;
@@ -1258,7 +1260,6 @@ private:
             // block, so this costs no accuracy. Kept generators, with no
             // finger, look the full lookahead ahead.
             const bool gated = g.holder >= 0;
-            const double swing = double(m_swing - 0.5f) * 0.5;
             constexpr double bar = kBeatsPerBar;
             bool held = false;
             for (long b0 = long(std::floor(g.cursor / bar)); !held && double(b0) * bar <= end; ++b0) {
@@ -1269,9 +1270,10 @@ private:
                         continue;
                     if (finishing && !g.untilInclusive && b >= g.until - 1e-9)
                         continue;
-                    if (b < beatNow - 0.02)
+                    const double heard = b + swingOf(g, s);
+                    if (heard < beatNow - 0.02)
                         continue; // too late to play in time
-                    if (gated && b + (g.swing && s.tick % 12 == 6 ? swing : 0.0) > tight) {
+                    if (gated && heard > tight) {
                         end = b - 1e-6; // not yet: come back for it
                         held = true;
                         break;
@@ -1286,11 +1288,17 @@ private:
         }
     }
 
+    // How late swing puts a step, in beats: every other sixteenth, the MPC
+    // way; in a part written in triplets (the brushes'), the eighth after
+    // each beat, from straight (50%) through the triplet (66%) and past.
+    double swingOf(const Gen &g, const Step &s) const {
+        if (g.eighths)
+            return s.tick % 24 == 12 ? double(m_swing - 0.5f) : 0.0;
+        return g.swing && s.tick % 12 == 6 ? double(m_swing - 0.5f) * 0.5 : 0.0;
+    }
+
     void sendStep(const Gen &g, const Step &s, double beat, ControlContext &ctx) {
-        // Swing: every other sixteenth comes late, the MPC way.
-        double b = beat;
-        if (g.swing && s.tick % 12 == 6)
-            b += double(m_swing - 0.5f) * 0.5;
+        const double b = beat + swingOf(g, s);
         // No two strokes alike: a few percent of velocity, the same for the
         // same step of the same pad every bar, so a loop of it still loops.
         uint32_t hash = uint32_t(g.pad) * 2654435761u ^ uint32_t(s.tick) * 40503u;
@@ -1310,8 +1318,10 @@ private:
         c.f[2] = g.sy;
         c.f[3] = g.semis;
         c.f[4] = g.decay;
-        if (g.pad == Sub) // a groove's 808 rings a little over a sixteenth
-            c.f[5] = float(0.4 * 60.0 / std::max(40.0, ctx.studio().bpm));
+        // A groove's 808 rings a little over a sixteenth; the upright
+        // holds each walking note nearly to the next, so they join.
+        if (g.pad == Sub)
+            c.f[5] = float((m_kit == Brushes || m_kit == Cr78 ? 0.95 : 0.4) * 60.0 / std::max(40.0, ctx.studio().bpm));
         stamp(c);
         ctx.send(c);
         if (!g.preview) {
@@ -1472,7 +1482,7 @@ private:
             return false;
         if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
             return true;
-        if (id >= SpotKit && id < SpotKit + KitCount) {
+        if (id >= SpotKit && id < int(SpotKit) + int(KitCount)) {
             if (id - SpotKit != m_kit)
                 setKit(id - SpotKit, ctx);
             return true;
@@ -1779,32 +1789,36 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                    : QStringLiteral("LOOPING INTO SLOT %1 · SPACE CALLS IT OFF").arg(pc.view->recording + 1),
                std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f), 13, true);
     c::beats(p, pc, col);
-    // Below the pad, every one clickable: the clips and the kits, then the
-    // swing, the loop's length (↑ ↓), overdub and the drums' own sounds back.
+    // Below the pad, every one clickable: the clips, the swing, the loop's
+    // length (↑ ↓), overdub and the drums' own sounds back on the left; the
+    // ten kits on the right, the dance floor's five over the five from beyond it.
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
-    QStringList kits;
-    for (int k = 0; k < KitCount; ++k)
-        kits << QString::fromUtf8(kitName(k)).toUpper();
-    c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), kits, m_kit, &m_spots, SpotKit);
+    for (int r = 0; r < 2; ++r) {
+        QStringList kits;
+        for (int k = r * 5; k < r * 5 + 5 && k < KitCount; ++k)
+            kits << QString::fromUtf8(kitName(k)).toUpper();
+        c::chips(p, pc, c::bandRow(pc, r, 0.57, 1), kits, m_kit - r * 5, &m_spots, SpotKit + r * 5);
+    }
+    // Swing's − and + flank its gauge, which names it, so they fit in the
+    // row with overdub and sounds back.
     const QRectF row = c::bandRow(pc, 1, 0, 0.55);
-    const double w = row.width() / 5;
-    c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SWING −  ⇧←"), false, &m_spots,
-            SpotSwingDown);
-    const QRectF gauge(row.left() + w, row.top(), w - 4, row.height());
+    static const double cuts[8] = {0, 0.112, 0.237, 0.349, 0.489, 0.629, 0.83, 1};
+    auto cell = [&](int i) {
+        return QRectF(row.left() + row.width() * cuts[i], row.top(), row.width() * (cuts[i + 1] - cuts[i]) - 4,
+                      row.height());
+    };
+    c::chip(p, pc, cell(0), QStringLiteral("− ⇧←"), false, &m_spots, SpotSwingDown);
+    const QRectF gauge = cell(1);
     c::text(p, gauge.adjusted(0, 0, 0, -12), QStringLiteral("SWING %1%").arg(int(std::lround(m_swing * 100))), col, 11,
             true, Qt::AlignCenter);
-    c::gauge(p, QRectF(gauge.left() + 6, gauge.bottom() - 10, gauge.width() - 12, 7), (m_swing - 0.5f) / 0.2f, col, 10);
-    c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ⇧→"), false,
-            &m_spots, SpotSwingUp);
+    c::gauge(p, QRectF(gauge.left() + 4, gauge.bottom() - 10, gauge.width() - 8, 7), (m_swing - 0.5f) / 0.2f, col, 10);
+    c::chip(p, pc, cell(2), QStringLiteral("+ ⇧→"), false, &m_spots, SpotSwingUp);
     // The arrows: the loop Space last made, shorter or longer.
-    c::chip(p, pc, QRectF(row.left() + 3 * w, row.top(), w - 4, row.height()), QStringLiteral("LOOP −  ↓"), false,
-            &m_spots, SpotLoopShorter);
-    c::chip(p, pc, QRectF(row.left() + 4 * w, row.top(), w - 4, row.height()), QStringLiteral("LOOP +  ↑"), false,
-            &m_spots, SpotLoopLonger);
-    c::chips(p, pc, c::bandRow(pc, 1, 0.57, 1),
-             {QStringLiteral("OVERDUB  ⇧↵"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,
-             SpotOverdub);
+    c::chip(p, pc, cell(3), QStringLiteral("LOOP− ↓"), false, &m_spots, SpotLoopShorter);
+    c::chip(p, pc, cell(4), QStringLiteral("LOOP+ ↑"), false, &m_spots, SpotLoopLonger);
+    c::chip(p, pc, cell(5), QStringLiteral("OVERDUB ⇧↵"), m_userOverdub, &m_spots, SpotOverdub);
+    c::chip(p, pc, cell(6), QStringLiteral("BACK DEL"), false, &m_spots, SpotReset);
 }
 
 }

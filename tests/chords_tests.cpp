@@ -298,9 +298,9 @@ private slots:
         QVERIFY(sus.rms(0.25, 0.5) > 0.003);
     }
 
-    // Return loops the last bars played, however they were played: four
-    // chords held a bar each become a four-bar loop.
-    void returnLoopsTheLastBars() {
+    // P loops the last bars played, however they were played: four chords
+    // held a bar each become a four-bar loop.
+    void pLoopsTheLastBars() {
         const double bar = 4 * 60.0 / 124.0;
         std::string s = "page 0 3\n";
         const char *keys[] = {"A", "F", "D", "G"};
@@ -309,7 +309,7 @@ private slots:
             s += "key " + num(on) + " " + keys[i] + " down\n";
             s += "key " + num(off) + " " + keys[i] + " up\n";
         }
-        s += "key " + num(4 * bar - 0.3) + " Return\nend " + num(9 * bar) + "\n";
+        s += "key " + num(4 * bar - 0.3) + " P\nend " + num(9 * bar) + "\n";
         std::set<int> roots;
         const auto take = playWatching(s, [&](double now, const StudioView &v) {
             if (now > 4 * bar + 0.2)
@@ -519,7 +519,7 @@ private slots:
     }
 
     // Space over a playing loop takes what was just played at once, and the
-    // page says what landed; Return counts down to its bar line.
+    // page says what landed; P counts down to its bar line.
     void theLoopIsAnnounced() {
         QString landed, counting;
         const std::string over = recordedLoop({0, 5, 2, 6}) + "down " + num(3 * kBar + 0.01) + " 70 " + cell(3, Triad) +
@@ -529,10 +529,10 @@ private slots:
         QVERIFY2(landed.contains("looped") && landed.contains("slot 2"), qPrintable(landed));
         QCOMPARE(take.view.parts[kChords].playing, 1);
         testkit::play(recordedLoop({0, 5, 2, 6}) + "down " + num(3 * kBar + 0.05) + " 71 " + cell(4, Triad) + "\nup " +
-                          num(3 * kBar + kBeat) + " 71\nkey " + num(3 * kBar + 2 * kBeat) + " Return\nend " +
+                          num(3 * kBar + kBeat) + " 71\nkey " + num(3 * kBar + 2 * kBeat) + " P\nend " +
                           num(3 * kBar + 2.5 * kBeat) + "\n",
                       [&](Session &s) { counting = s.pageStatus(); });
-        QVERIFY2(counting.contains("looping the last") && counting.contains("return calls it off"), qPrintable(counting));
+        QVERIFY2(counting.contains("looping the last") && counting.contains("p calls it off"), qPrintable(counting));
     }
 
     // Over a running clock, a progression played twice and then Space loops
@@ -564,7 +564,7 @@ private slots:
             QVERIFY2(take.rms(b * kBar, (b + 1) * kBar) > 0.02, qPrintable(QString("bar %1 is quiet").arg(b)));
     }
 
-    // A chord landed a hair early for its bar belongs to it: Return keeps
+    // A chord landed a hair early for its bar belongs to it: P keeps
     // all four chords of a progression played 20 ms ahead of each bar.
     void earlyChordsStayInTheLoop() {
         std::string s = "tempo 0 128\npage 0.01 3\n";
@@ -574,7 +574,7 @@ private slots:
             s += "down " + num((b + 1) * bar - 0.02) + " " + std::to_string(b + 1) + " " + cell(d, Triad) + "\n";
             s += "up " + num((b + 2) * bar - 0.08) + " " + std::to_string(b + 1) + "\n";
         }
-        s += "key " + num(5 * bar + 0.25) + " Return\nend " + num(10 * bar) + "\n";
+        s += "key " + num(5 * bar + 0.25) + " P\nend " + num(10 * bar) + "\n";
         std::set<int> roots;
         const auto take = playWatching(s, [&](double now, const StudioView &v) {
             if (now > 5 * bar + 0.3)
@@ -712,16 +712,16 @@ private slots:
         QCOMPARE(shown, 0);
     }
 
-    // Return pressed just after the bar line: the loop has already begun,
-    // and its first chord sounds at once, so no bar goes by without it.
-    void lateReturnSoundsAtOnce() {
+    // P pressed just after the bar line: the loop has already begun, and
+    // its first chord sounds at once, so no bar goes by without it.
+    void lateLoopSoundsAtOnce() {
         std::string s = "page 0 3\n";
         for (int b = 1; b < 5; ++b)
             s += "down " + num(b * kBar + 0.01) + " " + std::to_string(b) + " " +
                  cell(std::array<int, 5>{0, 0, 5, 2, 6}[size_t(b)], Triad) + "\nup " + num((b + 1) * kBar - 0.15) + " " +
                  std::to_string(b) + "\n";
         const double press = 5 * kBar + 0.5 * kBeat;
-        s += "key " + num(press) + " Return\nend " + num(11 * kBar) + "\n";
+        s += "key " + num(press) + " P\nend " + num(11 * kBar) + "\n";
         int soon = -1, next = -1;
         const auto take = playWatching(s, [&](double now, const StudioView &v) {
             if (soon < 0 && now > press + 0.1)
@@ -729,10 +729,72 @@ private slots:
             if (next < 0 && now > 6 * kBar + 0.1)
                 next = v.chordRoot;
         });
-        QCOMPARE(soon, 0); // the loop's first chord, the moment Return lands
+        QCOMPARE(soon, 0); // the loop's first chord, the moment P lands
         QCOMPARE(next, 5); // and the loop carries on from there
         for (int b = 5; b < 11; ++b)
             QVERIFY2(take.rms(b * kBar, (b + 1) * kBar) > 0.02, qPrintable(QString("bar %1 is quiet").arg(b)));
+    }
+
+    // Return holds, as L and the click do; Delete lets go of the chord held
+    // and leaves hold on for the next one.
+    void returnHoldsAndDeleteLetsGo() {
+        const auto held =
+            testkit::play("page 0 3\nkey 0.1 Return\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
+        const auto loose = testkit::play("page 0 3\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
+        QVERIFY(held.rms(2.0, 2.5) > 0.01);
+        QVERIFY(loose.rms(2.0, 2.5) < 0.3 * held.rms(2.0, 2.5));
+        for (int c = 0; c < 8; ++c)
+            QCOMPARE(int(held.view.parts[kChords].clips[c].state), int(ClipView::Empty));
+        QString status;
+        const auto gone = testkit::play(
+            "page 0 3\nkey 0.1 Return\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nkey 1.0 Delete\nend 2.5\n",
+            [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY(gone.rms(2.0, 2.5) < 0.3 * held.rms(2.0, 2.5));
+        QVERIFY2(status.contains("hold"), qPrintable(status));
+    }
+
+    // The band under the pad does what the keys do. On the scripts' window
+    // the pad is 900 × 562.5 px: row 0 is 0.048 of it under the pad, row 1
+    // 0.119. Row 0 holds the clips, then the six sounds from about 0.4 to
+    // 0.8 of the width; row 1 starts with HOLD.
+    void theBandUnderThePadIsClickable() {
+        QString status;
+        testkit::play("page 0 3\nbutton 0.2 0.48 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("trance", Qt::CaseInsensitive), qPrintable(status));
+        testkit::play("page 0 3\nbutton 0.2 0.76 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("pump", Qt::CaseInsensitive), qPrintable(status));
+        // HOLD, then a chord that keeps ringing after the finger lifts.
+        const auto held = testkit::play("page 0 3\nbutton 0.1 0.03 -0.119\ndown 0.2 1 " + cell(0, Triad) +
+                                            "\nup 0.6 1\nend 2.5\n",
+                                        [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("hold"), qPrintable(status));
+        QVERIFY(held.rms(2.0, 2.5) > 0.01);
+        // VOICE + twice: the voicing goes up two steps.
+        testkit::play("page 0 3\nbutton 0.1 0.6 -0.119\nbutton 0.2 0.6 -0.119\nend 0.5\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("voicing +2"), qPrintable(status));
+        // GATE +: the pad's held chord takes the next gate, the offbeat.
+        testkit::play("page 0 3\nbutton 0.1 0.37 -0.119\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("gate offbeat", Qt::CaseInsensitive), qPrintable(status));
+        // The same from the keyboard: Shift+→, or ] as a second key.
+        testkit::play("page 0 3\nkey 0.1 Shift+Right\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("gate offbeat", Qt::CaseInsensitive), qPrintable(status));
+        testkit::play("page 0 3\nkey 0.1 ]\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("gate offbeat", Qt::CaseInsensitive), qPrintable(status));
+        testkit::play("page 0 3\nkey 0.1 Shift+Left\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("gate wub", Qt::CaseInsensitive) && status.contains("pad", Qt::CaseInsensitive),
+                 qPrintable(status));
+    }
+
+    // A clip slot under the pad, clicked, starts its loop or stops it.
+    void clickingAClipLaunchesIt() {
+        const std::string loop = recordedLoop({0, 5, 2, 6}) + "key " + num(2 * kBar + 0.2) + " Backspace\n";
+        const auto stopped = testkit::play(loop + "end " + num(5 * kBar) + "\n");
+        QVERIFY(stopped.view.parts[kChords].playing < 0);
+        // Slot 1 is the first of eight across the clip strip (0 .. ~0.33).
+        const auto launched =
+            testkit::play(loop + "button " + num(4 * kBar) + " 0.02 -0.048\nend " + num(6 * kBar) + "\n");
+        QCOMPARE(launched.view.parts[kChords].playing, 0);
     }
 
     // Clicking the pad holds, like L.

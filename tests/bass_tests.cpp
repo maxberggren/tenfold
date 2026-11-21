@@ -405,15 +405,16 @@ private slots:
     }
 
     // The loop steps aside while the player holds a note, and comes back.
-    void theLoopStepsAsideForTheHand() {
+    void theLoopDucksUnderTheHand() {
+        // A held note over the loop: the loop plays on at half, under it.
         Rig rig;
         rig.send(noteOn(kReplay | 1, 0, bass::Sub));
         rig.run(0.5);
         QVERIFY(std::fabs(cents(rig.pitch(), 33)) < 15);
         rig.send(noteOn(5, 4, bass::Sub));
         rig.run(0.5);
-        QVERIFY(std::fabs(cents(rig.pitch(), 40)) < 15);
-        QVERIFY(rig.pub[bass::PubClipMute] > 0.95f);
+        QVERIFY(std::fabs(rig.pub[bass::PubClipMute] - (1.0f - bass::kLoopUnderHand)) < 0.05f);
+        QCOMPARE(int(rig.engine->voices()), 2);
         rig.send(noteOff(5));
         rig.run(0.6);
         QVERIFY(std::fabs(cents(rig.pitch(), 33)) < 15);

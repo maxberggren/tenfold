@@ -13,9 +13,10 @@
 //
 // There are two lanes, each a mono synth with its own note stack: the
 // player's fingers and keys, and the clip that is looping. While the
-// player holds a note the loop steps aside, so the low end is never two
-// basses at once; the shapers the player holds (octave, roll, wobble,
-// grit) work on whatever is sounding, the loop included.
+// player holds a note the loop ducks to half, so the hand leads but what
+// Space would layer onto is still heard; the shapers the player holds
+// (octave, roll, wobble, grit) work on whatever is sounding, the loop
+// included.
 
 #include <array>
 #include <cmath>
@@ -91,13 +92,16 @@ enum Pub : int {
     PubGritChar = 22,
     PubOct = 23,
     PubChordShift = 24, // degrees the chord moves a following line
-    PubClipMute = 25,   // how far the loop has stepped aside
+    PubClipMute = 25,   // how far the loop has ducked under the hand (0..1 − kLoopUnderHand)
     PubScopeCycles = 26,
     PubFilter = 27,      // the FILTER finger's cutoff offset, and its morph offset
     PubFilterMorph = 28,
     PubScope = 128,     // 128 points: two cycles of the waveform, phase-locked
     PubScopeSize = 128,
 };
+
+// How loud the loop plays while the player holds a note over it.
+constexpr float kLoopUnderHand = 0.5f;
 
 // --- the sounds -----------------------------------------------------------------
 
@@ -1228,11 +1232,12 @@ private:
         const bool liveShown = m_live.active() || !shownClip.active();
         float mixL[kBlock] = {}, mixR[kBlock] = {};
         m_live.render(mixL, mixR, n, off0, ctx, m_shapeLive, 1.0f, liveShown ? wraps : nullptr);
-        // The loop steps aside while the player holds a note; its layers
-        // all share the loop's shapers.
+        // The loop ducks to half while the player holds a note: the hand
+        // leads, and the loop it would layer onto is still there to play
+        // along with. Its layers all share the loop's shapers.
         const Shape clipSh = Shape::over(clipShape(), m_shapeLive);
         for (Lane &ln : m_clip)
-            ln.render(mixL, mixR, n, off0, ctx, clipSh, m_live.holding() ? 0.0f : 1.0f,
+            ln.render(mixL, mixR, n, off0, ctx, clipSh, m_live.holding() ? kLoopUnderHand : 1.0f,
                           liveShown || &ln != &shownClip ? nullptr : wraps);
         for (int i = 0; i < n; ++i) {
             l[i] += mixL[i];

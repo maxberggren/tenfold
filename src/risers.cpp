@@ -116,7 +116,13 @@ public:
         if (k.repeat)
             return true;
         if (k.down && k.key >= Qt::Key_F1 && k.key <= Qt::Key_F8) {
-            ctx.launch(k.key - Qt::Key_F1);
+            const int slot = k.key - Qt::Key_F1;
+            if (k.modifiers & Qt::ShiftModifier) {
+                ctx.clear(slot);
+                ctx.notice(QStringLiteral("Slot %1 emptied").arg(slot + 1));
+            } else {
+                ctx.launch(slot);
+            }
             return true;
         }
         const double t = ctx.now();
@@ -135,30 +141,22 @@ public:
         case Qt::Key_Enter:
             sendDrop(t, ctx);
             return true;
-        case Qt::Key_Q: {
-            Command c;
-            c.type = CmdFall;
-            c.id = kEveryone;
-            c.t = t;
-            ctx.send(c);
-            m_localDrop = m_liveDrop = -1;
-            ctx.notice(QStringLiteral("The build falls away"));
+        // Delete lets go, as on every page: here the whole build. Q was its
+        // key first and stays a second one.
+        case Qt::Key_Delete:
+        case Qt::Key_Q:
+            fallAway(t, ctx);
             return true;
-        }
         case Qt::Key_Up:
         case Qt::Key_Down:
-            m_keyRow = std::clamp(m_keyRow + (k.key == Qt::Key_Up ? 1 : -1), 0, kRows - 1);
-            ctx.notice(QStringLiteral("Keys play %1-bar risers").arg(rowBars(m_keyRow)));
+            setKeyRow(m_keyRow + (k.key == Qt::Key_Up ? 1 : -1), ctx);
             return true;
         case Qt::Key_Left:
         case Qt::Key_Right:
-            m_style = (m_style + (k.key == Qt::Key_Right ? 1 : StyleCount - 1)) % StyleCount;
-            sendStyle(t, ctx);
-            ctx.notice(QStringLiteral("Drop style: %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()));
+            setStyle((m_style + (k.key == Qt::Key_Right ? 1 : StyleCount - 1)) % StyleCount, t, ctx);
             return true;
         case Qt::Key_W:
-            m_buildMix = !m_buildMix;
-            ctx.notice(m_buildMix ? QStringLiteral("Builds move the mix") : QStringLiteral("Builds leave the mix alone"));
+            toggleBuildMix(ctx);
             return true;
         default:
             break;
@@ -210,8 +208,23 @@ public:
 
     void paint(QPainter &p, const PaintContext &pc) override;
 
+    // The mouse on the band under the pad: everything the keys do that the
+    // pad doesn't already.
+    enum Spot { SpotStyle = 100, SpotShorter = 200, SpotLonger, SpotDrop, SpotFall, SpotMix };
+    bool click(QPointF, ControlContext &ctx) override;
+
     QString help() const override {
         return QStringLiteral(
+            "Left / Right\tdrop style: clean; gap, a half-beat breath before the ONE with only the risers' room ringing; "
+            "or strip, the risers alone for the build's last bar, then the breath\n"
+            "Up / Down\tlonger or shorter risers from the keys (1, 2, 4, 8, 16 bars)\n"
+            "Return\tdrop on the next bar line: everything rising rushes into it\n"
+            "Delete (or Q)\tthe whole build falls away\n"
+            "F1–F8 · Shift+F1–F8\tlaunch a slot at the next bar · empty it\n"
+            "Backspace\tstop the FX clip at the next bar\n"
+            "Space\tloop what you just played (as on every page); Shift+Space layers it onto the loop playing\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the drop styles, riser length, DROP, "
+            "the build falling away, and whether builds move the mix\n"
             "land in the build field\ta riser: the column is the sound (noise, pitch, saw, roll, swell), the row its "
             "length (1, 2, 4, 8, 16 bars up the pad); it peaks on the next phrase line (every 8 bars, 16 for the top "
             "row) and comes in that many bars before it; the finger shows the bar\n"
@@ -219,22 +232,16 @@ public:
             "slide up / sideways\tbigger and brighter / pitch or voicing, always in the key\n"
             "press, twist, flatten\tswell it / set it moving / add grit\n"
             "flick down as you lift\tpull that riser out: it falls away\n"
-            "click the pad, Return\tdrop on the next bar line instead: everything rising rushes into it\n"
+            "click the pad\tdrop on the next bar line instead, as Return does\n"
             "bottom row\timpact, sub drop, downlifter, laser zap, power-down, echo throw, reverb wash, DJ sweep\n"
             "sub drop during a build\tarms a sub onto the drop (the drop's boom gives way to it)\n"
             "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger\n"
             "hold the sweep\tslide left to close a low-pass on the whole mix, up to open a high-pass; press for drive\n"
-            "Space\tloop what you just played (as on every page); Shift+Space layers it onto the loop playing\n"
             "record a build and its drop\tbuild, let it drop, press Space in the bar after: the loop runs from the bar "
             "the build began in to the bar after the drop, and drops on the same bar every pass\n"
-            "A S D F G\tnoise, pitch, saw, roll, swell risers; Up / Down sets their length\n"
+            "A S D F G\tnoise, pitch, saw, roll, swell risers, as long as Up / Down says\n"
             "Z X C V B N M ,\tthe bottom row's hits, held as long as the key\n"
-            "Left / Right\tdrop style: clean; gap, a half-beat breath before the ONE with only the risers' room ringing; "
-            "or strip, the risers alone for the build's last bar, then the breath\n"
-            "Q\tthe whole build falls away\n"
-            "W\tbuilds move the mix (high-pass, room, and drive when pushed) or leave it alone\n"
-            "F1–F8\tlaunch a slot at the next bar\n"
-            "Backspace\tstop the FX clip at the next bar");
+            "W\tbuilds move the mix (high-pass, room, and drive when pushed) or leave it alone");
     }
 
     float tutorialProbe(const QString &name) const override {
@@ -503,6 +510,33 @@ private:
         ctx.notice(QStringLiteral("DROP on the next ONE"));
     }
 
+    // Every riser falls away at once and the drop is called off.
+    void fallAway(double t, ControlContext &ctx) {
+        Command c;
+        c.type = CmdFall;
+        c.id = kEveryone;
+        c.t = t;
+        ctx.send(c);
+        m_localDrop = m_liveDrop = -1;
+        ctx.notice(QStringLiteral("The build falls away"));
+    }
+
+    void setStyle(int style, double t, ControlContext &ctx) {
+        m_style = std::clamp(style, 0, int(StyleCount) - 1);
+        sendStyle(t, ctx);
+        ctx.notice(QStringLiteral("Drop style: %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()));
+    }
+
+    void setKeyRow(int row, ControlContext &ctx) {
+        m_keyRow = std::clamp(row, 0, kRows - 1);
+        ctx.notice(QStringLiteral("Keys play %1-bar risers").arg(rowBars(m_keyRow)));
+    }
+
+    void toggleBuildMix(ControlContext &ctx) {
+        m_buildMix = !m_buildMix;
+        ctx.notice(m_buildMix ? QStringLiteral("Builds move the mix") : QStringLiteral("Builds leave the mix alone"));
+    }
+
     // --- the mix -------------------------------------------------------------
 
     struct Mod {
@@ -745,6 +779,7 @@ private:
     std::array<Finger, 24> m_fingers{};
     Mod m_mods[kMods];
     Frame m_frame;
+    console::Hotspots m_spots; // what paint() drew to be clicked
     bool m_button = false;
     bool m_buildMix = true;
     int m_style = Clean;
@@ -758,6 +793,28 @@ private:
     double m_liftDrop = -1;
     double m_songStart = -1;
 };
+
+bool FxPage::click(QPointF at, ControlContext &ctx) {
+    const int id = m_spots.at(at);
+    if (id < 0)
+        return false;
+    if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+        return true;
+    const double t = ctx.now();
+    if (id >= SpotStyle && id < SpotStyle + int(StyleCount)) {
+        if (id - SpotStyle != m_style)
+            setStyle(id - SpotStyle, t, ctx);
+        return true;
+    }
+    switch (id) {
+    case SpotShorter: setKeyRow(m_keyRow - 1, ctx); return true;
+    case SpotLonger: setKeyRow(m_keyRow + 1, ctx); return true;
+    case SpotDrop: sendDrop(t, ctx); return true;
+    case SpotFall: fallAway(t, ctx); return true;
+    case SpotMix: toggleBuildMix(ctx); return true;
+    default: return false;
+    }
+}
 
 // --- drawing -------------------------------------------------------------------
 
@@ -1003,18 +1060,11 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         c::text(p, QRectF(cell.left() + 6, cell.top() + 4, 30, 14), QString(QChar(kHitKeys[k])), c::alpha(col, 0.75f), 11, true);
     }
 
-    // The top band: the drop style and the keys' length on the left, the
-    // build's timeline and its countdown in the middle, what the page is
-    // doing to the mix on the right.
+    // The top band: the build's timeline and its countdown in the middle,
+    // what the page is doing to the mix on the right. The drop style, the
+    // keys' length and whether builds move the mix are in the band under
+    // the pad, where the mouse can change them.
     const qreal bandTop = pc.pad.top() + 12;
-    {
-        QRectF r = c::tag(p, QPointF(pc.pad.left() + 12, bandTop + 7),
-                          QStringLiteral("DROP %1").arg(QString::fromUtf8(styleName(m_style)).toUpper()), col, 11);
-        r = c::tag(p, QPointF(r.right() + 6, r.center().y()), QStringLiteral("KEYS %1 BAR").arg(rowBars(m_keyRow)),
-                   c::alpha(col, 0.7f), 11);
-        if (!m_buildMix)
-            c::tag(p, QPointF(pc.pad.left() + 12, bandTop + 29), QStringLiteral("MIX LEFT ALONE"), c::alpha(col, 0.5f), 11);
-    }
     const QRectF band(pc.pad.left() + pc.pad.width() * 0.26, bandTop, pc.pad.width() * 0.3, 10);
     if (drop > beat) {
         const double span = std::max(0.25, drop - start);
@@ -1118,7 +1168,38 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         c::tag(p, QPointF(cell.center().x(), cell.top() + 12), QStringLiteral("ON THE ONE"), col, 10, true);
     }
     c::beats(p, pc, col);
-    c::clips(p, QRectF(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width(), 30), *pc.view, col, pc.time);
+
+    // Below the pad, every one clickable: the clips and the drop styles,
+    // then the keys' riser length, the drop, the build falling away and
+    // whether builds move the mix.
+    m_spots.clear();
+    c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
+    QStringList styles;
+    for (int s = 0; s < StyleCount; ++s)
+        styles << QStringLiteral("DROP %1").arg(QString::fromUtf8(styleName(s)).toUpper());
+    c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), styles, m_style, &m_spots, SpotStyle);
+    // The length needs less room than the three chips beside it, whose
+    // words must still fit on the narrowest window.
+    const QRectF row = c::bandRow(pc, 1, 0, 0.42);
+    const double w = (row.width() + 4) / 3;
+    c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SHORTER  ↓"), false, &m_spots,
+            SpotShorter);
+    const QRectF length(row.left() + w, row.top(), w - 4, row.height());
+    c::text(p, length.adjusted(0, 0, 0, -12),
+            rowBars(m_keyRow) == 1 ? QStringLiteral("KEYS 1 BAR") : QStringLiteral("KEYS %1 BARS").arg(rowBars(m_keyRow)),
+            col, 11, true, Qt::AlignCenter);
+    c::gauge(p, QRectF(length.left() + 6, length.bottom() - 10, length.width() - 12, 7),
+             float(m_keyRow + 1) / kRows, col, kRows);
+    c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("LONGER  ↑"), false,
+            &m_spots, SpotLonger);
+    const QRectF right = c::bandRow(pc, 1, 0.44, 1);
+    const double rw = (right.width() + 4) / 3;
+    c::chip(p, pc, QRectF(right.left(), right.top(), rw - 4, right.height()), QStringLiteral("DROP  ↵"),
+            drop > beat, &m_spots, SpotDrop);
+    c::chip(p, pc, QRectF(right.left() + rw, right.top(), rw - 4, right.height()), QStringLiteral("FALL AWAY  DEL"),
+            false, &m_spots, SpotFall);
+    c::chip(p, pc, QRectF(right.left() + 2 * rw, right.top(), rw - 4, right.height()), QStringLiteral("MOVE MIX  W"),
+            m_buildMix, &m_spots, SpotMix);
 }
 
 }

@@ -153,11 +153,15 @@ constexpr int Rate = 46, Pump = 47;
 constexpr int Columns = 48;  // per lane 8 apart: how loud each degree is sounding
 }
 
-constexpr int kLiveLane = 0, kReplayLane = 1, kLanes = 2;
+// Lanes of play: the live one, then one per layer of the playing loop (each
+// layer's chords are held and sound on their own, so a chord layered over
+// the loop never cuts the loop's off). The page is shown two: the live
+// lane, and the loop's chord of the moment as kReplayLane.
+constexpr int kLiveLane = 0, kReplayLane = 1, kLanes = 1 + kClipLayers, kPubLanes = 2;
 // The id of the page's carry-on markers: never a chord's (those count up
 // from 1 and wrap below it).
 constexpr int kCarryOnId = 0xFFFFF0;
-inline int laneOf(int id) { return (id >> 24) != 0 ? kReplayLane : kLiveLane; }
+inline int laneOf(int id) { return isReplay(id) ? kReplayLane + replayLayer(id) : kLiveLane; }
 
 // --- harmony ----------------------------------------------------------------
 
@@ -581,8 +585,11 @@ public:
                 if (cur)
                     release(*cur);
                 L.voice = -1;
-                if (lane == kLiveLane && m_lanes[kReplayLane].voice >= 0)
-                    announce(kReplayLane, ctx);
+                // The chord of the moment falls back to the newest still
+                // held: the loop's under a live one, a layer's first layer
+                // under the chord layered on it.
+                if (!current(m_lanes[kLiveLane]) && loopLane() >= 0)
+                    announce(loopLane(), ctx);
             }
             break;
         }
@@ -649,23 +656,37 @@ public:
         // chords a little late is still on the loop's last chord for a moment.
         bool loopSounding = false;
         for (const auto &v : m_voices)
-            loopSounding |= v.active && v.lane == kReplayLane;
+            loopSounding |= v.active && v.lane >= kReplayLane;
         const ChordVoice *live = current(m_lanes[kLiveLane]);
-        const Shape &loopShape = m_lanes[kReplayLane].shape;
+        const int ll = loopLane();
+        const Shape &loopShape = m_lanes[ll >= 0 ? ll : kReplayLane].shape;
         const bool differ = live && loopSounding && loopShape.count > 0 &&
                             column(live->degree) != column(loopShape.tones[0]);
         m_differFor = differ ? m_differFor + double(n) * tr.beatsPerSample : 0.0;
         // Landing with the loop's chord, to a tenth of a beat, counts as new.
-        const bool newcomer = m_onsetAt[kLiveLane] >= m_onsetAt[kReplayLane] - 0.1;
+        const bool newcomer = m_onsetAt[kLiveLane] >= m_onsetAt[ll >= 0 ? ll : kReplayLane] - 0.1;
         const double wait = newcomer ? 0.03 / tr.secondsPerBeat() : 0.5;
         const bool clash = m_differFor > wait;
+        const float k = 1.0f - std::exp(-float(n) / (0.01f * m_rate));
         const float loop0 = m_loopGain;
-        m_loopGain += ((clash ? 0.125f : 1.0f) - m_loopGain) * (1.0f - std::exp(-float(n) / (0.01f * m_rate)));
+        m_loopGain += ((clash ? 0.125f : 1.0f) - m_loopGain) * k;
+        // Layers of the loop holding a different chord from its newest step
+        // back the same way: one harmony leads, the other stays under it.
+        float layer0[kLanes];
+        for (int i = kReplayLane; i < kLanes; ++i) {
+            const Lane &L = m_lanes[i];
+            const bool under = ll >= 0 && i != ll && current(L) && L.shape.count > 0 &&
+                               column(L.shape.tones[0]) != column(m_lanes[ll].shape.tones[0]);
+            layer0[i] = m_layerGain[i];
+            m_layerGain[i] += ((under ? 0.125f : 1.0f) - m_layerGain[i]) * k;
+        }
         float mixL[kBlock] = {}, mixR[kBlock] = {};
         for (auto &v : m_voices)
             if (v.active) {
-                const bool loop = v.lane == kReplayLane;
-                renderVoice(v, mixL, mixR, n, loop ? loop0 : 1.0f, loop ? m_loopGain : 1.0f);
+                const bool loop = v.lane >= kReplayLane;
+                const int lane = std::clamp(int(v.lane), 0, kLanes - 1);
+                renderVoice(v, mixL, mixR, n, loop ? loop0 * layer0[lane] : 1.0f,
+                            loop ? m_loopGain * m_layerGain[lane] : 1.0f);
             }
         // Chords leave the low end to the bass: a fourth-order high-pass
         // under 140 Hz.
@@ -693,8 +714,21 @@ public:
     }
 
     void publish(float *data) override {
-        for (int k = 0; k < kLanes; ++k) {
-            float *d = data + k * pub::LaneStride;
+        // The loop is shown as its chord of the moment: the newest layer
+        // holding one, else the newest ringing out.
+        int shownLoop = loopLane();
+        if (shownLoop < 0)
+            for (int i = kReplayLane; i < kLanes; ++i) {
+                const Lane &L = m_lanes[i];
+                if (L.shown >= 0 && m_voices[size_t(L.shown)].active && m_voices[size_t(L.shown)].lane == i &&
+                    (shownLoop < 0 || m_onsetAt[i] > m_onsetAt[shownLoop]))
+                    shownLoop = i;
+            }
+        if (shownLoop < 0)
+            shownLoop = kReplayLane;
+        for (int pk = 0; pk < kPubLanes; ++pk) {
+            const int k = pk == 0 ? kLiveLane : shownLoop;
+            float *d = data + pk * pub::LaneStride;
             const Lane &L = m_lanes[k];
             const ChordVoice *v = L.shown >= 0 ? &m_voices[size_t(L.shown)] : nullptr;
             if (v && (!v->active || v->lane != k))
@@ -723,13 +757,13 @@ public:
             d[pub::Sounding] = L.voice >= 0 ? 1.0f : 0.0f;
             float cols[8] = {};
             for (const auto &w : m_voices)
-                if (w.active && w.lane == k) {
+                if (w.active && (pk == 0 ? w.lane == kLiveLane : w.lane >= kReplayLane)) {
                     const int c = ((w.degree % m_count) + m_count) % m_count;
                     if (c < 8)
                         cols[c] = std::max(cols[c], std::min(1.0f, w.level * 3.0f));
                 }
             for (int c = 0; c < 8; ++c)
-                data[pub::Columns + 8 * k + c] = cols[c];
+                data[pub::Columns + 8 * pk + c] = cols[c];
         }
         for (int s = 0; s < StyleCount; ++s) {
             data[pub::Gate + s] = m_rhythm[s].gateView;
@@ -794,6 +828,12 @@ private:
         ChordVoice &v = m_voices[size_t(L.voice)];
         return v.active && !v.releasing ? &v : nullptr;
     }
+    const ChordVoice *current(const Lane &L) const {
+        if (L.voice < 0)
+            return nullptr;
+        const ChordVoice &v = m_voices[size_t(L.voice)];
+        return v.active && !v.releasing ? &v : nullptr;
+    }
 
     // How long a chord takes to fall away when a new one takes its place.
     static constexpr float kDamp = 0.02f;
@@ -833,6 +873,15 @@ private:
             if (L.depth > 0 && current(L))
                 sound(k, L.stack[L.depth - 1], 0, false, ctx, false);
         }
+    }
+
+    // The loop's lane whose chord is the loop's now: the newest held, or -1.
+    int loopLane() const {
+        int best = -1;
+        for (int i = kReplayLane; i < kLanes; ++i)
+            if (current(m_lanes[i]) && (best < 0 || m_onsetAt[i] > m_onsetAt[best]))
+                best = i;
+        return best;
     }
 
     // A degree as its column on the pad: the same chord in any octave.
@@ -926,7 +975,7 @@ private:
     // The chord of the moment for Bass, Arp and Lead. A chord held live wins
     // over a loop's while the finger is down.
     void announce(int lane, AudioContext &ctx) {
-        if (lane == kReplayLane && current(m_lanes[kLiveLane]))
+        if (lane >= kReplayLane && (current(m_lanes[kLiveLane]) || lane != loopLane()))
             return;
         const Shape &s = m_lanes[lane].shape;
         if (s.count > 0)
@@ -1454,7 +1503,9 @@ private:
     float m_pumpView = 0;
     float m_loopGain = 1;
     double m_differFor = 0; // beats the live chord has differed from the loop's
-    double m_onsetAt[kLanes] = {-1e9, -1e9}; // the beat each lane's chord began
+    double m_onsetAt[kLanes] = {-1e9, -1e9, -1e9, -1e9, -1e9}; // the beat each lane's chord began
+    static_assert(kLanes == 5);
+    float m_layerGain[kLanes] = {1, 1, 1, 1, 1}; // each loop layer's step back under another
     Svf m_hp1L, m_hp1R, m_hp2L, m_hp2R;
 };
 

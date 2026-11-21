@@ -157,6 +157,38 @@ const std::set<int> kAMinor = {9, 11, 0, 2, 4, 5, 7};
 class ChordsTests : public QObject {
     Q_OBJECT
 private slots:
+    void aLayeredChordLeavesTheLoopsChordSounding() {
+        // A pad held on the key's chord all bar is looped; then piano stabs on
+        // the sixth degree, on beats 1 and 3, are layered on it. The stabs
+        // sound over the pad, not instead of it: no beat after the layer goes
+        // quiet, and between stabs the chord of the moment (what Bass, Arp and
+        // Lead follow) is the pad's again.
+        const std::string script = "page 0.05 3\nkey 0.1 Ctrl+M\n"
+                                   "key 1.9355 A down\nkey 3.8952 Space\nkey 4.1129 A up\n"
+                                   "key 4.8387 Right\nkey 4.8871 Right\nkey 4.9355 Right\n"
+                                   "key 6.2903 H down\nkey 6.4839 H up\nkey 7.2581 H down\nkey 7.4516 H up\n"
+                                   "key 7.7661 Space\nend 13.6\n";
+        int onTonic = 0, samples = 0;
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            if (t > 9.7 && t < 11.6) {
+                ++samples;
+                onTonic += s.view().chordRoot == 0;
+            }
+        });
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[2].playing, 0);
+        QVERIFY(take.view.parts[2].clips[1].state == ClipView::Empty);
+        const double spb = 60.0 / 124.0;
+        const double before = take.rms(8 * spb, 16 * spb);
+        double quietest = 1;
+        for (int beat = 18; beat < 26; ++beat)
+            quietest = std::min(quietest, take.rms(beat * spb, (beat + 1) * spb));
+        QVERIFY2(quietest > before * 0.5, qPrintable(QStringLiteral("a beat at %1 dB of %2 dB")
+                                                         .arg(20 * std::log10(quietest), 0, 'f', 1)
+                                                         .arg(20 * std::log10(before), 0, 'f', 1)));
+        QVERIFY2(onTonic > samples / 3, qPrintable(QStringLiteral("on the tonic %1 of %2").arg(onTonic).arg(samples)));
+    }
+
     void fingersPlayAndStayFinite() {
         const auto take = testkit::play("page 0 3\n"
                                         "tap 0.2 0.2 0.5\ntap 0.5 0.4 0.6\ndown 0.8 1 0.6 0.4\n"

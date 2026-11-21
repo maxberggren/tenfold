@@ -664,10 +664,14 @@ struct Engine::Impl {
     float rate = 48000;
     uint64_t rendered = 0;
     int cursor = 0; // the sample within the block being worked on
-    Lane lanes[2];
+    // The live lane, then one per layer of the playing loop: each layer
+    // keeps its own notes, settings and place in its pattern, so a pattern
+    // layered on the loop plays beside the loop's instead of replacing it.
+    static constexpr int kLanes = 1 + kClipLayers;
+    Lane lanes[kLanes];
     Settings overlay;
     int overlayMask = 0;
-    Settings eff[2];
+    Settings eff[kLanes];
     Voice voices[kVoices];
     uint64_t age = 0;
     Echo echo;
@@ -687,11 +691,18 @@ struct Engine::Impl {
     uint32_t noteSeed = 0x2545F491u;
 
     static bool clipId(int id) { return (id & (1 << 30)) != 0; }
+    // The loop's lane the page shows: the first layer playing (else the first).
+    int clipShown() const {
+        for (int k = 1; k < kLanes; ++k)
+            if (lanes[k].running)
+                return k;
+        return 1;
+    }
 
     void refreshEff(int lane) {
         eff[lane] = lanes[lane].s;
-        if (lane == 1 && overlayMask) {
-            Settings &e = eff[1];
+        if (lane >= 1 && overlayMask) {
+            Settings &e = eff[lane];
             const Settings &o = overlay;
             if (overlayMask & kPadRate) {
                 e.rate = o.rate;
@@ -780,7 +791,7 @@ struct Engine::Impl {
     void noteOn(int lane, const Command &c, double b) {
         Lane &L = lanes[lane];
         const int col = c.i[0], row = c.i[1] >> 4 & 15, stack = c.i[1] & 15, flags = c.i[1] >> 8;
-        if (lane == 1 && c.f[1] >= 1.0f) {
+        if (lane >= 1 && c.f[1] >= 1.0f) {
             const int parity = int(c.f[1]) - 1;
             const int bar = int(floorDiv(int64_t(std::floor((b + 0.1) / kBeatsPerBar)), 1));
             L.diceBars = (parity - bar) & 1;
@@ -817,7 +828,7 @@ struct Engine::Impl {
         // A note that landed on an empty hand starts the pattern over, even
         // if a loop's quantising brought it a hair before the Offs of the
         // notes it followed.
-        if (lane == 1 && (flags & kFresh)) {
+        if (lane >= 1 && (flags & kFresh)) {
             L.count = 0;
             L.running = false;
         }
@@ -830,7 +841,7 @@ struct Engine::Impl {
         // hand has just played, and counts it as played.
         const Settings &e = eff[lane];
         const double inBar = b - std::floor(b / kBeatsPerBar) * kBeatsPerBar;
-        const bool late = lane == 1 && inBar - double(c.f[2]) > 0.02 && inBar - double(c.f[2]) < kBeatsPerBar;
+        const bool late = lane >= 1 && inBar - double(c.f[2]) > 0.02 && inBar - double(c.f[2]) < kBeatsPerBar;
         const bool handPlayed = late && lanes[0].lastFired == stepAt(b, e.rate, e.swing);
         if (!held && phase >= 0) {
             // A loop coming round: start the pattern where the live one was
@@ -847,7 +858,7 @@ struct Engine::Impl {
         fill(n);
         if (fresh) {
             L.counter =
-                (phase >= 0 ? uint64_t(phase) : 0) + (lane == 1 ? stepsBefore(L, e, b, double(c.f[2]), !handPlayed) : 0);
+                (phase >= 0 ? uint64_t(phase) : 0) + (lane >= 1 ? stepsBefore(L, e, b, double(c.f[2]), !handPlayed) : 0);
             L.freshBeat = b;
         }
         if (!L.running) {
@@ -924,7 +935,7 @@ struct Engine::Impl {
     }
 
     void apply(const Command &c, double b) {
-        const int lane = clipId(c.id) ? 1 : 0;
+        const int lane = clipId(c.id) ? 1 + replayLayer(c.id) : 0;
         switch (c.type) {
         case kState: {
             ++states;
@@ -934,17 +945,21 @@ struct Engine::Impl {
             break;
         }
         case kOverlay: {
-            const Settings before = eff[1];
+            // The hand's overlay reaches every layer of the loop.
             overlay.unpack(c);
             overlayMask = (c.i[3] >> 10) & 63;
-            refreshEff(1);
-            retime(1, before, b);
+            for (int k = 1; k < kLanes; ++k) {
+                const Settings before = eff[k];
+                refreshEff(k);
+                retime(k, before, b);
+            }
             break;
         }
         case kSync:
             // A take just landed: its loop is on the take's own bars unless
             // the clock was reset to make it (then the bars are new ones).
-            lanes[1].aligned = rendered - jumpedAt >= uint64_t(rate * 0.25);
+            for (int k = 1; k < kLanes; ++k)
+                lanes[k].aligned = rendered - jumpedAt >= uint64_t(rate * 0.25);
             break;
         case kCut:
             for (Voice &v : voices)
@@ -1232,14 +1247,14 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
     s.expectBeat = b0 + double(n) * bps;
     // A clock that jumped (the first loop setting the tempo) leaves no
     // backlog of steps behind it.
-    for (int k = 0; k < 2; ++k) {
+    for (int k = 0; k < Impl::kLanes; ++k) {
         auto &L = s.lanes[k];
         if (L.running && L.next < b0 - stepBeats(s.eff[k].rate))
             s.schedule(L, s.eff[k], b0, false);
     }
     // Filter settings glide a little, so sweeps are smooth.
-    float cutHz[2], res[2], send[2];
-    for (int k = 0; k < 2; ++k) {
+    float cutHz[Impl::kLanes], res[Impl::kLanes], send[Impl::kLanes];
+    for (int k = 0; k < Impl::kLanes; ++k) {
         auto &L = s.lanes[k];
         const float c = L.cut.step(s.eff[k].cutoff);
         res[k] = L.res.step(s.eff[k].res) * 0.92f;
@@ -1291,7 +1306,7 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
             s.barCount = s.lanes[0].counter;
             barLine += kBeatsPerBar;
         }
-        for (int k = 0; k < 2; ++k) {
+        for (int k = 0; k < Impl::kLanes; ++k) {
             auto &L = s.lanes[k];
             int fired = 0;
             while (L.running && offsetOfBeat(L.next) <= pos && fired++ < 8)
@@ -1300,7 +1315,7 @@ void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
     }
     renderVoices(pos, n);
     // The echo, from whichever lane is playing (the live one first).
-    const int lead = s.lanes[0].running || !s.lanes[1].running ? 0 : 1;
+    const int lead = s.lanes[0].running ? 0 : s.clipShown();
     const Settings &e = s.eff[lead];
     const float fb = std::min(0.93f, 0.2f + 0.42f * e.echo + 0.4f * e.throwFb);
     s.echo.process(sendL, sendR, dryL, dryR, n, float(echoBeats(e.echoTime) * tr.samplesPerBeat()), fb,
@@ -1339,18 +1354,30 @@ void Engine::silence(bool hard) {
 
 void Engine::publish(float *data) {
     const Impl &s = *d;
-    auto live = [&](int k) { return s.lanes[k].running ? float(s.lanes[k].count) : 0.0f; };
-    data[kDataLivePool] = live(0);
-    data[kDataClipPool] = live(1);
+    // The loop's layers show together: their notes, the steps they flash;
+    // its step and settings are the first layer playing's.
+    const int clip = s.clipShown();
+    float clipPool = 0;
+    bool clipRunning = false;
+    for (int k = 1; k < Impl::kLanes; ++k)
+        if (s.lanes[k].running) {
+            clipPool += float(s.lanes[k].count);
+            clipRunning = true;
+        }
+    data[kDataLivePool] = s.lanes[0].running ? float(s.lanes[0].count) : 0.0f;
+    data[kDataClipPool] = clipPool;
     data[kDataLiveStep] = float(s.lanes[0].lastInBar);
-    data[kDataClipStep] = float(s.lanes[1].lastInBar);
+    data[kDataClipStep] = float(s.lanes[clip].lastInBar);
     data[kDataBar] = float(s.barIndex);
     data[kDataBarCount] = float(s.barCount);
     data[kDataLiveRunning] = s.lanes[0].running ? 1.0f : 0.0f;
-    data[kDataClipRunning] = s.lanes[1].running ? 1.0f : 0.0f;
+    data[kDataClipRunning] = clipRunning ? 1.0f : 0.0f;
     for (int i = 0; i < kFlashCells; ++i) {
         data[kDataFlash + i] = s.lanes[0].flash[i];
-        data[kDataClipFlash + i] = s.lanes[1].flash[i];
+        float f = 0;
+        for (int k = 1; k < Impl::kLanes; ++k)
+            f = std::max(f, s.lanes[k].flash[i]);
+        data[kDataClipFlash + i] = f;
     }
     data[kDataEcho] = s.echo.level;
     data[kDataLevel] = s.level;
@@ -1368,7 +1395,7 @@ void Engine::publish(float *data) {
         o[0] = float(std::fmod(f.beat, 64.0));
         o[1] = float(f.degree);
         o[2] = f.accent ? -f.vel : f.vel;
-        o[3] = f.midi > 0 ? float(f.lane + 1) : 0.0f;
+        o[3] = f.midi > 0 ? float(std::min(f.lane, 1) + 1) : 0.0f; // 1 live, 2 the loop (any layer)
     }
 }
 
@@ -1389,9 +1416,9 @@ std::vector<Engine::Fired> Engine::log() const {
 
 void Engine::clearLog() { d->logCount = 0; }
 
-const Settings &Engine::laneSettings(int lane) const { return d->eff[std::clamp(lane, 0, 1)]; }
+const Settings &Engine::laneSettings(int lane) const { return d->eff[lane <= 0 ? 0 : d->clipShown()]; }
 int Engine::statesReceived() const { return d->states; }
-uint64_t Engine::laneCounter(int lane) const { return d->lanes[std::clamp(lane, 0, 1)].counter; }
+uint64_t Engine::laneCounter(int lane) const { return d->lanes[lane <= 0 ? 0 : d->clipShown()].counter; }
 
 // --- the page -------------------------------------------------------------------
 

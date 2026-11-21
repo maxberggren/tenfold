@@ -116,6 +116,36 @@ std::string gridX(int col) { return std::to_string(0.58 * (col + 0.5) / 8.0); }
 class ArpTests : public QObject {
     Q_OBJECT
 private slots:
+    void aLayeredPatternPlaysBesideTheLoops() {
+        // A minor held at 1/16 is looped; then, slower and on another sound,
+        // F is held and layered on it. Both patterns play on, each in its own
+        // lane with its own notes and rate: the loop's A minor isn't wiped by
+        // the layer's F (it was: one lane, the newest notes and settings won).
+        const std::string script = "page 0.05 5\nkey 0.1 Ctrl+M\n"
+                                   "key 1.935 A down\nkey 5.831 Space\nkey 6.532 A up\n"
+                                   "key 6.774 C\nkey 6.80 Shift+Left\nkey 6.85 Shift+Left\n"
+                                   "key 7.742 H down\nkey 11.637 Space\nkey 12.339 H up\nend 21.3\n";
+        int first = 0, layer = 0, firstA = 0;
+        const auto take = testkit::play(script, [&](Session &s) {
+            arp::Engine *e = engineOf(s);
+            QVERIFY(e);
+            for (const auto &f : e->log()) {
+                if (f.beat < 32 || f.beat >= 40)
+                    continue;
+                if (f.lane == 1) {
+                    ++first;
+                    firstA += ((int(std::lround(f.midi)) % 12) + 12) % 12 == 9;
+                } else if (f.lane == 2) {
+                    ++layer;
+                }
+            }
+        });
+        QVERIFY(take.error.empty());
+        QVERIFY2(first >= 24, qPrintable(QStringLiteral("the loop's own pattern: %1 notes in two bars").arg(first)));
+        QVERIFY2(firstA >= 6, qPrintable(QStringLiteral("%1 A's in it").arg(firstA)));
+        QVERIFY2(layer >= 6, qPrintable(QStringLiteral("the layer: %1 notes in two bars").arg(layer)));
+    }
+
     // --- patterns and rhythm ------------------------------------------------
 
     void euclideanRhythmsSpreadTheirHits() {

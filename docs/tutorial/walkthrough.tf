@@ -162,7 +162,7 @@ down 99.677 34 0.7660 0.6 p=0.65
 up 100.597 34
 key 100.695 Space
 
-# 5 Arp. M follows the chords; two notes held run.
+# 5 Arp. § follows the chords; two notes held run.
 key 102.581 5
 key 102.781 §
 down 104.516 40 0.0360 0.32 p=0.6

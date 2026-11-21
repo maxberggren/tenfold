@@ -142,7 +142,7 @@ std::string walkthrough() {
         }
     s.key(bar(52) + 0.05, "Space");
 
-    s.comment("5 Arp. M follows the chords; two notes held run.");
+    s.comment("5 Arp. § follows the chords; two notes held run.");
     s.key(bar(53), "5");
     s.key(bar(53) + 0.2, "§");
     s.add("down %.3f 40 0.0360 0.32 p=0.6", bar(54));

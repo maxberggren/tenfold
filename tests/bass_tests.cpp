@@ -791,30 +791,47 @@ private slots:
         QVERIFY2(db < -45, qPrintable(QStringLiteral("%1 dB").arg(db)));
     }
 
-    // The keys every part page shares (docs/PARTS.md 4b), on the bass:
-    // ← → the sound, \\ the chords, [ ] the roll, Delete lets it go.
+    // The keys every part page shares (docs/PARTS.md 4b), on the bass,
+    // the primary ones (no AltGr on a Swedish keyboard) and their old
+    // second keys: ← → the sound, § the chords, Shift+← → the roll,
+    // Delete lets it go, - + the tone.
     void sharedKeysDoWhatTheTableSays() {
-        testkit::play("page 0 2\nkey 0.1 Right\nend 0.3\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Reese)); // from PLUCK
-        });
-        testkit::play("page 0 2\nkey 0.1 Q\nkey 0.2 Left\nend 0.3\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Bounce)); // round from SUB
-        });
-        testkit::play("page 0 2\nkey 0.1 \\\nend 0.3\n", [](Session &s) {
-            QCOMPARE(s.probe(1, QStringLiteral("follow")), 1.0f);
-        });
-        // ] twice: the roll is on, latched on the second pattern, rolling a
-        // held note; Delete lets it go.
-        const std::string roll = "page 0 2\nkey 0.1 ]\nkey 0.2 ]\ndown 0.3 1 0.3 0.4\n";
-        QCOMPARE(int(testkit::play(roll + "end 0.8\n").view.parts[1].data[bass::PubRoll]), 2);
-        QCOMPARE(int(testkit::play(roll + "key 0.5 Delete\nend 0.8\n").view.parts[1].data[bass::PubRoll]), 0);
-        // - = are the tone now, Shift+- = the slide: neither steps the other.
-        testkit::play("page 0 2\nkey 0.1 =\nend 0.3\n", [](Session &s) {
-            QCOMPARE(s.notice(nullptr), QStringLiteral("Keyboard tone 70%"));
-        });
-        testkit::play("page 0 2\nkey 0.1 Shift+=\nend 0.3\n", [](Session &s) {
-            QVERIFY2(s.notice(nullptr).startsWith(QStringLiteral("Slide ")), qPrintable(s.notice(nullptr)));
-        });
+        auto probe = [](const std::string &keys, const char *name) {
+            float v = 0;
+            testkit::play("page 0 2\n" + keys + "end 0.4\n",
+                          [&](Session &s) { v = s.probe(1, QString::fromLatin1(name)); });
+            return v;
+        };
+        QCOMPARE(int(probe("key 0.1 Right\n", "sound")), int(bass::Reese));          // from PLUCK
+        QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\n", "sound")), int(bass::Bounce)); // round from SUB
+        QCOMPARE(probe("key 0.1 §\n", "follow"), 1.0f);
+        QCOMPARE(probe("key 0.1 `\n", "follow"), 1.0f);
+        QCOMPARE(probe("key 0.1 \\\n", "follow"), 1.0f);
+        QCOMPARE(probe("key 0.1 O\n", "follow"), 1.0f);
+        // Shift+→ twice (or ] twice): the roll is on, latched on the second
+        // pattern, rolling a held note; Delete lets it go.
+        auto rolled = [](const std::string &keys) {
+            return int(testkit::play("page 0 2\n" + keys + "down 0.3 1 0.3 0.4\nend 0.8\n")
+                           .view.parts[1]
+                           .data[bass::PubRoll]);
+        };
+        QCOMPARE(rolled("key 0.1 Shift+Right\nkey 0.2 Shift+Right\n"), 2);
+        QCOMPARE(rolled("key 0.1 ]\nkey 0.2 ]\n"), 2);
+        QCOMPARE(rolled("key 0.1 ]\nkey 0.2 ]\nkey 0.25 Shift+Left\n"), 1);
+        QCOMPARE(rolled("key 0.1 ]\nkey 0.2 ]\nkey 0.5 Delete\n"), 0);
+        // - + are the tone (= too); Shift+↑ ↓ the slide; Shift and a sound's
+        // letter turns its saw square.
+        auto notice = [](const std::string &keys) {
+            QString n;
+            testkit::play("page 0 2\n" + keys + "end 0.4\n", [&](Session &s) { n = s.notice(nullptr); });
+            return n;
+        };
+        QCOMPARE(notice("key 0.1 +\n"), QStringLiteral("Keyboard tone 70%"));
+        QCOMPARE(notice("key 0.1 =\n"), QStringLiteral("Keyboard tone 70%"));
+        QCOMPARE(notice("key 0.1 -\n"), QStringLiteral("Keyboard tone 50%"));
+        QVERIFY(notice("key 0.1 Shift+Up\n").startsWith(QStringLiteral("Slide ")));
+        QVERIFY(notice("key 0.1 Shift+Up\n") != notice("key 0.1 Shift+Down\n"));
+        QCOMPARE(notice("key 0.1 Shift+E\n").toLower(), QStringLiteral("reese: square"));
     }
 
     // Return with a shaper held latches it, as a click does, and makes no
@@ -832,7 +849,7 @@ private slots:
     // The band under the pad, with the mouse. On the scripts' window the
     // pad is 562.5 px high: row 0 is 0.048 under it, row 1 0.119. The
     // sounds fill row 0 from 0.38 of the width, eight across; row 1 is five
-    // steppers (0.12, 0.13, 0.12, 0.12, 0.12 wide, the left half down, the
+    // steppers (0.11, 0.14, 0.12, 0.12, 0.12 wide, the left half down, the
     // right half up), then five switches.
     void theBandUnderThePadIsClickable() {
         // ACID, the fourth sound.

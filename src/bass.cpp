@@ -24,12 +24,13 @@
 // accent, or, with only shapers down, latches them so they stay.
 //
 // The keyboard is a second way in: two rows of the scale (Z to / and A to '
-// an octave up), the eight sounds on Q to I, and the keys every part page
-// shares (docs/PARTS.md 4b): ← → the sound, ↑ ↓ the octave, [ ] the roll,
-// - = the tone, Return latch, Shift+Return overdub, \ follow the chords,
-// Delete free the shapers, F1–F8 and Backspace the clips. The older keys
-// (O, P, F9, F10, Enter for LOOP) still work. Everything a key does, the
-// band under the pad does for the mouse.
+// an octave up; Ö Ä on a Nordic keyboard), the eight sounds on Q to I
+// (Shift: square), and the keys every part page shares (docs/PARTS.md 4b):
+// ← → the sound, ↑ ↓ the octave, Shift+← → the roll, - + the tone, Return
+// latch, Shift+Return overdub, the key left of 1 (§ or `) follow the chords,
+// Delete free the shapers, F1–F8 and Backspace the clips. Shift+↑ ↓ is the
+// slide. The older keys ([ ] = \ O P F9 F10, Enter for LOOP) still work.
+// Everything a key does, the band under the pad does for the mouse.
 
 #include <QFontMetricsF>
 #include <QLinearGradient>
@@ -274,17 +275,26 @@ public:
         case Qt::Key_Backspace:
             ctx.stop();
             return true;
-        // The shared keys (docs/PARTS.md 4b), each with its old key beside it.
+        // The shared keys (docs/PARTS.md 4b), each with its old key beside
+        // it. The primary ones need no AltGr on a Swedish keyboard.
         case Qt::Key_Left:
         case Qt::Key_Right:
-            setSound((m_sound + (k.key == Qt::Key_Right ? 1 : SoundCount - 1)) % SoundCount, ctx);
+            if (shift)
+                stepRoll(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            else
+                setSound((m_sound + (k.key == Qt::Key_Right ? 1 : SoundCount - 1)) % SoundCount, ctx);
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down:
-            stepOctave(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            // Shift+↑ ↓ is the slide, the bass's second vertical setting.
+            if (shift)
+                stepSlide(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            else
+                stepOctave(k.key == Qt::Key_Up ? 1 : -1, ctx);
             return true;
-        // Shifted, the brackets and - = reach the second setting of each
-        // pair; a shifted key may arrive as the character it types.
+        // Morph keeps its old keys, Shift+[ ] (a shifted bracket may arrive
+        // as the brace it types); on a Swedish keyboard it is the chip, the
+        // finger's twist and the FILTER zone.
         case Qt::Key_BraceLeft:
         case Qt::Key_BraceRight:
             stepMorph(k.key == Qt::Key_BraceRight ? 1 : -1, ctx);
@@ -296,16 +306,13 @@ public:
             else
                 stepRoll(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
             return true;
+        // Tone: - and +, = as well. Shift is ignored, since + is Shift+= on
+        // a US keyboard (and Shift+- may come along with it as _).
+        case Qt::Key_Minus:
         case Qt::Key_Underscore:
         case Qt::Key_Plus:
-            stepSlide(k.key == Qt::Key_Plus ? 1 : -1, ctx);
-            return true;
-        case Qt::Key_Minus:
         case Qt::Key_Equal:
-            if (shift)
-                stepSlide(k.key == Qt::Key_Equal ? 1 : -1, ctx);
-            else
-                stepTone(k.key == Qt::Key_Equal ? 1 : -1, ctx);
+            stepTone(k.key == Qt::Key_Plus || k.key == Qt::Key_Equal ? 1 : -1, ctx);
             return true;
         case Qt::Key_Return:
             // Return latches the shapers held, as a click does; with none
@@ -325,6 +332,9 @@ public:
         case Qt::Key_F10:
             toggleOverdub(ctx);
             return true;
+        // The key left of 1: § on a Nordic keyboard, ` on a US one.
+        case Qt::Key_section:
+        case Qt::Key_QuoteLeft:
         case Qt::Key_Backslash:
         case Qt::Key_O:
             toggleFollow(ctx);
@@ -333,16 +343,19 @@ public:
         case Qt::Key_P:
             freeShapers(ctx);
             return true;
-        case Qt::Key_QuoteLeft:
-            toggleSquare(ctx);
-            return true;
         case Qt::Key_Q: case Qt::Key_W: case Qt::Key_E: case Qt::Key_R:
         case Qt::Key_T: case Qt::Key_Y: case Qt::Key_U: case Qt::Key_I: {
             static const int order[] = {Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R,
                                         Qt::Key_T, Qt::Key_Y, Qt::Key_U, Qt::Key_I};
+            // Shift with a sound's letter: that sound, its saw turned square
+            // (or back), the same keys on every layout.
             for (int s = 0; s < SoundCount; ++s)
-                if (order[s] == k.key)
-                    setSound(s, ctx);
+                if (order[s] == k.key) {
+                    if (s != m_sound || !shift)
+                        setSound(s, ctx);
+                    if (shift)
+                        toggleSquare(ctx);
+                }
             return true;
         }
         default:
@@ -504,11 +517,11 @@ public:
         return QStringLiteral(
             "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce (or Q W E R T Y U I)\n"
             "↑ ↓\tthe pad's octave\n"
-            "[ ]\tthe roll: off, then OFFBEAT … 8THS, latched on whatever plays\n"
-            "- =\tdarker, brighter: the tone of notes played on the keys\n"
+            "Shift+← → (or [ ])\tthe roll: off, then OFFBEAT … 8THS, latched on whatever plays\n"
+            "- + (or =)\tdarker, brighter: the tone of notes played on the keys\n"
             "Return\twith shapers down, latch them (as a click does); with none, LOOP\n"
             "Shift+Return\toverdub on or off (F10 too)\n"
-            "\\\tfollow the chords, on or off (O too)\n"
+            "§ (` on US, or \\ or O)\tfollow the chords, on or off\n"
             "Delete\tlet the latched shapers go (P too)\n"
             "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · clear it · stop the loop\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds, and every setting "
@@ -525,7 +538,7 @@ public:
             "click\twith a note down, strike it again accented; with only shapers down, latch them\n"
             "LOOP (rail, far left), Enter or F9\talso: record the coming bars from the next bar line; tap again to close\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
-            "Shift+- =   Shift+[ ]   `\tslide time   morph   saw or square");
+            "Shift+↑ ↓   Shift+[ ]   Shift+Q … I\tslide time   morph   that sound with a square for its saw");
     }
 
     // For the tutorial: whether the bass follows the chords, and its sound.
@@ -1003,6 +1016,9 @@ private:
         case Qt::Key_Greater: return Qt::Key_Period;
         case Qt::Key_Colon: return Qt::Key_Semicolon;
         case Qt::Key_QuoteDbl: return Qt::Key_Apostrophe;
+        // A Nordic keyboard has Ö and Ä where a US one has ; and '.
+        case Qt::Key_Odiaeresis: return Qt::Key_Semicolon;
+        case Qt::Key_Adiaeresis: return Qt::Key_Apostrophe;
         default: return key;
         }
     }
@@ -1092,7 +1108,7 @@ private:
 
     int m_sound = Pluck;
     float m_morph[SoundCount];
-    bool m_square[SoundCount] = {}; // the saw swapped for a square (the ` key)
+    bool m_square[SoundCount] = {}; // the saw swapped for a square (Shift and the sound's letter)
     float m_glide = 0.5f, m_keyTone = 0.6f;
     int m_octave = 0;
     bool m_follow = false;
@@ -1491,13 +1507,13 @@ void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QStrin
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(overL || overR ? pc.color : c::alpha(pc.color, 0.6f), 1.5));
     p.drawRect(r);
-    const qreal keyW = std::max(QFontMetricsF(c::font(11, true)).horizontalAdvance(down),
-                                QFontMetricsF(c::font(11, true)).horizontalAdvance(up)) + 4;
+    const qreal keyW = std::max(QFontMetricsF(c::font(12, true)).horizontalAdvance(down),
+                                QFontMetricsF(c::font(12, true)).horizontalAdvance(up)) + 4;
     const QRectF bottom(r.left() + 4, r.top() + 13, r.width() - 8, 16);
     c::text(p, QRectF(r.left() + 3, r.top() + 1, r.width() - 6, 13), name, c::alpha(pc.color, 0.65f),
             fitPx(name, r.width() - 6, 10), true, Qt::AlignCenter);
-    c::text(p, bottom, down, overL ? pc.color : c::alpha(pc.color, 0.7f), 11, true, Qt::AlignLeft | Qt::AlignVCenter);
-    c::text(p, bottom, up, overR ? pc.color : c::alpha(pc.color, 0.7f), 11, true, Qt::AlignRight | Qt::AlignVCenter);
+    c::text(p, bottom, down, overL ? pc.color : c::alpha(pc.color, 0.7f), 12, true, Qt::AlignLeft | Qt::AlignVCenter);
+    c::text(p, bottom, up, overR ? pc.color : c::alpha(pc.color, 0.7f), 12, true, Qt::AlignRight | Qt::AlignVCenter);
     const qreal vw = bottom.width() - 2 * keyW;
     c::text(p, QRectF(bottom.left() + keyW, bottom.top(), vw, bottom.height()), value, pc.color, fitPx(value, vw, 12),
             true, Qt::AlignCenter);
@@ -1526,14 +1542,14 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
         x += w;
     };
     const int roll = rollIndex();
-    stepper(0.12, QStringLiteral("OCTAVE"), octaveText().toUpper(), QStringLiteral("↓"), QStringLiteral("↑"),
+    stepper(0.11, QStringLiteral("OCTAVE"), octaveText().toUpper(), QStringLiteral("↓"), QStringLiteral("↑"),
             SpotOctDown);
-    stepper(0.13, QStringLiteral("ROLL"), roll < 0 ? QStringLiteral("OFF") : QString::fromUtf8(kPatterns[roll].name),
-            QStringLiteral("["), QStringLiteral("]"), SpotRollDown);
+    stepper(0.14, QStringLiteral("ROLL"), roll < 0 ? QStringLiteral("OFF") : QString::fromUtf8(kPatterns[roll].name),
+            QStringLiteral("⇧←"), QStringLiteral("⇧→"), SpotRollDown);
     stepper(0.12, QStringLiteral("KEY TONE"), QStringLiteral("%1%").arg(int(std::lround(m_keyTone * 100))),
-            QStringLiteral("−"), QStringLiteral("="), SpotToneDown);
+            QStringLiteral("−"), QStringLiteral("+"), SpotToneDown);
     stepper(0.12, QStringLiteral("SLIDE"), QStringLiteral("%1MS").arg(int(std::lround(1000 * glideSeconds()))),
-            QStringLiteral("⇧−"), QStringLiteral("⇧="), SpotSlideDown);
+            QStringLiteral("⇧↓"), QStringLiteral("⇧↑"), SpotSlideDown);
     stepper(0.12, QStringLiteral("MORPH"), QStringLiteral("%1%").arg(int(std::lround(m_morph[m_sound] * 100))),
             QStringLiteral("⇧["), QStringLiteral("⇧]"), SpotMorphDown);
 
@@ -1546,9 +1562,9 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
     auto toggle = [&](int i, const QString &name, const QString &key, bool lit, int id) {
         keyChip(p, pc, QRectF(x + i * w, row.top(), w - 4, row.height()), name, key, lit, m_spots, id);
     };
-    toggle(0, m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"), QStringLiteral("`"),
-           m_square[m_sound], SpotSquare);
-    toggle(1, QStringLiteral("FOLLOW"), QStringLiteral("\\"), m_follow, SpotFollow);
+    toggle(0, m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
+           QStringLiteral("⇧%1").arg(QChar(keys[m_sound])), m_square[m_sound], SpotSquare);
+    toggle(1, QStringLiteral("FOLLOW"), QStringLiteral("§"), m_follow, SpotFollow);
     toggle(2, QStringLiteral("LATCH"), QStringLiteral("⏎"), m_latchNext ? blink : latched, SpotLatch);
     toggle(3, QStringLiteral("OVERDUB"), QStringLiteral("⇧⏎"), pc.view->overdub, SpotOverdub);
     toggle(4, QStringLiteral("LET GO"), QStringLiteral("DEL"), false, SpotFree);

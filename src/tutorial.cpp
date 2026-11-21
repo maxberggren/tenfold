@@ -194,8 +194,8 @@ void Tutorial::build() {
          QStringLiteral("That's the heart of the song."),
          {},
          {},
-         {chordColumn(kAm, QStringLiteral("1 Am")), chordColumn(kF, QStringLiteral("2 F")),
-          chordColumn(kC, QStringLiteral("3 C")), chordColumn(kG, QStringLiteral("4 G"))},
+         {chordColumn(kAm, QStringLiteral("1")), chordColumn(kF, QStringLiteral("2")),
+          chordColumn(kC, QStringLiteral("3")), chordColumn(kG, QStringLiteral("4"))},
          {{QStringLiteral("Am"), [](Look &l) { return l.has(Chords, "columns", 1u << kAm); }},
           {QStringLiteral("F"), [](Look &l) { return l.has(Chords, "columns", 1u << kF); }},
           {QStringLiteral("C"), [](Look &l) { return l.has(Chords, "columns", 1u << kC); }},
@@ -609,7 +609,7 @@ void Tutorial::paint(QPainter &p, const PaintContext &pc, int page, const QStrin
     QPainterPath holes;
     for (const Spot &s : st.spots)
         holes.addRect(pc.rect(s.x0, s.y0, s.x1, s.y1));
-    p.fillPath(dim.subtracted(holes), QColor(0, 0, 0, 120));
+    p.fillPath(dim.subtracted(holes), QColor(0, 0, 0, 165));
     for (const Spot &s : st.spots) {
         const QRectF r = pc.rect(s.x0, s.y0, s.x1, s.y1).adjusted(2, 2, -2, -2);
         // A glowing frame with bright corners, breathing.
@@ -648,7 +648,7 @@ void Tutorial::paint(QPainter &p, const PaintContext &pc, int page, const QStrin
             }
         }
         if (!s.label.isEmpty())
-            console::tag(p, QPointF(r.center().x(), r.top() + 16), s.label, hot, 13, true);
+            console::tag(p, r.center(), s.label, hot, 16, true);
     }
     p.restore();
 }

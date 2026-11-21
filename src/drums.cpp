@@ -1099,6 +1099,10 @@ private:
             c.f[5] = float(0.4 * 60.0 / std::max(40.0, ctx.studio().bpm));
         stamp(c);
         ctx.send(c);
+        if (!g.preview) {
+            ++m_hits;
+            m_padsHit |= 1u << g.pad;
+        }
     }
 
     // Every hit carries the page's whole sound for its pad, the kit and the

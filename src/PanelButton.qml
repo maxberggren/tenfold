@@ -9,9 +9,25 @@ Item {
     property color color: "#FFB000"
     property bool active: false
     property int labelSize: 16
+    property bool hint: false // the tutorial points at it: a breathing halo
     signal clicked()
 
     readonly property bool lit: active || mouse.pressed
+
+    Rectangle {
+        visible: button.hint
+        anchors.fill: parent
+        anchors.margins: -6
+        color: "transparent"
+        border.color: "#FFFFFF"
+        border.width: 3
+        SequentialAnimation on opacity {
+            running: button.hint
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.2; duration: 500 }
+            NumberAnimation { to: 1; duration: 500 }
+        }
+    }
 
     Rectangle {
         anchors.fill: parent

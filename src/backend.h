@@ -51,6 +51,23 @@ class Backend : public QObject {
     Q_PROPERTY(QString lastRecording READ lastRecording NOTIFY changed)
     Q_PROPERTY(double level READ level NOTIFY changed)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
+    // The tutorial's step, for its panel.
+    Q_PROPERTY(bool tutorialActive READ tutorialActive NOTIFY changed)
+    Q_PROPERTY(int tutorialStep READ tutorialStep NOTIFY changed)
+    Q_PROPERTY(int tutorialCount READ tutorialCount CONSTANT)
+    Q_PROPERTY(QStringList tutorialChapters READ tutorialChapters CONSTANT)
+    Q_PROPERTY(QVariantList tutorialChapterColors READ tutorialChapterColors CONSTANT)
+    Q_PROPERTY(int tutorialChapter READ tutorialChapter NOTIFY changed)
+    Q_PROPERTY(int tutorialPage READ tutorialPage NOTIFY changed)
+    Q_PROPERTY(QString tutorialTitle READ tutorialTitle NOTIFY changed)
+    Q_PROPERTY(QString tutorialText READ tutorialText NOTIFY changed)
+    Q_PROPERTY(QString tutorialTip READ tutorialTip NOTIFY changed)
+    Q_PROPERTY(QString tutorialCheer READ tutorialCheer NOTIFY changed)
+    Q_PROPERTY(QString tutorialButton READ tutorialButton NOTIFY changed)
+    Q_PROPERTY(QStringList tutorialKeys READ tutorialKeys NOTIFY changed)
+    Q_PROPERTY(QVariantList tutorialChecks READ tutorialChecks NOTIFY changed)
+    // 0 working on it, 1 just done (celebrating), 2 done before (came back with Back)
+    Q_PROPERTY(int tutorialState READ tutorialState NOTIFY changed)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -93,6 +110,22 @@ public:
     double level() const { return m_session->view().rms; }
     QString notice() const { return m_notice; }
 
+    bool tutorialActive() const { return m_session->tutorial().active(); }
+    int tutorialStep() const { return m_session->tutorial().index(); }
+    int tutorialCount() const { return m_session->tutorial().count(); }
+    QStringList tutorialChapters() const { return m_session->tutorial().chapters(); }
+    int tutorialChapter() const { return m_session->tutorial().chapterIndex(); }
+    int tutorialPage() const { return m_session->tutorial().step().page; }
+    QString tutorialTitle() const { return m_session->tutorial().step().title; }
+    QString tutorialText() const { return m_session->tutorial().step().text; }
+    QString tutorialTip() const { return m_session->tutorial().step().tip; }
+    QString tutorialCheer() const { return m_session->tutorial().step().cheer; }
+    QString tutorialButton() const { return m_session->tutorial().step().button; }
+    QStringList tutorialKeys() const { return m_session->tutorial().step().keys; }
+    QVariantList tutorialChecks() const;
+    QVariantList tutorialChapterColors() const;
+    int tutorialState() const { return int(m_session->tutorial().state()); }
+
     tf::Session *session() const { return m_session.get(); }
     float padAspect() const { return m_touch->aspect(); }
 
@@ -106,6 +139,9 @@ public:
     Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }
     Q_INVOKABLE void undoTake() { m_session->undoTake(); }
     Q_INVOKABLE void startOver() { m_session->startOver(); }
+    Q_INVOKABLE void toggleTutorial();
+    Q_INVOKABLE void tutorialNext();
+    Q_INVOKABLE void tutorialBack();
     // A key for the pages; returns true when one used it.
     Q_INVOKABLE bool sendKey(int key, int modifiers, bool down, bool repeat, const QString &text);
 

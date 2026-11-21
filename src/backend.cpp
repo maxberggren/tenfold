@@ -194,6 +194,45 @@ bool Backend::sendKey(int key, int modifiers, bool down, bool repeat, const QStr
     return used;
 }
 
+QVariantList Backend::tutorialChecks() const {
+    QVariantList l;
+    const Tutorial &t = m_session->tutorial();
+    for (int i = 0; i < int(t.step().checks.size()); ++i) {
+        QVariantMap m;
+        m["label"] = t.step().checks[size_t(i)].label;
+        m["done"] = t.checked(i);
+        l << m;
+    }
+    return l;
+}
+
+// Each chapter in the colour of the page it happens on.
+QVariantList Backend::tutorialChapterColors() const {
+    QVariantList l;
+    const Tutorial &t = m_session->tutorial();
+    QString last;
+    for (int i = 0; i < t.count(); ++i)
+        if (t.step(i).chapter != last) {
+            last = t.step(i).chapter;
+            l << m_session->pageColor(t.step(i).page);
+        }
+    return l;
+}
+
+// Each may change the page: the tabs and the guide follow.
+void Backend::toggleTutorial() {
+    m_session->toggleTutorial();
+    tick();
+}
+void Backend::tutorialNext() {
+    m_session->tutorialNext();
+    tick();
+}
+void Backend::tutorialBack() {
+    m_session->tutorialBack();
+    tick();
+}
+
 double Backend::latencyMs() const {
     const int q = m_audio->quantum();
     return q > 0 ? 1000.0 * q / m_audio->rate() : 0;
@@ -256,6 +295,7 @@ void Backend::toggleRecording() {
     m_recordClock.start();
     m_studio->setRecording(true);
     m_recorder = std::thread([this] { recorderLoop(); });
+    m_session->setMixRecording(true);
     emit changed();
 }
 
@@ -292,6 +332,7 @@ void Backend::stopRecording() {
         m_recorder.join();
     m_recording = false;
     m_lastRecording = m_recordPath;
+    m_session->setMixRecording(false);
 }
 
 void Backend::tick() {

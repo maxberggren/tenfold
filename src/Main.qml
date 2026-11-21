@@ -51,7 +51,10 @@ ApplicationWindow {
 
     Shortcut {
         sequence: "Esc"; context: Qt.ApplicationShortcut
-        onActivated: win.helpVisible ? win.helpVisible = false : backend.giveBack()
+        // Closes what is open first: the guide, then the tutorial; then it
+        // gives the trackpad back.
+        onActivated: win.helpVisible ? win.helpVisible = false
+                   : backend.tutorialActive ? backend.toggleTutorial() : backend.giveBack()
     }
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
@@ -106,6 +109,9 @@ ApplicationWindow {
                         readonly property bool current: backend.page === index
                         readonly property bool sounding: backend.pagesPlaying[index] === true
                         readonly property string silenced: backend.pagesSilenced[index] || ""
+                        // The tutorial's next page, while the player isn't on it.
+                        readonly property bool called: backend.tutorialActive && backend.tutorialPage === index
+                                                       && !current
                         Layout.fillWidth: true
                         Layout.preferredHeight: 58
                         Layout.minimumWidth: 92
@@ -114,6 +120,20 @@ ApplicationWindow {
                             color: tab.current ? tab.tint : "transparent"
                             border.color: tab.tint
                             border.width: 2
+                        }
+                        Rectangle {
+                            visible: tab.called
+                            anchors.fill: parent
+                            anchors.margins: -5
+                            color: "transparent"
+                            border.color: "#FFFFFF"
+                            border.width: 3
+                            SequentialAnimation on opacity {
+                                running: tab.called
+                                loops: Animation.Infinite
+                                NumberAnimation { to: 0.15; duration: 450 }
+                                NumberAnimation { to: 1; duration: 450 }
+                            }
                         }
                         Text {
                             x: 8
@@ -173,8 +193,8 @@ ApplicationWindow {
                 // The right-hand column: the clock and key every part shares,
                 // what's ready, the readouts, and the buttons.
                 ColumnLayout {
-                    Layout.preferredWidth: 300
-                    Layout.maximumWidth: 300
+                    Layout.preferredWidth: backend.tutorialActive ? 360 : 300
+                    Layout.maximumWidth: backend.tutorialActive ? 360 : 300
                     Layout.fillHeight: true
                     spacing: 12
 
@@ -210,8 +230,23 @@ ApplicationWindow {
                         }
                     }
 
+                    TutorialPanel {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 380
+                        visible: backend.tutorialActive
+                        tint: backend.pageColors[backend.tutorialPage]
+                        onPage: backend.page === backend.tutorialPage
+                        pageKey: win.pageKey(backend.tutorialPage)
+                        pageName: backend.pageNames[backend.tutorialPage]
+                        onBack: backend.tutorialBack()
+                        onNext: backend.tutorialNext()
+                        onLeave: backend.toggleTutorial()
+                    }
+
                     Column {
                         Layout.fillWidth: true
+                        visible: !backend.tutorialActive
                         spacing: 6
                         StatusLamp { label: qsTr("Trackpad grabbed"); on: win.playing; color: win.green }
                         StatusLamp { label: qsTr("Audio running"); on: backend.audioOk; color: win.green }
@@ -221,6 +256,7 @@ ApplicationWindow {
 
                     Column {
                         Layout.fillWidth: true
+                        visible: !backend.tutorialActive
                         spacing: 0
                         Rectangle {
                             width: parent.width
@@ -260,16 +296,17 @@ ApplicationWindow {
                     GridLayout {
                         id: buttons
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.fillHeight: !backend.tutorialActive
                         Layout.topMargin: 6
                         columns: 2
                         columnSpacing: 8
-                        rowSpacing: 8
-                        property int bh: 46
+                        rowSpacing: backend.tutorialActive ? 5 : 8
+                        property int bh: backend.tutorialActive ? 34 : 46
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             label: win.playing ? qsTr("Release pad") : qsTr("Take pad")
                             key: win.playing ? "Esc" : ""; color: win.green; active: win.playing
+                            hint: backend.tutorialActive && backend.tutorialButton === "pad" && !win.playing
                             onClicked: backend.togglePlay()
                         }
                         PanelButton {
@@ -278,36 +315,43 @@ ApplicationWindow {
                                    ? qsTr("Rec %1").arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
                                    : qsTr("Record")
                             key: "Ctrl R"; color: win.red; active: backend.recording
+                            hint: backend.tutorialActive && backend.tutorialButton === "record"
                             onClicked: backend.toggleRecording()
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                             label: qsTr("Tempo −"); key: "Ctrl ↓"; color: win.amber
                             onClicked: backend.shiftTempo(-1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                             label: qsTr("Tempo +"); key: "Ctrl ↑"; color: win.amber
                             onClicked: backend.shiftTempo(1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                             label: qsTr("Key ◀"); key: "Ctrl ←"; color: win.cyan
                             onClicked: backend.shiftRoot(-1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                             label: qsTr("Key ▶"); key: "Ctrl →"; color: win.cyan
                             onClicked: backend.shiftRoot(1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                             label: qsTr("Click"); key: "Ctrl M"; color: win.amber; active: backend.metronome
                             onClicked: backend.toggleMetronome()
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             label: qsTr("Undo loop"); key: "Ctrl Z"; color: win.amber
+                            hint: backend.tutorialActive && backend.tutorialButton === "undo"
                             onClicked: backend.undoTake()
                         }
                         PanelButton {
@@ -319,6 +363,13 @@ ApplicationWindow {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
                             onClicked: win.helpVisible = !win.helpVisible
+                        }
+                        PanelButton {
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            label: backend.tutorialActive ? qsTr("Leave tutorial") : qsTr("Tutorial: make a track")
+                            key: "Ctrl T"; color: win.green; active: backend.tutorialActive
+                            onClicked: backend.toggleTutorial()
                         }
                     }
                 }
@@ -358,7 +409,9 @@ ApplicationWindow {
         // Not playing yet: a console dialog with the button that takes the pad.
         Rectangle {
             anchors.centerIn: parent
-            visible: !win.playing && !win.helpVisible
+            // The tutorial's own first step says how to take the pad (and the
+            // mouse plays meanwhile), so the dialog stays out of its way.
+            visible: !win.playing && !win.helpVisible && !backend.tutorialActive
             width: Math.min(parent.width - 120, 620)
             height: startColumn.implicitHeight + 64
             color: "#000000"
@@ -418,6 +471,15 @@ ApplicationWindow {
                     color: win.green
                     labelSize: 20
                     onClicked: backend.play()
+                }
+                PanelButton {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 48
+                    label: qsTr("New here? The tutorial builds a whole track with you")
+                    key: "Ctrl T"
+                    color: win.amber
+                    labelSize: 15
+                    onClicked: backend.toggleTutorial()
                 }
                 Text {
                     Layout.fillWidth: true

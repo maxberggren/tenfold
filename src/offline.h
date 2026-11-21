@@ -25,6 +25,8 @@
 //   key   T NAME [down|up]                            a key, as Qt names it: A, F1, Up,
 //                                                     Ctrl+Up, Shift+Left…; without
 //                                                     down or up, a press and release
+//   mouse T X Y down|up|move                          the mouse on the pad: pressed, it is
+//                                                     one more finger; move alone hovers
 //   tempo T BPM
 //   end   T
 namespace tf {

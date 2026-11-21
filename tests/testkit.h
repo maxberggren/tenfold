@@ -83,6 +83,11 @@ template <typename T>
 struct Register {
     Register() {
         registry().push_back([](int argc, char **argv) {
+            // TENFOLD_TESTS=Name,Other runs only those classes, for a quick
+            // look at one page's tests.
+            const QByteArray only = qgetenv("TENFOLD_TESTS");
+            if (!only.isEmpty() && !only.split(',').contains(T::staticMetaObject.className()))
+                return 0;
             T t;
             return QTest::qExec(&t, argc, argv);
         });

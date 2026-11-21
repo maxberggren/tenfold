@@ -30,7 +30,9 @@ static void usage(FILE *out) {
                "                                          render a scripted performance\n"
                "  tenfold bench [--json]                  time a dense case\n"
                "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
-               "                                          draw the window mid-performance (page 1-7, 0 arrange)\n",
+               "                     [--tutorial STEP]\n"
+               "                                          draw the window mid-performance (page 1-7, 0 arrange),\n"
+               "                                          with the tutorial on that step (from 1) if asked\n",
                out);
 }
 
@@ -100,6 +102,11 @@ static int screenshot(int argc, char **argv) {
     if (const char *size = option(argc, argv, "--size"))
         std::sscanf(size, "%dx%d", &w, &h);
     window->resize(w, h);
+    if (const char *step = option(argc, argv, "--tutorial")) {
+        tf::Session &s = *backend.session();
+        std::lock_guard lock(s.lock());
+        s.tutorial().jump(std::atoi(step) - 1, s);
+    }
     if (const char *page = option(argc, argv, "--page")) {
         const int n = std::atoi(page);
         backend.setPage(n == 0 ? backend.pageCount() - 1 : n - 1);

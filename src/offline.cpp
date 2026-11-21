@@ -28,7 +28,7 @@ struct Finger {
 
 struct Event {
     double t = 0, t2 = 0;
-    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, End } kind = End;
+    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, End } kind = End;
     int keyMode = 0; // 0 press, 1 down, 2 up
     int id = 0;
     float x = 0, y = 0;
@@ -142,6 +142,19 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                 if (QKeySequence(QString::fromStdString(e.key)).isEmpty())
                     return fail("unknown key");
                 events.push_back(e);
+            } else if (word == "mouse") {
+                // The mouse over the pad: pressed it is one more finger.
+                e.kind = Event::Mouse;
+                std::string mode;
+                if (!(ls >> e.t >> e.x >> e.y >> mode))
+                    return fail("expected T X Y down|up|move");
+                if (mode == "down")
+                    e.keyMode = 1;
+                else if (mode == "up")
+                    e.keyMode = 2;
+                else if (mode != "move")
+                    return fail("mouse is down, up or move");
+                events.push_back(e);
             } else if (word == "page") {
                 e.kind = Event::Page;
                 if (!(ls >> e.t >> e.id))
@@ -179,6 +192,7 @@ struct ScriptPlayer::Impl {
     std::vector<GlideMove> glides;
     size_t next = 0;
     double clickUntil = -1;
+    bool mouseDown = false;
     struct PendingUp {
         double t;
         int key, mods;
@@ -283,6 +297,12 @@ void ScriptPlayer::tick(double t, Session &session) {
             }
             break;
         }
+        case Event::Mouse:
+            // A move keeps the button as it was: a drag while pressed.
+            if (e.keyMode != 0)
+                d->mouseDown = e.keyMode == 1;
+            session.pointer(e.x, e.y, d->mouseDown, true);
+            break;
         case Event::Page:
             session.setPage(e.id == 0 ? session.arrangePage() : e.id - 1);
             break;

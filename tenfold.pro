@@ -1,4 +1,4 @@
-QT += core gui qml quick quickcontrols2
+QT += core gui qml quick quickcontrols2 dbus
 
 CONFIG += c++20 release link_pkgconfig
 PKGCONFIG += libpipewire-0.3
@@ -25,6 +25,7 @@ HEADERS += \
     src/offline.h \
     src/part.h \
     src/parts.h \
+    src/portalfilepicker.h \
     src/phrase.h \
     src/session.h \
     src/songfile.h \
@@ -58,6 +59,7 @@ SOURCES += \
     src/helper.cpp \
     src/offline.cpp \
     src/parts.cpp \
+    src/portalfilepicker.cpp \
     src/session.cpp \
     src/songfile.cpp \
     src/studio.cpp \

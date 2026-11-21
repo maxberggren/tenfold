@@ -22,8 +22,8 @@
 //                           loop it layers on top, as one loop. Space again
 //                           while a take waits calls it off
 //   Shift+Space             a new loop, in place of this page's playing loop
-// Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
-// record the mix, quit). The pad is taken with the window's Play button.
+// Escape, ?, Ctrl+R, Ctrl+S, Ctrl+O and Ctrl+Q are the window's (give the
+// pad back, help, record the mix, save and open songs, quit). The pad is taken with the window's Play button.
 
 #include <QJsonObject>
 #include <QPointF>

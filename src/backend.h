@@ -13,7 +13,9 @@
 #include <thread>
 
 #include "audio.h"
+#include "portalfilepicker.h"
 #include "session.h"
+#include "songfile.h"
 #include "studio.h"
 #include "touchsource.h"
 #include "wav.h"
@@ -167,6 +169,12 @@ public:
     int loopShorterBeats() const { return m_session->loopBeats(-1); }
     int loopLongerBeats() const { return m_session->loopBeats(1); }
     Q_INVOKABLE void startOver() { m_session->startOver(); }
+    // Song files: Ctrl+S, Ctrl+Shift+S, Ctrl+O, and Ctrl+Shift+O for the
+    // song kept when tenfold last quit.
+    Q_INVOKABLE void saveSong() { m_songs->save(); }
+    Q_INVOKABLE void saveSongAs() { m_songs->saveAs(); }
+    Q_INVOKABLE void openSong() { m_songs->open(); }
+    Q_INVOKABLE void reopenLastSong() { m_songs->reopenLast(); }
     Q_INVOKABLE void toggleTutorial();
     Q_INVOKABLE void tutorialNext();
     Q_INVOKABLE void tutorialBack();
@@ -193,6 +201,9 @@ private:
     std::unique_ptr<tf::Session> m_session;
     std::unique_ptr<tf::TouchSource> m_touch;
     std::unique_ptr<tf::AudioOut> m_audio;
+    std::unique_ptr<PortalFilePicker> m_picker;
+    std::unique_ptr<tf::SongFiles> m_songs;
+    bool m_shutDown = false;
     QTimer m_timer;
     QString m_device;
     bool m_wantPlay = false;

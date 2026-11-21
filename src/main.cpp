@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -19,6 +20,9 @@
 #include "backend.h"
 #include "helper.h"
 #include "offline.h"
+#include "session.h"
+#include "songfile.h"
+#include "studio.h"
 #include "surface.h"
 #include "theme.h"
 #include "translator.h"
@@ -32,7 +36,8 @@ static void usage(FILE *out) {
                "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
                "                     [--tutorial STEP]\n"
                "                                          draw the window mid-performance (page 1-7, 0 arrange),\n"
-               "                                          with the tutorial on that step (from 1) if asked\n",
+               "                                          with the tutorial on that step (from 1) if asked\n"
+               "  tenfold check <song.tenfold>            say whether a song file opens, and what is in it\n",
                out);
 }
 
@@ -126,6 +131,30 @@ static int screenshot(int argc, char **argv) {
     return 0;
 }
 
+// Opens a song file the way Ctrl+O does, into a studio with no sound card,
+// and says what is in it or why it won't open.
+static int check(int argc, char **argv) {
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
+    const QString path = QString::fromLocal8Bit(argv[2]);
+    QJsonObject doc;
+    QString error;
+    bool ok = tf::readSongFile(path, &doc, &error);
+    if (ok) {
+        tf::Studio studio(48000.0f);
+        tf::Session session(&studio);
+        ok = session.openSong(doc, &error);
+    }
+    if (!ok) {
+        std::fprintf(stderr, "%s: %s\n", argv[2], qPrintable(error));
+        return 1;
+    }
+    std::printf("%s: %s\n", argv[2], qPrintable(tf::songSummary(doc)));
+    if (!error.isEmpty())
+        std::printf("  (%s)\n", qPrintable(error));
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     // Runs as root under pkexec: no GUI, no Qt, no environment.
     if (argc == 3 && std::strcmp(argv[1], "helper") == 0)
@@ -150,6 +179,8 @@ int main(int argc, char *argv[]) {
         return report(tf::runBench(8.0), json);
     if (argc >= 3 && std::strcmp(argv[1], "screenshot") == 0)
         return screenshot(argc, argv);
+    if (argc == 3 && std::strcmp(argv[1], "check") == 0)
+        return check(argc, argv);
     if (argc >= 2 && (std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0)) {
         usage(stdout);
         return 0;

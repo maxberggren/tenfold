@@ -166,6 +166,8 @@ struct Bank {
     PulseOsc pulse[2];
     float car[2] = {}, mod[2] = {};
     SawOsc layer, layer2;
+    SquareOsc sub;
+    Svf breath; // the band of air over the note
     Oversampler2x osL, osR;
 };
 
@@ -183,6 +185,12 @@ struct Voice {
     float y = 0.5f, press = 0.5f, fat = 0, motion = 0; // smoothed expression
     float ySet = 0.5f, pressSet = 0.5f, fatSet = 0, motionSet = 0;
     float scoop = 0, fmEnv = 1;
+    float chiff = 0, chiffFast = 0; // the puff of air on a tongued attack: its fall, and its rise
+    // An old synth's tuning wandering, each oscillator on its own (the two
+    // saws and the square under them): where each is, where it is heading,
+    // and how long until it heads somewhere else.
+    static constexpr int kDrifts = 3;
+    float drift[kDrifts] = {}, driftTo[kDrifts] = {}, driftLeft[kDrifts] = {};
     float vibPhase = 0, held = 0; // seconds since the note began, for the vibrato's delay
     float pwmPhase = 0;
     float gateEnv = 1;
@@ -190,6 +198,7 @@ struct Voice {
     float cut = 4;                // smoothed cutoff, in octaves above 60 Hz
     Ladder fL, fR;
     Svf form[2][3];
+    OnePoleLp airLp; // takes the hiss off the breath
     float level = 0;      // for the page
     float lastL = 0, lastR = 0; // the last sample out, for a stolen voice's declick
     Rng rng;
@@ -555,6 +564,7 @@ private:
         for (auto &ch : v.form)
             for (auto &f : ch)
                 f.reset();
+        v.airLp.y = 0;
         v.amp.v = v.filt.v = 0;
         v.amp.stage = v.filt.stage = Env::Idle;
         v.level = 0;
@@ -573,6 +583,14 @@ private:
             k.car[0] = k.car[1] = k.mod[0] = k.mod[1] = 0;
             k.layer.phase = v.rng.unit();
             k.layer2.phase = v.rng.unit();
+            k.sub.phase = 0;
+            k.breath.reset();
+        }
+        // Each note begins somewhere in its drift, as an old synth's would.
+        // (Only a drifting sound draws it, so the others' phases stay as they were.)
+        for (int o = 0; o < Voice::kDrifts; ++o) {
+            v.drift[o] = v.driftTo[o] = s.drift > 0 ? v.rng.bipolar() : 0.0f;
+            v.driftLeft[o] = 0;
         }
         v.cut = cutoffFor(v, s, 1.0f, line.tone);
         strike(v, n.vel, true);
@@ -582,11 +600,13 @@ private:
     // or a portamento restart never clicks.
     void strike(Voice &v, float vel, bool scoop) {
         const Sound &s = sound(v.sound);
-        v.amp.set(s.a, s.d, s.s, s.r, m_rate);
+        // A hard press tongues a quicker attack, if the sound has one.
+        v.amp.set(lerpf(s.a, s.aHard, hardness(v, s)), s.d, s.s, s.r, m_rate);
         v.filt.set(0.001f, s.envDecay, 0.0f, 0.3f, m_rate);
         v.amp.gate(true);
         v.filt.gate(true);
         v.fmEnv = 1.0f;
+        v.chiff = v.chiffFast = 1.0f;
         if (scoop)
             v.scoop = -s.scoop * (0.7f + 0.6f * vel);
         v.vel = vel;
@@ -685,10 +705,22 @@ private:
         return t;
     }
 
+    // How much of the filter envelope a touch gets: all of it, unless the
+    // sound waits on pressure, when a light finger gets almost none.
+    static float envTouch(const Voice &v, const Sound &s) {
+        const float k = clampf((v.press - 0.25f) / 0.6f, 0.0f, 1.0f);
+        return 1.0f - s.envPress + s.envPress * k;
+    }
+
+    // How hard a sound with a quicker hard attack is being pressed, 0..1.
+    static float hardness(const Voice &v, const Sound &s) {
+        return s.aHard > 0 ? clampf((v.press - 0.45f) / 0.45f, 0.0f, 1.0f) : 0.0f;
+    }
+
     static float cutoffFor(const Voice &v, const Sound &s, float fe, int tone) {
         const float note = v.banks[0].pitch;
         float c = s.cutoff + s.cutoffY * (2.0f * v.y - 1.0f) + 0.16f * (v.press - 0.5f) +
-                  s.envAmt * fe * (0.6f + 0.5f * v.vel);
+                  s.envAmt * fe * (0.6f + 0.5f * v.vel) * envTouch(v, s);
         c = c * 8.1f + s.keyTrack * (note - 72.0f) / 12.0f + float(tone) * kToneOctaves;
         return clampf(c, 0.5f, 8.6f);
     }
@@ -758,13 +790,39 @@ private:
         // and gives way to the player's own wiggle.
         const float fade = clampf((v.held - s.vibDelay) / 0.5f, 0.0f, 1.0f);
         const float lean = clampf((v.press - 0.3f) / 0.5f, 0.0f, 1.4f);
-        const float vibDepth = s.vibDepth * fade * (0.3f + 0.7f * lean) * (1.0f - v.motion);
-        const float vib0 = vibDepth * sine()(v.vibPhase);
+        const float vibShape = fade * (0.3f + 0.7f * lean) * (1.0f - v.motion);
+        const float vibDepth = s.vibDepth * vibShape;
+        const float sin0 = sine()(v.vibPhase);
         v.vibPhase += s.vibRate * dt;
         v.vibPhase -= std::floor(v.vibPhase);
-        const float vib1 = vibDepth * sine()(v.vibPhase);
+        const float sin1 = sine()(v.vibPhase);
+        // An old synth's drift: each oscillator wanders a few cents on its
+        // own, slowly, to a new place every half second or so, mostly well
+        // off centre, so the saws' beating quickens and slows and the
+        // square leans against them.
+        if (s.drift > 0) {
+            const float k = 1.0f - std::exp(-dt / 0.4f);
+            for (int o = 0; o < Voice::kDrifts; ++o) {
+                v.driftLeft[o] -= dt;
+                if (v.driftLeft[o] <= 0) {
+                    const float to = 0.5f + 0.5f * v.rng.unit();
+                    v.driftTo[o] = v.rng.bipolar() < 0 ? -to : to;
+                    v.driftLeft[o] = 0.3f + 0.5f * v.rng.unit();
+                }
+                v.drift[o] += (v.driftTo[o] - v.drift[o]) * k;
+            }
+        }
+        const float vib0 = vibDepth * sin0, vib1 = vibDepth * sin1;
+        // A wind player's vibrato is mostly in the breath: the level swells with it.
+        const float amp0 = 1.0f + s.vibAmp * vibShape * sin0, amp1 = 1.0f + s.vibAmp * vibShape * sin1;
         const float scoop0 = v.scoop;
         v.scoop *= std::exp(-dt / std::max(s.scoopTime, 0.005f));
+        // The puff of a tongued note: up in a few milliseconds, gone in
+        // fifty (the difference of a slow and a fast fall, peaking at 1).
+        const float chiff0 = 1.48f * (v.chiff - v.chiffFast);
+        v.chiff *= std::exp(-dt / 0.045f);
+        v.chiffFast *= std::exp(-dt / 0.005f);
+        const float chiff1 = 1.48f * (v.chiff - v.chiffFast);
         if (v.owner >= 0)
             m_pubVib[v.owner] = vibDepth;
 
@@ -817,7 +875,7 @@ private:
         float uniRatio[Bank::kUni], uniL[Bank::kUni], uniR[Bank::kUni];
         for (int u = 0; u < U; ++u) {
             const float d = U == 2 ? det2[u] : det7[u];
-            uniRatio[u] = std::exp2(d * cents / 1200.0f);
+            uniRatio[u] = std::exp2((d * cents + (u < Voice::kDrifts - 1 ? s.drift * v.drift[u] : 0.0f)) / 1200.0f);
             const float pan = clampf((U == 2 ? d * 2.0f : U >= 5 ? pan7[u] : d) * spread, -1.0f, 1.0f);
             uniL[u] = std::sqrt(0.5f * (1.0f - pan));
             uniR[u] = std::sqrt(0.5f * (1.0f + pan));
@@ -834,7 +892,17 @@ private:
         v.fmEnv = s.fmFloor + (v.fmEnv - s.fmFloor) * std::exp(-dt / std::max(s.fmDecay, 0.01f));
         const float hz0 = inc1[0] * rate;
         const float fmIndexMax = std::max(0.0f, 0.42f * rate / (hz0 * (s.fmRatio + 1.0f)) - 1.0f);
-        const float fmIndex = std::min(s.fmIndex * v.fmEnv * (0.7f + 0.5f * v.vel + 0.25f * v.y), fmIndexMax);
+        // Under C5 the index grows, so low notes keep their reedy upper
+        // harmonics instead of thinning to a sine.
+        const float low = clampf((72.0f - v.banks[0].pitch) / 12.0f, 0.0f, 1.5f);
+        const float fmIndex =
+            std::min(s.fmIndex * v.fmEnv * (0.7f + 0.5f * v.vel + 0.25f * v.y) * (1.0f + s.fmLow * low), fmIndexMax);
+        // The square an octave down: its own drift, thinning out from E4 to
+        // gone at E5, and up with a flatter finger.
+        const float subRatio = 0.5f * std::exp2(s.drift * v.drift[Voice::kDrifts - 1] / 1200.0f);
+        float subGain[Voice::kBanks];
+        for (int b = 0; b < Voice::kBanks; ++b)
+            subGain[b] = s.sub * clampf((76.0f - v.banks[b].pitch) / 12.0f, 0.0f, 1.0f) * (0.6f + 0.8f * v.fat);
 
         // The filter, set once a segment from smoothed numbers.
         const float fe = v.filt.v;
@@ -842,6 +910,25 @@ private:
         const float fc = std::min(60.0f * std::exp2(v.cut), rate * (0.45f - 0.12f * s.res));
         v.fL.set(fc, s.res, rate);
         v.fR.set(fc, s.res, rate);
+        // The breath sits in a wide band over each voice's note, never
+        // under 2.5 kHz, where air is heard: a low note's breath is no
+        // duller than a high one's.
+        if (s.breath > 0)
+            for (int b = 0; b < Voice::kBanks; ++b)
+                if (live[b])
+                    v.banks[b].breath.set(std::max(2.5f * inc1[b] * rate, 2500.0f), 0.9f, rate);
+        // The air's level: steady under the held note, puffing on the attack.
+        // It comes in ahead of the tone, so it has its own envelope rather
+        // than the tone's slower one.
+        // A hard-tongued note already speaks quickly: its puff is softer, so
+        // a fast run doesn't spit.
+        const float puff = s.chiff * (1.0f - 0.5f * hardness(v, s));
+        const float air0 = puff * chiff0, air1 = puff * chiff1;
+        // The air's top follows the tone keys, not the note.
+        if (s.breath > 0)
+            v.airLp.set(8000.0f * std::exp2(float(m_lines[size_t(v.from)].tone) * kToneOctaves), rate);
+        // A flatter finger, a breathier note; and a low note takes more air.
+        const float breath = s.breath * (0.7f + 0.8f * v.fat) * (1.0f + 0.28f * low);
         float formGain[3] = {};
         if (s.formant) {
             // The height walks through the vowels.
@@ -885,7 +972,12 @@ private:
         const float driveGain = 1.0f + 6.0f * drive;
         const float driveNorm = 1.0f / (1.0f + 1.6f * drive);
         const float resComp = 1.0f + 0.8f * s.res * s.res;
-        const float swell = 0.5f + 0.75f * v.press;
+        // Pressure swells the level. A sound that also tongues quicker under
+        // a hard press swells less, or its runs would come out hot; one whose
+        // filter waits on pressure gets the level back that a light, dark
+        // touch loses, so a whistle is as present as a quack.
+        const float dark = 1.0f - envTouch(v, s);
+        const float swell = (s.aHard > 0 ? 0.62f + 0.5f * v.press : 0.5f + 0.75f * v.press) * (1.0f + 0.55f * dark * dark);
         const float outGain = s.gain * 0.3f * swell * (0.45f + 0.55f * v.vel);
         const float send = s.echo + 0.9f * m_lines[size_t(v.from)].throwAmt;
         const float inv = 1.0f / float(n);
@@ -897,7 +989,7 @@ private:
             const float t = (float(i) + 0.5f) * inv;
             const float a = v.amp.step();
             v.filt.step();
-            float sl = 0, sr = 0;
+            float sl = 0, sr = 0, air = 0;
             for (int b = 0; b < Voice::kBanks; ++b) {
                 if (!live[b])
                     continue;
@@ -923,6 +1015,7 @@ private:
                     bl += s.pulse * 0.6f * (p0 + 0.6f * w * p1);
                     br += s.pulse * 0.6f * (0.8f * p0 + w * p1);
                 }
+                float tone = 0; // the FM pair's sound, which the breath is rocked by
                 if (s.fm > 0) {
                     float fmo[2];
                     for (int c = 0; c < 2; ++c) {
@@ -936,6 +1029,16 @@ private:
                     // Each side mostly its own carrier: wide, but whole in mono.
                     bl += s.fm * 0.8f * (0.8f * fmo[0] + 0.2f * fmo[1]);
                     br += s.fm * 0.8f * (0.8f * fmo[1] + 0.2f * fmo[0]);
+                    tone = 0.5f * (fmo[0] + fmo[1]);
+                }
+                if (s.sub > 0) {
+                    // An octave down, in the middle.
+                    const float o = k.sub.step(std::min(inc * subRatio, 0.45f)) * subGain[b];
+                    bl += o;
+                    br += o;
+                }
+                if (s.breath > 0) {
+                    air += k.breath.step(v.rng.bipolar()).band * (0.65f + 0.35f * tone) * gb;
                 }
                 if (s.layer > 0) {
                     // Two saws an octave up, a few cents apart, one each side.
@@ -985,9 +1088,17 @@ private:
                 v.gateEnv += (1.0f - v.gateEnv) * gateRelease;
                 gate = v.gateEnv;
             }
-            const float g2 = a * outGain * gate;
+            const float g2 = a * outGain * gate * (amp0 + (amp1 - amp0) * t);
             sl *= g2;
             sr *= g2;
+            if (s.breath > 0) {
+                // The air skips the ladder (its band is already set under the
+                // cutoff) so its puff can come before the tone has bloomed.
+                const float ga = (breath * a + air0 + (air1 - air0) * t) * outGain * gate;
+                air = v.airLp.step(air) * ga;
+                sl += air;
+                sr += air;
+            }
             outL[i] += sl;
             outR[i] += sr;
             v.lastL = sl;
@@ -1502,7 +1613,8 @@ public:
 
     QString help() const override {
         return QStringLiteral(
-            "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room\n"
+            "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room, Mini (a vintage mono synth), "
+            "Flute\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
             "Shift+← →\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
             "- and + (or =)\ttone: darker, brighter\n"
@@ -1519,8 +1631,9 @@ public:
             "slide\tglide through the scale; rest and it settles in tune\n"
             "wiggle\tvibrato as wide as the wiggle; hold still and it comes by itself\n"
             "higher on the pad\tbrighter (on Vox, the vowel: oo, oh, ah, eh, ee)\n"
-            "press harder\tswell, and a deeper vibrato\n"
-            "flatten the finger\tfatter: the unison spreads\n"
+            "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
+            "on Flute, a quicker attack)\n"
+            "flatten the finger\tfatter: the unison spreads (on Flute, breathier)\n"
             "twist the finger\tbend up or down one step of the scale\n"
             "click the pad\tleap an octave up while held\n"
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"

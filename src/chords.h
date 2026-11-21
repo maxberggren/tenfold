@@ -2,7 +2,7 @@
 
 // The Chords part's engine: the harmony (which notes a degree and a colour
 // make in the current key, and how to voice them so one chord flows into
-// the next), the six sounds, and the tempo-locked gates that give a held
+// the next), the ten sounds, and the tempo-locked gates that give a held
 // chord its rhythm. Included only by chords.cpp.
 //
 // Everything a chord is travels in its Command as scale degrees and
@@ -31,17 +31,21 @@ inline const char *colourName(int c) {
     return n[std::clamp(c, 0, ColourCount - 1)];
 }
 
-enum Style : int { Pad, Trance, Organ, Piano, Pluck, Pump, StyleCount };
+// New sounds go on the end: songs, clips and the tutorial store indices.
+enum Style : int { Pad, Trance, Organ, Piano, Pluck, Pump, Keys, Strings, Dub, Guitar, StyleCount };
 
 enum Pattern : int { Hold, Offbeat, Eighths, Tresillo, Charleston, TranceGate, Sixteenths, Wub, PatternCount };
 
 // How a chord sounds. Saw styles are unison sawtooths through a ladder;
 // the organ is a drawbar wavetable with percussion and a key click; the
-// piano is two-operator FM with a hammer.
+// piano is two-operator FM with a hammer; the electric piano is FM with a
+// tine's bell on the attack and a pickup's bark; the string machine is
+// phase-locked octave saws (a divide-down organ's) through one low-pass; the
+// guitar is a plucked string (Karplus-Strong) per note.
 struct StyleDef {
     const char *name;
     const char *blurb;
-    enum Osc : uint8_t { Saw, OrganOsc, PianoOsc } osc;
+    enum Osc : uint8_t { Saw, OrganOsc, PianoOsc, TineOsc, StringOsc, PluckedOsc } osc;
     int unison;       // saws per note (the organ and the piano: two copies, one each side)
     float detune;     // cents to the outermost saw
     float a, d, s, r; // amplitude envelope, seconds (decay and release are time constants)
@@ -57,9 +61,13 @@ struct StyleDef {
     float strum = 0;  // seconds between notes of a fresh chord, low to high
     float width;      // stereo spread of the unison, 0..1
     int pattern;      // the rhythm it comes with
+    // An effect the style's voices share, one stereo unit on its own bus,
+    // so it costs the same for one chord as for ten: the string machine's
+    // ensemble chorus, the dub stab's echo.
+    enum Bus : uint8_t { Dry, Ensemble, Echo, Comp } bus = Dry;
 };
 
-// The six sounds. Levels are matched by ear-proxy (RMS of a held
+// The ten sounds. Levels are matched by ear-proxy (RMS of a held
 // progression through the studio), stabs a little lower for their peaks.
 inline const StyleDef &styleDef(int s) {
     static const StyleDef defs[StyleCount] = {
@@ -95,6 +103,37 @@ inline const StyleDef &styleDef(int s) {
          .a = 0.012f, .d = 0.5f, .s = 0.92f, .r = 0.22f, .cutoff = 0.56f, .envAmt = 0.12f, .envDecay = 0.4f,
          .res = 0.42f, .legato = true, .glide = 0.025f, .centre = 60.0f, .gain = 0.44f, .pump = 0.82f,
          .width = 0.7f, .pattern = Hold},
+        // An electric piano: FM tine and bark that mellows as it rings, a
+        // bell on the attack, a slow stereo tremolo; held, low and warm, for
+        // neo-soul, lo-fi and deep house.
+        {.name = "KEYS", .blurb = "electric piano, tremolo", .osc = StyleDef::TineOsc, .unison = 2, .detune = 3.0f,
+         .a = 0.002f, .d = 3.2f, .s = 0.12f, .r = 0.3f, .cutoff = 0.66f, .envAmt = 0.08f, .envDecay = 0.5f,
+         .res = 0.05f, .retrig = true, .glide = 0.02f, .centre = 60.0f, .gain = 0.21f, .width = 0.35f,
+         .pattern = Hold},
+        // A string machine: octave saws locked in phase, swelling slowly
+        // through a string section's EQ (thin underneath, a bite around
+        // 1.6 kHz) and an ensemble chorus; close voicings up high that
+        // glide. Synthwave, the seventies and eighties, ambient.
+        {.name = "STRINGS", .blurb = "string machine, ensemble", .osc = StyleDef::StringOsc, .unison = 1,
+         .detune = 0.0f, .a = 0.45f, .d = 1.5f, .s = 0.9f, .r = 0.8f, .cutoff = 0.85f, .envAmt = 0.03f,
+         .envDecay = 0.8f, .res = 0.0f, .legato = true, .glide = 0.06f, .centre = 67.0f, .gain = 0.155f,
+         .width = 1.0f, .pattern = Hold, .bus = StyleDef::Ensemble},
+        // A dub-techno stab: two saws through a resonant ladder that snaps
+        // shut, open voicings with the root under them, into a dotted-eighth
+        // echo whose repeats grow darker and thinner and smear into space.
+        {.name = "DUB", .blurb = "chord stab into echo", .osc = StyleDef::Saw, .unison = 2, .detune = 7.0f,
+         .a = 0.002f, .d = 0.24f, .s = 0.0f, .r = 0.12f, .cutoff = 0.4f, .envAmt = 0.34f, .envDecay = 0.11f,
+         .res = 0.4f, .retrig = true, .spread = true, .glide = 0.02f, .centre = 61.0f, .gain = 0.56f,
+         .width = 0.4f, .pattern = Offbeat, .bus = StyleDef::Echo},
+        // A clean funk guitar: a plucked string per note through a single
+        // coil's pickup, strummed down and up a few milliseconds apart,
+        // palm-muted as the gate shortens and dead (a pitchless chk) on
+        // about half the ghost strokes between the beats, squashed by a
+        // compressor and rounded by a cabinet.
+        {.name = "GUITAR", .blurb = "funk guitar, strummed", .osc = StyleDef::PluckedOsc, .unison = 1,
+         .detune = 0.0f, .a = 0.0008f, .d = 1.0f, .s = 1.0f, .r = 0.035f, .cutoff = 0.95f, .envAmt = 0.0f,
+         .envDecay = 0.2f, .res = 0.05f, .retrig = true, .glide = 0.01f, .centre = 66.0f, .gain = 0.67f,
+         .strum = 0.0045f, .width = 0.8f, .pattern = Sixteenths, .bus = StyleDef::Comp},
     };
     return defs[std::clamp(s, 0, StyleCount - 1)];
 }
@@ -148,9 +187,10 @@ constexpr int LaneStride = 16; // live lane at 0, replayed lane at 16
 constexpr int Degree = 0, Colour = 1, Style = 2, Level = 3, Notes = 4, NoteCount = 10, Sounding = 11, Register = 12,
               Filter = 13;
 constexpr int Gate = 32;     // per style: the gate's level now
-constexpr int Pattern = 40;  // per style: the pattern sounding (override included)
 constexpr int Rate = 46, Pump = 47;
 constexpr int Columns = 48;  // per lane 8 apart: how loud each degree is sounding
+constexpr int Pattern = 64;  // per style: the pattern sounding (override included)
+static_assert(Gate + StyleCount <= Rate && Pattern + StyleCount <= kPartData);
 }
 
 // Lanes of play: the live one, then one per layer of the playing loop (each
@@ -456,7 +496,88 @@ struct GateBlock {
     bool active = false;
     bool smooth = false;
     float g[kBlock] = {};
-    uint8_t hitOn[kBlock] = {}, hitOff[kBlock] = {};
+    uint8_t hitOn[kBlock] = {}, hitOff[kBlock] = {}; // hitOn: 2 for an accented hit, 1 for the others
+};
+
+// A plucked string (Karplus-Strong): a burst of noise one period long
+// circulating through a delay line tuned to the note, a one-pole lowpass in
+// the loop for the string's damping (a palm on the strings closes it) and
+// an allpass for the fraction of a sample the tuning needs. It is heard
+// through a pickup: the string a fifth of a period earlier subtracted, the
+// comb that gives a single coil its quack.
+struct PluckedString {
+    static constexpr int kSize = 1024; // a period of up to 1023 samples: down to about 47 Hz
+    static constexpr float kDead = 1.0f; // a mute this full is a dead stroke: a pitchless chk
+    float line[kSize] = {};
+    int w = 0, period = 100, pickup = 20;
+    float apC = 0, apX = 0, apY = 0; // the fractional-delay allpass
+    float lp = 0, damp = 0.8f, loss = 0.999f;
+    float excLp = 0, excLp2 = 0, excAmp = 0, excBright = 0.5f;
+    int excLeft = 0, excLength = 1;
+    float mute = 0;      // the palm mute of the last pluck, 0..1
+    float energy = 0;    // a running level, so a string that died out costs nothing
+
+    void clear() {
+        std::fill(std::begin(line), std::end(line), 0.0f);
+        apX = apY = lp = excLp = excLp2 = 0;
+        excLeft = 0;
+        energy = 0;
+    }
+    // Tunes the loop to hz for this block: the delay, the damping and how
+    // fast the string dies, all from the pitch and the palm.
+    void tune(float hz, float rate) {
+        hz = clampf(hz, 50.0f, rate * 0.2f);
+        // Open, the loop keeps nearly everything and rings for seconds; under
+        // the palm it loses its highs at once and dies in a tenth of one.
+        const float open = 1.0f - mute;
+        const bool dead = mute >= kDead;
+        // A dead stroke: the fretting hand only rests on the strings, which
+        // give back a thud and no note.
+        damp = dead ? 0.15f : clampf(0.28f + 0.66f * open - 0.12f * (hz / 2000.0f), 0.12f, 0.96f);
+        const float t60 = dead ? 0.012f : 0.09f + 2.6f * open * open * open;
+        loss = std::pow(10.0f, -3.0f / (t60 * hz));
+        // The lowpass delays the loop by its phase delay at the note; the
+        // integer line and the allpass make up the rest of the period.
+        const float wv = kTwoPi * hz / rate, b = 1.0f - damp;
+        const float lpDelay = std::atan2(b * std::sin(wv), 1.0f - b * std::cos(wv)) / wv;
+        const float total = rate / hz - lpDelay;
+        period = std::clamp(int(total - 0.1f), 2, kSize - 1);
+        const float frac = total - float(period);
+        apC = (1.0f - frac) / (1.0f + frac);
+        pickup = std::max(1, int(0.2f * float(period) + 0.5f));
+    }
+    void pluck(float amp, float bright, float palm) {
+        mute = palm;
+        // A darker pick is quieter noise; made up (at most twice), so the
+        // palm changes the tone more than the level.
+        excAmp = amp * std::min(2.0f, 1.0f / std::sqrt(bright / (2.0f - bright)));
+        excBright = bright;
+        // A dead stroke is a short dark burst; a note, a period of pick.
+        excLength = palm >= kDead ? 4 * period : period;
+        excLeft = excLength;
+    }
+    inline float step(Rng &rng) {
+        float in = 0;
+        if (excLeft > 0) {
+            // The pick: noise through two one-poles (a band-limited scrape,
+            // never a white hiss), darkened by the palm and a soft touch,
+            // faded over the burst so it has no edge.
+            excLp += (rng.bipolar() - excLp) * excBright;
+            excLp2 += (excLp - excLp2) * excBright;
+            in = excLp2 * excAmp * (0.4f + 0.6f * float(excLeft) / float(excLength));
+            --excLeft;
+        }
+        const float x = line[(w - period) & (kSize - 1)];
+        const float y = apC * (x - apY) + apX;
+        apX = x;
+        apY = y;
+        lp += (y - lp) * damp;
+        const float out = lp * loss + in;
+        const float before = line[(w - pickup) & (kSize - 1)];
+        line[w] = out;
+        w = (w + 1) & (kSize - 1);
+        return 0.75f * (out - before);
+    }
 };
 
 // One sounding chord: up to four voiced notes plus two doublings (the root
@@ -474,7 +595,10 @@ struct ChordVoice {
         int delay = 0;      // a strum: samples before this note speaks
         float onset = 1;    // a strummed note fades in over a couple of milliseconds once it speaks
         float phase[kUnison] = {};
-        float phase2[2] = {}; // the piano's modulators, the organ's percussion
+        float phase2[2] = {}; // the piano's modulators, the organ's percussion, the tine's bell
+        int pluckIn = -1;     // the guitar: samples until this string is plucked (−1: not waiting)
+        float pluckAmp = 1, pluckMute = 0;
+        PluckedString string;
     };
 
     bool active = false, releasing = false;
@@ -498,10 +622,179 @@ struct ChordVoice {
     int graceHold = 0;
     int minHold = 0;     // a struck chord rings at least this long before a gate may end it
     bool lateRelease = false; // let go before it spoke: release once it has rung its shortest
-    float leslie = 0;    // the organ's slow rotor
+    float leslie = 0;    // the organ's slow rotor, the electric piano's tremolo
+    bool upStroke = false;  // the guitar: the next strum goes up the strings
+    int sinceStrum = 1 << 20; // the guitar: samples since the last strum began
     Rng rng{0x1234567u};
 
     void init(uint32_t seed) { rng = Rng(seed); }
+};
+
+// --- the shared effects -----------------------------------------------------
+
+// The string machine's ensemble: three taps on one short delay, each swept
+// by a slow and a fast sine a third of a turn apart from the others (the
+// bucket-brigade chorus of the seventies' string machines), one side of the
+// stereo from the first and second, the other from the third and second.
+// The whole bus goes through it, so it costs the same for any number of
+// chords. Ahead of it, a string section's fixed EQ: nothing under 250 Hz,
+// a broad lift around 1.6 kHz where bowed strings bite (the low-pass at
+// about 7 kHz is each chord's own filter, which the knob still turns).
+struct Ensemble {
+    Delay line;
+    Svf hp, bell;
+    float rate = 48000, slow = 0, fast = 0;
+    int idle = 1 << 30;
+    static constexpr float kBellQ = 0.7f, kBellGain = 0.585f; // +4 dB
+
+    void init(float r) {
+        rate = r;
+        line.init(size_t(0.03f * r));
+        hp.set(250.0f, 0.707f, r);
+        bell.set(1600.0f, kBellQ, r);
+    }
+    // Adds the chorused bus to out.
+    void process(const float *inL, const float *inR, float *outL, float *outR, int n) {
+        float in = 0;
+        for (int i = 0; i < n; ++i)
+            in += std::fabs(inL[i]) + std::fabs(inR[i]);
+        idle = in > 1e-7f ? 0 : idle + n;
+        if (idle > int(0.05f * rate)) // the line's 30 ms have passed through
+            return;
+        const Tables &tb = tables();
+        const float base = 0.0068f * rate, dSlow = 0.0015f * rate, dFast = 0.00012f * rate;
+        const float incS = 0.63f / rate, incF = 5.7f / rate;
+        for (int i = 0; i < n; ++i) {
+            const float x = hp.step(0.5f * (inL[i] + inR[i])).high;
+            const float m = x + kBellGain / kBellQ * bell.step(x).band;
+            line.push(m);
+            slow = wrap01(slow + incS);
+            fast = wrap01(fast + incF);
+            float t[3];
+            for (int k = 0; k < 3; ++k) {
+                const float off = float(k) * (1.0f / 3.0f);
+                const float d = base + dSlow * lut(tb.sine, wrap01(slow + off)) + dFast * lut(tb.sine, wrap01(fast + off));
+                t[k] = line.read(d);
+            }
+            outL[i] += 0.15f * m + 0.62f * t[0] + 0.45f * t[1];
+            outR[i] += 0.15f * m + 0.62f * t[2] + 0.45f * t[1];
+        }
+    }
+};
+
+// The dub stab's echo: a ping-pong on the dotted eighth of the tempo, each
+// pass through a high-pass, a low-pass, a soft clip and an allpass, so the
+// repeats grow thinner, darker and more diffuse as they trail off (the
+// first is nearly the stab, the tenth a wash), and one more allpass a side
+// on the way out. Pressing harder throws it: the feedback climbs. The dry
+// bus passes straight through.
+struct DubEcho {
+    Delay l, r;
+    Smooth time, feedback;
+    Svf hpL, hpR, lpL, lpR;
+    Allpass apL1, apL2, apR1, apR2;
+    float rate = 48000, wow = 0, throwTo = 0.66f;
+    int idle = 1 << 30;
+    static constexpr float kMaxSeconds = 1.5f, kFeedback = 0.66f, kThrown = 0.82f, kWet = 0.6f;
+
+    void init(float rt) {
+        rate = rt;
+        l.init(size_t(kMaxSeconds * rt) + 64);
+        r.init(size_t(kMaxSeconds * rt) + 64);
+        time.setTime(0.3f, rt);
+        time.reset(0.36f * rt);
+        feedback.setTime(0.15f, rt);
+        feedback.reset(kFeedback);
+        for (Svf *f : {&hpL, &hpR})
+            f->set(330.0f, 0.6f, rt);
+        for (Svf *f : {&lpL, &lpR})
+            f->set(2100.0f, 0.65f, rt);
+        apL1.init(uint32_t(0.0071f * rt), 0.55f);
+        apL2.init(uint32_t(0.0113f * rt), 0.5f);
+        apR1.init(uint32_t(0.0083f * rt), 0.55f);
+        apR2.init(uint32_t(0.0127f * rt), 0.5f);
+    }
+    // Adds the dry bus and its echoes to out.
+    void process(const float *inL, const float *inR, float *outL, float *outR, int n, double secondsPerBeat) {
+        float in = 0;
+        for (int i = 0; i < n; ++i)
+            in += std::fabs(inL[i]) + std::fabs(inR[i]);
+        idle = in > 1e-7f ? 0 : idle + n;
+        // Silent for twenty seconds: every repeat has died away.
+        if (idle > int(20.0f * rate))
+            return;
+        const float target = clampf(float(0.75 * secondsPerBeat), 0.05f, kMaxSeconds - 0.01f) * rate;
+        for (int i = 0; i < n; ++i) {
+            const float t = time.step(target);
+            wow = wrap01(wow + 0.4f / rate);
+            const float mod = 0.0009f * rate * lut(tables().sine, wow);
+            const float dl = l.read(t + mod), dr = r.read(t + 0.8f * mod);
+            const float fb = feedback.step(throwTo);
+            const float fl = apL1.step(fastTanh(1.15f * lpL.step(hpL.step(dr).high).low)) * fb;
+            const float fr = apR1.step(fastTanh(1.15f * lpR.step(hpR.step(dl).high).low)) * fb;
+            // The stab goes left first and every repeat crosses over, so
+            // the left side always holds the louder repeat of each pair:
+            // taking the left back by √fb and the right up by as much (a
+            // little more, for what the loop's filters take on each pass)
+            // makes each pair even, and the echo leans to neither side.
+            l.push(0.5f * (inL[i] + inR[i]) + fl);
+            r.push(fr);
+            const float side = 0.85f * std::sqrt(fb);
+            outL[i] += inL[i] + kWet * side * apL2.step(dl);
+            outR[i] += inR[i] + kWet / side * apR2.step(dr);
+        }
+    }
+};
+
+// The guitar's bus: a compressor, as funk players keep on the floor (fast
+// to catch the pick, a little slower to let go, four to one, the level
+// made up), the round-off of a clean amp pushed a little (the pick's
+// sharpest edges, which no compressor is fast enough for), then a speaker
+// cabinet: two two-pole low-passes at 4.5 kHz, where a guitar's sound
+// ends. The compressor hears the strings a
+// millisecond and a half before they pass, so even a pick's first edge is
+// caught.
+struct GuitarAmp {
+    static constexpr int kLookSize = 128;
+    Svf cabL1, cabL2, cabR1, cabR2;
+    float lookL[kLookSize] = {}, lookR[kLookSize] = {};
+    int look = 72, pos = 0;
+    float rate = 48000, env = 0, atk = 0.02f, rel = 0.0003f;
+    int idle = 1 << 30;
+    static constexpr float kThreshold = 0.1f, kSlope = 1.0f - 1.0f / 4.0f, kMakeup = 2.6f, kClip = 0.3f;
+
+    void init(float r) {
+        rate = r;
+        atk = 1.0f - std::exp(-1.0f / (0.001f * r));
+        rel = 1.0f - std::exp(-1.0f / (0.06f * r));
+        look = std::min(kLookSize - 1, int(0.0015f * r));
+        for (Svf *f : {&cabL1, &cabR1})
+            f->set(4500.0f, 0.54f, r);
+        for (Svf *f : {&cabL2, &cabR2})
+            f->set(4500.0f, 1.31f, r);
+    }
+    // Adds the bus, squashed and through the cabinet, to out.
+    void process(const float *inL, const float *inR, float *outL, float *outR, int n) {
+        float in = 0;
+        for (int i = 0; i < n; ++i)
+            in += std::fabs(inL[i]) + std::fabs(inR[i]);
+        idle = in > 1e-7f ? 0 : idle + n;
+        if (idle > int(0.05f * rate))
+            return;
+        for (int i = 0; i < n; ++i) {
+            const float x = std::max(std::fabs(inL[i]), std::fabs(inR[i]));
+            env += (x - env) * (x > env ? atk : rel);
+            const float g = (env > kThreshold ? std::pow(kThreshold / env, kSlope) : 1.0f) * kMakeup;
+            lookL[pos] = inL[i];
+            lookR[pos] = inR[i];
+            const int at = (pos - look + kLookSize) % kLookSize;
+            pos = (pos + 1) % kLookSize;
+            const float yl = kClip * fastTanh(lookL[at] * g * (1.0f / kClip));
+            const float yr = kClip * fastTanh(lookR[at] * g * (1.0f / kClip));
+            outL[i] += cabL2.step(cabL1.step(yl).low).low;
+            outR[i] += cabR2.step(cabR1.step(yr).low).low;
+        }
+    }
 };
 
 // --- the engine -------------------------------------------------------------
@@ -526,6 +819,9 @@ public:
             f->set(140.0f, 0.54f, rate);
         for (Svf *f : {&m_hp2L, &m_hp2R})
             f->set(140.0f, 1.31f, rate);
+        m_ensemble.init(rate);
+        m_echo.init(rate);
+        m_amp.init(rate);
     }
 
     void command(const Command &c, AudioContext &ctx) override {
@@ -684,14 +980,31 @@ public:
             layer0[i] = m_layerGain[i];
             m_layerGain[i] += ((under ? 0.125f : 1.0f) - m_layerGain[i]) * k;
         }
+        // Voices of a style with an effect of its own render to that
+        // effect's bus; the effect then adds its bus to the mix.
         float mixL[kBlock] = {}, mixR[kBlock] = {};
+        float busL[StyleDef::Comp + 1][kBlock] = {}, busR[StyleDef::Comp + 1][kBlock] = {};
+        float dubPressure = -1;
         for (auto &v : m_voices)
             if (v.active) {
                 const bool loop = v.lane >= kReplayLane;
                 const int lane = std::clamp(int(v.lane), 0, kLanes - 1);
-                renderVoice(v, mixL, mixR, n, loop ? loop0 * layer0[lane] : 1.0f,
+                const StyleDef::Bus bus = styleDef(v.style).bus;
+                float *oL = bus == StyleDef::Dry ? mixL : busL[bus];
+                float *oR = bus == StyleDef::Dry ? mixR : busR[bus];
+                renderVoice(v, oL, oR, n, loop ? loop0 * layer0[lane] : 1.0f,
                             loop ? m_loopGain * m_layerGain[lane] : 1.0f);
+                if (bus == StyleDef::Echo && !v.releasing)
+                    dubPressure = std::max(dubPressure, v.pressureSm);
             }
+        // The hardest-pressed dub chord sets how far its echo is thrown; with
+        // none held, the echo keeps the last throw as it trails off.
+        if (dubPressure >= 0)
+            m_echo.throwTo = DubEcho::kFeedback + (DubEcho::kThrown - DubEcho::kFeedback) *
+                                                      clampf((dubPressure - 0.55f) / 0.4f, 0.0f, 1.0f);
+        m_ensemble.process(busL[StyleDef::Ensemble], busR[StyleDef::Ensemble], mixL, mixR, n);
+        m_echo.process(busL[StyleDef::Echo], busR[StyleDef::Echo], mixL, mixR, n, tr.secondsPerBeat());
+        m_amp.process(busL[StyleDef::Comp], busR[StyleDef::Comp], mixL, mixR, n);
         // Chords leave the low end to the bass: a fourth-order high-pass
         // under 140 Hz.
         for (int i = 0; i < n; ++i) {
@@ -1054,7 +1367,9 @@ private:
         v.svfL.reset();
         v.svfR.reset();
         v.clickBp.reset();
-        v.clickBp.set(e.style == Piano ? 2600.0f : 3400.0f, 1.2f, m_rate);
+        v.clickBp.set(e.style == Piano ? 2600.0f : e.style == Keys ? 1300.0f : 3400.0f, 1.2f, m_rate);
+        v.upStroke = false;
+        v.sinceStrum = -1; // the guitar strums its first chord as it starts
         // The unison: detunes spread symmetrically with the outer pair
         // furthest, each saw panned its own way. The organ and the piano use
         // two copies a few cents apart, one each side.
@@ -1075,6 +1390,9 @@ private:
         }
         float low = 0, top = 0;
         doublings(vc, rootMidi, low, top);
+        // The guitar's strings all start at once and its strum plucks them
+        // in turn (see strum), the same way on every hit of its gate.
+        const float noteStrum = sd.osc == StyleDef::PluckedOsc ? 0.0f : sd.strum;
         for (int k = 0; k < ChordVoice::kNotes; ++k) {
             auto &nt = v.notes[k];
             nt.delay = 0;
@@ -1084,11 +1402,14 @@ private:
             for (float &p : nt.phase)
                 p = v.rng.unit();
             nt.phase2[0] = nt.phase2[1] = 0;
+            nt.pluckIn = -1;
+            if (sd.osc == StyleDef::PluckedOsc)
+                nt.string.clear();
             if (k < vc.count) {
                 nt.role = ChordVoice::Core;
                 nt.midi = nt.target = vc.notes[k];
                 nt.amp = nt.ampPrev = nt.ampTarget = 1;
-                nt.delay = int(sd.strum * float(k) * m_rate);
+                nt.delay = int(noteStrum * float(k) * m_rate);
                 nt.onset = nt.delay > 0 ? 0.0f : 1.0f;
             } else if (k == 4) {
                 nt.role = ChordVoice::Low;
@@ -1100,7 +1421,7 @@ private:
                 nt.exists = top > 0;
                 nt.midi = nt.target = top > 0 ? top : vc.notes[vc.count - 1];
                 nt.amp = nt.ampPrev = nt.ampTarget = nt.exists ? 0.55f * v.big : 0.0f;
-                nt.delay = int(sd.strum * float(vc.count) * m_rate);
+                nt.delay = int(noteStrum * float(vc.count) * m_rate);
                 nt.onset = nt.delay > 0 ? 0.0f : 1.0f;
             } else {
                 nt.role = ChordVoice::Core;
@@ -1148,6 +1469,9 @@ private:
                 nt.amp = nt.ampPrev = 0;
                 nt.ampTarget = 1;
                 nt.delay = 0;
+                nt.pluckIn = 0; // a string fading in is plucked (the other sounds ignore it)
+                nt.pluckAmp = 0.7f * v.vel;
+                nt.pluckMute = 0;
                 break;
             }
         }
@@ -1213,7 +1537,7 @@ private:
             const double elapsed = pos - double(hitAbs);
             const float accent = g.hits[h] == 'X' ? 1.0f : 0.8f;
             const bool on = elapsed < dur;
-            G.hitOn[i] = on && hitAbs != R.lastHit;
+            G.hitOn[i] = on && hitAbs != R.lastHit ? (g.hits[h] == 'X' ? 2 : 1) : 0;
             G.hitOff[i] = !on && R.wasOn;
             if (G.hitOn[i])
                 R.lastHit = hitAbs;
@@ -1245,6 +1569,67 @@ private:
             m_pump[i] = 1.0f - atk * (1.0f - u);
         }
         m_pumpView = 1.0f - m_pump[n - 1];
+    }
+
+    // The guitar's right hand: on each hit of its gate (and as a chord
+    // starts) a strum across the sounding strings, a few milliseconds a
+    // string, down from the low strings on the accents and alternating
+    // down and up between them. The palm mutes it more the shorter the
+    // gate, and more again on the unaccented strokes, the ghost scratches
+    // of funk; a Hold gate lets the chord ring open.
+    void strumOnHits(ChordVoice &v, const GateBlock &G, int from, int n) {
+        const StyleDef &sd = styleDef(v.style);
+        const bool gated = G.active && !v.releasing;
+        const float len = m_rhythm[v.style].length;
+        const float palm = gated ? clampf((0.7f - len) / 0.6f, 0.0f, 0.75f) : 0.0f;
+        int since = v.sinceStrum;
+        for (int i = from; i < n; ++i) {
+            const bool first = since < 0;
+            ++since;
+            if (!first && !(gated && G.hitOn[i] && since > int(0.03f * m_rate)))
+                continue;
+            const bool accent = first || G.hitOn[i] == 2;
+            v.upStroke = accent ? false : !v.upStroke;
+            since = 0;
+            // The strings sounding, lowest first.
+            int order[ChordVoice::kNotes], count = 0;
+            for (int k = 0; k < ChordVoice::kNotes; ++k)
+                if (v.notes[k].ampTarget > 0.01f && v.notes[k].exists)
+                    order[count++] = k;
+            for (int a = 1; a < count; ++a)
+                for (int b = a; b > 0 && v.notes[order[b]].target < v.notes[order[b - 1]].target; --b)
+                    std::swap(order[b], order[b - 1]);
+            // A hand, not a sequencer: each stroke lands up to 5 ms behind the
+            // hit (never ahead of it, so a loop's first stroke is never
+            // early) and sweeps the strings a little faster or slower.
+            const float per = (v.upStroke ? 0.75f : 1.0f) * sd.strum * m_rate * (0.8f + 0.4f * v.rng.unit());
+            const int late = int(0.005f * m_rate * v.rng.unit());
+            // A ghost stroke muted past about half is a dead one: the chk
+            // between the chords. A little scatter, as a hand has, so some
+            // ghosts still sound a note, and pressing hard (past three
+            // quarters, so a light or medium touch keeps the chord-chk
+            // alternation) lets more of them ring.
+            float mute = clampf(palm + (accent ? -0.15f : 0.2f + 0.3f * (v.rng.unit() - 0.5f)), 0.0f, 0.92f);
+            const float ring = 0.08f + 0.6f * clampf((v.pressureSm - 0.75f) / 0.25f, 0.0f, 1.0f);
+            if (!accent && mute > 0.45f && v.rng.unit() >= ring)
+                mute = PluckedString::kDead;
+            for (int r = 0; r < count; ++r) {
+                auto &nt = v.notes[order[r]];
+                const int rank = v.upStroke ? count - 1 - r : r;
+                nt.pluckIn = i - from + late + int(per * float(rank));
+                // An upstroke catches the top strings hardest.
+                const float weight = v.upStroke ? 0.6f + 0.4f * float(r) / float(std::max(1, count - 1)) : 1.0f;
+                nt.pluckAmp = (accent ? 1.0f : 0.72f) * weight * (0.92f + 0.16f * v.rng.unit());
+                nt.pluckMute = mute;
+            }
+        }
+        v.sinceStrum = since;
+    }
+
+    // The fretting hand lifts: the strings stop ringing.
+    static void choke(ChordVoice &v) {
+        for (auto &nt : v.notes)
+            nt.string.mute = std::max(nt.string.mute, 0.95f);
     }
 
     // g0 and g1: a gain ramp over the block (the loop stepping back).
@@ -1289,8 +1674,10 @@ private:
         // climbing back over 2 ms when it is struck again (a jump would
         // click through the FM index and the percussion).
         float strikeAt[kBlock] = {};
-        if (sd.osc != StyleDef::Saw) {
-            const float fall = std::exp(-1.0f / ((v.style == Piano ? 0.32f : 0.11f) * m_rate));
+        const bool struck = sd.osc == StyleDef::OrganOsc || sd.osc == StyleDef::PianoOsc || sd.osc == StyleDef::TineOsc;
+        if (struck) {
+            const float fall =
+                std::exp(-1.0f / ((v.style == Piano ? 0.32f : sd.osc == StyleDef::TineOsc ? 0.5f : 0.11f) * m_rate));
             const float rise = 1.0f / (0.002f * m_rate);
             float st = v.strike;
             const bool strikes = G.active && sd.retrig && !v.releasing;
@@ -1311,6 +1698,8 @@ private:
             }
             v.strike = st;
         }
+        if (sd.osc == StyleDef::PluckedOsc)
+            strumOnHits(v, G, from, n);
 
         // Oscillators, before the envelope and the filter.
         float bL[kBlock] = {}, bR[kBlock] = {};
@@ -1373,6 +1762,100 @@ private:
                 nt.phase[0] = pl;
                 nt.phase[1] = pr;
                 nt.phase2[0] = pp;
+            } else if (sd.osc == StyleDef::TineOsc) {
+                // The electric piano: FM at 1:1 for the tine's bark, which
+                // softens as the note rings, and a modulator fourteen times
+                // the pitch whose bell rings only on the attack (it falls as
+                // the strike to the sixth power). A carrier a few cents off
+                // is the stereo side, as on the piano.
+                const float incL = hz * v.ratio[0] * invRate, incR = hz * v.ratio[1] * invRate;
+                const float incB = std::min(14.0f * hz * invRate, 0.45f);
+                float pl = nt.phase[0], pr = nt.phase[1], pb = nt.phase2[0];
+                const float bright = clampf(1.25f - (nt.midi - 60.0f) / 36.0f, 0.35f, 1.3f);
+                const float idx0 = (0.25f + 1.4f * v.vel * v.vel) * bright / kTwoPi;
+                // The bell thins out up the keyboard, where 14x would alias.
+                const float bell0 =
+                    (0.35f + 0.8f * v.vel) * bright * clampf((96.0f - nt.midi) / 24.0f, 0.0f, 1.0f) / kTwoPi;
+                const float side = kSide * sd.width;
+                // The pickup, driven: a hard hit pushes it into an odd-harmonic
+                // edge (tanh, normalised so the level holds) and an
+                // even-harmonic growl (x + k·x²) that stays through the
+                // sustain; a soft touch reaches neither and stays round, a
+                // medium one already growls.
+                const float push = clampf((v.vel - 0.55f) / 0.4f, 0.0f, 1.0f), hit = push * push;
+                const float bark0 = 1.8f * hit, drive = 1.0f + hit;
+                const float driveNorm = 1.0f / fastTanh(drive);
+                // The mean of the driven x², taken back off so the growl adds
+                // no DC (fitted over drives 1..2).
+                const float meanSq = 0.5f + 0.31f * (drive - 1.0f) - 0.12f * (drive - 1.0f) * (drive - 1.0f);
+                for (int i = start; i < n; ++i) {
+                    pl = wrap01(pl + incL);
+                    pr = wrap01(pr + incR);
+                    pb = wrap01(pb + incB);
+                    const float st = strikeAt[i], s2 = st * st;
+                    const float idx = idx0 * (0.3f + 0.7f * st);
+                    const float bell = lut(tb.sine, pb) * bell0 * s2 * s2 * s2;
+                    const float ml = lut(tb.sine, pl) * idx + bell, mr = lut(tb.sine, pr) * idx + bell;
+                    const float k = bark0 * (0.6f + 0.4f * st);
+                    const float cm = fastTanh(drive * lut(tb.sine, wrap01(pl + ml))) * driveNorm;
+                    const float cs = fastTanh(drive * lut(tb.sine, wrap01(pr + mr))) * driveNorm;
+                    const float mid = (cm + k * (cm * cm - meanSq)) * kMid, sd2 = (cs + k * (cs * cs - meanSq)) * side;
+                    nl[i] += mid + sd2;
+                    nr[i] += mid - sd2;
+                }
+                nt.phase[0] = pl;
+                nt.phase[1] = pr;
+                nt.phase2[0] = pb;
+            } else if (sd.osc == StyleDef::StringOsc) {
+                // The string machine: a saw and the saw an octave up, divided
+                // from one phase as the old machines' octave dividers did, so
+                // the two never beat; the ensemble on the bus gives the
+                // movement and the width.
+                const float inc = std::min(hz * invRate, 0.22f), inc2 = 2.0f * inc;
+                float ph = nt.phase[0];
+                for (int i = start; i < n; ++i) {
+                    ph += inc;
+                    if (ph >= 1.0f)
+                        ph -= 1.0f;
+                    const float p2 = ph < 0.5f ? 2.0f * ph : 2.0f * ph - 1.0f;
+                    const float x = 0.6f * (2.0f * ph - 1.0f - polyBlep(ph, inc)) +
+                                    0.6f * (2.0f * p2 - 1.0f - polyBlep(p2, inc2));
+                    nl[i] += x;
+                    nr[i] += x;
+                }
+                nt.phase[0] = ph;
+            } else if (sd.osc == StyleDef::PluckedOsc) {
+                // The guitar: a string per note, plucked when its strum
+                // reaches it, low strings a little left and high ones right.
+                auto &str = nt.string;
+                const int k = int(&nt - v.notes);
+                // (Low strings carry more energy, so the spread sits a
+                // little right of centre to balance.)
+                const float pan = (nt.role == ChordVoice::Low   ? -0.45f
+                                   : nt.role == ChordVoice::Top ? 0.75f
+                                                                : -0.35f + 0.33f * float(k)) *
+                                  sd.width;
+                const float gl = std::sqrt(0.5f * (1.0f - pan)), gr = std::sqrt(0.5f * (1.0f + pan));
+                const bool waiting = nt.pluckIn >= 0 && nt.pluckIn < n - from;
+                // A string that has died away costs nothing until it is
+                // plucked again.
+                if (str.energy > 1e-6f || str.excLeft > 0 || waiting) {
+                    str.tune(hz, m_rate);
+                    float e = 0;
+                    for (int i = start; i < n; ++i) {
+                        if (i - from == nt.pluckIn)
+                            str.pluck(nt.pluckAmp,
+                                      clampf(0.12f + 0.45f * v.vel * (1.0f - 0.7f * nt.pluckMute), 0.06f, 0.8f),
+                                      nt.pluckMute);
+                        const float x = str.step(v.rng);
+                        e = std::max(e, std::fabs(x));
+                        nl[i] += x * gl;
+                        nr[i] += x * gr;
+                    }
+                    str.energy = e;
+                }
+                if (nt.pluckIn >= 0)
+                    nt.pluckIn = nt.pluckIn >= n - from ? nt.pluckIn - (n - from) : -1;
             } else {
                 // Two-operator FM at 1:1, its index falling with the strike, so
                 // a chord starts bright and hammered and mellows as it rings,
@@ -1419,18 +1902,28 @@ private:
         const bool chop = G.active && !sd.retrig;
         const bool strikeGate = G.active && sd.retrig;
         const bool ladder = sd.osc == StyleDef::Saw;
-        const bool click = sd.osc != StyleDef::Saw;
+        const bool mono = sd.osc == StyleDef::StringOsc; // one filter does for both sides
+        const bool click = struck;
+        const float clickLevel = v.style == Piano ? 0.16f : v.style == Keys ? 0.035f : 0.1f;
+        const bool guitar = sd.osc == StyleDef::PluckedOsc;
         const float graceDecay = std::exp(-1.0f / (0.008f * m_rate));
         const float clickDecay = std::exp(-1.0f / (0.0035f * m_rate));
         const float gain = sd.gain * (0.5f + 0.5f * v.vel) * (0.82f + 0.36f * v.pressureSm);
-        v.leslie = wrap01(v.leslie + float(n) * 0.85f * invRate);
-        const float rot = v.style == Organ ? 0.13f * lut(tb.sine, v.leslie) : 0.0f;
+        // The organ's rotor, slow; the electric piano's tremolo, a stereo
+        // pan at a few hertz (it keeps the mono sum whole). Each moves
+        // smoothly across the block.
+        const float rotDepth = v.style == Organ ? 0.13f : v.style == Keys ? 0.24f : 0.0f;
+        const float rot0 = rotDepth * lut(tb.sine, v.leslie);
+        v.leslie = wrap01(v.leslie + float(n) * (v.style == Keys ? 4.4f : 0.85f) * invRate);
+        const float rot1 = rotDepth * lut(tb.sine, v.leslie);
         float peak = 0;
         for (int i = from; i < n; ++i) {
             if (v.minHold > 0 && --v.minHold == 0 &&
                 (v.lateRelease || (strikeGate && !v.releasing && G.g[i] < 0.3f))) {
                 v.amp.off();
                 v.filt.off();
+                if (guitar)
+                    choke(v);
             }
             if (strikeGate && !v.releasing) {
                 if (G.hitOn[i]) {
@@ -1441,6 +1934,8 @@ private:
                 if (v.minHold == 0 && G.hitOff[i]) {
                     v.amp.off();
                     v.filt.off();
+                    if (guitar)
+                        choke(v);
                 }
             }
             const float a = v.amp.step();
@@ -1455,13 +1950,14 @@ private:
                     v.ladR.set(hz, sd.res, m_rate);
                 } else {
                     v.svfL.set(hz, 0.75f, m_rate);
-                    v.svfR.set(hz, 0.75f, m_rate);
+                    if (!mono)
+                        v.svfR.set(hz, 0.75f, m_rate);
                 }
             }
             float xl = bL[i], xr = bR[i];
             if (click && v.clickEnv > 1e-4f) {
                 // The hammer, or the organ's key click.
-                const float c = v.clickBp.step(v.rng.bipolar()).band * v.clickEnv * (v.style == Piano ? 0.16f : 0.1f);
+                const float c = v.clickBp.step(v.rng.bipolar()).band * v.clickEnv * clickLevel;
                 xl += c;
                 xr += c;
                 v.clickEnv *= clickDecay;
@@ -1469,6 +1965,8 @@ private:
             if (ladder) {
                 xl = v.ladL.step(xl);
                 xr = v.ladR.step(xr);
+            } else if (mono) {
+                xl = xr = v.svfL.step(xl).low;
             } else {
                 xl = v.svfL.step(xl).low;
                 xr = v.svfR.step(xr).low;
@@ -1483,6 +1981,7 @@ private:
             }
             if (sd.pump > 0)
                 g *= 1.0f - sd.pump * (1.0f - m_pump[i]);
+            const float rot = rot0 + (rot1 - rot0) * float(i) * invN;
             xl *= g * (1.0f + rot);
             xr *= g * (1.0f - rot);
             outL[i] += xl;
@@ -1511,6 +2010,9 @@ private:
     static_assert(kLanes == 5);
     float m_layerGain[kLanes] = {1, 1, 1, 1, 1}; // each loop layer's step back under another
     Svf m_hp1L, m_hp1R, m_hp2L, m_hp2R;
+    Ensemble m_ensemble;
+    DubEcho m_echo;
+    GuitarAmp m_amp;
 };
 
 }

@@ -69,12 +69,12 @@ std::vector<float> voicing(const StudioView &v, int lane = 0) {
     return out;
 }
 
-// The share of a stretch's energy between lo and hi Hz, from one long FFT
-// (or, with absolute, the energy itself).
-double bandShare(const testkit::Take &take, double from, double lo, double hi, bool absolute = false) {
+// The power spectrum of a stretch (0.68 s from `from`, mid channel,
+// Hann-windowed), bin k at k·48000/32768 Hz; empty past the end.
+std::vector<double> spectrum(const testkit::Take &take, double from) {
     const size_t a = size_t(from * 48000), n = 1 << 15;
     if (a + n > take.left.size())
-        return 1;
+        return {};
     std::vector<std::complex<double>> x(n);
     for (size_t i = 0; i < n; ++i) {
         const double w = 0.5 - 0.5 * std::cos(2 * M_PI * double(i) / double(n - 1));
@@ -100,16 +100,65 @@ double bandShare(const testkit::Take &take, double from, double lo, double hi, b
             }
         }
     }
+    std::vector<double> out(n / 2);
+    for (size_t k = 1; k < n / 2; ++k)
+        out[k] = std::norm(x[k]);
+    return out;
+}
+constexpr double kBinHz = 48000.0 / 32768.0;
+
+// The share of a stretch's energy between lo and hi Hz, from one long FFT
+// (or, with absolute, the energy itself).
+double bandShare(const testkit::Take &take, double from, double lo, double hi, bool absolute = false) {
+    const auto spec = spectrum(take, from);
+    if (spec.empty())
+        return 1;
     double in = 0, all = 0;
-    for (size_t k = 1; k < n / 2; ++k) {
-        const double f = double(k) * 48000.0 / double(n), e = std::norm(x[k]);
-        all += e;
+    for (size_t k = 1; k < spec.size(); ++k) {
+        const double f = double(k) * kBinHz;
+        all += spec[k];
         if (f >= lo && f < hi)
-            in += e;
+            in += spec[k];
     }
     if (absolute)
         return in;
     return all > 0 ? in / all : 1;
+}
+
+// The spectral centroid of a stretch, in Hz.
+double centroid(const testkit::Take &take, double from) {
+    const auto spec = spectrum(take, from);
+    double m = 0, all = 0;
+    for (size_t k = 1; k < spec.size(); ++k)
+        m += spec[k] * double(k) * kBinHz, all += spec[k];
+    return all > 0 ? m / all : 0;
+}
+
+// How far apart two stretches' tone colours are: the mean difference, in
+// dB, of their energy shares in third-octave bands from 50 Hz to 20 kHz.
+double toneDistance(const testkit::Take &a, const testkit::Take &b, double from) {
+    const auto sa = spectrum(a, from), sb = spectrum(b, from);
+    if (sa.empty() || sb.empty())
+        return 0;
+    auto bands = [](const std::vector<double> &spec) {
+        std::vector<double> e;
+        double all = 0;
+        for (double lo = 50; lo < 20000; lo *= std::exp2(1.0 / 3)) {
+            double in = 0;
+            for (size_t k = size_t(lo / kBinHz); k < spec.size() && double(k) * kBinHz < lo * std::exp2(1.0 / 3); ++k)
+                in += spec[k];
+            e.push_back(in);
+            all += in;
+        }
+        for (double &v : e)
+            v = 10 * std::log10(v / all + 1e-12);
+        return e;
+    };
+    const auto ba = bands(sa), bb = bands(sb);
+    double d = 0;
+    for (size_t i = 0; i < ba.size(); ++i)
+        d += std::fabs(ba[i] - bb[i]);
+    return d / double(ba.size());
 }
 
 // A loop made the deliberate way: chords one beat each from the first bar
@@ -152,6 +201,51 @@ double choppiness(const testkit::Take &take, double from, double to, double bpm)
 
 // Pitch classes of A natural minor, the studio's default key.
 const std::set<int> kAMinor = {9, 11, 0, 2, 4, 5, 7};
+
+// The sounds, in the order → steps through them.
+enum { Pad = 0, Trance, Organ, Piano, Pluck, Pump, Keys, Strings, Dub, Guitar, kSounds };
+
+// The keys that choose sound s from the first (→ s times).
+std::string soundKeys(int s) {
+    std::string out;
+    for (int k = 0; k < s; ++k)
+        out += "key " + num(0.01 + 0.005 * k) + " Right\n";
+    return out;
+}
+
+// One chord held on sound s: the tonic triad from 0.3 s to 2.8 s; with
+// ungated, a finger holds the rail's HOLD cell over it (no gate's chop
+// shaking sidebands off its notes).
+testkit::Take heldChord(int s, std::vector<float> *notes = nullptr, bool ungated = false, double pressure = 0.6) {
+    const std::string script = "page 0 3\n" + soundKeys(s) + (ungated ? "down 0.2 9 " + rail(0) + "\n" : "") +
+                               "down 0.3 1 " + cell(0, Triad) + " p=" + num(pressure) + "\nup 2.8 1\n" +
+                               (ungated ? "up 2.9 9\n" : "") + "end 4.4\n";
+    return playWatching(script, [&](double now, const StudioView &v) {
+        if (notes && now > 1.0 && now < 1.1)
+            *notes = voicing(v);
+    });
+}
+
+// Measures of a held chord that tell sounds apart by ear: how bright it is
+// (the share above 1.5 kHz), how chopped (its gate), how it holds (the
+// level late in the chord against early), how wide, and how much is left
+// once the finger lifts (a release, an echo).
+struct Character {
+    double bright, chop, hold, width, tail;
+};
+Character characterOf(const testkit::Take &t) {
+    Character c;
+    c.bright = bandShare(t, 0.9, 1500, 20000);
+    c.chop = choppiness(t, 1.0, 2.6, 124);
+    c.hold = t.rms(2.2, 2.7) / std::max(1e-9, t.rms(0.4, 0.9));
+    double lr = 0, ll = 0, rr = 0;
+    for (size_t i = size_t(0.5 * 48000); i < size_t(2.7 * 48000); ++i)
+        lr += double(t.left[i]) * t.right[i], ll += double(t.left[i]) * t.left[i],
+            rr += double(t.right[i]) * t.right[i];
+    c.width = 1.0 - lr / std::sqrt(std::max(1e-18, ll * rr));
+    c.tail = t.rms(3.1, 3.6) / std::max(1e-9, t.rms(0.5, 2.7));
+    return c;
+}
 
 }
 
@@ -393,7 +487,7 @@ private slots:
     // the biggest voicing (a flat finger) on every sound.
     void theLowEndIsLeftToTheBass() {
         std::string step;
-        for (int s = 0; s < 6; ++s) {
+        for (int s = 0; s < kSounds; ++s) {
             const auto take = testkit::play("page 0 3\n" + step + "down 0.3 1 " + cell(5, Seventh) +
                                             " size=2\nup 1.4 1\nend 1.5\n");
             const double sub = bandShare(take, 0.6, 20, 80);
@@ -456,7 +550,7 @@ private slots:
                      [&](double now, const StudioView &v) {
                          const float *d = v.parts[kChords].data;
                          if (now > 0.6 && now < 0.9)
-                             latched = int(d[40 + 0]); // the pad's pattern
+                             latched = int(d[64 + 0]); // the pad's pattern
                          if (now > 1.4 && now < 1.5)
                              rate2 = int(d[46]);
                          if (now > 1.8 && now < 1.9)
@@ -635,10 +729,11 @@ private slots:
         QVERIFY2(eOther < 0.1 * fOther, qPrintable(QString("E %1 F %2 (alone %3)").arg(eOther).arg(fOther).arg(eAlone)));
     }
 
-    // The organ and the piano keep their weight in mono.
+    // The organ, the piano, the electric piano (its tremolo pans), the dub
+    // stab (its echo ping-pongs) and the guitar keep their weight in mono.
     void stabsSurviveMono() {
-        for (const char *keys : {"key 0.05 Right\nkey 0.06 Right\n", "key 0.05 Right\nkey 0.06 Right\nkey 0.07 Right\n"}) {
-            const auto take = testkit::play(std::string("page 0 3\n") + keys + "down 0.2 1 " + cell(0, Seventh) +
+        for (int s : {int(Organ), int(Piano), int(Keys), int(Dub), int(Guitar)}) {
+            const auto take = testkit::play("page 0 3\n" + soundKeys(s) + "down 0.2 1 " + cell(0, Seventh) +
                                             "\nup 3.8 1\nend 4\n");
             double lr = 0, ll = 0, rr = 0, mono = 0, stereo = 0;
             for (size_t i = size_t(0.3 * 48000); i < size_t(3.8 * 48000); ++i) {
@@ -648,7 +743,8 @@ private slots:
                 stereo += 0.5 * (l * l + r * r);
             }
             const double corr = lr / std::sqrt(ll * rr), loss = 10 * std::log10(mono / stereo);
-            QVERIFY2(corr > 0.5 && loss > -1.5, qPrintable(QString("corr %1 loss %2 dB").arg(corr).arg(loss)));
+            QVERIFY2(corr > 0.5 && loss > -1.5,
+                     qPrintable(QString("sound %1: corr %2 loss %3 dB").arg(s).arg(corr).arg(loss)));
         }
     }
 
@@ -788,14 +884,16 @@ private slots:
 
     // The band under the pad does what the keys do. On the scripts' window
     // the pad is 900 × 562.5 px: row 0 is 0.048 of it under the pad, row 1
-    // 0.119. Row 0 holds the clips, then the six sounds from about 0.4 to
-    // 0.8 of the width; row 1 starts with HOLD.
+    // 0.119. Row 0 holds the clips, then the ten sounds from about 0.28 to
+    // 0.83 of the width; row 1 starts with HOLD.
     void theBandUnderThePadIsClickable() {
         QString status;
-        testkit::play("page 0 3\nbutton 0.2 0.48 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        testkit::play("page 0 3\nbutton 0.2 0.35 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains("trance", Qt::CaseInsensitive), qPrintable(status));
-        testkit::play("page 0 3\nbutton 0.2 0.76 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        testkit::play("page 0 3\nbutton 0.2 0.576 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains("pump", Qt::CaseInsensitive), qPrintable(status));
+        testkit::play("page 0 3\nbutton 0.2 0.795 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("guitar", Qt::CaseInsensitive), qPrintable(status));
         // HOLD, then a chord that keeps ringing after the finger lifts.
         const auto held = testkit::play("page 0 3\nbutton 0.1 0.03 -0.119\ndown 0.2 1 " + cell(0, Triad) +
                                             "\nup 0.6 1\nend 2.5\n",
@@ -881,7 +979,7 @@ private slots:
                                           .toObject();
             QCOMPARE(again, saved);
             // The engine gates the organ on eighths again, and the loop plays.
-            QCOMPARE(int(opened.view().parts[kChords].data[40 + 2]), int(Eighths));
+            QCOMPARE(int(opened.view().parts[kChords].data[64 + 2]), int(Eighths));
             QCOMPARE(opened.view().parts[kChords].playing, 0);
             const QString status = opened.pageStatus();
             QVERIFY2(status.contains(QStringLiteral("ORGAN")) && status.contains(QStringLiteral("hold")) &&
@@ -965,7 +1063,172 @@ private slots:
         QCOMPARE(organ[QStringLiteral("filter")].toDouble(), 0.5);
         QCOMPARE(piano[QStringLiteral("gate")].toString(), QStringLiteral("8THS"));
         QCOMPARE(piano[QStringLiteral("swing")].toDouble(), 0.25);
-        QCOMPARE(int(session.view().parts[kChords].data[40 + 3]), int(Eighths));
+        QCOMPARE(int(session.view().parts[kChords].data[64 + 3]), int(Eighths));
+    }
+
+    // Every sound, held: it speaks, stays finite and under the ceiling,
+    // carries no DC, and its energy sits on the notes of the chord it
+    // voices (in tune: far more within a quarter of a semitone of them than
+    // a quarter to two thirds of a semitone off, measured ungated).
+    void everySoundIsCleanAndInTune_data() {
+        QTest::addColumn<int>("sound");
+        const char *names[] = {"pad", "trance", "organ", "piano", "pluck", "pump", "keys", "strings", "dub", "guitar"};
+        for (int s = 0; s < kSounds; ++s)
+            QTest::newRow(names[s]) << s;
+    }
+    void everySoundIsCleanAndInTune() {
+        QFETCH(int, sound);
+        std::vector<float> notes;
+        const auto take = heldChord(sound);
+        QVERIFY(take.error.empty());
+        QVERIFY(take.finite());
+        QVERIFY2(take.peak() < 1.0, qPrintable(QString::number(take.peak())));
+        QVERIFY2(take.rms(0.5, 2.7) > 0.02, qPrintable(QString::number(take.rms(0.5, 2.7))));
+        double dc = 0;
+        for (size_t i = size_t(0.5 * 48000); i < size_t(2.7 * 48000); ++i)
+            dc += 0.5 * (take.left[i] + take.right[i]);
+        dc /= 2.2 * 48000;
+        QVERIFY2(std::fabs(dc) < 0.002, qPrintable(QString::number(dc)));
+        const auto open = heldChord(sound, &notes, true);
+        QVERIFY(notes.size() >= 3);
+        double on = 0, off = 0;
+        for (float n : notes) {
+            const double hz = 440.0 * std::exp2((n - 69.0) / 12.0);
+            auto at = [&](double lo, double hi) {
+                return bandShare(open, 0.35, hz * std::exp2(lo / 12), hz * std::exp2(hi / 12));
+            };
+            on += at(-0.25, 0.25);
+            off += at(0.25, 0.65) + at(-0.65, -0.25);
+            QVERIFY2(kAMinor.count(int(std::lround(n)) % 12), qPrintable(QString::number(n)));
+        }
+        QVERIFY2(on > 3.0 * off, qPrintable(QString("on the notes %1, beside them %2").arg(on).arg(off)));
+    }
+
+    // The four sounds beyond EDM each differ from every other sound, by a
+    // margin, in something an ear would name: brightness, chop, how the
+    // chord holds, width, or what rings on after it.
+    void theNewSoundsAreDistinct() {
+        Character c[kSounds];
+        for (int s = 0; s < kSounds; ++s)
+            c[s] = characterOf(heldChord(s));
+        auto ratio = [](double a, double b) { return std::max(a, b) / std::max(1e-6, std::min(a, b)); };
+        for (int s = Keys; s < kSounds; ++s)
+            for (int o = 0; o < kSounds; ++o) {
+                if (o == s)
+                    continue;
+                const bool apart = ratio(c[s].bright, c[o].bright) > 1.6 || ratio(c[s].chop, c[o].chop) > 1.6 ||
+                                   ratio(c[s].hold, c[o].hold) > 1.6 || std::fabs(c[s].width - c[o].width) > 0.12 ||
+                                   ratio(c[s].tail, c[o].tail) > 2.0;
+                QVERIFY2(apart, qPrintable(QString("sounds %1 and %2: bright %3/%4 chop %5/%6 hold %7/%8 width %9/%10 "
+                                                   "tail %11/%12")
+                                               .arg(s)
+                                               .arg(o)
+                                               .arg(c[s].bright)
+                                               .arg(c[o].bright)
+                                               .arg(c[s].chop)
+                                               .arg(c[o].chop)
+                                               .arg(c[s].hold)
+                                               .arg(c[o].hold)
+                                               .arg(c[s].width)
+                                               .arg(c[o].width)
+                                               .arg(c[s].tail)
+                                               .arg(c[o].tail)));
+            }
+    }
+
+    // The dub stab trails off in echoes after the finger lifts, thinner and
+    // darker each time; the organ, stabbing the same offbeats, stops.
+    void theDubStabEchoes() {
+        const auto dub = heldChord(Dub), organ = heldChord(Organ);
+        const double dubTail = dub.rms(3.0, 3.6) / dub.rms(0.5, 2.7);
+        const double organTail = organ.rms(3.0, 3.6) / organ.rms(0.5, 2.7);
+        QVERIFY2(dubTail > 0.15 && dubTail > 5 * organTail,
+                 qPrintable(QString("dub %1 organ %2").arg(dubTail).arg(organTail)));
+        // Thinner (less under 300 Hz) and darker (less over 1.5 kHz against
+        // the middle) than the stabs they repeat.
+        auto top = [&](double t) { return bandShare(dub, t, 1500, 20000) / bandShare(dub, t, 300, 1500); };
+        QVERIFY2(top(3.0) < 0.9 * top(1.0) && bandShare(dub, 3.0, 20, 300) < 0.8 * bandShare(dub, 1.0, 20, 300),
+                 qPrintable(QString("top %1 then %2, low %3 then %4")
+                                .arg(top(1.0))
+                                .arg(top(3.0))
+                                .arg(bandShare(dub, 1.0, 20, 300))
+                                .arg(bandShare(dub, 3.0, 20, 300))));
+    }
+
+    // The string machine is a string section, not a pad: much brighter
+    // (its EQ lifts the bite and drops the body) and far from the pad's tone
+    // colour.
+    void stringsAreNotThePad() {
+        const auto strings = heldChord(Strings), pad = heldChord(Pad);
+        const double cs = centroid(strings, 1.0), cp = centroid(pad, 1.0), d = toneDistance(strings, pad, 1.0);
+        QVERIFY2(cs > 1000 && cs > 1.8 * cp && d >= 7.0,
+                 qPrintable(QString("strings %1 Hz, pad %2 Hz, %3 dB apart").arg(cs).arg(cp).arg(d)));
+    }
+
+    // The electric piano barks when struck hard: a seventh chord's
+    // sustain, half a second in, is far brighter after a hard hit than
+    // after a soft one, which stays round.
+    void keysBarkWhenStruckHard() {
+        auto played = [](double pressure) {
+            return testkit::play("page 0 3\n" + soundKeys(Keys) + "down 0.3 1 " + cell(0, Seventh) +
+                                 " p=" + num(pressure) + "\nup 2.8 1\nend 3.0\n");
+        };
+        const auto soft = played(0.05), hard = played(0.95);
+        const double s = centroid(soft, 0.8), h = centroid(hard, 0.8);
+        QVERIFY2(h >= 430 && s <= 360 && h > 1.3 * s, qPrintable(QString("soft %1 Hz hard %2 Hz").arg(s).arg(h)));
+        QVERIFY(hard.peak() < 1.0);
+    }
+
+    // Pressing a dub chord harder throws its echo: a longer tail.
+    void pressingThrowsTheDubEcho() {
+        const auto light = heldChord(Dub, nullptr, false, 0.5), thrown = heldChord(Dub, nullptr, false, 1.0);
+        const double l = light.rms(3.6, 4.3) / light.rms(0.5, 2.7), t = thrown.rms(3.6, 4.3) / thrown.rms(0.5, 2.7);
+        QVERIFY2(t > 1.5 * l, qPrintable(QString("light %1 thrown %2").arg(l).arg(t)));
+    }
+
+    // The guitar sounds through a pickup and a cabinet: no zing above
+    // 6 kHz; and through a compressor, so its peaks stay under the ceiling
+    // with room to spare.
+    void theGuitarIsWarmAndSquashed() {
+        const auto take = heldChord(Guitar);
+        const double air = bandShare(take, 1.0, 6000, 24000);
+        QVERIFY2(air < 0.01, qPrintable(QString::number(air)));
+        const double crest = 20 * std::log10(take.peak() / take.rms(0.5, 2.7));
+        QVERIFY2(take.peak() < 0.8 && crest < 18, qPrintable(QString("peak %1 crest %2 dB").arg(take.peak()).arg(crest)));
+    }
+
+    // The string machine swells in; the electric piano and the guitar speak
+    // at once.
+    void stringsSwellKeysAndGuitarStrike() {
+        const auto strings = heldChord(Strings), keys = heldChord(Keys), guitar = heldChord(Guitar);
+        auto rise = [](const testkit::Take &t) { return t.rms(0.3, 0.36) / std::max(1e-9, t.rms(0.9, 1.1)); };
+        QVERIFY2(rise(strings) < 0.3, qPrintable(QString::number(rise(strings))));
+        QVERIFY2(rise(keys) > 0.6, qPrintable(QString::number(rise(keys))));
+        QVERIFY2(rise(guitar) > 0.4, qPrintable(QString::number(rise(guitar))));
+    }
+
+    // The guitar strums: the chord's lowest string speaks a few
+    // milliseconds before its highest. Low strings sit left of high ones,
+    // so a downstroke arrives on the left first: the first 3 ms lean far
+    // more left than the chord does once every string sounds (the
+    // compressor squashes both sides alike, so the lean survives it).
+    void theGuitarStrums() {
+        const auto take = heldChord(Guitar);
+        size_t onset = 0;
+        for (size_t i = size_t(0.29 * 48000); i < take.left.size(); ++i)
+            if (std::fabs(take.left[i]) + std::fabs(take.right[i]) > 0.003) {
+                onset = i;
+                break;
+            }
+        QVERIFY(onset > 0);
+        auto lean = [&](double from, double to) {
+            double l = 0, r = 0;
+            for (size_t i = onset + size_t(from * 48000); i < onset + size_t(to * 48000); ++i)
+                l += double(take.left[i]) * take.left[i], r += double(take.right[i]) * take.right[i];
+            return l / std::max(1e-12, r);
+        };
+        const double early = lean(0.0, 0.003), late = lean(0.02, 0.05);
+        QVERIFY2(early > 1.3 * late, qPrintable(QString("left/right %1 early, %2 once strummed").arg(early).arg(late)));
     }
 };
 

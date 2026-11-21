@@ -180,8 +180,11 @@ void fitChips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStrin
 class Control : public PartControl {
 public:
     Control() {
-        for (int s = 0; s < StyleCount; ++s)
+        for (int s = 0; s < StyleCount; ++s) {
             m_pattern[s] = styleDef(s).pattern;
+            m_length[s] = 0.55f;
+            m_filter[s] = 0.5f;
+        }
     }
 
     void frame(const Frame &f, ControlContext &ctx) override {
@@ -1067,9 +1070,9 @@ private:
     int m_style = Pad;
     int m_register = 0;
     int m_pattern[StyleCount] = {};
-    float m_length[StyleCount] = {0.55f, 0.55f, 0.55f, 0.55f, 0.55f, 0.55f};
+    float m_length[StyleCount] = {};
     float m_swing[StyleCount] = {};
-    float m_filter[StyleCount] = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+    float m_filter[StyleCount] = {};
     int m_override = -1, m_rate = 1;
     bool m_hold = false, m_overdub = false;
     int m_latched = 0, m_latchedOrder = 0;
@@ -1251,8 +1254,11 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         soundIds << SpotStyle + s;
     }
     const QRectF top = c::bandRow(pc, 0);
-    const qreal keysW = top.width() * 0.2;
-    const qreal soundsW = std::max(chipsWidth(sounds, gap), top.width() * 0.41);
+    // Ten sounds need most of the row: the keyboard gives up a little, and
+    // the sounds take what their words need and a few pixels each to
+    // breathe, the clips the rest.
+    const qreal keysW = top.width() * 0.16;
+    const qreal soundsW = std::max(chipsWidth(sounds, gap) + 3.0 * qreal(sounds.size()), top.width() * 0.41);
     const qreal clipsW = top.width() - keysW - soundsW - 2 * between;
     c::clips(p, QRectF(top.left(), top.top(), clipsW, top.height()), *pc.view, col, pc.time, &m_spots);
     fitChips(p, pc, QRectF(top.left() + clipsW + between, top.top(), soundsW, top.height()), sounds, soundLit,
@@ -1389,7 +1395,8 @@ void Control::paintKeys(QPainter &p, const QRectF &r, const PaintContext &pc, co
 QString Control::help() const {
     // The keys every part page shares come first, then this page's own.
     return QStringLiteral(
-        "← →\tthe sound: pad, trance, organ, piano, pluck, pump\n"
+        "← →\tthe sound: pad, trance, organ, piano, pluck, pump, keys (electric piano), strings (string machine), "
+        "dub (stab into echo), guitar (funk, strummed)\n"
         "↑ ↓\tthe voicing higher or lower\n"
         "Shift+← →  (or [ ])\tthe gate pattern for this sound\n"
         "- +  (or =)\tthe filter darker or brighter\n"

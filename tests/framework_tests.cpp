@@ -436,6 +436,36 @@ private slots:
         QVERIFY2(most >= 2, qPrintable(QStringLiteral("at most %1 voice(s) at once").arg(most)));
     }
 
+    void aLayerLandsWithoutCuttingTheLoop() {
+        // A bar of lead that holds one long note, then a short note played
+        // over it and Space part-way through the bar: the layer goes into
+        // the playing loop without stopping it, so the long note is held on
+        // to the end of the bar instead of being let go when the layer lands.
+        // (The lead publishes each line's state: [0] is 1 while it is held.)
+        const std::string script = std::string(kBeat) +
+                                   "page 3.0 4\n"
+                                   "tap 4.52 0.3 0.5 len=2.3\n"
+                                   "key 6.6 Space\n"
+                                   "tap 9.0 0.6 0.5 len=0.15\n"
+                                   "key 9.4 Space\nend 10.6\n";
+        bool heldBefore = true, heldAfter = true;
+        int layered = -1;
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            const float held = s.view().parts[3].data[16 * 1 + 0];
+            if (t > 8.7 && t < 9.3)
+                heldBefore = heldBefore && held == 1.0f;
+            if (t > 9.6 && t < 10.3)
+                heldAfter = heldAfter && held == 1.0f;
+            if (t > 10.4)
+                layered = s.view().parts[3].clips[0].events;
+        });
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[3].playing, 0);
+        QVERIFY2(layered > 2, qPrintable(QStringLiteral("%1 events").arg(layered)));
+        QVERIFY(heldBefore);
+        QVERIFY2(heldAfter, "the loop's held note was let go when the layer landed");
+    }
+
     void aLayerFitsTheLoopItGoesOnto() {
         // A four-bar bass loop (one note a bar, played once), then three
         // notes over three bars layered on it: the layer is taken as four

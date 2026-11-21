@@ -11,44 +11,7 @@ using namespace tf;
 
 namespace {
 
-// Plays a script like testkit::play, and calls fn with the session after
-// every tick, so a test can follow the studio bar by bar.
-testkit::Take watch(const std::string &script, const std::function<void(double, Session &)> &fn) {
-    testkit::Take take;
-    ScriptPlayer player;
-    if (!player.load(script, &take.error))
-        return take;
-    Studio studio(48000.0f);
-    studio.setTimeOrigin(0);
-    setScriptClock(0);
-    Session session(&studio);
-    session.setClock(&scriptClock);
-    const double end = player.end() + 0.01;
-    float buf[384 * 2];
-    uint64_t lastSample = ~0ull;
-    for (int tick = 0;; ++tick) {
-        const double t = tick / 125.0;
-        if (t > end)
-            break;
-        session.refresh();
-        player.tick(t, session);
-        studio.render(buf, 384);
-        for (int i = 0; i < 384; ++i) {
-            take.left.push_back(buf[2 * i]);
-            take.right.push_back(buf[2 * i + 1]);
-        }
-        session.refresh();
-        // Only a view the studio has just published: a page's own changes
-        // show in the session's view at once, before the studio applies them
-        // (a mute timed for the bar line shows a sixteenth early).
-        if (fn && session.view().sample != lastSample) {
-            lastSample = session.view().sample;
-            fn(t, session);
-        }
-    }
-    take.view = session.view();
-    return take;
-}
+using testkit::watch;
 
 // Four one-bar loops at 120 BPM, each played and then looped with Space the
 // way every part page does it, from single hits and notes so they lean as

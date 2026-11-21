@@ -325,8 +325,10 @@ static void debugOn(Studio::Impl &s, int part, int src, const Command &c) {
 
 static void debugClip(Studio::Impl &s, int part, const Studio::PartState &p, int slot, double b0, double b1);
 
+// play: start it at once (a new loop); a take about to be layered into the
+// playing loop isn't started, so that loop plays on undisturbed.
 static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0, double b1, float quantize,
-                     double anchor, bool stretch, double playedFrom = -1e18) {
+                     double anchor, bool stretch, double playedFrom = -1e18, bool play = true) {
     const double raw = b1 - b0;
     if (slot < 0 || slot >= kClipSlots || raw < 0.2)
         return;
@@ -479,6 +481,11 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             std::fprintf(stderr, " %d@%.4f", int(e.c.type), e.pos);
         std::fprintf(stderr, "\n");
     }
+    if (!play) {
+        clip.anchor = anchor;
+        ++p.takes;
+        return;
+    }
     startClip(p, s, slot, anchor);
     p.catchFrom = floorMod(start, len);
     ++p.takes;
@@ -504,13 +511,18 @@ static bool mergeInto(Studio::PartState &p, Studio::Impl &s, int a, int b, bool 
         p.clips[b].length <= 0)
         return false;
     auto &before = keepForUndo(p, a); // also the source for a's own events
-    const bool was = p.playing == a;
-    if (was)
-        stopClip(p, s);
-    auto &dst = p.clips[a];
     const auto &other = p.clips[b];
     const double lenA = before.length, lenB = other.length;
     const double len = chain ? lenA + lenB : std::max(lenA, lenB);
+    // A playing clip that keeps its length plays straight on: its events are
+    // swapped under it, and what it holds now stays held (its own events
+    // keep their ids, so their Offs still come). Only a clip that grows
+    // starts again from its new top.
+    const bool was = p.playing == a;
+    const bool restart = was && std::fabs(len - lenA) > 1e-9;
+    if (restart)
+        stopClip(p, s);
+    auto &dst = p.clips[a];
     dst.events.clear();
     dst.length = len;
     dst.anchor = before.anchor;
@@ -548,7 +560,7 @@ static bool mergeInto(Studio::PartState &p, Studio::Impl &s, int a, int b, bool 
                                           std::min(kClipLayers - 1, top + 1 + e.layer)});
     }
     sortClip(dst.events);
-    if (was)
+    if (restart)
         startClip(p, s, a, dst.anchor);
     if (count)
         ++p.takes;
@@ -1044,7 +1056,9 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 const int slot = p.recording;
                 p.recording = -1;
                 const uint32_t takesBefore = p.takes;
-                makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false, p.recFrom);
+                const int layerInto = p.recLayerInto;
+                const bool layering = layerInto >= 0 && layerInto != slot && p.clips[layerInto].length > 0;
+                makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false, p.recFrom, !layering);
                 p.recFrom = -1e18;
                 if (p.recRecount && p.takes > takesBefore)
                     --p.takes; // the take it replaces was counted already
@@ -1064,7 +1078,9 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                         stopClip(p, s);
                     p.clips[slot].events.clear();
                     p.clips[slot].length = 0;
-                    startClip(p, s, into, p.clips[into].anchor);
+                    // The loop plays on through the merge, not from its top.
+                    if (p.playing != into)
+                        startClip(p, s, into, p.clips[into].anchor);
                     debugClip(s, pi, p, into, p.recStart, end);
                 }
             }

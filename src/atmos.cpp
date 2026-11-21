@@ -371,7 +371,7 @@ int bedPitches(const Bed &b, const Harmony &h, bool drone, float lo, float hi, f
 
 // --- the engine ---------------------------------------------------------------
 
-enum ParamId : int { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord, PChordToLoop };
+enum ParamId : int { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord, PChordToLoop, PTone };
 // The page marks the latched layers a loop is about to take, so the loop's
 // first round can take their voices over (never recorded).
 constexpr uint16_t kAdoptable = Command::User + 1;
@@ -398,6 +398,7 @@ enum Pub : int {
     PubOwnLoop,     // the own chord came from a loop
     PubOwnHand,     // the player's chord key holds it, whatever a loop says
     PubFrozen,      // voices the freeze is holding
+    PubTone,        // 0 dark .. 0.5 as built .. 1 bright
     PubVoice0 = 20,  // 9 per voice
     PubGlint0 = 200, // 3 per glint
 };
@@ -815,6 +816,7 @@ public:
             case PPump: m_pump = std::clamp(int(std::lround(c.f[0])), 0, 2); break;
             case PSpace: m_space = clampf(c.f[0], 0.0f, 1.0f); break;
             case PSwell: m_swellOn = c.f[0] > 0.5f; break;
+            case PTone: m_tone = clampf(c.f[0], 0.0f, 1.0f); break;
             case PChordToLoop:
                 m_ownHand = false;
                 break;
@@ -880,6 +882,7 @@ public:
         const bool frozen = m_freeze && m_melt <= 0;
         m_freezeAmt += ((frozen ? 1.0f : 0.0f) - m_freezeAmt) * (1.0f - std::exp(-dt / 0.05f));
         m_spaceS += (m_space - m_spaceS) * k;
+        m_toneS += (m_tone - m_toneS) * k;
         m_cloudAmt += ((m_cloudOn ? 1.0f : 0.0f) - m_cloudAmt) * (1.0f - std::exp(-dt / 0.6f));
 
         float dryL[kBlock] = {}, dryR[kBlock] = {};
@@ -901,9 +904,30 @@ public:
             dryR[i] *= g;
         }
         renderGlints(dryL, dryR, n);
-        // Sheen: the top of the bed lifted a touch always, and a lot as it
-        // swells.
-        const float sheen = 0.25f + 4.5f * m_swellE;
+        // Tone, the player's - and =: below the middle a low-pass closes over
+        // the bed (and so over its halo), from about 16 kHz down to about
+        // 1.1; above it the sheen lifts the top. In the middle the bed is as
+        // it was built, the filter out of the way.
+        const float darker = clampf((0.5f - m_toneS) * 2.0f, 0.0f, 1.0f);
+        const float brighter = clampf((m_toneS - 0.5f) * 2.0f, 0.0f, 1.0f);
+        if (darker > 0.002f) {
+            const float hz = 16000.0f * std::exp2(-3.8f * darker);
+            if (std::fabs(hz - m_toneSet) > 0.002f * hz) {
+                m_toneSet = hz;
+                m_toneL.set(hz, 0.6f, m_rate);
+                copyCoefficients(m_toneR, m_toneL);
+            }
+            for (int i = 0; i < n; ++i) {
+                dryL[i] = m_toneL.step(dryL[i]).low;
+                dryR[i] = m_toneR.step(dryR[i]).low;
+            }
+        } else {
+            m_toneL.reset();
+            m_toneR.reset();
+        }
+        // Sheen: the top of the bed lifted a touch always (more with the
+        // tone up, none with it down), and a lot as it swells.
+        const float sheen = (0.25f + 1.2f * brighter) * (1.0f - darker) + 4.5f * m_swellE;
         for (int i = 0; i < n; ++i) {
             dryL[i] += sheen * m_sheenL.step(dryL[i]).high;
             dryR[i] += sheen * m_sheenR.step(dryR[i]).high;
@@ -1004,6 +1028,7 @@ public:
         d[PubLevel] = m_levelOut;
         d[PubOwnLoop] = m_ownLoop ? 1.0f : 0.0f;
         d[PubOwnHand] = m_ownHand ? 1.0f : 0.0f;
+        d[PubTone] = m_tone;
         int frozen = 0, k = 0;
         for (const Voice &v : m_voices) {
             frozen += v.active && v.frozen;
@@ -1575,6 +1600,8 @@ private:
     bool m_ownLoop = false, m_ownHand = false;
     float m_lowCutSet = 55.0f;
     Svf m_sideHp1, m_sideHp2, m_sheenL, m_sheenR;
+    float m_tone = 0.5f, m_toneS = 0.5f, m_toneSet = 0;
+    Svf m_toneL, m_toneR;
 };
 
 // --- scenes -------------------------------------------------------------------
@@ -1731,6 +1758,13 @@ public:
                 m_scene = -1;
         }
 
+        // A swell the mouse started ends by itself once it has risen all
+        // the way.
+        if (m_swellClicked && t >= m_swellUntil) {
+            m_swellClicked = false;
+            swell(ctx);
+        }
+
         // A loop holding the bed, for the status line.
         m_playing.clear();
         if (pv.playing >= 0)
@@ -1758,7 +1792,6 @@ public:
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const PartView &pv = ctx.studio().parts[ctx.part()];
-        const float *d = pv.data;
         if (k.key == Qt::Key_Space) {
             // Space is the session's: it loops what was just played. Seeing
             // it first, the page offers its latched layers to the loop, which
@@ -1777,18 +1810,39 @@ public:
                 return true;
             m_swellHeld = k.down;
             m_swells += k.down;
-            param(PSwell, k.down ? 1.0f : 0.0f, ctx);
+            swell(ctx);
             return true;
         }
         if (!k.down)
             return false;
+        const bool shift = k.modifiers & Qt::ShiftModifier;
         if (k.key >= Qt::Key_F1 && k.key <= Qt::Key_F8) {
-            ctx.launch(k.key - Qt::Key_F1);
+            const int slot = k.key - Qt::Key_F1;
+            if (shift) {
+                ctx.clear(slot);
+                ctx.notice(QStringLiteral("Slot %1 cleared").arg(slot + 1));
+            } else {
+                ctx.launch(slot);
+            }
             return true;
         }
         if (k.key == Qt::Key_Backspace) {
             ctx.stop();
             return true;
+        }
+        // The steppers repeat while held; everything else is one press.
+        switch (k.key) {
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+            stepSpace(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_Minus:
+        case Qt::Key_Plus:
+        case Qt::Key_Equal:
+            stepTone(k.key == Qt::Key_Minus ? -1 : 1, ctx);
+            return true;
+        default:
+            break;
         }
         if (k.repeat)
             return true;
@@ -1799,57 +1853,122 @@ public:
             }
         for (int c = 0; c < 7; ++c)
             if (k.key == kChordKeys[c]) {
-                const bool loopHad = d[PubOwnLoop] > 0.5f;
-                chord(c, ctx);
-                ctx.notice(QStringLiteral("The bed's own chord %1: only Atmos plays it%2. Comma follows the Chords page")
-                               .arg(roman(c), loopHad ? QStringLiteral(", over the loop's chords") : QString()));
+                ownChord(c, ctx);
                 return true;
             }
+        // The shared keys first (the same on every part page, and reachable
+        // without AltGr on a Nordic keyboard), then the keys they replaced,
+        // which stay as second keys.
         switch (k.key) {
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+            if (shift)
+                stepPump(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            else
+                stepScene(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_BracketLeft:
+        case Qt::Key_BracketRight:
+            stepPump(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            if (shift)
+                toggleOverdub(ctx);
+            else if (!latchHeld(ctx))
+                toggleHold(ctx);
+            return true;
+        case Qt::Key_section:   // left of 1 on Nordic and Mac layouts
+        case Qt::Key_QuoteLeft: // and on US ones
+        case Qt::Key_Backslash:
         case Qt::Key_Comma:
-            chord(-1, ctx);
-            ctx.notice(QStringLiteral("The bed follows the chords"));
-            return true;
-        case Qt::Key_H:
-            m_hold = !m_hold;
-            ctx.notice(m_hold ? QStringLiteral("Hold: layers stay when lifted") : QStringLiteral("Hold off"));
-            return true;
-        case Qt::Key_F: {
-            const bool on = d[PubFreeze] < 0.5f;
-            param(PFreeze, on ? 1.0f : 0.0f, ctx);
-            ctx.notice(on ? QStringLiteral("Frozen: the bed holds, lifted or not, and follows the chords")
-                          : QStringLiteral("Thawed"));
-            return true;
-        }
-        case Qt::Key_G: {
-            const bool on = d[PubCloud] < 0.5f;
-            param(PCloud, on ? 1.0f : 0.0f, ctx);
-            ctx.notice(on ? QStringLiteral("Grain cloud") : QStringLiteral("Cloud off"));
-            return true;
-        }
-        case Qt::Key_P: {
-            const int mode = (int(std::lround(d[PubPump])) + 1) % 3;
-            param(PPump, float(mode), ctx);
-            static const char *names[3] = {"Pump off", "Pump with the kick", "Pump on every beat"};
-            ctx.notice(QString::fromUtf8(names[mode]));
-            return true;
-        }
-        case Qt::Key_Up:
-        case Qt::Key_Down: {
-            const float s = clampf(std::round(d[PubSpace] * 4.0f) / 4.0f + (k.key == Qt::Key_Up ? 0.25f : -0.25f), 0.0f, 1.0f);
-            param(PSpace, s, ctx);
-            ctx.notice(QStringLiteral("Space %1").arg(int(std::lround(s * 4))));
-            return true;
-        }
-        case Qt::Key_O:
-            ctx.overdub(!pv.overdub);
-            ctx.notice(pv.overdub ? QStringLiteral("Overdub off") : QStringLiteral("Overdub"));
+            follow(ctx);
             return true;
         case Qt::Key_Delete:
             releaseAll(ctx, QStringLiteral("Let go: everything latched fades"));
             return true;
+        case Qt::Key_H:
+            toggleHold(ctx);
+            return true;
+        case Qt::Key_F:
+            toggleFreeze(ctx);
+            return true;
+        case Qt::Key_G:
+            toggleCloud(ctx);
+            return true;
+        case Qt::Key_P:
+            stepPump(1, ctx);
+            return true;
+        case Qt::Key_O:
+            toggleOverdub(ctx);
+            return true;
         default:
             return false;
+        }
+    }
+
+    // The mouse on the band under the pad: the clips, the scenes and the
+    // chords in it, and every setting a key reaches.
+    enum Spot {
+        SpotScene = 100,
+        SpotChord = 120,
+        SpotHold = 200,
+        SpotFreeze,
+        SpotCloud,
+        SpotSwell,
+        SpotPumpDown,
+        SpotPumpUp,
+        SpotSpaceDown,
+        SpotSpaceUp,
+        SpotToneDown,
+        SpotToneUp,
+        SpotFollow,
+        SpotOverdub,
+        SpotLetGo,
+    };
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int id = m_spots.at(at);
+        if (id < 0)
+            return false;
+        if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+            return true;
+        if (id >= SpotScene && id < SpotScene + 8) {
+            toggleScene(id - SpotScene, ctx);
+            return true;
+        }
+        if (id >= SpotChord && id < SpotChord + 7) {
+            ownChord(id - SpotChord, ctx);
+            return true;
+        }
+        switch (id) {
+        case SpotHold: toggleHold(ctx); return true;
+        case SpotFreeze: toggleFreeze(ctx); return true;
+        case SpotCloud: toggleCloud(ctx); return true;
+        case SpotSwell:
+            // A click has no release to end a held swell, so the chip is a
+            // toggle: on, the swell rises; a second click, or eight bars
+            // (when it has risen all the way), lets it fall back.
+            if (m_swellClicked) {
+                m_swellClicked = false;
+            } else {
+                m_swellClicked = true;
+                m_swellUntil = ctx.timeAt(ctx.beatAt(ctx.now()) + 8.0 * kBeatsPerBar);
+                ++m_swells;
+            }
+            swell(ctx);
+            ctx.notice(m_swellClicked ? QStringLiteral("Swelling: click again to let it fall back")
+                                      : QStringLiteral("The swell falls back"));
+            return true;
+        case SpotPumpDown: stepPump(-1, ctx); return true;
+        case SpotPumpUp: stepPump(1, ctx); return true;
+        case SpotSpaceDown: stepSpace(-1, ctx); return true;
+        case SpotSpaceUp: stepSpace(1, ctx); return true;
+        case SpotToneDown: stepTone(-1, ctx); return true;
+        case SpotToneUp: stepTone(1, ctx); return true;
+        case SpotFollow: follow(ctx); return true;
+        case SpotOverdub: toggleOverdub(ctx); return true;
+        case SpotLetGo: releaseAll(ctx, QStringLiteral("Let go: everything latched fades")); return true;
+        default: return false;
         }
     }
 
@@ -1877,7 +1996,7 @@ public:
         }
         if (m_swellHeld) {
             m_swellHeld = false;
-            param(PSwell, 0, ctx);
+            swell(ctx);
         }
         m_frame = Frame{};
     }
@@ -2197,7 +2316,92 @@ private:
             m_latched.push_back({L, xOf(L.family, L.colour), L.height, s, false, false});
         }
         m_scene = s;
+        m_lastScene = s;
         ctx.notice(QString::fromUtf8(sc.name));
+    }
+
+    // ← →: the next or previous scene, from the one laid (or last laid).
+    void stepScene(int dir, ControlContext &ctx) {
+        const int from = m_scene >= 0 ? m_scene : m_lastScene;
+        toggleScene(from < 0 ? (dir > 0 ? 0 : 7) : (from + dir + 8) % 8, ctx);
+    }
+
+    // What the engine says it is doing now.
+    static const float *pub(ControlContext &ctx) { return ctx.studio().parts[ctx.part()].data; }
+
+    // The swell rises while S is held or the mouse's toggle is on.
+    void swell(ControlContext &ctx) { param(PSwell, m_swellHeld || m_swellClicked ? 1.0f : 0.0f, ctx); }
+
+    void stepSpace(int dir, ControlContext &ctx) {
+        const float s = clampf(std::round(pub(ctx)[PubSpace] * 4.0f) / 4.0f + 0.25f * float(dir), 0.0f, 1.0f);
+        param(PSpace, s, ctx);
+        ctx.notice(QStringLiteral("Space %1").arg(int(std::lround(s * 4))));
+    }
+
+    void stepTone(int dir, ControlContext &ctx) {
+        const float s = clampf(std::round(pub(ctx)[PubTone] * 8.0f) / 8.0f + 0.125f * float(dir), 0.0f, 1.0f);
+        param(PTone, s, ctx);
+        const int step = int(std::lround(s * 8)) - 4;
+        ctx.notice(step == 0 ? QStringLiteral("Tone as built")
+                             : QStringLiteral("Tone %1%2: %3").arg(step > 0 ? "+" : "").arg(step)
+                                   .arg(step > 0 ? QStringLiteral("brighter") : QStringLiteral("darker")));
+    }
+
+    void stepPump(int dir, ControlContext &ctx) {
+        const int mode = (int(std::lround(pub(ctx)[PubPump])) + dir + 3) % 3;
+        param(PPump, float(mode), ctx);
+        static const char *names[3] = {"Pump off", "Pump with the kick", "Pump on every beat"};
+        ctx.notice(QString::fromUtf8(names[mode]));
+    }
+
+    void ownChord(int c, ControlContext &ctx) {
+        const bool loopHad = pub(ctx)[PubOwnLoop] > 0.5f;
+        chord(c, ctx);
+        ctx.notice(QStringLiteral("The bed's own chord %1: only Atmos plays it%2. § follows the Chords page")
+                       .arg(roman(c), loopHad ? QStringLiteral(", over the loop's chords") : QString()));
+    }
+
+    void follow(ControlContext &ctx) {
+        chord(-1, ctx);
+        ctx.notice(QStringLiteral("The bed follows the chords"));
+    }
+
+    void toggleHold(ControlContext &ctx) {
+        m_hold = !m_hold;
+        ctx.notice(m_hold ? QStringLiteral("Hold: layers held a moment stay when lifted") : QStringLiteral("Hold off"));
+    }
+
+    // Return with fingers down latches them, as the click does. False if
+    // there was nothing to latch.
+    bool latchHeld(ControlContext &ctx) {
+        int latched = 0;
+        for (Held &h : m_held)
+            if (h.touch >= 0 && !h.grabbed && !h.cancelled && !h.latch) {
+                h.latch = true;
+                ++latched;
+            }
+        if (latched)
+            ctx.notice(QStringLiteral("Latched: it stays when you lift. Delete lets everything go"));
+        return latched > 0;
+    }
+
+    void toggleFreeze(ControlContext &ctx) {
+        const bool on = pub(ctx)[PubFreeze] < 0.5f;
+        param(PFreeze, on ? 1.0f : 0.0f, ctx);
+        ctx.notice(on ? QStringLiteral("Frozen: the bed holds, lifted or not, and follows the chords")
+                      : QStringLiteral("Thawed"));
+    }
+
+    void toggleCloud(ControlContext &ctx) {
+        const bool on = pub(ctx)[PubCloud] < 0.5f;
+        param(PCloud, on ? 1.0f : 0.0f, ctx);
+        ctx.notice(on ? QStringLiteral("Grain cloud") : QStringLiteral("Cloud off"));
+    }
+
+    void toggleOverdub(ControlContext &ctx) {
+        const bool on = !ctx.studio().parts[ctx.part()].overdub;
+        ctx.overdub(on);
+        ctx.notice(on ? QStringLiteral("Overdub: what you play joins the loop") : QStringLiteral("Overdub off"));
     }
 
     std::array<Held, 16> m_held{};
@@ -2212,14 +2416,27 @@ private:
     Frame m_frame;
     QString m_cue, m_frozen, m_playing;
     double m_buttonAt = 0, m_handUntil = 0;
-    int m_nextId = 0, m_scene = -1, m_takeSlot = -1, m_lastPlaying = -1;
-    double m_spaceAt = 0;
-    bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false;
+    int m_nextId = 0, m_scene = -1, m_lastScene = -1, m_takeSlot = -1, m_lastPlaying = -1;
+    double m_spaceAt = 0, m_swellUntil = 0;
+    bool m_button = false, m_longDone = false, m_hold = false, m_swellHeld = false, m_swellClicked = false;
+    console::Hotspots m_spots; // what paint() drew to be clicked
     uint32_t m_swells = 0; // for the tutorial
 };
 
 QString AtmosControl::help() const {
     return QStringLiteral(
+        "← →\tthe scenes, one after another: dawn, ocean, cathedral, stardust, nostalgia, euphoria, night rain, pulse\n"
+        "↑ ↓\tspace: the halo's size and shimmer\n"
+        "Shift+← →\tthe pump: off, with the kick, on every beat ([ ] and P step it too)\n"
+        "- +\ttone: darker, brighter (= too)\n"
+        "Return\twith fingers down, latch them, as the click does; otherwise hold on or off: layers held a moment stay when lifted (H too)\n"
+        "Shift+Return\toverdub (O too)\n"
+        "§ (the key left of 1; ` on US keyboards)\tfollow the Chords page again (\\ and comma too)\n"
+        "Delete\tlet every latched layer go\n"
+        "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot at the next bar · clear it · stop the clip at the next bar\n"
+        "the band under the pad\tthe mouse does what the keys do: click a clip to launch or stop it, a scene, the bed's own chord, "
+        "and every setting; a stepper's left half goes down, its right half up; the swell chip is a toggle, and it ends by itself "
+        "after eight bars\n"
         "touch\ta layer of the bed, in the chord: drone, pad, choir, glass, air from left to right\n"
         "slide up or down\tthe voicing climbs or falls through the chord, brighter as it rises\n"
         "slide across a column\tthe colour: soft to bowed, strings to saw to hollow, oo to ee, pure glass to twinkles to stars, wind to rain to vinyl\n"
@@ -2231,19 +2448,11 @@ QString AtmosControl::help() const {
         "hold the click down a second\tlet every latched layer go (so does Delete)\n"
         "touch an orb\tpick a latched layer up and reshape it; a quick tap lets it go\n"
         "Space\tloop what was just played, latched bed and all; the pad shows the loop waiting for its bar; Space again calls it off\n"
-        "Q W E R T Y U I\tscenes: dawn, ocean, cathedral, stardust, nostalgia, euphoria, night rain, pulse\n"
-        "Z X C V B N M\tthe bed's own chord on degrees I to VII (Atmos only); Space loops a progression with the bed, and a key pressed over the loop takes over until comma\n"
-        "comma\tfollow the Chords page again\n"
-        "H\thold: layers held a moment stay when lifted\n"
+        "Q W E R T Y U I\tscenes: dawn, ocean, cathedral, stardust, nostalgia, euphoria, night rain, pulse; the same key again fades it\n"
+        "Z X C V B N M\tthe bed's own chord on degrees I to VII (Atmos only); Space loops a progression with the bed, and a key pressed over the loop takes over until §\n"
         "F\tfreeze: every layer sounding holds, lifted or not, and follows the chords; again to thaw\n"
         "G\tgrain cloud of the bed, in octaves\n"
-        "S, held\tswell: louder, brighter, more shimmer, rising for as long as it is held (up to eight bars)\n"
-        "P\tpump: with the kick, on every beat, off\n"
-        "Up, Down\tspace: the halo's size and shimmer\n"
-        "O\toverdub\n"
-        "Delete\tlet every latched layer go\n"
-        "F1–F8\tlaunch a slot at the next bar\n"
-        "Backspace\tstop the clip at the next bar");
+        "S, held\tswell: louder, brighter, more shimmer, rising for as long as it is held (up to eight bars)");
 }
 
 QString AtmosControl::status() const {
@@ -2260,6 +2469,8 @@ QString AtmosControl::status() const {
         add(QString::fromUtf8(kScenes[m_scene].name));
     if (m_hold)
         add(QStringLiteral("hold"));
+    if (m_swellClicked)
+        add(QStringLiteral("swelling, a click on SWELL ends it"));
     if (!m_playing.isEmpty())
         add(m_playing);
     if (!m_frozen.isEmpty())
@@ -2506,6 +2717,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
     p.restore();
 
     // The panel's readouts along the top edge, inside the pad.
+    const int own = int(std::lround(d[PubOwn]));
     {
         const int px = std::max(10, int(12 * pc.scale));
         const QFont fnt = c::font(px, true);
@@ -2533,7 +2745,6 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
             x += 134;
         };
         // The chord.
-        const int own = int(std::lround(d[PubOwn]));
         const float rootMidi = midiOf(root);
         const int rpc = ((int(std::lround(rootMidi)) % 12) + 12) % 12;
         QString quality;
@@ -2557,47 +2768,96 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
                                                      : QStringLiteral("%1 · OWN %2 · ATMOS ONLY").arg(chord, roman(own));
         lit(whose, true, col);
         x += 4;
-        lit(QStringLiteral("HOLD"), m_hold, col);
-        lit(QStringLiteral("FREEZE"), d[PubFreeze] > 0.5f, QColor("#BFE6FF"));
-        lit(QStringLiteral("CLOUD"), d[PubCloud] > 0.5f, col);
-        static const char *pump[3] = {"PUMP OFF", "PUMP KICK", "PUMP BEAT"};
-        lit(QString::fromUtf8(pump[std::clamp(int(std::lround(d[PubPump])), 0, 2)]), d[PubPump] > 0.5f, col);
-        meter(QStringLiteral("SPACE"), d[PubSpace], 5);
+        meter(QStringLiteral("SPACE"), d[PubSpace], 4);
+        meter(QStringLiteral("TONE"), d[PubTone], 8);
         meter(QStringLiteral("SWELL"), d[PubSwell], 6);
         if (m_scene >= 0)
             lit(QString::fromUtf8(kScenes[m_scene].name), true, familyColor(col, Choir));
         const QString cue = loopCue(pc.beat, *pc.view);
         if (!cue.isEmpty())
             lit(cue, true, c::red());
-
-        // The keys, as a row of chips: the scenes, then the chords, lit
-        // where they are.
-        x = pc.pad.left() + 12;
-        y += 24;
-        const int kpx = std::max(9, int(10 * pc.scale));
-        const QFont kf = c::font(kpx, true);
-        auto chip = [&](const QString &s, bool on, QColor cc) {
-            const qreal w = QFontMetricsF(kf).horizontalAdvance(s) + 10;
-            if (x + w > pc.pad.right() - 10)
-                return;
-            if (on)
-                c::tag(p, QPointF(x, y), s, cc, kpx);
-            else
-                c::text(p, QRectF(x, y - 8, w, 16), s, c::alpha(cc, 0.4f), kpx, true, Qt::AlignCenter);
-            x += w + 3;
-        };
-        static const char *sceneKeys = "QWERTYUI", *chordKeys = "ZXCVBNM";
-        for (int i = 0; i < 8; ++i)
-            chip(QStringLiteral("%1 %2").arg(QChar(sceneKeys[i])).arg(QString::fromUtf8(kScenes[i].name).toUpper()),
-                 m_scene == i, familyColor(col, Choir));
-        x += 8;
-        for (int i = 0; i < 7; ++i)
-            chip(QStringLiteral("%1 %2").arg(QChar(chordKeys[i])).arg(roman(i)), own == i, col);
-        chip(QStringLiteral(", FOLLOW"), own < 0, col);
     }
 
     c::beats(p, pc, col);
-    c::clips(p, QRectF(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width(), 30), *pc.view, col, pc.time);
+
+    // Below the pad, every one clickable. Row 0: the clips, then the scenes
+    // in two rows of four. Row 1, in two thin rows: the switches, then the
+    // steppers and the bed's own chords. Each chip says its key.
+    m_spots.clear();
+    c::clips(p, c::bandRow(pc, 0, 0, 0.42), *pc.view, col, pc.time, &m_spots);
+    const double thin = 14, gap = 3;
+    const int tpx = 10; // a size up from what chip() gives a box this thin
+    auto half = [&](int row, int sub, double x0, double x1) {
+        const QRectF r = c::bandRow(pc, row, x0, x1);
+        return QRectF(r.left(), r.top() + sub * (r.height() - thin), r.width(), thin);
+    };
+    auto thinChip = [&](const QRectF &cell, const QString &label, bool lit, int id) {
+        c::chip(p, pc, cell, QString(), lit, id >= 0 ? &m_spots : nullptr, id);
+        c::text(p, cell.adjusted(3, 0, -3, 0), label, lit ? QColor::fromRgb(c::kInk) : col, tpx, true, Qt::AlignCenter);
+    };
+    static const char *sceneKeys = "QWERTYUI";
+    QStringList scenes[2];
+    for (int i = 0; i < 8; ++i)
+        scenes[i / 4] << QStringLiteral("%1 %2").arg(QChar(sceneKeys[i]), QString::fromUtf8(kScenes[i].name));
+    for (int r = 0; r < 2; ++r) {
+        const QRectF band = half(0, r, 0.435, 1);
+        const double w = (band.width() + gap) / 4;
+        for (int i = 0; i < 4; ++i)
+            thinChip(QRectF(band.left() + i * w, band.top(), w - gap, thin), scenes[r][i], m_scene == 4 * r + i,
+                     SpotScene + 4 * r + i);
+    }
+
+    // A row of chips of their labels' widths, the spare room shared out
+    // evenly. A stepper is one chip, its left half one way and its right
+    // half the other.
+    struct Item {
+        QString label;
+        bool lit;
+        int id, id2 = -1; // id2: the right half's, for a stepper
+    };
+    auto row = [&](const QRectF &r, const std::vector<Item> &items) {
+        const QFontMetricsF fm(c::font(tpx, true));
+        std::vector<double> w;
+        double sum = 0;
+        for (const Item &it : items) {
+            w.push_back(fm.horizontalAdvance(it.label) + 12);
+            sum += w.back();
+        }
+        const double spare = r.width() - sum - gap * double(items.size() - 1);
+        const double add = spare / double(items.size()), squeeze = spare < 0 ? (r.width() - gap * double(items.size() - 1)) / sum : 1;
+        double x = r.left();
+        for (size_t i = 0; i < items.size(); ++i) {
+            const double cw = spare < 0 ? w[i] * squeeze : w[i] + add;
+            const QRectF cell(x, r.top(), cw, r.height());
+            const Item &it = items[i];
+            thinChip(cell, it.label, it.lit, it.id2 < 0 ? it.id : -1);
+            if (it.id2 >= 0) {
+                m_spots.add(QRectF(cell.left(), cell.top(), cell.width() / 2, cell.height()), it.id);
+                m_spots.add(QRectF(cell.center().x(), cell.top(), cell.width() / 2, cell.height()), it.id2);
+            }
+            x += cw + gap;
+        }
+    };
+    static const char *pumpName[3] = {"OFF", "KICK", "BEAT"};
+    const int pump = std::clamp(int(std::lround(d[PubPump])), 0, 2);
+    row(half(1, 0, 0, 1), {
+        {QStringLiteral("HOLD  ⏎"), m_hold, SpotHold},
+        {QStringLiteral("FREEZE  F"), d[PubFreeze] > 0.5f, SpotFreeze},
+        {QStringLiteral("CLOUD  G"), d[PubCloud] > 0.5f, SpotCloud},
+        {QStringLiteral("SWELL ON/OFF  S"), m_swellClicked || m_swellHeld, SpotSwell},
+        {QStringLiteral("⇧←  PUMP %1  ⇧→").arg(QString::fromUtf8(pumpName[pump])), pump > 0, SpotPumpDown, SpotPumpUp},
+        {QStringLiteral("OVERDUB  ⇧⏎"), pc.view->overdub, SpotOverdub},
+        {QStringLiteral("LET GO  DEL"), false, SpotLetGo},
+    });
+    std::vector<Item> lower = {
+        {QStringLiteral("↓  SPACE  ↑"), false, SpotSpaceDown, SpotSpaceUp},
+        {QStringLiteral("−  TONE  +"), false, SpotToneDown, SpotToneUp},
+        {QStringLiteral("FOLLOW  §"), own < 0, SpotFollow},
+    };
+    static const char *chordKeys = "ZXCVBNM";
+    for (int i = 0; i < 7; ++i)
+        lower.push_back({QStringLiteral("%1 %2").arg(QChar(chordKeys[i]), roman(i)), own == i, SpotChord + i});
+    row(half(1, 1, 0, 1), lower);
 }
 
 } // namespace

@@ -16,6 +16,7 @@
 #include <sstream>
 #include <string>
 
+#include "audio.h"
 #include "backend.h"
 #include "helper.h"
 #include "offline.h"
@@ -29,6 +30,7 @@ static void usage(FILE *out) {
                "  tenfold render <script.tf> <out.wav> [--json]\n"
                "                                          render a scripted performance\n"
                "  tenfold bench [--json]                  time a dense case\n"
+               "  tenfold latency [--json]                measure the microphone's trip to the ears\n"
                "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
                "                     [--tutorial STEP]\n"
                "                                          draw the window mid-performance (page 1-7, 0 arrange),\n"
@@ -150,6 +152,10 @@ int main(int argc, char *argv[]) {
         return report(tf::runBench(8.0), json);
     if (argc >= 3 && std::strcmp(argv[1], "screenshot") == 0)
         return screenshot(argc, argv);
+    if (argc >= 2 && std::strcmp(argv[1], "latency") == 0) {
+        QCoreApplication app(argc, argv);
+        return tf::measureLatency(json);
+    }
     if (argc >= 2 && (std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0)) {
         usage(stdout);
         return 0;

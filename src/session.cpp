@@ -93,6 +93,32 @@ public:
         m.d1 = b1;
         post(m);
     }
+    void takeAudio(int slot, double b0, double b1, const Command &sound, int into, bool retake, bool free) override {
+        if (m_part < 0)
+            return;
+        StudioMsg m;
+        m.kind = free ? (retake ? StudioMsg::Recapture : StudioMsg::Capture)
+                      : (retake ? StudioMsg::Retake : StudioMsg::TakeBars);
+        m.part = int8_t(m_part);
+        m.slot = int8_t(slot);
+        m.d0 = b0;
+        m.d1 = b1;
+        m.audio = true;
+        m.cmd = sound;
+        if (!free && into >= 0)
+            m.value = into + 1;
+        post(m);
+        // Shown at once, as Space's own take is, so a second Space knows
+        // there is one to call off.
+        if (!free)
+            m_s->m_view.parts[m_part].recording = slot;
+    }
+    void cancelTake() override {
+        if (m_part < 0)
+            return;
+        simple(StudioMsg::CancelRecord, m_part, 0, 0);
+        m_s->m_view.parts[m_part].recording = -1;
+    }
     void stopRecording() override { simple(StudioMsg::StopRecord, m_part, 0, 0); }
     void overdub(bool on) override { simple(StudioMsg::Overdub, m_part, 0, on); }
     void launch(int slot, bool now) override { launchPart(m_part, slot, now); }
@@ -202,7 +228,7 @@ Session::Session(Studio *studio) : m_studio(studio) {
     }
     for (auto &spec : parts) {
         auto page = std::make_unique<Page>();
-        page->part = m_studio->addPart(std::move(spec.engine), spec.channel);
+        page->part = m_studio->addPart(std::move(spec.engine), spec.channel, spec.monitors);
         page->followsChords = spec.followsChords;
         page->spec = std::move(spec);
         page->ctx = std::make_unique<Context>(this, page->part);
@@ -1293,11 +1319,23 @@ double Session::retakeLength(int dir) const {
 
 int Session::loopBeats(int dir) const {
     std::lock_guard lock(m_lock);
+    // A page that makes its own takes (the Vocal page's audio) says.
+    const Page &p = *m_pages[size_t(m_page)];
+    if (p.part >= 0) {
+        const int beats = p.spec.control->loopBeats(dir);
+        if (beats >= 0)
+            return beats;
+    }
     return int(std::lround(retakeLength(dir)));
 }
 
 void Session::resizeLoop(int dir) {
     std::lock_guard lock(m_lock);
+    Page &p = *m_pages[size_t(m_page)];
+    if (p.part >= 0 && p.spec.control->loopBeats(0) >= 0) {
+        p.spec.control->resizeLoop(dir, *p.ctx);
+        return;
+    }
     if (retakeLength(0) > 0)
         adjustTake(dir);
 }

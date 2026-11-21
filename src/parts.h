@@ -18,6 +18,7 @@ PartSpec makeLead();   // 4
 PartSpec makeArp();    // 5
 PartSpec makeAtmos();  // 6
 PartSpec makeRisers(); // 7, the FX page
+PartSpec makeVocal();  // 8, the microphone
 
 std::vector<PartSpec> makeParts();
 // The arrange page knows the parts by name and colour.

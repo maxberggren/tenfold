@@ -32,6 +32,7 @@ HEADERS += \
     src/theme.h \
     src/touch.h \
     src/touchsource.h \
+    src/vocal.h \
     src/translator.h \
     src/tuning.h \
     src/tutorial.h \
@@ -46,6 +47,7 @@ PARTS = \
     src/arp.cpp \
     src/atmos.cpp \
     src/risers.cpp \
+    src/vocal.cpp \
     src/arrange.cpp
 
 SOURCES += \

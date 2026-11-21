@@ -8,7 +8,10 @@ namespace tf {
 class Studio;
 
 // A PipeWire playback stream asking for a 128-frame quantum (2.7 ms at
-// 48 kHz) and rendering on PipeWire's real-time thread.
+// 48 kHz) and rendering on PipeWire's real-time thread, and beside it a
+// capture stream from the default microphone at the same quantum, which
+// hands what it hears straight to the studio for the next render (the
+// Vocal page monitors it, so every sample of buffering is heard).
 class AudioOut {
 public:
     explicit AudioOut(Studio *studio);
@@ -20,6 +23,8 @@ public:
     bool running() const { return m_running.load(); }
     int quantum() const { return m_quantum.load(); }
     int rate() const { return m_rate.load(); }
+    // Why there is no microphone, or "".
+    std::string inputError() const;
 
     struct Impl;
 
@@ -32,5 +37,13 @@ private:
     friend struct Impl;
     friend void onProcess(void *);
 };
+
+// `tenfold latency`: how long the voice takes from the microphone to the
+// ears, measured. The real studio and its two streams run against a pair
+// of private virtual devices (a source that sends a burst of noise, a sink
+// that records), through the real PipeWire graph at the real quantum, with
+// the Vocal page monitoring, so nothing is heard; then the devices this
+// machine would use report their own latency. The report says both.
+int measureLatency(bool json);
 
 }

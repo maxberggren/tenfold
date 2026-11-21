@@ -11,6 +11,7 @@ std::vector<PartSpec> makeParts() {
     parts.push_back(makeArp());
     parts.push_back(makeAtmos());
     parts.push_back(makeRisers());
+    parts.push_back(makeVocal());
     return parts;
 }
 

@@ -53,6 +53,9 @@ struct StudioMsg {
     double d0 = 0, d1 = 0;
     double d2 = -1e18; // TakeBars layered: nothing played before this beat goes in (it is in the loop already)
     float f = 0;
+    // TakeBars, Retake, Capture, Recapture: the clip is recorded audio, the
+    // one sound cmd (see ControlContext::takeAudio), not what was played.
+    bool audio = false;
     Command cmd;
 };
 
@@ -62,7 +65,8 @@ public:
     ~Studio();
 
     // Before audio starts.
-    int addPart(std::unique_ptr<PartEngine> engine, const float *channel);
+    // monitors: the part plays live input, mixed after the limiter (PartSpec::monitors).
+    int addPart(std::unique_ptr<PartEngine> engine, const float *channel, bool monitors = false);
     int partCount() const { return int(m_parts.size()); }
     PartEngine *engine(int part) const;
 
@@ -77,6 +81,17 @@ public:
 
     // Interleaved stereo. Audio thread only.
     void render(float *interleaved, int frames);
+
+    // The microphone, mono at the studio's rate: the capture stream (or a
+    // script) pushes what arrives, and each render takes as many samples as
+    // it renders, keeping as little waiting as it can. One pushing thread.
+    static constexpr size_t kInputRing = 1 << 15;
+    void pushInput(const float *mono, int frames);
+    // What the audio server says about the microphone and the latencies
+    // (milliseconds each way, the devices' included); see StudioView.
+    void setInput(int state, float inputMs = 0, float outputMs = 0);
+    // Samples waiting in the input ring after the last render took its share.
+    int inputWaiting() const { return m_inReserve.load(std::memory_order_relaxed); }
 
     bool fetchView() { return m_views.fetch(); }
     const StudioView &view() const { return m_views.front(); }
@@ -128,6 +143,16 @@ private:
 
     float m_scope[kScopeSize] = {};
     std::atomic<uint32_t> m_scopeWrite{0};
+
+    std::vector<float> m_input;
+    std::atomic<uint64_t> m_inHead{0}, m_inTail{0};
+    std::atomic<int> m_inState{0}, m_inReserve{0};
+    std::atomic<float> m_inMs{0}, m_outMs{0};
+    int m_inSlack = 0;        // samples held back after an underrun, so the next doesn't come
+    int m_inLow = 1 << 30;    // the least left waiting over the last second
+    uint64_t m_inLowSince = 0;
+    int m_quantum = 128;
+    void pullInput(float *dst, int n);
 
     std::atomic<bool> m_recording{false};
     std::vector<float> m_record;

@@ -35,13 +35,68 @@ constexpr float kButtonAspect = 1.6f;
 
 struct Event {
     double t = 0, t2 = 0;
-    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, End } kind = End;
+    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, Mic, Voice, End } kind = End;
     int keyMode = 0; // 0 press, 1 down, 2 up
     int id = 0;
     float x = 0, y = 0;
     float p = NAN, size = NAN, twist = NAN;
     std::string key;
+    // A sung word (voice): pitch from hz to `to`, its level and vowel; a
+    // WAV (mic): its gain.
+    float hz = 220, to = NAN, level = 0.3f;
+    char vowel = 'a';
 };
+
+// A sung word for the script's microphone: a glottal buzz (a saw, darkened)
+// through three vowel formants, with a breath of noise, a consonant's click
+// of noise at its start, a natural rise and fall and, held long enough, a
+// vibrato. What it lacks in charm it has in what a voice detector and a
+// pitch tracker need: voiced, with clean silence either side.
+void singWord(std::vector<float> &out, double at, double dur, float hz, float to, float level, char vowel,
+              uint32_t seed) {
+    const float rate = kRate;
+    struct Formant {
+        float f1, f2, f3;
+    };
+    Formant fm{800, 1150, 2900};
+    switch (vowel) {
+    case 'e': fm = {400, 2000, 2550}; break;
+    case 'i': fm = {280, 2250, 2900}; break;
+    case 'o': fm = {450, 800, 2830}; break;
+    case 'u': fm = {325, 700, 2530}; break;
+    default: break;
+    }
+    Svf f1, f2, f3;
+    f1.set(fm.f1, 6, rate);
+    f2.set(fm.f2, 8, rate);
+    f3.set(fm.f3, 10, rate);
+    OnePoleLp tilt;
+    tilt.set(1400, rate);
+    Rng rng(seed);
+    const size_t a = size_t(std::max(0.0, at) * rate), n = size_t(dur * rate);
+    if (out.size() < a + n)
+        out.resize(a + n, 0.0f);
+    double phase = 0;
+    const float target = std::isnan(to) ? hz : to;
+    for (size_t i = 0; i < n; ++i) {
+        const float u = float(i) / float(n), secs = float(i) / rate;
+        // Glide from hz to `to` over the word, with vibrato after 150 ms.
+        float f = hz * std::pow(target / hz, u);
+        if (secs > 0.15f)
+            f *= std::exp2(0.25f / 12.0f * std::sin(kTwoPi * 5.5f * (secs - 0.15f)) * std::min(1.0f, (secs - 0.15f) * 4));
+        phase += double(f) / rate;
+        phase -= std::floor(phase);
+        const float saw = float(2.0 * phase - 1.0);
+        const float buzz = tilt.step(saw) + 0.02f * rng.bipolar();
+        float v = f1.step(buzz).band + 0.5f * f2.step(buzz).band + 0.25f * f3.step(buzz).band;
+        // Rise over 25 ms, fall over the last 60.
+        const float env = std::min(1.0f, secs / 0.025f) * std::min(1.0f, float(n - i) / (0.06f * rate));
+        v *= env;
+        if (secs < 0.012f)
+            v += 0.5f * rng.bipolar() * (1.0f - secs / 0.012f);
+        out[a + i] += v * level * 2.2f;
+    }
+}
 
 struct GlideMove {
     double t1, t2;
@@ -172,6 +227,43 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                 if (!(ls >> e.t >> e.x >> e.y))
                     return fail("expected T X Y");
                 events.push_back(e);
+            } else if (word == "voice") {
+                // A sung word into the microphone: voice T DUR [hz=] [to=] [level=] [vowel=].
+                e.kind = Event::Voice;
+                if (!(ls >> e.t >> e.t2))
+                    return fail("expected T DUR");
+                std::string opt;
+                while (ls >> opt) {
+                    const auto eq = opt.find('=');
+                    if (eq == std::string::npos)
+                        return fail("bad option");
+                    const std::string k = opt.substr(0, eq), v = opt.substr(eq + 1);
+                    if (k == "hz")
+                        e.hz = std::stof(v);
+                    else if (k == "to")
+                        e.to = std::stof(v);
+                    else if (k == "level")
+                        e.level = std::stof(v);
+                    else if (k == "vowel" && !v.empty())
+                        e.vowel = v[0];
+                    else
+                        return fail("bad option");
+                }
+                events.push_back(e);
+            } else if (word == "mic") {
+                // A recording into the microphone from T: mic T FILE.wav [gain=].
+                e.kind = Event::Mic;
+                if (!(ls >> e.t >> e.key))
+                    return fail("expected T FILE");
+                std::string opt;
+                if (ls >> opt) {
+                    if (opt.rfind("gain=", 0) != 0)
+                        return fail("bad option");
+                    e.level = std::stof(opt.substr(5));
+                } else {
+                    e.level = 1;
+                }
+                events.push_back(e);
             } else if (word == "page") {
                 e.kind = Event::Page;
                 if (!(ls >> e.t >> e.id))
@@ -215,6 +307,10 @@ struct ScriptPlayer::Impl {
         int key, mods;
     };
     std::vector<PendingUp> keyUps;
+    // The microphone, as the script sings into it (empty: there is none).
+    std::vector<float> mic;
+    bool hasMic = false;
+    uint64_t micPushed = 0;
 };
 
 namespace {
@@ -237,6 +333,31 @@ bool ScriptPlayer::load(const std::string &script, std::string *error) {
     }
     for (const Event &e : d->events)
         d->end = std::max(d->end, std::max(e.t, e.t2));
+    for (const Event &e : d->events)
+        if (e.kind == Event::End)
+            d->end = e.t;
+    // The microphone's whole performance, made now so ticks only copy it.
+    uint32_t seed = 0x5EED;
+    for (const Event &e : d->events) {
+        if (e.kind == Event::Voice) {
+            d->hasMic = true;
+            singWord(d->mic, e.t, e.t2, e.hz, e.to, e.level, e.vowel, seed += 0x9E37);
+            d->end = std::max(d->end, e.t + e.t2);
+        } else if (e.kind == Event::Mic) {
+            const std::vector<float> wav = readWavMono(e.key, int(kRate));
+            if (wav.empty()) {
+                if (error)
+                    *error = "cannot read " + e.key + " (16/24-bit PCM or 32-bit float WAV)";
+                return false;
+            }
+            d->hasMic = true;
+            const size_t a = size_t(e.t * kRate);
+            if (d->mic.size() < a + wav.size())
+                d->mic.resize(a + wav.size(), 0.0f);
+            for (size_t i = 0; i < wav.size(); ++i)
+                d->mic[a + i] += wav[i] * e.level;
+        }
+    }
     for (const Event &e : d->events)
         if (e.kind == Event::End)
             d->end = e.t;
@@ -344,8 +465,28 @@ void ScriptPlayer::tick(double t, Session &session) {
         case Event::Tempo:
             session.shiftTempo(std::round(e.x) - std::round(session.view().bpm));
             break;
+        case Event::Mic:
+        case Event::Voice:
         case Event::End:
             break;
+        }
+    }
+    // The microphone, a tick ahead: what the studio renders next hears it
+    // as it would live, at once.
+    if (d->hasMic) {
+        Studio *studio = session.studio();
+        if (d->micPushed == 0)
+            studio->setInput(StudioView::InputLive);
+        const uint64_t upTo = uint64_t(std::llround((t + 1.0 / kFrameRate) * double(studio->sampleRate())));
+        float buf[512];
+        while (d->micPushed < upTo) {
+            const int n = int(std::min<uint64_t>(512, upTo - d->micPushed));
+            for (int i = 0; i < n; ++i) {
+                const uint64_t k = d->micPushed + uint64_t(i);
+                buf[i] = k < d->mic.size() ? d->mic[size_t(k)] : 0.0f;
+            }
+            studio->pushInput(buf, n);
+            d->micPushed += uint64_t(n);
         }
     }
     for (auto it = glides.begin(); it != glides.end();) {

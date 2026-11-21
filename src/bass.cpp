@@ -1253,8 +1253,10 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
 
     // What's sounding: a column lit to its level, the filter as a bar
     // across it (the wobble moves it), the loop's line dimmer.
-    for (int lane = 1; lane >= 0; --lane) {
-        const float *ln = d + PubLane + 8 * lane;
+    for (int k = kClipLayers; k >= 0; --k) {
+        // 0 live, 1 the loop, 2… the loop's other layers (drawn as the loop).
+        const int lane = std::min(k, 1);
+        const float *ln = d + (k < 2 ? PubLane + 8 * k : PubLayerLanes + 8 * (k - 2));
         if (ln[PubOn] <= 0)
             continue;
         const int col = int(ln[PubDegree]) - n * m_octave - kLowDegree;

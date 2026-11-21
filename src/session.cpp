@@ -51,6 +51,7 @@ public:
                 for (int i = 0; i < heldCount; ++i)
                     if (held[size_t(i)] == c.id) {
                         held[size_t(i)] = held[size_t(--heldCount)];
+                        lastRelease = c.t > 0 ? c.t : now();
                         break;
                     }
             }
@@ -173,6 +174,9 @@ public:
     // When a held sound was last shaped (slid, pressed, turned): playing
     // that goes on without new notes.
     double lastShaped = -1;
+    // When a held sound was last let go: a note held and released before
+    // Space is played until then, not just from its onset.
+    double lastRelease = -1;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
 
 private:
@@ -1115,6 +1119,11 @@ bars:
     // right after a note loops it too.
     if (lastReal >= 0)
         end = std::max(end, std::ceil((ctx.beatAt(lastReal) + 0.13) * 4.0) / 4.0);
+    // A note held and let go before Space is in it to its end: a held root
+    // isn't cut to the beat after it began.
+    if (ctx.heldCount == 0 && lastReal >= 0 && ctx.lastRelease > lastReal && ctx.lastRelease <= nowT + 0.05)
+        end = std::max(end, std::min(std::ceil(ctx.beatAt(ctx.lastRelease) * 4.0) / 4.0,
+                                     std::ceil(beatNow * 4.0) / 4.0));
     // Did the player settle into a pattern? The shortest whole number of
     // bars that what was just played repeats with, stretched back over
     // every repeat, leaving out what came before it.

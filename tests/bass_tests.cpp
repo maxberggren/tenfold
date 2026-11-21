@@ -233,6 +233,27 @@ constexpr int kReplay = 1 << 30; // how the studio marks a clip's ids
 class BassTests : public QObject {
     Q_OBJECT
 private slots:
+    void aNoteHeldAndLetGoBeforeSpaceLoopsWhole() {
+        // Nothing else playing but the click: a note held for most of a bar,
+        // let go, then Space. The loop holds it as long as it was held (it
+        // was cut to the beat after it began).
+        const std::string script = "page 0.05 2\nkey 0.1 Ctrl+M\n"
+                                   "down 1.935 1 0.3 0.5\nup 3.774 1\nkey 3.895 Space\nend 6.0\n";
+        const double spb = 60.0 / 124.0;
+        int samples = 0, held = 0;
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            // The loop's second time round, beats 1.5 to 3.5 into it.
+            if (t > 9.5 * spb && t < 11.5 * spb) {
+                ++samples;
+                held += s.view().parts[1].data[bass::PubLane + 8 + bass::PubOn] == 1.0f;
+            }
+        });
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QVERIFY(samples > 0);
+        QVERIFY2(held == samples, qPrintable(QStringLiteral("held %1 of %2").arg(held).arg(samples)));
+    }
+
     // Every sound plays the note it is asked for, in the key, with one sine
     // under 120 Hz in the middle, and no overs, played hard and bright.
     void everySoundPlaysInKeyMonoAndClean() {

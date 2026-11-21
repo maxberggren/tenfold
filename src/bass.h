@@ -96,6 +96,7 @@ enum Pub : int {
     PubScopeCycles = 26,
     PubFilter = 27,      // the FILTER finger's cutoff offset, and its morph offset
     PubFilterMorph = 28,
+    PubLayerLanes = 32, // the loop's other layers, three lanes of 8 laid out as PubLane's
     PubScope = 128,     // 128 points: two cycles of the waveform, phase-locked
     PubScopeSize = 128,
 };
@@ -1092,10 +1093,15 @@ public:
     }
 
     void publish(float *data) override {
-        const Lane *lanes[2] = {&m_live, &clipShown()};
-        for (int k = 0; k < 2; ++k) {
+        // Live, the loop's lane shown, then its other layers.
+        const Lane *lanes[2 + kClipLayers - 1] = {&m_live, &clipShown()};
+        int count = 2;
+        for (const Lane &ln : m_clip)
+            if (&ln != lanes[1])
+                lanes[count++] = &ln;
+        for (int k = 0; k < count; ++k) {
             const Lane &ln = *lanes[k];
-            float *d = data + PubLane + 8 * k;
+            float *d = data + (k < 2 ? PubLane + 8 * k : PubLayerLanes + 8 * (k - 2));
             d[PubOn] = ln.active() ? (ln.holding() ? 1.0f : 0.5f) : 0.0f;
             d[PubMidi] = ln.midi();
             d[PubLevel] = ln.level();

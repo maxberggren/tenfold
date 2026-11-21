@@ -772,6 +772,149 @@ private slots:
         QVERIFY2(std::abs(after - before) <= 2, qPrintable(QStringLiteral("%1 then %2").arg(before).arg(after)));
     }
 
+    // --- the shared keys and the mouse --------------------------------------
+
+    void theSharedKeysReachTheSoundFollowAndRegister() {
+        // ← → step through the sounds (round the end), the key left of 1
+        // (§, or ` on US layouts) follows the chords, Shift+← → the rate,
+        // Shift+↑ ↓ the range.
+        QString status;
+        float follow = -1;
+        testkit::play("page 0 5\nkey 0.1 Right\nkey 0.2 Right\nkey 0.3 §\nkey 0.4 Shift+Right\nend 0.6\n",
+                      [&](Session &s) {
+                          status = s.pageStatus();
+                          follow = s.probe(4, QStringLiteral("follow"));
+                      });
+        QVERIFY2(status.contains(QStringLiteral("supersaw")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("1/16T")), qPrintable(status));
+        QCOMPARE(follow, 1.0f);
+        testkit::play("page 0 5\nkey 0.1 Left\nkey 0.2 `\nkey 0.3 \\\nkey 0.4 Shift+Up\nend 0.6\n",
+                      [&](Session &s) {
+                          status = s.pageStatus();
+                          follow = s.probe(4, QStringLiteral("follow"));
+                      });
+        QVERIFY2(status.contains(QStringLiteral("acid")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("3 oct")), qPrintable(status));
+        QCOMPARE(follow, 0.0f);
+        // M, the tutorial's key, still follows; [ ] still set the rate.
+        testkit::play("page 0 5\nkey 0.1 M\nkey 0.2 [\nend 0.4\n", [&](Session &s) {
+            follow = s.probe(4, QStringLiteral("follow"));
+            status = s.pageStatus();
+        });
+        QCOMPARE(follow, 1.0f);
+        QVERIFY2(status.contains(QStringLiteral("1/8T")), qPrintable(status));
+    }
+
+    void registerAndToneKeysMoveTheNotes() {
+        // ↑ lifts the grid an octave; + brightens. A note held under each
+        // setting: the first an octave above the second's run.
+        std::vector<arp::Engine::Fired> low, high;
+        testkit::play("page 0 5\ndown 0.5 1 " + gridX(0) + " 0.32\nup 2.0 1\nend 2.1\n",
+                      [&](Session &s) { low = engineOf(s)->log(); });
+        testkit::play("page 0 5\nkey 0.1 Up\nkey 0.2 +\ndown 0.5 1 " + gridX(0) + " 0.32\nup 2.0 1\nend 2.1\n",
+                      [&](Session &s) { high = engineOf(s)->log(); });
+        QVERIFY(!low.empty() && !high.empty());
+        QCOMPARE(high.front().midi, low.front().midi + 12.0f);
+        // + and = brighten, - darkens, a twentieth at a time.
+        float tone = 0;
+        testkit::play("page 0 5\nkey 0.1 +\nkey 0.2 =\nkey 0.3 -\nkey 0.4 +\nend 0.6\n",
+                      [&](Session &s) { tone = s.probe(4, QStringLiteral("tone")); });
+        QVERIFY2(std::fabs(tone - 0.65f) < 1e-4f, qPrintable(QString::number(tone)));
+    }
+
+    void deleteLetsGoOfTheLatch() {
+        const auto take = testkit::play("page 0 5\ndown 0.5 1 " + gridX(2) + " 0.32\nkey 1.0 Return\nup 1.5 1\n"
+                                        "key 4.0 Delete\nend 7.5\n");
+        QVERIFY(take.rms(2.0, 3.8) > 0.02);  // latched: running after the lift
+        QVERIFY(take.rms(6.0, 7.5) < 0.003); // let go, the echo gone too
+    }
+
+    // The band under the pad on the scripts' 960×720 window: the pad is
+    // 900 × 562.5 px, row 0 of the band 0.048 of its height under it, row 1
+    // 0.119. Row 0 holds the clips to 0.45 of the width, then three
+    // steppers 0.1713 wide, 0.012 apart; row 1 five columns 0.2025 apart,
+    // each 0.19 wide. A stepper's keycaps sit at either end, about 0.04 wide.
+    static std::string top(int stepper, bool up) {
+        const double x0 = 0.462 + stepper * (0.17133 + 0.012);
+        return std::to_string(up ? x0 + 0.17133 - 0.018 : x0 + 0.018);
+    }
+    static std::string band(int column, bool up) {
+        return std::to_string(column * 0.2025 + (up ? 0.19 - 0.02 : 0.02));
+    }
+
+    void theBandUnderThePadIsClickable() {
+        QString status;
+        // Sound up, rate up, range up, first note down.
+        testkit::play("page 0 5\nbutton 0.2 " + top(0, true) + " -0.048\nbutton 0.3 " + top(1, true) +
+                          " -0.048\nbutton 0.4 " + band(1, true) + " -0.119\nbutton 0.5 " + top(2, false) +
+                          " -0.048\nend 0.7\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("glass")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("1/16T")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("3 oct")), qPrintable(status));
+        // OVERDUB, the middle of the three chips that fill columns 3 and 4.
+        testkit::play("page 0 5\nbutton 0.2 0.80 -0.119\nend 0.4\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("overdub")), qPrintable(status));
+        // The first note down from a triad to a fifth: one finger, two notes.
+        std::vector<arp::Engine::Fired> log;
+        testkit::play("page 0 5\nbutton 0.2 " + top(2, false) + " -0.048\ndown 0.5 1 " + gridX(0) +
+                          " 0.32\nup 3.0 1\nend 3.1\n",
+                      [&](Session &s) { log = engineOf(s)->log(); });
+        std::set<int> pcs;
+        for (const auto &f : log)
+            pcs.insert(int(std::lround(f.midi)) % 12);
+        QCOMPARE(pcs, (std::set<int>{9, 4}));
+    }
+
+    void aClickOnTheClipStopsIt() {
+        // A loop plays in slot 1; a click on it stops it at the bar.
+        StudioView view;
+        testkit::play("key 0.1 Ctrl+M\npage 0 5\ndown " + at(4.0) + " 1 " + gridX(0) + " 0.32\nkey " + at(12.05) +
+                          " Space\nup 6.5 1\nbutton 8.0 0.025 -0.048\nend 11\n",
+                      [&](Session &s) { view = s.view(); });
+        QVERIFY(view.parts[4].clips[0].state != ClipView::Empty);
+        QCOMPARE(view.parts[4].playing, -1);
+    }
+
+    void theMouseIsAFingerOnThePadsChips() {
+        // Pressed and let go on the chips drawn on the pad: a pattern, a
+        // sound, FOLLOW.
+        QString status;
+        float follow = -1;
+        testkit::play("page 0 5\nmouse 0.2 0.18 0.93 down\nmouse 0.3 0.18 0.93 up\n"
+                      "mouse 0.4 0.124 0.07 down\nmouse 0.5 0.124 0.07 up\n"
+                      "mouse 0.6 0.456 0.07 down\nmouse 0.7 0.456 0.07 up\nend 0.9\n",
+                      [&](Session &s) {
+                          status = s.pageStatus();
+                          follow = s.probe(4, QStringLiteral("follow"));
+                      });
+        QVERIFY2(status.contains(QStringLiteral("up·down")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("glass")), qPrintable(status));
+        QCOMPARE(follow, 1.0f);
+    }
+
+    void theMouseLatchesAChordAClickAtATime() {
+        // LATCH, then three clicks on the grid: three notes latched; a click
+        // on one takes it away; Delete lets go of the rest.
+        auto click = [](double t, const std::string &x) {
+            return "mouse " + std::to_string(t) + " " + x + " 0.32 down\nmouse " + std::to_string(t + 0.1) + " " + x +
+                   " 0.32 up\n";
+        };
+        const std::string latch = "page 0 5\nmouse 0.2 0.539 0.07 down\nmouse 0.3 0.539 0.07 up\n" +
+                                  click(0.5, gridX(0)) + click(0.8, gridX(2)) + click(1.1, gridX(4));
+        QString status;
+        testkit::play(latch + "end 1.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.startsWith(QStringLiteral("3 notes")) && status.contains(QStringLiteral("latched")),
+                 qPrintable(status));
+        testkit::play(latch + click(1.5, gridX(2)) + "end 1.8\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.startsWith(QStringLiteral("2 notes")), qPrintable(status));
+        const auto take = testkit::play(latch + "key 2.0 Delete\nend 4.5\n",
+                                        [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.startsWith(QStringLiteral("No notes")), qPrintable(status));
+        QVERIFY(take.rms(1.2, 1.9) > 0.02);
+        QVERIFY(take.rms(4.0, 4.5) < 0.003);
+    }
+
     void thePageDrawsWithHandsOnIt() {
         testkit::play("page 0 5\ndown 0.3 1 " + gridX(1) + " 0.32\ndown 0.4 2 0.7 0.8\ndown 0.5 3 0.9 0.2\nend 1.2\n",
                       [](Session &s) {

@@ -11,10 +11,16 @@
 // press for bite), groove (accents and chaos) and echo (press to throw it).
 //
 // The pattern runs on the studio's clock to the sample. Clicking the pad
-// latches what the fingers hold; holding the click loops the last bars into
-// a clip at the next bar line, and the loop carries on exactly where the
-// live pattern was. With no notes held, the right hand shapes the loop that
-// is playing, and lets go of it when it lifts.
+// latches what the fingers hold; Space loops the last bars into a clip from
+// the bar line, and the loop carries on exactly where the live pattern was.
+// With no notes held, the right hand shapes the loop that is playing, and
+// lets go of it when it lifts.
+//
+// The keys are the ones every part page shares (← → sound, ↑ ↓ register,
+// Shift+← → rate, - + tone, Return latch, Shift+Return overdub, the key
+// left of 1 follow, Delete let go), with the arp's own letters beside them. The band under the pad
+// has a control for each, so the mouse, which is one more finger on the
+// pad, can do everything the keys do.
 
 #include "arp.h"
 
@@ -1625,47 +1631,69 @@ public:
                 flush(t, ctx, true);
                 return true;
             }
+        const bool shift = k.modifiers & Qt::ShiftModifier;
         if (k.key >= Qt::Key_F1 && k.key <= Qt::Key_F8) {
             const int slot = k.key - Qt::Key_F1;
-            ctx.launch(slot);
+            if (shift)
+                ctx.clear(slot);
+            else
+                ctx.launch(slot);
             return true;
         }
+        // The keys every part page shares come first (← → sound, ↑ ↓
+        // register, Shift+← → rate, - + tone, Return latch, Shift+Return
+        // overdub, the key left of 1 follow, Delete let go), chosen so none
+        // needs AltGr on a Nordic keyboard; [ ] = \ and M stay as second
+        // keys, and the letters are the arp's own.
         switch (k.key) {
         case Qt::Key_Backspace:
             ctx.stop();
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            setLatch(!m_latch, t, ctx);
+            if (shift)
+                toggleOverdub(ctx);
+            else
+                setLatch(!m_latch, t, ctx);
             return true;
-        case Qt::Key_Up:
-        case Qt::Key_Down:
-            m_s.rate = std::clamp(m_s.rate + (k.key == Qt::Key_Up ? 1 : -1), 0, RateCount - 1);
-            ctx.notice(QStringLiteral("Rate %1").arg(QString::fromUtf8(rateName(m_s.rate))));
-            break;
+        case Qt::Key_Delete:
+            letGo(t, ctx);
+            return true;
         case Qt::Key_Left:
         case Qt::Key_Right:
-            m_s.reg = std::clamp(m_s.reg + (k.key == Qt::Key_Right ? 1 : -1), 0, kRegisters - 1);
-            ctx.notice(QStringLiteral("Register %1").arg(m_s.reg + 2));
+            if (shift)
+                stepRate(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            else
+                stepSound(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            break;
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+            if (shift)
+                stepOctaves(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            else
+                stepRegister(k.key == Qt::Key_Up ? 1 : -1, ctx);
             break;
         case Qt::Key_BracketLeft:
         case Qt::Key_BracketRight:
-            m_s.octaves = std::clamp(m_s.octaves + (k.key == Qt::Key_BracketRight ? 1 : -1), 1, kMaxOctaves);
-            ctx.notice(QStringLiteral("%1 octave%2").arg(m_s.octaves).arg(m_s.octaves > 1 ? "s" : ""));
+            stepRate(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
+            break;
+        case Qt::Key_Minus:
+        case Qt::Key_Equal:
+        case Qt::Key_Plus:
+            stepTone(k.key == Qt::Key_Minus ? -1 : 1, ctx);
+            break;
+        case Qt::Key_section:
+        case Qt::Key_QuoteLeft:
+        case Qt::Key_Backslash:
+        case Qt::Key_M:
+            toggleFollow(ctx);
             break;
         case Qt::Key_Comma:
         case Qt::Key_Period:
-            m_s.stack = std::clamp(m_s.stack + (k.key == Qt::Key_Period ? 1 : -1), 0, kStacks - 1);
-            restack(t, ctx);
-            ctx.notice(QStringLiteral("First note: %1").arg(QString::fromUtf8(stackName(m_s.stack))));
+            stepStack(k.key == Qt::Key_Period ? 1 : -1, t, ctx);
             break;
         case Qt::Key_N:
-            m_s.seed = (hash(m_s.seed, uint32_t(t * 1000.0)) & 0xFFFFFF) | 1u;
-            ctx.notice(QStringLiteral("New dice"));
-            break;
-        case Qt::Key_M:
-            m_s.follow = !m_s.follow;
-            ctx.notice(m_s.follow ? QStringLiteral("Following the chords") : QStringLiteral("Playing the notes held"));
+            newDice(t, ctx);
             break;
         case Qt::Key_O:
         case Qt::Key_P: {
@@ -1677,6 +1705,43 @@ public:
         }
         default:
             return false;
+        }
+        flush(t, ctx, true);
+        return true;
+    }
+
+    // The mouse on the band under the pad: the clips, and a control for
+    // everything a key does that the pad's own chips and pads don't.
+    enum Spot {
+        SpotSoundDown = 100, SpotSoundUp, SpotRateDown, SpotRateUp, SpotStackDown, SpotStackUp,
+        SpotRegDown, SpotRegUp, SpotOctDown, SpotOctUp, SpotToneDown, SpotToneUp,
+        SpotDice, SpotOverdub, SpotLetGo
+    };
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int id = m_spots.at(at);
+        if (id < 0)
+            return false;
+        if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+            return true;
+        const double t = ctx.now();
+        m_perOct = perOctaveOf(ctx.studio());
+        switch (id) {
+        case SpotSoundDown: stepSound(-1, ctx); break;
+        case SpotSoundUp: stepSound(1, ctx); break;
+        case SpotRateDown: stepRate(-1, ctx); break;
+        case SpotRateUp: stepRate(1, ctx); break;
+        case SpotStackDown: stepStack(-1, t, ctx); break;
+        case SpotStackUp: stepStack(1, t, ctx); break;
+        case SpotRegDown: stepRegister(-1, ctx); break;
+        case SpotRegUp: stepRegister(1, ctx); break;
+        case SpotOctDown: stepOctaves(-1, ctx); break;
+        case SpotOctUp: stepOctaves(1, ctx); break;
+        case SpotToneDown: stepTone(-1, ctx); break;
+        case SpotToneUp: stepTone(1, ctx); break;
+        case SpotDice: newDice(t, ctx); break;
+        case SpotOverdub: toggleOverdub(ctx); return true;
+        case SpotLetGo: letGo(t, ctx); return true;
+        default: return false;
         }
         flush(t, ctx, true);
         return true;
@@ -1702,6 +1767,7 @@ public:
     void paint(QPainter &p, const PaintContext &pc) override {
         namespace c = console;
         p.setRenderHint(QPainter::Antialiasing, true);
+        m_spots.clear();
         c::pad(p, pc, QStringLiteral("Arp"));
         paintGrid(p, pc);
         paintChips(p, pc);
@@ -1718,6 +1784,16 @@ public:
 
     QString help() const override {
         return QStringLiteral(
+            "← →\tthe sound: pluck, glass, supersaw, pulse, acid (Z X C V B pick one)\n"
+            "↑ ↓ · Shift+↑ ↓\tregister: where the grid starts · range: how many octaves the pattern climbs\n"
+            "Shift+← → (or [ ])\tthe rate: 1/8 to 1/32, with triplets\n"
+            "- +\ttone: darker, brighter\n"
+            "Return · Shift+Return\tlatch · overdub on or off (what you play joins the loop)\n"
+            "§ (the key left of 1; or \\ or M)\tfollow the chords page\n"
+            "Delete\tlet go of what is latched\n"
+            "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · clear it · stop the loop at the bar\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), sound, rate, first note, register, "
+            "range, tone, dice, overdub, let go; each chip shows its key\n"
             "touch the grid\ta note of the scale, the upper row an octave up; press harder for louder\n"
             "first finger\tgrows into a chord; twist it: single, fifth, triad, seventh, ninth\n"
             "more fingers\tadd their notes; slide one sideways to walk it along the scale\n"
@@ -1731,18 +1807,16 @@ public:
             "ECHO\tacross: 1/16 to dotted 1/4 · up: amount · press: throw the feedback\n"
             "right hand, no notes held\tshapes the playing loop, and lets go of it on lifting\n"
             "click\tlatch: the pattern keeps running when the fingers lift (not while a pad is pressed)\n"
+            "the mouse on the pad\ta finger: the grid, the chips, the pads; with LATCH on, each click adds a note "
+            "to the chord and a click on a latched note takes it away\n"
             "Space\tloops what you just played, from the bar line (a latch lets go: the loop plays it on); Space again calls it off\n"
-            "F1–F8 · Backspace\tlaunch a slot · stop the loop at the bar\n"
             "A S D F G H J K L ; '\tnotes, held like fingers\n"
-            "Q W E R T Y U I · Z X C V B\tthe eight patterns · the five sounds\n"
-            "↑ ↓ · ← → · [ ]\trate · register · octaves\n"
-            "O P · , .\tfewer or more hits · what the first note grows into\n"
-            "Return\tlatch\n"
-            "M · N\tfollow the chords page · new dice for random and chaos");
+            "Q W E R T Y U I\tthe eight patterns\n"
+            ", . · O P · N\twhat the first note grows into · fewer or more hits · new dice for random and chaos");
     }
 
     // What the tutorial asks: whether the arp follows the chords page, is
-    // latched, and runs (live or from its loop).
+    // latched, and runs (live or from its loop); and for the tests, the tone.
     float tutorialProbe(const QString &name) const override {
         if (name == QLatin1String("follow"))
             return m_s.follow ? 1.0f : 0.0f;
@@ -1750,6 +1824,8 @@ public:
             return m_latch ? 1.0f : 0.0f;
         if (name == QLatin1String("running"))
             return m_running ? 1.0f : 0.0f;
+        if (name == QLatin1String("tone"))
+            return m_s.cutoff;
         return PartControl::tutorialProbe(name);
     }
 
@@ -1767,6 +1843,8 @@ public:
             s += QStringLiteral(" · following the chords");
         if (m_latch)
             s += QStringLiteral(" · latched");
+        if (m_overdub)
+            s += QStringLiteral(" · overdub");
         if (m_take >= 0)
             s += QStringLiteral(" · loop take: %1 (Space calls it off)").arg(takeText(m_takeView, m_takeBeat).toLower());
         else if (held > 0)
@@ -1920,6 +1998,68 @@ private:
         ctx.notice(QStringLiteral("Sound: %1").arg(QString::fromUtf8(soundName(s))));
     }
 
+    // What the keys and the band's chips both do, one step at a time.
+    void stepSound(int dir, ControlContext &ctx) { setSound((m_s.sound + dir + SoundCount) % SoundCount, ctx); }
+
+    void stepRate(int dir, ControlContext &ctx) {
+        m_s.rate = std::clamp(m_s.rate + dir, 0, RateCount - 1);
+        ctx.notice(QStringLiteral("Rate %1").arg(QString::fromUtf8(rateName(m_s.rate))));
+    }
+
+    void stepRegister(int dir, ControlContext &ctx) {
+        m_s.reg = std::clamp(m_s.reg + dir, 0, kRegisters - 1);
+        const StudioView &sv = ctx.studio();
+        Tuning tuning;
+        tuning.set(sv.root, sv.family, sv.brightness, sv.just);
+        ctx.notice(QStringLiteral("Register: the grid from %1").arg(noteLabel(tuning, m_s.reg, 0, 0)));
+    }
+
+    void stepOctaves(int dir, ControlContext &ctx) {
+        m_s.octaves = std::clamp(m_s.octaves + dir, 1, kMaxOctaves);
+        ctx.notice(QStringLiteral("%1 octave%2").arg(m_s.octaves).arg(m_s.octaves > 1 ? "s" : ""));
+    }
+
+    void stepTone(int dir, ControlContext &ctx) {
+        m_s.cutoff = clampf(m_s.cutoff + 0.05f * float(dir), 0.04f, 1.0f);
+        ctx.notice(QStringLiteral("Tone %1%").arg(int(std::lround(m_s.cutoff * 100))));
+    }
+
+    void stepStack(int dir, double t, ControlContext &ctx) {
+        m_s.stack = std::clamp(m_s.stack + dir, 0, kStacks - 1);
+        restack(t, ctx);
+        ctx.notice(QStringLiteral("First note: %1").arg(QString::fromUtf8(stackName(m_s.stack))));
+    }
+
+    void newDice(double t, ControlContext &ctx) {
+        m_s.seed = (hash(m_s.seed, uint32_t(t * 1000.0)) & 0xFFFFFF) | 1u;
+        ctx.notice(QStringLiteral("New dice"));
+    }
+
+    void toggleFollow(ControlContext &ctx) {
+        m_s.follow = !m_s.follow;
+        ctx.notice(m_s.follow ? QStringLiteral("Following the chords") : QStringLiteral("Playing the notes held"));
+    }
+
+    void toggleOverdub(ControlContext &ctx) {
+        m_overdub = !m_overdub;
+        ctx.overdub(m_overdub);
+        ctx.notice(m_overdub ? QStringLiteral("Overdub: what you play joins the loop") : QStringLiteral("Overdub off"));
+    }
+
+    // Delete: what is latched lets go, and the latch with it. Notes held
+    // by fingers or keys stay; they let go when they lift.
+    void letGo(double t, ControlContext &ctx) {
+        bool any = false;
+        for (const auto &n : m_notes)
+            any |= n.used && n.touch < 0 && !n.key;
+        if (!m_latch && !any) {
+            ctx.notice(QStringLiteral("Nothing latched"));
+            return;
+        }
+        setLatch(false, t, ctx);
+        flush(t, ctx, true);
+    }
+
     void setLatch(bool on, double t, ControlContext &ctx) {
         m_latch = on;
         if (!on)
@@ -1968,7 +2108,7 @@ private:
         bool physical = false;
         for (auto &n : m_notes)
             physical |= n.used && (n.touch >= 0 || n.key);
-        if (m_latch && !physical)
+        if (m_latch && !physical && touch != kMouseId)
             for (auto &n : m_notes)
                 if (n.used)
                     release(n, t, ctx);
@@ -2027,9 +2167,7 @@ private:
                 if (chip < SoundCount) {
                     setSound(chip, ctx);
                 } else if (chip == SoundCount) {
-                    m_s.follow = !m_s.follow;
-                    ctx.notice(m_s.follow ? QStringLiteral("Following the chords")
-                                          : QStringLiteral("Playing the notes held"));
+                    toggleFollow(ctx);
                 } else {
                     setLatch(!m_latch, time, ctx);
                 }
@@ -2038,7 +2176,20 @@ private:
                 return;
             }
             const int col = std::clamp(int(u * kColumns), 0, kColumns - 1);
-            addNote(t.id, 0, col, gridRow(t.y, -1), velocityOf(t), time, ctx);
+            const int row = gridRow(t.y, -1);
+            // The mouse is one finger, so with the latch on it builds the
+            // chord a click at a time: each click adds its note to what is
+            // latched, and a click on a latched note takes it away (Delete
+            // lets go of them all).
+            if (t.id == kMouseId && m_latch)
+                for (auto &n : m_notes)
+                    if (n.used && n.touch < 0 && !n.key && n.col == col && n.row == row) {
+                        release(n, time, ctx);
+                        holdChip(t.id);
+                        flush(time, ctx, true);
+                        return;
+                    }
+            addNote(t.id, 0, col, row, velocityOf(t), time, ctx);
             if (Note *n = noteFor(t.id))
                 n->angle0 = t.angle;
             return;
@@ -2371,6 +2522,8 @@ private:
     std::array<Knob, 10> m_knobs{};
     std::array<int, 10> m_chipTouches{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool m_latch = false;
+    bool m_overdub = false;           // Shift+Return or the OVERDUB chip: what is played joins the loop
+    console::Hotspots m_spots;        // what paint() drew to be clicked
     bool m_running = false;           // the arp plays, live or from its loop
     double m_latchToLoopAt = -1e9;    // when a landing loop took the latch over
     int m_latchToLoopSlot = -1;
@@ -2825,27 +2978,79 @@ void ArpControl::paintFingers(QPainter &p, const PaintContext &pc) {
 
 void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
     namespace c = console;
-    const QRectF strip(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width() * 0.66, 30);
-    c::clips(p, strip, *pc.view, pc.color, pc.time);
-    const QRectF info(strip.right() + 12, strip.top(), pc.pad.right() - strip.right() - 12, strip.height());
-    QString line = QStringLiteral("SPACE LOOPS WHAT YOU PLAYED");
-    QColor ink = c::alpha(pc.color, 0.75f);
-    if (pc.view->recording >= 0) {
-        line = takeText(*pc.view, pc.beat);
-        ink = std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f);
-    } else if (pc.view->data[kDataOverlay] > 0.5f) {
-        line = QStringLiteral("SHAPING THE LOOP");
-        ink = c::amber();
+    const QColor col = pc.color;
+    const Settings &s = m_s;
+    // The band under the pad. Row 0: the clips, then the sound, the rate
+    // and the first note's chord; row 1, in five columns: the register, the
+    // octaves, the tone, then dice, overdub and let go. A stepper is its
+    // two keys, drawn as keycaps, either side of what they set: the mouse
+    // reaches everything a key does and learns the key while it's at it.
+    auto column = [&](int row, int i, int span = 1) {
+        constexpr double w = 0.19, step = 0.2025;
+        return c::bandRow(pc, row, i * step, i * step + w + (span - 1) * step);
+    };
+    constexpr double kClipsEnd = 0.45, kGap = 0.012, kTopW = (1.0 - kClipsEnd - 3 * kGap) / 3;
+    auto top = [&](int i) {
+        const double x0 = kClipsEnd + kGap + i * (kTopW + kGap);
+        return c::bandRow(pc, 0, x0, x0 + kTopW);
+    };
+    auto keycap = [&](const QRectF &r, const QString &key, int id) {
+        c::chip(p, pc, r, QString(), false, &m_spots, id);
+        c::text(p, r, key, col, 15, true, Qt::AlignCenter);
+    };
+    auto stepper = [&](const QRectF &r, const QString &title, const QString &value, const QString &down,
+                       const QString &up, int idDown, float gauge = -1, bool dim = false) {
+        const qreal kw = std::clamp<qreal>(r.width() * 0.22, 26, 40);
+        keycap(QRectF(r.left(), r.top(), kw, r.height()), down, idDown);
+        keycap(QRectF(r.right() - kw, r.top(), kw, r.height()), up, idDown + 1);
+        const QRectF mid(r.left() + kw + 2, r.top(), r.width() - 2 * kw - 4, r.height());
+        c::text(p, QRectF(mid.left(), mid.top(), mid.width(), 12), title, c::alpha(col, 0.6f), 9, true,
+                Qt::AlignCenter);
+        c::text(p, QRectF(mid.left(), mid.top() + 10, mid.width(), gauge >= 0 ? 14 : 20), value,
+                dim ? c::alpha(col, 0.45f) : col, 12, true, Qt::AlignCenter);
+        if (gauge >= 0)
+            c::gauge(p, QRectF(mid.left() + 4, mid.bottom() - 6, mid.width() - 8, 5), gauge, col, 10);
+    };
+    c::clips(p, c::bandRow(pc, 0, 0, kClipsEnd), *pc.view, col, pc.time, &m_spots);
+    stepper(top(0), QStringLiteral("SOUND"), QString::fromUtf8(soundShort(s.sound)), QStringLiteral("←"),
+            QStringLiteral("→"), SpotSoundDown);
+    stepper(top(1), QStringLiteral("RATE"), QString::fromUtf8(rateName(s.rate)), QStringLiteral("⇧←"),
+            QStringLiteral("⇧→"), SpotRateDown);
+    // Following the chords, the first note plays the chord's notes, not
+    // its own stack: the setting waits, dimmed.
+    stepper(top(2), QStringLiteral("FIRST NOTE"), QString::fromUtf8(stackName(s.stack)).toUpper(),
+            QStringLiteral(","), QStringLiteral("."), SpotStackDown, -1, s.follow);
+    Tuning tuning;
+    tuning.set(pc.studio->root, pc.studio->family, pc.studio->brightness, pc.studio->just);
+    stepper(column(1, 0), QStringLiteral("REGISTER"), QStringLiteral("FROM %1").arg(noteLabel(tuning, s.reg, 0, 0)),
+            QStringLiteral("↓"), QStringLiteral("↑"), SpotRegDown);
+    stepper(column(1, 1), QStringLiteral("RANGE"), QStringLiteral("%1 OCT").arg(s.octaves), QStringLiteral("⇧↓"),
+            QStringLiteral("⇧↑"), SpotOctDown);
+    stepper(column(1, 2), QStringLiteral("TONE"), QStringLiteral("%1").arg(int(std::lround(s.cutoff * 100))),
+            QStringLiteral("-"), QStringLiteral("+"), SpotToneDown, (s.cutoff - 0.04f) / 0.96f);
+    {
+        bool latched = m_latch;
+        for (const auto &n : m_notes)
+            latched |= n.used && n.touch < 0 && !n.key;
+        const QRectF r = column(1, 3, 2);
+        const qreal w = (r.width() + 4) / 3;
+        c::chip(p, pc, QRectF(r.left(), r.top(), w - 4, r.height()), QStringLiteral("DICE  N"), false, &m_spots,
+                SpotDice);
+        c::chip(p, pc, QRectF(r.left() + w, r.top(), w - 4, r.height()), QStringLiteral("OVERDUB  ⇧⏎"), m_overdub,
+                &m_spots, SpotOverdub);
+        // Let go is only worth a lit outline while something is latched.
+        if (latched)
+            c::chip(p, pc, QRectF(r.left() + 2 * w, r.top(), w - 4, r.height()), QStringLiteral("LET GO  DEL"), false,
+                    &m_spots, SpotLetGo);
+        else {
+            const QRectF cell(r.left() + 2 * w, r.top(), w - 4, r.height());
+            p.setPen(QPen(c::alpha(col, 0.25f), 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(cell);
+            c::text(p, cell, QStringLiteral("LET GO  DEL"), c::alpha(col, 0.35f), 12, true, Qt::AlignCenter);
+            m_spots.add(cell, SpotLetGo);
+        }
     }
-    c::text(p, QRectF(info.left(), info.top(), info.width(), 15), line, ink, 11, true);
-    QString second = QStringLiteral("%1 · %2").arg(QString::fromUtf8(soundName(m_s.sound)),
-                                                    QString::fromUtf8(patternName(m_s.pattern)));
-    if (m_latch)
-        second = QStringLiteral("LATCHED · ") + second;
-    else if (pc.time - m_latchToLoopAt < 4.0 && m_latchToLoopSlot >= 0)
-        second = QStringLiteral("LATCH LET GO: LOOP %1 PLAYS IT · ").arg(m_latchToLoopSlot + 1) + second;
-    c::text(p, QRectF(info.left(), info.top() + 15, info.width(), 15), second,
-            m_latch ? c::amber() : c::alpha(pc.color, 0.55f), 11, true);
 }
 
 } // namespace

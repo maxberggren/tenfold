@@ -153,8 +153,8 @@ void Tutorial::build() {
            [](Look &l) { return l.lasted(0, 1.0, l.probe(Drums, "rolling") >= 1); }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Three fingers: a groove"),
-         QStringLiteral("Land three fingers together on KICK, CLAP and HAT and leave them down. Each drum plays "
-                        "its part of a house groove, in time. Slide one finger up for a busier part."),
+         QStringLiteral("Land three fingers together on KICK, CLAP and HAT and leave them down (or hold Z, C and V). "
+                        "Each drum plays its part of a house groove, in time. Slide one finger up for a busier part."),
          QStringLiteral("Left and right arrows change the kit: house, techno, trap, breaks, garage."),
          QStringLiteral("Now it grooves by itself."),
          {},
@@ -165,12 +165,12 @@ void Tutorial::build() {
            [](Look &l) { return l.probe(Drums, "grooving") >= 2 || l.since(Drums, "grooves") >= 2 || l.playing(Drums); }}}});
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Click to keep it"),
-         QStringLiteral("While the groove plays under your fingers, press the pad down until it clicks. At the next "
-                        "bar line the groove becomes a loop and plays on by itself: lift your fingers and listen. "
-                        "Your loops are what the song is built from."),
+         QStringLiteral("While the groove plays under your fingers, press the pad down until it clicks (or press "
+                        "Space). At the next bar line the groove becomes a loop and plays on by itself: lift your "
+                        "fingers and listen. Your loops are what the song is built from."),
          QStringLiteral("F1 relaunches slot 1 and Backspace stops it. Ctrl+↑ and Ctrl+↓ change the tempo of everything."),
          QStringLiteral("Your first loop! It plays until you stop it."),
-         {QStringLiteral("click")},
+         {QStringLiteral("click"), QStringLiteral("Space")},
          {},
          {spot(0.0f, 0.06f, 1.0f, 0.25f, QStringLiteral("HOLD THE GROOVE · CLICK"))},
          {{QStringLiteral("A drum loop plays"), [](Look &l) { return l.playing(Drums); }}}});
@@ -320,8 +320,8 @@ void Tutorial::build() {
           {QStringLiteral("The arp runs"), [](Look &l) { return l.data(Arp, 6) > 0.5f || l.playing(Arp); }}}});
 
     add({QStringLiteral("Arp"), Arp, QStringLiteral("Pick a pattern, latch, loop"),
-         QStringLiteral("Tap a pattern along the top, UP·DN or CONV. Click the pad while notes run: they latch and "
-                        "keep running when you lift. Then Space loops it."),
+         QStringLiteral("Tap a pattern along the top, UP·DN or CONV. Click the pad while notes run (or press "
+                        "Return): they latch and keep running when you lift. Then Space loops it."),
          QStringLiteral("The pads on the right shape it: RATE, RHYTHM, RANGE, TONE, GROOVE, ECHO."),
          QStringLiteral("The arp runs on its own."),
          {QStringLiteral("click"), QStringLiteral("Space")},
@@ -366,8 +366,8 @@ void Tutorial::build() {
            [](Look &l) { return l.data(FX, 4) >= 1 || l.data(FX, 0) >= 0 || l.data(FX, 14) != l.dataAtStart(FX, 14); }}}});
 
     add({QStringLiteral("FX"), FX, QStringLiteral("Drop!"),
-         QStringLiteral("Don't wait for it: click the pad. Everything rising rushes into a drop on the next bar, "
-                        "with an impact on the ONE."),
+         QStringLiteral("Don't wait for it: click the pad (or press Return). Everything rising rushes into a drop "
+                        "on the next bar, with an impact on the ONE."),
          QStringLiteral("The bottom row has impacts, sub drops and sweeps: X is the sub drop."),
          QStringLiteral("DROP."),
          {QStringLiteral("click")},
@@ -404,7 +404,8 @@ void Tutorial::build() {
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Mute and back"),
          QStringLiteral("Q W E R T Y U mute a part at once, in page order, and the tab says so. Mute the drums with Q, hear the space it leaves, and bring them back with Q."),
-         QStringLiteral("Hold A S D F G H J to hear one part alone."),
+         QStringLiteral("A finger on a lane's LVL FLT ECH VRB rides it: up and down its level, sideways its filter. "
+                        "Hold A S D F G H J to hear one part alone."),
          QStringLiteral("Taking things away is half of arranging."),
          {QStringLiteral("Q")},
          {},

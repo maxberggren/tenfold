@@ -8,6 +8,7 @@
 // each step began.
 
 #include <QFile>
+#include <set>
 #include <cstdarg>
 #include <cstdio>
 
@@ -220,6 +221,8 @@ struct Walk {
     int finishes = 0;
     bool activeAtEnd = true;
     int songBars = 0;          // the longest song the arrange page played
+    std::set<int> bassNotes;   // what the bass loop played while the lead was being made
+    std::set<int> chordRoots;  // the chords the chord loop played meanwhile
 };
 
 int songBarsOf(const QString &status) {
@@ -260,6 +263,14 @@ Walk walk(const std::string &script) {
             w.order.push_back(last);
             if (w.began[size_t(last)] < 0)
                 w.began[size_t(last)] = t;
+        }
+        // The bass loop's notes, and the chords' roots, while the lead
+        // chapter plays over them (bars 36 to 52).
+        if (t > bar(36) && t < bar(52)) {
+            const PartView &bass = session.view().parts[1];
+            if (bass.data[8] >= 1)
+                w.bassNotes.insert(int(std::lround(bass.data[9])) % 12);
+            w.chordRoots.insert(session.view().chordRoot);
         }
         if (tick % 25 == 0)
             w.songBars = std::max(w.songBars, songBarsOf(session.pageStatus(session.arrangePage())));
@@ -344,6 +355,26 @@ private slots:
                       [](Session &s) { QVERIFY(s.tutorial().index() >= 2); });
     }
 
+    void theKeyboardAndMouseCanDoTheBeat() {
+        // Without a trackpad: the mouse taps the kick, Z X C V play the
+        // beat, the hat rolls under the held mouse, Z C V held together
+        // groove, and Space keeps it.
+        std::string script = "key 0.1 Ctrl+T\nmouse 0.3 0.12 0.15 down\nmouse 0.38 0.12 0.15 up\n";
+        for (int b = 8; b < 16; ++b) {
+            script += "key " + std::to_string(beat(b)) + " Z\n";
+            if (b % 2)
+                script += "key " + std::to_string(beat(b) + 0.01) + " C\n";
+            script += "key " + std::to_string(beat(b + 0.5)) + " V\n";
+        }
+        script += "mouse 8.0 0.88 0.15 down\nmouse 9.5 0.88 0.15 up\n"
+                  "key 11.61 Z down\nkey 11.62 C down\nkey 11.63 V down\n"
+                  "key 15.48 Space\nkey 15.6 Z up\nkey 15.6 C up\nkey 15.6 V up\nend 19\n";
+        testkit::play(script, [](Session &s) {
+            QVERIFY2(s.tutorial().index() >= 5, qPrintable(QString::number(s.tutorial().index())));
+            QVERIFY(s.view().parts[0].playing >= 0);
+        });
+    }
+
     void everyStepFinishesByItself() {
         const Walk &w = theWalk();
         QVERIFY2(w.take.error.empty(), w.take.error.c_str());
@@ -370,12 +401,22 @@ private slots:
                 clips += c.state != ClipView::Empty;
             QVERIFY2(clips >= 1, qPrintable(QStringLiteral("part %1 has no loop").arg(p + 1)));
         }
+        // The bass loop walks with the chords: the roots of Am, F, C, G.
+        QVERIFY(w.chordRoots.size() >= 4);
+        for (int pc : {9, 5, 0, 7})
+            QVERIFY2(w.bassNotes.count(pc), qPrintable(QStringLiteral("the bass never played pitch class %1").arg(pc)));
         // The progression and the melody over it loop as four bars, one
         // round each, without the tries before them.
         QCOMPARE(int(w.take.view.parts[2].clips[0].lengthBeats), 16);
         QCOMPARE(int(w.take.view.parts[3].clips[0].lengthBeats), 16);
         // The written track, the full form.
         QVERIFY(w.songBars >= 70);
+        if (std::getenv("TENFOLD_WALKTHROUGH_LOG"))
+            for (int p = 0; p < 7; ++p)
+                std::printf("part %d gain %.2f echo %.2f verb %.2f filter %.2f mute %.0f\n", p,
+                            w.take.view.parts[p].channel.value[Gain], w.take.view.parts[p].channel.value[EchoSend],
+                            w.take.view.parts[p].channel.value[ReverbSend], w.take.view.parts[p].channel.value[Filter],
+                            w.take.view.parts[p].channel.value[Mute]);
         QVERIFY(w.take.finite());
         QVERIFY(w.take.peak() < 1.0);
     }

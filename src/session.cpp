@@ -1052,9 +1052,7 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
     if (layer && into >= 0)
-        ctx.notice(QStringLiteral("Layered %1 onto slot %2 (Ctrl+Z takes it off, Shift+Space makes a new loop)")
-                       .arg(what)
-                       .arg(into + 1));
+        ctx.notice(QStringLiteral("Layered %1 onto slot %2 · Ctrl+Z takes it off").arg(what).arg(into + 1));
     else
         ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
 }
@@ -1121,7 +1119,7 @@ void Session::redoTake() {
     m.kind = StudioMsg::RedoTake;
     m.part = int8_t(part);
     m_studio->post(m);
-    context(m_page).notice(QStringLiteral("Brought back the %1 loop (Ctrl+Z takes it back again)").arg(pageName(part)));
+    context(m_page).notice(QStringLiteral("Brought back the %1 loop · Ctrl+Z takes it again").arg(pageName(part)));
 }
 
 void Session::startOver() {

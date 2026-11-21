@@ -495,30 +495,52 @@ ApplicationWindow {
             }
         }
 
-        // A notice from a page or a key, big for a moment.
-        Text {
-            id: noticeLabel
-            anchors.centerIn: parent
-            width: parent.width - 80
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            text: backend.notice
-            font.family: win.wide
-            font.pixelSize: 64
-            font.weight: Font.Black
-            font.letterSpacing: 6
-            font.capitalization: Font.AllUppercase
-            color: win.pageColor
+        // A notice from a page or a key, big for a moment over the pad (not
+        // the buttons beside it), always on one line: a long one gets a smaller size instead of a
+        // second line. The pad sits inside layouts, so its place is mapped
+        // here; naming its size and the window's makes the binding follow
+        // them.
+        Rectangle {
+            id: noticeBox
+            readonly property point padAt: (surface.x, surface.y, surface.width, surface.height, win.width, win.height,
+                                            surface.mapToItem(parent, 0, 0))
+            // Inside the pad's drawn frame, which sits 30 px in from the item.
+            x: padAt.x + 44
+            y: padAt.y + (surface.height - height) / 2
+            width: surface.width - 88
+            height: 84
+            // No backing: the pad stays in sight under the words.
+            color: "transparent"
             opacity: 0
+            visible: opacity > 0
+            Text {
+                id: noticeLabel
+                anchors.fill: parent
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.NoWrap
+                maximumLineCount: 1
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 9
+                text: backend.notice
+                font.family: win.wide
+                font.pixelSize: 56
+                font.weight: Font.Black
+                font.letterSpacing: 1 // fixed pixels: kept small so a shrunk line still fits
+                font.capitalization: Font.AllUppercase
+                color: win.pageColor
+            }
             Connections {
                 target: backend
                 function onNoticeChanged() { noticeFade.restart() }
             }
             SequentialAnimation {
                 id: noticeFade
-                NumberAnimation { target: noticeLabel; property: "opacity"; to: 1; duration: 60 }
-                PauseAnimation { duration: 700 }
-                NumberAnimation { target: noticeLabel; property: "opacity"; to: 0; duration: 500 }
+                NumberAnimation { target: noticeBox; property: "opacity"; to: 1; duration: 60 }
+                PauseAnimation { duration: 1300 }
+                NumberAnimation { target: noticeBox; property: "opacity"; to: 0; duration: 500 }
             }
         }
 

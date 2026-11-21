@@ -24,9 +24,14 @@
 // accent, or, with only shapers down, latches them so they stay.
 //
 // The keyboard is a second way in: two rows of the scale (Z to / and A to '
-// an octave up), the eight sounds on Q to I, O to follow the chords, and
-// the usual F1–F8, Backspace for the clips; Enter is LOOP.
+// an octave up), the eight sounds on Q to I, and the keys every part page
+// shares (docs/PARTS.md 4b): ← → the sound, ↑ ↓ the octave, [ ] the roll,
+// - = the tone, Return latch, Shift+Return overdub, \ follow the chords,
+// Delete free the shapers, F1–F8 and Backspace the clips. The older keys
+// (O, P, F9, F10, Enter for LOOP) still work. Everything a key does, the
+// band under the pad does for the mouse.
 
+#include <QFontMetricsF>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -265,19 +270,71 @@ public:
             }
             return true;
         }
-        const PartView &pv = ctx.studio().parts[ctx.part()];
         switch (k.key) {
         case Qt::Key_Backspace:
             ctx.stop();
             return true;
+        // The shared keys (docs/PARTS.md 4b), each with its old key beside it.
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+            setSound((m_sound + (k.key == Qt::Key_Right ? 1 : SoundCount - 1)) % SoundCount, ctx);
+            return true;
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+            stepOctave(k.key == Qt::Key_Up ? 1 : -1, ctx);
+            return true;
+        // Shifted, the brackets and - = reach the second setting of each
+        // pair; a shifted key may arrive as the character it types.
+        case Qt::Key_BraceLeft:
+        case Qt::Key_BraceRight:
+            stepMorph(k.key == Qt::Key_BraceRight ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_BracketLeft:
+        case Qt::Key_BracketRight:
+            if (shift)
+                stepMorph(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
+            else
+                stepRoll(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_Underscore:
+        case Qt::Key_Plus:
+            stepSlide(k.key == Qt::Key_Plus ? 1 : -1, ctx);
+            return true;
+        case Qt::Key_Minus:
+        case Qt::Key_Equal:
+            if (shift)
+                stepSlide(k.key == Qt::Key_Equal ? 1 : -1, ctx);
+            else
+                stepTone(k.key == Qt::Key_Equal ? 1 : -1, ctx);
+            return true;
         case Qt::Key_Return:
+            // Return latches the shapers held, as a click does; with none
+            // held it is LOOP, as it always was.
+            if (shift)
+                toggleOverdub(ctx);
+            else if (!latchHeld(ctx))
+                loop(ctx);
+            return true;
         case Qt::Key_Enter:
         case Qt::Key_F9:
-            loop(ctx);
+            if (shift)
+                toggleOverdub(ctx);
+            else
+                loop(ctx);
             return true;
         case Qt::Key_F10:
-            ctx.overdub(!pv.overdub);
-            ctx.notice(pv.overdub ? QStringLiteral("Overdub off") : QStringLiteral("Overdub: play over the loop"));
+            toggleOverdub(ctx);
+            return true;
+        case Qt::Key_Backslash:
+        case Qt::Key_O:
+            toggleFollow(ctx);
+            return true;
+        case Qt::Key_Delete:
+        case Qt::Key_P:
+            freeShapers(ctx);
+            return true;
+        case Qt::Key_QuoteLeft:
+            toggleSquare(ctx);
             return true;
         case Qt::Key_Q: case Qt::Key_W: case Qt::Key_E: case Qt::Key_R:
         case Qt::Key_T: case Qt::Key_Y: case Qt::Key_U: case Qt::Key_I: {
@@ -285,58 +342,157 @@ public:
                                         Qt::Key_T, Qt::Key_Y, Qt::Key_U, Qt::Key_I};
             for (int s = 0; s < SoundCount; ++s)
                 if (order[s] == k.key)
-                    m_sound = s;
-            ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(recipe(m_sound).name),
-                                                   QString::fromUtf8(recipe(m_sound).what)));
+                    setSound(s, ctx);
             return true;
         }
-        case Qt::Key_O:
-            m_follow = !m_follow;
-            ctx.notice(m_follow ? QStringLiteral("Bass follows the chords: columns count from the chord's root")
-                                : QStringLiteral("Bass plays the key"));
-            return true;
-        case Qt::Key_P:
-            for (int s = 0; s < ShaperCount; ++s)
-                if (m_latched[s]) {
-                    m_latched[s] = false;
-                    sendShaper(Shaper(s), 0, restB(Shaper(s)), ctx.now(), ctx, true);
-                }
-            ctx.notice(QStringLiteral("Shapers released"));
-            return true;
-        case Qt::Key_Backslash:
-            if (recipe(m_sound).saw <= 0) {
-                ctx.notice(QStringLiteral("%1 has no saw to turn square").arg(QString::fromUtf8(recipe(m_sound).name)));
-                return true;
-            }
-            m_square[m_sound] = !m_square[m_sound];
-            ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(recipe(m_sound).name),
-                                               m_square[m_sound] ? QStringLiteral("square") : QStringLiteral("saw")));
-            return true;
-        case Qt::Key_BracketLeft:
-        case Qt::Key_BracketRight:
-            m_morph[m_sound] = clampf(m_morph[m_sound] + (k.key == Qt::Key_BracketRight ? 0.1f : -0.1f), 0, 1);
-            ctx.notice(QStringLiteral("%1 morph %2%").arg(QString::fromUtf8(recipe(m_sound).name))
-                           .arg(int(std::lround(m_morph[m_sound] * 100))));
-            return true;
-        case Qt::Key_Minus:
-        case Qt::Key_Equal:
-            m_glide = clampf(m_glide + (k.key == Qt::Key_Equal ? 0.125f : -0.125f), 0, 1);
-            ctx.notice(QStringLiteral("Slide %1 ms").arg(int(std::lround(1000 * glideSeconds()))));
-            return true;
-        case Qt::Key_Up:
-        case Qt::Key_Down:
-            m_octave = std::clamp(m_octave + (k.key == Qt::Key_Up ? 1 : -1), 0, 2);
-            ctx.notice(QStringLiteral("Bass octave %1").arg(m_octave == 0 ? QStringLiteral("low")
-                                                            : m_octave == 1 ? QStringLiteral("+1")
-                                                                            : QStringLiteral("+2")));
-            return true;
-        case Qt::Key_Left:
-        case Qt::Key_Right:
-            m_keyTone = clampf(m_keyTone + (k.key == Qt::Key_Right ? 0.1f : -0.1f), 0, 1);
-            ctx.notice(QStringLiteral("Keyboard tone %1%").arg(int(std::lround(m_keyTone * 100))));
-            return true;
         default:
             return false;
+        }
+    }
+
+    // --- what the keys and the band under the pad do ---------------------
+
+    void setSound(int s, ControlContext &ctx) {
+        m_sound = s;
+        ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(recipe(m_sound).name),
+                                               QString::fromUtf8(recipe(m_sound).what)));
+    }
+
+    void stepOctave(int dir, ControlContext &ctx) {
+        m_octave = std::clamp(m_octave + dir, 0, 2);
+        ctx.notice(QStringLiteral("Bass octave %1").arg(octaveText()));
+    }
+    QString octaveText() const {
+        return m_octave == 0 ? QStringLiteral("low") : QStringLiteral("+%1").arg(m_octave);
+    }
+
+    // The roll from the keys: off, then each pattern in turn, latched so
+    // it strikes whatever is held (and the loop) until Delete lets it go.
+    int rollIndex() const {
+        return m_latched[ShapeRoll] && m_sent[ShapeRoll][0] > 0 ? int(m_sent[ShapeRoll][1]) : -1;
+    }
+    void stepRoll(int dir, ControlContext &ctx) {
+        const int next = std::clamp(rollIndex() + dir, -1, kPatternCount - 1);
+        if (next < 0) {
+            if (m_latched[ShapeRoll]) {
+                m_latched[ShapeRoll] = false;
+                sendShaper(ShapeRoll, 0, restB(ShapeRoll), ctx.now(), ctx, true);
+            }
+            ctx.notice(QStringLiteral("Roll off: ] rolls again"));
+            return;
+        }
+        m_latched[ShapeRoll] = true;
+        m_pattern = next;
+        sendShaper(ShapeRoll, m_gate, float(next), ctx.now(), ctx, true);
+        ctx.notice(QStringLiteral("Roll %1, latched: Delete lets go").arg(QString::fromUtf8(kPatterns[next].name)));
+    }
+
+    void stepTone(int dir, ControlContext &ctx) {
+        m_keyTone = clampf(m_keyTone + 0.1f * float(dir), 0, 1);
+        ctx.notice(QStringLiteral("Keyboard tone %1%").arg(int(std::lround(m_keyTone * 100))));
+    }
+
+    void stepSlide(int dir, ControlContext &ctx) {
+        m_glide = clampf(m_glide + 0.125f * float(dir), 0, 1);
+        ctx.notice(QStringLiteral("Slide %1 ms").arg(int(std::lround(1000 * glideSeconds()))));
+    }
+
+    void stepMorph(int dir, ControlContext &ctx) {
+        m_morph[m_sound] = clampf(m_morph[m_sound] + 0.1f * float(dir), 0, 1);
+        ctx.notice(QStringLiteral("%1 morph %2%").arg(QString::fromUtf8(recipe(m_sound).name))
+                       .arg(int(std::lround(m_morph[m_sound] * 100))));
+    }
+
+    void toggleSquare(ControlContext &ctx) {
+        if (recipe(m_sound).saw <= 0) {
+            ctx.notice(QStringLiteral("%1 has no saw to turn square").arg(QString::fromUtf8(recipe(m_sound).name)));
+            return;
+        }
+        m_square[m_sound] = !m_square[m_sound];
+        ctx.notice(QStringLiteral("%1: %2").arg(QString::fromUtf8(recipe(m_sound).name),
+                                           m_square[m_sound] ? QStringLiteral("square") : QStringLiteral("saw")));
+    }
+
+    void toggleFollow(ControlContext &ctx) {
+        m_follow = !m_follow;
+        ctx.notice(m_follow ? QStringLiteral("Bass follows the chords: columns count from the chord's root")
+                            : QStringLiteral("Bass plays the key"));
+    }
+
+    void toggleOverdub(ControlContext &ctx) {
+        const bool on = !ctx.studio().parts[ctx.part()].overdub;
+        ctx.overdub(on);
+        ctx.notice(on ? QStringLiteral("Overdub: play over the loop") : QStringLiteral("Overdub off"));
+    }
+
+    void freeShapers(ControlContext &ctx) {
+        m_latchNext = false;
+        for (int s = 0; s < ShaperCount; ++s)
+            if (m_latched[s]) {
+                m_latched[s] = false;
+                sendShaper(Shaper(s), 0, restB(Shaper(s)), ctx.now(), ctx, true);
+            }
+        ctx.notice(QStringLiteral("Shapers released"));
+    }
+
+    // Latches the shapers the hand holds, as a click does. False if none.
+    bool latchHeld(ControlContext &ctx) {
+        QStringList names;
+        for (const auto &h : m_fingers)
+            if (h.id >= 0 && h.role != NoteRole && h.role != NoRole && h.role != LoopRole) {
+                m_latched[shaperOf(h.role)] = true;
+                remember(h);
+                names << QString::fromUtf8(roleName(h.role));
+            }
+        if (names.isEmpty())
+            return false;
+        names.removeDuplicates();
+        ctx.notice(QStringLiteral("%1 latched: Delete lets go").arg(names.join(QStringLiteral(" + "))));
+        return true;
+    }
+
+    // The mouse on the band under the pad. The mouse is one finger, so it
+    // cannot hold a shaper and click: LATCH with nothing held arms instead,
+    // and the next shaper let go stays.
+    enum Spot {
+        SpotSound = 100,
+        SpotOctDown = 200, SpotOctUp, SpotRollDown, SpotRollUp, SpotToneDown, SpotToneUp,
+        SpotSlideDown, SpotSlideUp, SpotMorphDown, SpotMorphUp,
+        SpotSquare, SpotFollow, SpotLatch, SpotOverdub, SpotFree
+    };
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int id = m_spots.at(at);
+        if (id < 0)
+            return false;
+        if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+            return true;
+        if (id >= SpotSound && id < SpotSound + int(SoundCount)) {
+            setSound(id - SpotSound, ctx);
+            return true;
+        }
+        switch (id) {
+        case SpotOctDown: stepOctave(-1, ctx); return true;
+        case SpotOctUp: stepOctave(1, ctx); return true;
+        case SpotRollDown: stepRoll(-1, ctx); return true;
+        case SpotRollUp: stepRoll(1, ctx); return true;
+        case SpotToneDown: stepTone(-1, ctx); return true;
+        case SpotToneUp: stepTone(1, ctx); return true;
+        case SpotSlideDown: stepSlide(-1, ctx); return true;
+        case SpotSlideUp: stepSlide(1, ctx); return true;
+        case SpotMorphDown: stepMorph(-1, ctx); return true;
+        case SpotMorphUp: stepMorph(1, ctx); return true;
+        case SpotSquare: toggleSquare(ctx); return true;
+        case SpotFollow: toggleFollow(ctx); return true;
+        case SpotOverdub: toggleOverdub(ctx); return true;
+        case SpotFree: freeShapers(ctx); return true;
+        case SpotLatch:
+            if (!latchHeld(ctx)) {
+                m_latchNext = !m_latchNext;
+                ctx.notice(m_latchNext ? QStringLiteral("Latch: the next shaper you let go stays")
+                                       : QStringLiteral("Latch off"));
+            }
+            return true;
+        default: return false;
         }
     }
 
@@ -346,6 +502,17 @@ public:
 
     QString help() const override {
         return QStringLiteral(
+            "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce (or Q W E R T Y U I)\n"
+            "↑ ↓\tthe pad's octave\n"
+            "[ ]\tthe roll: off, then OFFBEAT … 8THS, latched on whatever plays\n"
+            "- =\tdarker, brighter: the tone of notes played on the keys\n"
+            "Return\twith shapers down, latch them (as a click does); with none, LOOP\n"
+            "Shift+Return\toverdub on or off (F10 too)\n"
+            "\\\tfollow the chords, on or off (O too)\n"
+            "Delete\tlet the latched shapers go (P too)\n"
+            "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · clear it · stop the loop\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds, and every setting "
+            "the keys reach; LATCH with nothing held: the next shaper you let go stays\n"
             "play, then Space\tloops what you just played (Space again calls a waiting loop off)\n"
             "touch the lower field\ta note in the key: higher is brighter (clean sub to biting), harder accents\n"
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back\n"
@@ -355,12 +522,10 @@ public:
             "WOB\tland on a rate (straight on top, triplets below): a wobble on the tempo; up/down the depth\n"
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
             "FILTER\ta fader for whatever sounds, the loop too: middle leaves it, up opens, down darkens; sideways morph (ACID: squelch)\n"
-            "click\twith a note down, strike it again accented; with only shapers down, latch them (P frees)\n"
-            "LOOP (rail, far left) or Enter\talso: record the coming bars from the next bar line; tap again to close\n"
+            "click\twith a note down, strike it again accented; with only shapers down, latch them\n"
+            "LOOP (rail, far left), Enter or F9\talso: record the coming bars from the next bar line; tap again to close\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
-            "Q W E R T Y U I   \\\tsub, pluck, reese, acid, wobble, growl, 808, bounce   saw or square\n"
-            "O   [ ]   - =   ↑ ↓   ← →\tfollow the chords   morph   slide time   pad octave   key tone\n"
-            "F1–F8 (Shift clears)  F10  Backspace\tlaunch a slot   overdub   stop the loop");
+            "Shift+- =   Shift+[ ]   `\tslide time   morph   saw or square");
     }
 
     // For the tutorial: whether the bass follows the chords, and its sound.
@@ -578,6 +743,12 @@ private:
         } else if (h.role != NoRole && h.role != LoopRole) {
             remember(h);
             const Shaper s = shaperOf(h.role);
+            // LATCH armed from the band: this shaper stays where it was let go.
+            if (m_latchNext) {
+                m_latchNext = false;
+                m_latched[s] = true;
+                ctx.notice(QStringLiteral("%1 latched: Delete lets go").arg(QString::fromUtf8(roleName(h.role))));
+            }
             // Another finger still in the same zone takes over where it is.
             Finger *other = nullptr;
             for (auto &f : m_fingers)
@@ -746,17 +917,8 @@ private:
             ctx.send(c);
             return;
         }
-        if (!shapers)
-            return;
-        QStringList names;
-        for (const auto &h : m_fingers)
-            if (h.id >= 0 && h.role != NoteRole) {
-                m_latched[shaperOf(h.role)] = true;
-                remember(h);
-                names << QString::fromUtf8(roleName(h.role));
-            }
-        names.removeDuplicates();
-        ctx.notice(QStringLiteral("%1 latched: P lets go").arg(names.join(QStringLiteral(" + "))));
+        if (shapers)
+            latchHeld(ctx);
     }
 
     // The one way a loop is made: a deliberate tap on LOOP (or Enter).
@@ -930,7 +1092,7 @@ private:
 
     int m_sound = Pluck;
     float m_morph[SoundCount];
-    bool m_square[SoundCount] = {}; // the saw swapped for a square (the \ key)
+    bool m_square[SoundCount] = {}; // the saw swapped for a square (the ` key)
     float m_glide = 0.5f, m_keyTone = 0.6f;
     int m_octave = 0;
     bool m_follow = false;
@@ -939,6 +1101,8 @@ private:
     int m_pattern = 3, m_rate = 3;
     float m_gate = 0.6f, m_depth = 0.8f, m_grit = 0.5f, m_gritChar = 0.25f;
     bool m_latched[ShaperCount] = {};
+    bool m_latchNext = false; // LATCH clicked with nothing held: the next shaper let go stays
+    console::Hotspots m_spots; // what paint() drew to be clicked
     float m_sent[ShaperCount][2] = {};
     double m_sentAt[ShaperCount] = {};
 
@@ -1293,24 +1457,101 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
     }
 }
 
+// The largest console font size, up to px, that fits s into width.
+int fitPx(const QString &s, qreal width, int px) {
+    for (; px > 8; --px)
+        if (QFontMetricsF(c::font(px, true)).horizontalAdvance(s) <= width)
+            break;
+    return px;
+}
+
+// A chip that says what it is over its key, both fitted to its width, so
+// a row of them still reads when the window is narrow.
+void keyChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &name, const QString &key, bool lit,
+             c::Hotspots &spots, int id) {
+    c::chip(p, pc, r, QString(), lit, &spots, id);
+    const QColor ink = lit ? QColor::fromRgb(c::kInk) : pc.color;
+    const qreal w = r.width() - 6;
+    c::text(p, QRectF(r.left() + 3, r.top() + 1, w, 16), name, ink, fitPx(name, w, 12), true, Qt::AlignCenter);
+    c::text(p, QRectF(r.left() + 3, r.top() + 16, w, 13), key, lit ? ink : c::alpha(ink, 0.7f), fitPx(key, w, 10), true,
+            Qt::AlignCenter);
+}
+
+// A setting the keys step, as one box: its name over its value, the left
+// half clicks down (id) and the right half up (id + 1), each half showing
+// its key at its edge.
+void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &name, const QString &value,
+              const QString &down, const QString &up, c::Hotspots &spots, int id) {
+    const QRectF left(r.left(), r.top(), r.width() / 2, r.height()), right(left.right(), r.top(), r.width() / 2, r.height());
+    spots.add(left, id);
+    spots.add(right, id + 1);
+    const bool overL = pc.mouseOver && left.contains(pc.mouse), overR = pc.mouseOver && right.contains(pc.mouse);
+    if (overL || overR)
+        p.fillRect(overL ? left : right, c::alpha(pc.color, 0.22f));
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(overL || overR ? pc.color : c::alpha(pc.color, 0.6f), 1.5));
+    p.drawRect(r);
+    const qreal keyW = std::max(QFontMetricsF(c::font(11, true)).horizontalAdvance(down),
+                                QFontMetricsF(c::font(11, true)).horizontalAdvance(up)) + 4;
+    const QRectF bottom(r.left() + 4, r.top() + 13, r.width() - 8, 16);
+    c::text(p, QRectF(r.left() + 3, r.top() + 1, r.width() - 6, 13), name, c::alpha(pc.color, 0.65f),
+            fitPx(name, r.width() - 6, 10), true, Qt::AlignCenter);
+    c::text(p, bottom, down, overL ? pc.color : c::alpha(pc.color, 0.7f), 11, true, Qt::AlignLeft | Qt::AlignVCenter);
+    c::text(p, bottom, up, overR ? pc.color : c::alpha(pc.color, 0.7f), 11, true, Qt::AlignRight | Qt::AlignVCenter);
+    const qreal vw = bottom.width() - 2 * keyW;
+    c::text(p, QRectF(bottom.left() + keyW, bottom.top(), vw, bottom.height()), value, pc.color, fitPx(value, vw, 12),
+            true, Qt::AlignCenter);
+}
+
+// Below the pad, every one clickable, each with its key: the clips and the
+// sounds, then the settings the keys step and the switches.
 void Control::paintBand(QPainter &p, const PaintContext &pc) {
-    const QRectF band(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width(), 30);
-    c::clips(p, QRectF(band.left(), band.top(), band.width() * 0.5, band.height()), *pc.view, pc.color, pc.time);
+    m_spots.clear();
+    c::clips(p, c::bandRow(pc, 0, 0, 0.36), *pc.view, pc.color, pc.time, &m_spots);
     static const char keys[] = "QWERTYUI";
-    const qreal x0 = band.left() + band.width() * 0.52, w = (band.right() - x0) / double(SoundCount);
-    for (int s = 0; s < SoundCount; ++s) {
-        const QRectF cell(x0 + s * w + 2, band.top(), w - 4, band.height());
-        const bool cur = s == m_sound;
-        if (cur) {
-            p.fillRect(cell, pc.color);
-        } else {
-            p.setPen(QPen(c::alpha(pc.color, 0.5f), 1));
-            p.setBrush(Qt::NoBrush);
-            p.drawRect(cell);
-        }
-        c::text(p, cell, QStringLiteral("%1 %2").arg(QChar(keys[s])).arg(QString::fromUtf8(recipe(s).name)),
-                cur ? QColor::fromRgb(c::kInk) : c::alpha(pc.color, 0.8f), 10, true, Qt::AlignCenter);
+    {
+        const QRectF row = c::bandRow(pc, 0, 0.38, 1);
+        const qreal w = (row.width() + 4) / double(SoundCount);
+        for (int s = 0; s < SoundCount; ++s)
+            keyChip(p, pc, QRectF(row.left() + s * w, row.top(), w - 4, row.height()), QString::fromUtf8(recipe(s).name),
+                    QString(QChar(keys[s])), s == m_sound, m_spots, SpotSound + s);
     }
+
+    const QRectF row = c::bandRow(pc, 1);
+    qreal x = row.left();
+    auto stepper = [&](double share, const QString &name, const QString &value, const QString &down,
+                       const QString &up, int id) {
+        const qreal w = row.width() * share;
+        stepChip(p, pc, QRectF(x, row.top(), w - 4, row.height()), name, value, down, up, m_spots, id);
+        x += w;
+    };
+    const int roll = rollIndex();
+    stepper(0.12, QStringLiteral("OCTAVE"), octaveText().toUpper(), QStringLiteral("↓"), QStringLiteral("↑"),
+            SpotOctDown);
+    stepper(0.13, QStringLiteral("ROLL"), roll < 0 ? QStringLiteral("OFF") : QString::fromUtf8(kPatterns[roll].name),
+            QStringLiteral("["), QStringLiteral("]"), SpotRollDown);
+    stepper(0.12, QStringLiteral("KEY TONE"), QStringLiteral("%1%").arg(int(std::lround(m_keyTone * 100))),
+            QStringLiteral("−"), QStringLiteral("="), SpotToneDown);
+    stepper(0.12, QStringLiteral("SLIDE"), QStringLiteral("%1MS").arg(int(std::lround(1000 * glideSeconds()))),
+            QStringLiteral("⇧−"), QStringLiteral("⇧="), SpotSlideDown);
+    stepper(0.12, QStringLiteral("MORPH"), QStringLiteral("%1%").arg(int(std::lround(m_morph[m_sound] * 100))),
+            QStringLiteral("⇧["), QStringLiteral("⇧]"), SpotMorphDown);
+
+    // The switches, lit when on; LATCH blinks while armed.
+    bool latched = false;
+    for (int s = 0; s < ShaperCount; ++s)
+        latched |= m_latched[s];
+    const bool blink = std::fmod(pc.time, 0.5) < 0.25;
+    const qreal w = (row.right() - x + 4) / 5.0;
+    auto toggle = [&](int i, const QString &name, const QString &key, bool lit, int id) {
+        keyChip(p, pc, QRectF(x + i * w, row.top(), w - 4, row.height()), name, key, lit, m_spots, id);
+    };
+    toggle(0, m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"), QStringLiteral("`"),
+           m_square[m_sound], SpotSquare);
+    toggle(1, QStringLiteral("FOLLOW"), QStringLiteral("\\"), m_follow, SpotFollow);
+    toggle(2, QStringLiteral("LATCH"), QStringLiteral("⏎"), m_latchNext ? blink : latched, SpotLatch);
+    toggle(3, QStringLiteral("OVERDUB"), QStringLiteral("⇧⏎"), pc.view->overdub, SpotOverdub);
+    toggle(4, QStringLiteral("LET GO"), QStringLiteral("DEL"), false, SpotFree);
 }
 
 } // namespace

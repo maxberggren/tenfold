@@ -657,7 +657,7 @@ private slots:
     }
 
     // A wobble finger wobbles while it stays; a click with only shapers down
-    // latches it; P lets go.
+    // latches it; P (Delete's old key) lets go.
     void railShapersSpringBackOrLatch() {
         auto wobbling = [](const std::string &script) {
             const auto take = testkit::play(script);
@@ -789,6 +789,82 @@ private slots:
         }
         const double db = 10 * std::log10(other / harmonic);
         QVERIFY2(db < -45, qPrintable(QStringLiteral("%1 dB").arg(db)));
+    }
+
+    // The keys every part page shares (docs/PARTS.md 4b), on the bass:
+    // ← → the sound, \\ the chords, [ ] the roll, Delete lets it go.
+    void sharedKeysDoWhatTheTableSays() {
+        testkit::play("page 0 2\nkey 0.1 Right\nend 0.3\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Reese)); // from PLUCK
+        });
+        testkit::play("page 0 2\nkey 0.1 Q\nkey 0.2 Left\nend 0.3\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Bounce)); // round from SUB
+        });
+        testkit::play("page 0 2\nkey 0.1 \\\nend 0.3\n", [](Session &s) {
+            QCOMPARE(s.probe(1, QStringLiteral("follow")), 1.0f);
+        });
+        // ] twice: the roll is on, latched on the second pattern, rolling a
+        // held note; Delete lets it go.
+        const std::string roll = "page 0 2\nkey 0.1 ]\nkey 0.2 ]\ndown 0.3 1 0.3 0.4\n";
+        QCOMPARE(int(testkit::play(roll + "end 0.8\n").view.parts[1].data[bass::PubRoll]), 2);
+        QCOMPARE(int(testkit::play(roll + "key 0.5 Delete\nend 0.8\n").view.parts[1].data[bass::PubRoll]), 0);
+        // - = are the tone now, Shift+- = the slide: neither steps the other.
+        testkit::play("page 0 2\nkey 0.1 =\nend 0.3\n", [](Session &s) {
+            QCOMPARE(s.notice(nullptr), QStringLiteral("Keyboard tone 70%"));
+        });
+        testkit::play("page 0 2\nkey 0.1 Shift+=\nend 0.3\n", [](Session &s) {
+            QVERIFY2(s.notice(nullptr).startsWith(QStringLiteral("Slide ")), qPrintable(s.notice(nullptr)));
+        });
+    }
+
+    // Return with a shaper held latches it, as a click does, and makes no
+    // loop; with nothing held it is still LOOP (enterRecordsToo…).
+    void returnLatchesHeldShapers() {
+        const auto take = testkit::play("page 0 2\nkey 0.1 W\ndown 0.2 2 0.6 0.9\nkey 0.4 Return\nup 0.7 2\n"
+                                        "down 0.9 1 0.3 0.3\nend 1.5\n");
+        const PartView &bass = take.view.parts[1];
+        QVERIFY(bass.data[bass::PubWobDepth] > 0.05f && bass.data[bass::PubLfo] >= 0);
+        QCOMPARE(bass.recording, -1);
+        for (int slot = 0; slot < kClipSlots; ++slot)
+            QCOMPARE(int(bass.clips[slot].state), int(ClipView::Empty));
+    }
+
+    // The band under the pad, with the mouse. On the scripts' window the
+    // pad is 562.5 px high: row 0 is 0.048 under it, row 1 0.119. The
+    // sounds fill row 0 from 0.38 of the width, eight across; row 1 is five
+    // steppers (0.12, 0.13, 0.12, 0.12, 0.12 wide, the left half down, the
+    // right half up), then five switches.
+    void theBandUnderThePadIsClickable() {
+        // ACID, the fourth sound.
+        testkit::play("page 0 2\nbutton 0.2 0.651 -0.048\nend 0.4\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Acid));
+        });
+        // FOLLOW, the second switch.
+        testkit::play("page 0 2\nbutton 0.2 0.727 -0.119\nend 0.4\n", [](Session &s) {
+            QCOMPARE(s.probe(1, QStringLiteral("follow")), 1.0f);
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("follows the chords")), qPrintable(s.pageStatus()));
+        });
+        // ROLL's right half twice, then a note: it rolls the second pattern.
+        QCOMPARE(int(testkit::play("page 0 2\nbutton 0.2 0.22 -0.119\nbutton 0.3 0.22 -0.119\n"
+                                   "down 0.5 1 0.3 0.4\nend 0.9\n")
+                         .view.parts[1]
+                         .data[bass::PubRoll]),
+                 2);
+    }
+
+    // The mouse is one finger: it cannot hold a shaper and click. LATCH
+    // clicked with nothing held arms instead, and the next shaper let go
+    // stays; LET GO frees it.
+    void latchFromTheBandKeepsTheNextShaper() {
+        auto wobbling = [](const std::string &script) {
+            const auto take = testkit::play(script);
+            return take.view.parts[1].data[bass::PubWobDepth] > 0.05f && take.view.parts[1].data[bass::PubLfo] >= 0;
+        };
+        const std::string latch = "page 0 2\nkey 0.05 W\nbutton 0.1 0.805 -0.119\ndown 0.2 2 0.6 0.9\nup 0.5 2\n";
+        QVERIFY(wobbling(latch + "down 0.9 1 0.3 0.3\nend 1.5\n"));
+        QVERIFY(!wobbling(latch + "button 0.7 0.961 -0.119\ndown 0.9 1 0.3 0.3\nend 1.5\n"));
+        // Unarmed, the same finger springs back.
+        QVERIFY(!wobbling("page 0 2\nkey 0.05 W\ndown 0.2 2 0.6 0.9\nup 0.5 2\ndown 0.9 1 0.3 0.3\nend 1.5\n"));
     }
 
     // Leaving the page ends what the fingers hold.

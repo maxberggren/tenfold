@@ -41,6 +41,7 @@
 #include "chords.h"
 #include "console.h"
 #include "parts.h"
+#include "songfile.h"
 
 namespace tf {
 
@@ -375,6 +376,80 @@ public:
             sendParam(ParamRate, 0, 1.0f, ctx);
         }
         m_frame = Frame{};
+    }
+
+    // A new song (Ctrl+N, or one opened): what belonged to the old one goes.
+    // The studio has silenced the chord hold kept ringing and turned
+    // overdub off, a P still waiting for its bar line would loop the old
+    // song's chords into the new one, and the progression shown is the old
+    // song's. The sound and its gates are the player's and stay.
+    void startOver(ControlContext &ctx) override {
+        (void)ctx;
+        m_latched = 0;
+        m_latchedOrder = 0;
+        m_overdub = false;
+        m_retroEnd = -1;
+        m_onsetCount = 0;
+        m_landedSlot = -1;
+        m_ribbonCount = 0;
+    }
+
+    // The song keeps the sound chosen, the voicing, whether hold is on, and
+    // each sound's own gate, gate length, swing and filter: a loop keeps the
+    // sound it was played with, so every sound's rhythm is part of the song,
+    // not only the one showing. Sounds and gates are saved by name, so a
+    // list that grows or is reordered still finds them. A chord hold keeps
+    // ringing is not saved (it is playing, not a setting), nor the rail held
+    // over everything or its double time (fingers on the rail), nor overdub
+    // (the studio starts an opened song with nothing recording).
+    void save(QJsonObject &out) const override {
+        out[QStringLiteral("sound")] = QString::fromUtf8(styleDef(m_style).name);
+        out[QStringLiteral("voicing")] = m_register;
+        out[QStringLiteral("hold")] = m_hold;
+        QJsonObject sounds;
+        for (int s = 0; s < StyleCount; ++s) {
+            QJsonObject o;
+            o[QStringLiteral("gate")] = QString::fromUtf8(gateDef(m_pattern[s]).name);
+            o[QStringLiteral("length")] = tidyFloat(m_length[s]);
+            o[QStringLiteral("swing")] = tidyFloat(m_swing[s]);
+            o[QStringLiteral("filter")] = tidyFloat(m_filter[s]);
+            sounds[QString::fromUtf8(styleDef(s).name)] = o;
+        }
+        out[QStringLiteral("sounds")] = sounds;
+    }
+
+    // Everything starts as a new page has it, so what the file leaves out
+    // (an older song, a hand edit) is the default, never the song open
+    // before. Then each sound's gate goes to the engine as the rail sends
+    // it; the sound, the voicing and the filter travel in every chord.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        auto number = [](const QJsonObject &o, const char *key, double lo, double hi, double fallback) {
+            const QJsonValue v = o.value(QLatin1String(key));
+            return v.isDouble() && std::isfinite(v.toDouble()) ? std::clamp(v.toDouble(), lo, hi) : fallback;
+        };
+        auto named = [](const QJsonValue &v, int count, const char *(*name)(int), int fallback) {
+            for (int i = 0; v.isString() && i < count; ++i)
+                if (v.toString().compare(QString::fromUtf8(name(i)), Qt::CaseInsensitive) == 0)
+                    return i;
+            return fallback;
+        };
+        const auto styleName = [](int s) { return styleDef(s).name; };
+        const auto gateName = [](int p) { return gateDef(p).name; };
+        m_style = named(in.value(QStringLiteral("sound")), StyleCount, styleName, Pad);
+        m_register = int(std::lround(number(in, "voicing", -3, 3, 0)));
+        const QJsonValue hold = in.value(QStringLiteral("hold"));
+        m_hold = hold.isBool() && hold.toBool();
+        const QJsonObject sounds = in.value(QStringLiteral("sounds")).toObject();
+        for (int s = 0; s < StyleCount; ++s) {
+            const QJsonObject o = sounds.value(QString::fromUtf8(styleDef(s).name)).toObject();
+            m_pattern[s] = named(o.value(QStringLiteral("gate")), PatternCount, gateName, styleDef(s).pattern);
+            m_length[s] = float(number(o, "length", 0.2, 1.0, 0.55));
+            m_swing[s] = float(number(o, "swing", 0.0, 0.4, 0.0));
+            m_filter[s] = float(number(o, "filter", 0.0, 1.0, 0.5));
+            sendParam(ParamPattern, s, float(m_pattern[s]), ctx);
+            sendParam(ParamLength, s, m_length[s], ctx);
+            sendParam(ParamSwing, s, m_swing[s], ctx);
+        }
     }
 
     // The mouse on the band under the pad: the clip slots, the sounds, and

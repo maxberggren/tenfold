@@ -2,6 +2,7 @@
 // voicing, the envelope, freeze, the gate, the budget) and the page through
 // the whole session (latching, scenes, loops, recording, leaving).
 
+#include <QJsonArray>
 #include <array>
 #include <chrono>
 
@@ -133,6 +134,15 @@ struct Bench : AudioContext {
 enum { Drone, Pad, Choir, Glass, Air };
 enum { PFreeze = 0, PCloud, PPump, PSpace, PSwell, PChord, PChordToLoop, PTone };
 constexpr int kPubTone = 19;
+constexpr int kPubOwnLoop = 16, kPubOwnHand = 17;
+
+// A part's settings in a song file, found by the part's name.
+QJsonObject settingsOf(const QJsonObject &doc, const QString &name = QStringLiteral("Atmos")) {
+    for (const QJsonValue &p : doc[QStringLiteral("parts")].toArray())
+        if (p.toObject()[QStringLiteral("name")].toString() == name)
+            return p.toObject()[QStringLiteral("settings")].toObject();
+    return {};
+}
 constexpr int A = 9, C = 0, D = 2, E = 4, F = 5, G = 7, B = 11;
 
 }
@@ -730,6 +740,143 @@ private slots:
         // Ten layers are fuller than one but far from ten times the power.
         const double ratio = ten.rms(3, 5) / one.rms(3, 5);
         QVERIFY2(ratio > 1.05 && ratio < 3.0, qPrintable(QString::number(ratio)));
+    }
+
+    // Song files: the bed comes back as it was left.
+    void theBedComesBackWithTheSong() {
+        // A scene, every setting off its default, and a layer latched by
+        // hand: saved, opened in a new tenfold, played on.
+        const std::string script = "page 0 6\nkey 0.2 W\nkey 0.4 F\nkey 0.5 G\nkey 0.6 P\nkey 0.7 Up\nkey 0.8 +\n"
+                                   "key 0.9 V\nkey 1.0 H\ndown 1.5 1 0.3 0.5 p=0.7\nclick 2.0\nup 2.5 1\nend 4\n";
+        testkit::reopen(script, 4.0, [](Session &, Session &opened, const QJsonObject &doc) {
+            const QJsonObject saved = settingsOf(doc);
+            QCOMPARE(saved[QStringLiteral("space")].toDouble(), 0.75);
+            QCOMPARE(saved[QStringLiteral("tone")].toDouble(), 0.625);
+            QCOMPARE(saved[QStringLiteral("pump")].toString(), QStringLiteral("beat"));
+            QVERIFY(saved[QStringLiteral("cloud")].toBool());
+            QVERIFY(saved[QStringLiteral("freeze")].toBool());
+            QVERIFY(saved[QStringLiteral("hold")].toBool());
+            QCOMPARE(saved[QStringLiteral("chord")].toInt(), 3);
+            QCOMPARE(saved[QStringLiteral("scene")].toString(), QStringLiteral("Ocean"));
+            const QJsonArray bed = saved[QStringLiteral("bed")].toArray();
+            QCOMPARE(bed.size(), 4);
+            QCOMPARE(bed[0].toObject()[QStringLiteral("sound")].toString(), QStringLiteral("Drone"));
+            QVERIFY(bed[0].toObject()[QStringLiteral("scene")].toBool());
+            QCOMPARE(bed[3].toObject()[QStringLiteral("sound")].toString(), QStringLiteral("Pad"));
+            QVERIFY(!bed[3].toObject().contains(QStringLiteral("scene")));
+            // Opened, the page saves what it was given.
+            QCOMPARE(settingsOf(opened.saveSong()), saved);
+            // And the engine plays it: frozen, the cloud, the pump on every
+            // beat, more space, a step brighter, its own IV, four layers.
+            const float *d = opened.view().parts[kAtmos].data;
+            QCOMPARE(d[0], 1.0f);
+            QCOMPARE(d[1], 1.0f);
+            QCOMPARE(int(d[2]), 2);
+            QCOMPARE(d[3], 0.75f);
+            QCOMPARE(d[kPubTone], 0.625f);
+            QCOMPARE(int(d[5]), 3);
+            QCOMPARE(d[kPubOwnHand], 1.0f);
+            QCOMPARE(opened.view().parts[kAtmos].voices, 4);
+            QCOMPARE(opened.probe(kAtmos, QStringLiteral("latched")), 4.0f);
+            const QString status = opened.pageStatus();
+            QVERIFY2(status.contains(QStringLiteral("Ocean")) && status.contains(QStringLiteral("hold")), qPrintable(status));
+        });
+    }
+
+    void aLoopsOwnChordsComeBackWithItsLoop() {
+        // The bed's own progression looped with Space: the chords are the
+        // loop's, so the file says to follow, and the loop takes them again.
+        const std::string script = "page 0.05 6\nkey 0.1 Ctrl+M\ndown 7.942 1 0.25 0.4 p=0.6\n"
+                                   "down 8.042 2 0.45 0.4 p=0.5\nclick 8.542\nup 8.942 1\nup 8.942 2\n"
+                                   "key 7.742 Z\nkey 9.677 N\nkey 11.62 Space\nend 18\n";
+        testkit::reopen(script, 6.0, [](Session &before, Session &opened, const QJsonObject &doc) {
+            QCOMPARE(before.view().parts[kAtmos].playing, 0);
+            const QJsonObject saved = settingsOf(doc);
+            QCOMPARE(saved[QStringLiteral("chord")].toInt(), -1);
+            QCOMPARE(settingsOf(opened.saveSong()), saved);
+            QCOMPARE(opened.view().parts[kAtmos].playing, 0);
+            QCOMPARE(opened.view().parts[kAtmos].data[kPubOwnLoop], 1.0f);
+        });
+    }
+
+    void aBrokenFileOpensASaneBed() {
+        QJsonObject doc;
+        testkit::play("page 0 6\nend 0.5\n", [&](Session &s) { doc = s.saveSong(); });
+        auto withSettings = [&](const QJsonValue &settings) {
+            QJsonObject d = doc;
+            QJsonArray parts = d[QStringLiteral("parts")].toArray();
+            for (int i = 0; i < parts.size(); ++i) {
+                QJsonObject p = parts[i].toObject();
+                if (p[QStringLiteral("name")].toString() == QStringLiteral("Atmos")) {
+                    p[QStringLiteral("settings")] = settings;
+                    parts[i] = p;
+                }
+            }
+            d[QStringLiteral("parts")] = parts;
+            return d;
+        };
+        auto opened = [&](const QJsonObject &d) {
+            QJsonObject out;
+            testkit::play("end 0.1\n", [&](Session &s) {
+                QString error;
+                QVERIFY2(s.openSong(d, &error), qPrintable(error));
+                out = settingsOf(s.saveSong());
+            });
+            return out;
+        };
+
+        // Wrong types, numbers far out of range, names nobody knows, more
+        // layers than voices: every value is the default or clamped.
+        QJsonArray bed;
+        bed.append(QJsonObject{{"sound", "Kazoo"}, {"height", 0.5}});
+        bed.append(7);
+        bed.append(QStringLiteral("pad"));
+        bed.append(QJsonObject{{"sound", "pad"}, {"colour", -5}, {"height", 1e9}, {"press", "x"}, {"motion", -1e30}, {"width", 7}, {"scene", true}});
+        bed.append(QJsonObject{{"sound", "GLASS"}});
+        for (int i = 0; i < 40; ++i)
+            bed.append(QJsonObject{{"sound", "Air"}});
+        const QJsonObject s = opened(withSettings(QJsonObject{{"space", 1e300}, {"tone", "bright"}, {"pump", "sideways"},
+                                                              {"cloud", 3}, {"freeze", "yes"}, {"hold", QJsonValue()},
+                                                              {"chord", -1e12}, {"scene", 42}, {"comet", QJsonObject{{"x", 1}}},
+                                                              {"bed", bed}}));
+        QCOMPARE(s[QStringLiteral("space")].toDouble(), 1.0);
+        QCOMPARE(s[QStringLiteral("tone")].toDouble(), 0.5);
+        QCOMPARE(s[QStringLiteral("pump")].toString(), QStringLiteral("kick"));
+        QCOMPARE(s[QStringLiteral("cloud")].toBool(), false);
+        QCOMPARE(s[QStringLiteral("freeze")].toBool(), false);
+        QCOMPARE(s[QStringLiteral("hold")].toBool(), false);
+        QCOMPARE(s[QStringLiteral("chord")].toInt(), -1);
+        QVERIFY(!s.contains(QStringLiteral("scene")));
+        QVERIFY(!s.contains(QStringLiteral("comet")));
+        const QJsonArray back = s[QStringLiteral("bed")].toArray();
+        QCOMPARE(back.size(), 20); // no more layers than the engine has voices
+        const QJsonObject pad = back[0].toObject();
+        QCOMPARE(pad[QStringLiteral("sound")].toString(), QStringLiteral("Pad"));
+        QCOMPARE(pad[QStringLiteral("colour")].toDouble(), 0.0);
+        QCOMPARE(pad[QStringLiteral("height")].toDouble(), 1.0);
+        QCOMPARE(pad[QStringLiteral("press")].toDouble(), 0.5);
+        QCOMPARE(pad[QStringLiteral("motion")].toDouble(), -1.0);
+        QCOMPARE(pad[QStringLiteral("width")].toDouble(), 1.0);
+        QVERIFY(!pad.contains(QStringLiteral("scene"))); // no scene to belong to
+        QCOMPARE(back[1].toObject()[QStringLiteral("sound")].toString(), QStringLiteral("Glass"));
+
+        // Not an object at all, or a bed that isn't a list: the defaults.
+        for (const QJsonValue &v : {QJsonValue(5), QJsonValue(QJsonObject{{"bed", QJsonObject{{"sound", "Pad"}}}, {"space", -3}})}) {
+            const QJsonObject d = opened(withSettings(v));
+            QCOMPARE(d[QStringLiteral("pump")].toString(), QStringLiteral("kick"));
+            QCOMPARE(d[QStringLiteral("tone")].toDouble(), 0.5);
+            QVERIFY(d[QStringLiteral("bed")].toArray().isEmpty());
+        }
+        // A file that left the page's settings out keeps the defaults even
+        // over a session that had moved them.
+        QJsonObject over;
+        testkit::play("page 0 6\nkey 0.2 G\nkey 0.3 Up\nend 0.6\n", [&](Session &s) {
+            QString error;
+            QVERIFY2(s.openSong(withSettings(QJsonObject{}), &error), qPrintable(error));
+            over = settingsOf(s.saveSong());
+        });
+        QCOMPARE(over[QStringLiteral("cloud")].toBool(), false);
+        QCOMPARE(over[QStringLiteral("space")].toDouble(), 0.5);
     }
 };
 

@@ -379,6 +379,14 @@ public:
     virtual bool menuClick(QPointF at, ControlContext &ctx) { (void)at, (void)ctx; return false; }
     // Esc: closes the menu. True if one was open.
     virtual bool closeMenu() { return false; }
+    // Space layering onto this page's loop: true if a layer always spans the
+    // whole loop (a page whose playing is changes of state, like a bed's
+    // chord, which a shorter layer would repeat inside the loop).
+    virtual bool layersSpanTheLoop() const { return false; }
+    // Whether sound left on with no hand on the page (a riser building, a
+    // bed latched) joins playing before a pause to playing after it, when
+    // Space looks for the phrase. A bed left on isn't playing: false.
+    virtual bool soundLeftOnJoinsThePlaying() const { return true; }
     // The page's gesture guide: one "gesture\twhat it does" per line.
     virtual QString help() const = 0;
     // One line under the pad: what the fingers are doing right now.

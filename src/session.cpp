@@ -510,6 +510,13 @@ void Session::idle(double t) {
 
 bool Session::key(const KeyEvent &k) {
     std::lock_guard lock(m_lock);
+    if (!k.repeat) {
+        const auto it = std::find(m_keysDown.begin(), m_keysDown.end(), k.key);
+        if (k.down && it == m_keysDown.end())
+            m_keysDown.push_back(k.key);
+        else if (!k.down && it != m_keysDown.end())
+            m_keysDown.erase(it);
+    }
     const bool ctrl = k.modifiers & Qt::ControlModifier;
     const bool shift = k.modifiers & Qt::ShiftModifier;
     if (k.down && !ctrl) {
@@ -607,11 +614,20 @@ void Session::refresh() {
         if (m_takeOrder.size() > size_t(kUndoSteps * kMaxParts))
             m_takeOrder.erase(m_takeOrder.begin(), m_takeOrder.end() - kUndoSteps * kMaxParts);
         const long bin = long(std::floor(m_view.time * 4.0));
+        // Sound bridges a pause in the playing only while a hand is on the
+        // page making it (a finger down, a key held): a chord held through a
+        // bar. A bed latched and left to sound would bridge every pause, and
+        // a loop made over it would reach back to when it was latched.
+        const int here = m_pages[size_t(m_page)]->part;
+        const bool hand = m_last.count > 0 || !m_keysDown.empty();
         for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
             const bool on = m_view.parts[p].voices > 0 && m_view.parts[p].playing < 0;
+            const bool held = on && p == here && hand;
             // Bins skipped since the last view were the same as now.
-            for (long b = std::max(m_soundBin[p] + 1, bin - kSoundBins + 1); b <= bin; ++b)
+            for (long b = std::max(m_soundBin[p] + 1, bin - kSoundBins + 1); b <= bin; ++b) {
                 m_sounding[p][((b % kSoundBins) + kSoundBins) % kSoundBins] = on;
+                m_handSounding[p][((b % kSoundBins) + kSoundBins) % kSoundBins] = held;
+            }
             m_soundBin[p] = bin;
         }
     }
@@ -619,7 +635,7 @@ void Session::refresh() {
 }
 
 // No stretch longer than maxGap in [t0, t1] where the part was silent.
-bool Session::soundedThrough(int part, double t0, double t1, double maxGap) const {
+bool Session::soundedThrough(int part, double t0, double t1, double maxGap, bool handOnly) const {
     if (part < 0 || part >= kMaxParts)
         return false;
     const long b0 = long(std::floor(t0 * 4.0)), b1 = long(std::floor(t1 * 4.0));
@@ -627,7 +643,8 @@ bool Session::soundedThrough(int part, double t0, double t1, double maxGap) cons
         return false;
     double silent = 0;
     for (long b = b0; b <= b1; ++b) {
-        if (m_sounding[part][((b % kSoundBins) + kSoundBins) % kSoundBins])
+        const long i = ((b % kSoundBins) + kSoundBins) % kSoundBins;
+        if (handOnly ? m_handSounding[part][i] : m_sounding[part][i])
             silent = 0;
         else if ((silent += 0.25) > maxGap)
             return false;
@@ -937,18 +954,25 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     }
     dlog("  layering=%d since=%.4f onsets kept=%d", int(layering), since, int(times.size()));
     std::sort(times.begin(), times.end(), [](const auto &x, const auto &y) { return x.t < y.t; });
+    bool handOnly = false;
+    for (const auto &pg : m_pages)
+        handOnly = handOnly || (pg->part == part && !pg->spec.control->soundLeftOnJoinsThePlaying());
     double first = -1, earliest = -1, last = -1, lastReal = -1;
     bool clocked = false; // sounds carried on through the phrase: it already runs on the clock
     for (size_t i = times.size(); i-- > 0;) {
         const double t = times[i].t;
         if (t > nowT + 0.05)
             continue;
-        // A pause is two bars with nothing played and nothing sounding.
+        // A pause is two bars with nothing played and nothing sounding. After
+        // the last note any sound counts (a chord ringing out, a bed left on:
+        // that is the loop); between notes, on a page that says so, only
+        // sound a hand was making, so a bed latched and left doesn't join new
+        // playing to old.
         if (last < 0) {
             if (nowT - t > 8 * spb && !soundedThrough(part, t, nowT, 8 * spb))
                 break;
             last = t;
-        } else if (earliest - t > 8 * spb && !soundedThrough(part, t, earliest, 8 * spb)) {
+        } else if (earliest - t > 8 * spb && !soundedThrough(part, t, earliest, 8 * spb, handOnly)) {
             break;
         }
         earliest = t;
@@ -1148,7 +1172,14 @@ bars:
     double layerBase = 0;
     if (layer && m_view.parts[part].playing >= 0) {
         layerBase = m_view.parts[part].clips[m_view.parts[part].playing].lengthBeats;
-        if (layerBase > 0) {
+        bool spans = false;
+        for (const auto &pg : m_pages)
+            spans = spans || (pg->part == part && pg->spec.control->layersSpanTheLoop());
+        if (layerBase > 0 && spans) {
+            if (std::fabs(layerBase - length) > 1e-6)
+                dlog("  layer over a %.3f-beat loop spans it (the page's choice)", layerBase);
+            length = layerBase;
+        } else if (layerBase > 0) {
             const auto fits = layerLengths(layerBase);
             double fit = fits.back();
             for (double d : fits)

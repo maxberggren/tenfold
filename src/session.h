@@ -170,8 +170,16 @@ private:
     // a latched arp, a ringing pad isn't a pause in the playing.
     static constexpr int kSoundBins = 256;
     uint8_t m_sounding[kMaxParts][kSoundBins] = {};
+    // The same, only while a hand was on the part's page (a finger down, a
+    // key held): what bridges a pause in the playing. A bed latched and left
+    // would bridge them all.
+    uint8_t m_handSounding[kMaxParts][kSoundBins] = {};
+    // Keys held down now (a note played from the keyboard is a hand on the
+    // page as much as a finger is).
+    std::vector<int> m_keysDown;
     long m_soundBin[kMaxParts] = {};
-    bool soundedThrough(int part, double t0, double t1, double maxGap) const;
+    // handOnly: count only sound made while a hand was on the page.
+    bool soundedThrough(int part, double t0, double t1, double maxGap, bool handOnly = false) const;
     double lastSounding(int part, double since) const;
     uint32_t m_takesSeen[kMaxParts] = {};
     // The beat each part's loop last changed (a take landed, another slot

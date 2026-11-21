@@ -140,6 +140,29 @@ constexpr int A = 9, C = 0, D = 2, E = 4, F = 5, G = 7, B = 11;
 class AtmosTests : public QObject {
     Q_OBJECT
 private slots:
+    void oneClickOverALatchedBedLoopsOneBar() {
+        // An old swell held and let go, three layers latched, then a while
+        // later one chord change (N) and Space: the loop is the bar with the
+        // change, the bed carried in as it sounds. The latched bed doesn't
+        // make the playing reach back to the swell (it was four bars, with
+        // the old swell coming back every pass).
+        const std::string bed = "page 0.05 6\nkey 0.1 Ctrl+M\n"
+                                "down 1.0 1 0.3 0.5 p=0.6\nup 5.0 1\n"
+                                "down 6.0 2 0.06 0.3 p=0.6\ndown 6.1 3 0.25 0.4 p=0.6\ndown 6.2 4 0.45 0.4 p=0.6\n"
+                                "click 6.5\nup 7.0 2\nup 7.0 3\nup 7.0 4\n"
+                                "key 11.0 N\nkey 13.4 Space\n";
+        const auto take = testkit::play(bed + "end 16\n");
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[5].playing, 0);
+        QCOMPARE(int(take.view.parts[5].clips[0].lengthBeats), 4);
+        // Two more changes layered on it: the layer spans the loop rather
+        // than repeating inside it, so the loop stays one bar.
+        const auto layered = testkit::play(bed + "key 16.0 X\nkey 17.5 C\nkey 19.3 Space\nend 22\n");
+        QCOMPARE(layered.view.parts[5].playing, 0);
+        QCOMPARE(int(layered.view.parts[5].clips[0].lengthBeats), 4);
+        QVERIFY(layered.view.parts[5].clips[1].state == ClipView::Empty);
+    }
+
     void everyLayerIsInTheChord() {
         // A minor, the tonic chord: whatever the layer, nearly all its
         // pitched energy is A, C or E (the rest is upper harmonics).

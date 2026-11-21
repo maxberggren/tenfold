@@ -1644,6 +1644,13 @@ QColor familyColor(QColor base, int family) {
 
 class AtmosControl : public PartControl {
 public:
+    // A bed's playing is changes of state (a chord clicked, a layer
+    // latched): a layer spans the whole loop, so a change made once isn't
+    // made again inside it.
+    bool layersSpanTheLoop() const override { return true; }
+    // A bed latched and left isn't playing: it doesn't join a chord clicked
+    // now to playing from before it was left (the loop would reach back).
+    bool soundLeftOnJoinsThePlaying() const override { return false; }
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
 

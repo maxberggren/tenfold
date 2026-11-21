@@ -401,7 +401,9 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
                         heldMoved[i] = heldMoved[heldCount];
                         break;
                     }
-            } else if (c.type == Command::Param) {
+            } else if (c.type == Command::Param && lg.beat >= playedFrom - eps) {
+                // A layer carries in no setting made before it either: the
+                // loop has its own, and it would set it again in the middle.
                 int i = 0;
                 while (i < knobCount && knobs[i].i[0] != c.i[0])
                     ++i;

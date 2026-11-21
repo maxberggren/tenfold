@@ -28,6 +28,8 @@
 // studio's grid, as ordinary hits: they land sample-exact, and a captured
 // loop holds them exactly as heard.
 
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPainter>
 #include <QPainterPath>
 #include <QStringList>
@@ -37,6 +39,7 @@
 #include "console.h"
 #include "drums.h"
 #include "parts.h"
+#include "songfile.h"
 
 namespace tf {
 
@@ -325,6 +328,113 @@ public:
         m_frame = Frame{};
         m_button = false;
         m_repeatKeys = 0;
+    }
+
+    // A new song (or one opened) has none of the old one's loops: no drum is
+    // out of them any more, a roll kept for the old song's bar line doesn't
+    // go into the new one's slot, and overdub is off. The kit and the sounds
+    // stay, as a player who starts again with them would want.
+    void startOver(ControlContext &ctx) override {
+        for (int s = 0; s < kClipSlots; ++s)
+            clearMutes(s, ctx);
+        if (m_keep.active) {
+            if (m_keep.overdubOn && !m_userOverdub)
+                ctx.overdub(false);
+            dropKept();
+            m_keep = Keep{};
+        }
+        if (m_userOverdub) {
+            m_userOverdub = false;
+            ctx.overdub(false);
+        }
+    }
+
+    // The kit by its name (the list may grow or change order), the swing,
+    // how much faster or slower held keys roll, each drum the player shaped,
+    // and the drums taken out of each loop. Overdub isn't kept: a song that
+    // opens recording into its loop would be a surprise.
+    void save(QJsonObject &out) const override {
+        out[QStringLiteral("kit")] = QString::fromLatin1(kitName(m_kit));
+        // Swing moves in steps of 2%, which a float sums to 0.53999996.
+        out[QStringLiteral("swing")] = tidyNumber(double(m_swing), 3);
+        out[QStringLiteral("keyRate")] = m_keyRate;
+        QJsonObject sounds;
+        for (int p = 0; p < PadCount; ++p)
+            if (m_edit[p].any()) {
+                QJsonObject e;
+                e[QStringLiteral("tune")] = tidyFloat(m_edit[p].tune);
+                e[QStringLiteral("decay")] = tidyFloat(m_edit[p].decay);
+                e[QStringLiteral("tone")] = tidyFloat(m_edit[p].tone);
+                sounds[QString::fromLatin1(padName(p))] = e;
+            }
+        if (!sounds.isEmpty())
+            out[QStringLiteral("sounds")] = sounds;
+        QJsonArray muted;
+        for (int s = 0; s < kClipSlots; ++s) {
+            if (!m_muted[s])
+                continue;
+            QJsonArray pads;
+            for (int p = 0; p < PadCount; ++p)
+                if (m_muted[s] >> p & 1u)
+                    pads.append(QString::fromLatin1(padName(p)));
+            QJsonObject m;
+            m[QStringLiteral("slot")] = s;
+            m[QStringLiteral("pads")] = pads;
+            muted.append(m);
+        }
+        if (!muted.isEmpty())
+            out[QStringLiteral("muted")] = muted;
+    }
+
+    // Everything starts from the page's defaults, so a setting the file
+    // lacks is the default and not what the last song left; then what the
+    // file says, checked and clamped, goes to the engine the way the keys
+    // send it. Drums go out of a loop only in a slot the song has a clip in.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        int kit = House;
+        const QString kitIn = in.value(QStringLiteral("kit")).toString();
+        for (int k = 0; k < KitCount; ++k)
+            if (kitIn == QLatin1String(kitName(k)))
+                kit = k;
+        setKit(kit, ctx, false);
+        const QJsonValue swing = in.value(QStringLiteral("swing"));
+        if (swing.isDouble() && std::isfinite(swing.toDouble()))
+            m_swing = float(std::clamp(swing.toDouble(), 0.5, 0.7));
+        m_keyRate = std::clamp(in.value(QStringLiteral("keyRate")).toInt(0), -3, 3);
+
+        const QJsonObject sounds = in.value(QStringLiteral("sounds")).toObject();
+        for (int p = 0; p < PadCount; ++p) {
+            const QJsonObject e = sounds.value(QLatin1String(padName(p))).toObject();
+            auto number = [&](const char *name, double limit) {
+                const QJsonValue v = e.value(QLatin1String(name));
+                const double x = v.isDouble() && std::isfinite(v.toDouble()) ? v.toDouble() : 0.0;
+                return float(std::clamp(x, -limit, limit));
+            };
+            // The ranges a finger can shape to: a tonal drum tunes by whole
+            // scale degrees, the others by semitones.
+            Edit edit;
+            edit.tune = tonal(p) ? std::round(number("tune", 7)) : number("tune", 12);
+            edit.decay = number("decay", 2);
+            edit.tone = number("tone", 1);
+            m_edit[p] = edit;
+            sendEdit(p, ctx);
+        }
+
+        for (int s = 0; s < kClipSlots; ++s)
+            clearMutes(s, ctx);
+        const PartView &pv = ctx.studio().parts[ctx.part()];
+        for (const QJsonValue &v : in.value(QStringLiteral("muted")).toArray()) {
+            const QJsonObject m = v.toObject();
+            const int slot = m.value(QStringLiteral("slot")).toInt(-1);
+            if (slot < 0 || slot >= kClipSlots || pv.clips[slot].state == ClipView::Empty)
+                continue;
+            for (const QJsonValue &name : m.value(QStringLiteral("pads")).toArray())
+                for (int p = 0; p < PadCount; ++p)
+                    if (name.toString() == QLatin1String(padName(p)) && !(m_muted[slot] >> p & 1u)) {
+                        m_muted[slot] |= 1u << p;
+                        sendMute(slot, p, true, ctx);
+                    }
+        }
     }
 
     // --- drawing -------------------------------------------------------------
@@ -1338,7 +1448,8 @@ private:
         }
     }
 
-    void setKit(int kit, ControlContext &ctx) {
+    // say: tell the player (a song being opened sets the kit quietly).
+    void setKit(int kit, ControlContext &ctx, bool say = true) {
         m_kit = kit;
         m_swing = kitSwing(kit);
         Command c;
@@ -1351,9 +1462,10 @@ private:
         for (auto &g : m_gens)
             if (g.active && g.groove)
                 g.setPattern(groovePattern(g.pad, m_kit, g.density, g.shift));
-        ctx.notice(QStringLiteral("%1 kit, swing %2%")
-                       .arg(QString::fromUtf8(kitName(kit)).toUpper())
-                       .arg(int(std::lround(m_swing * 100))));
+        if (say)
+            ctx.notice(QStringLiteral("%1 kit, swing %2%")
+                           .arg(QString::fromUtf8(kitName(kit)).toUpper())
+                           .arg(int(std::lround(m_swing * 100))));
     }
 
     int freeSlot(ControlContext &ctx) const {

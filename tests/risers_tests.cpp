@@ -484,6 +484,49 @@ private slots:
         QVERIFY(d[risers::pub::Drop] > 0);
     }
 
+    // Recording a build and its drop: play the build over a loop, let the
+    // drop land, press Space in the bar after it. The loop runs from the bar
+    // the build began in to the bar after the drop, and every pass drops on
+    // the same bar of it, moving the mix as it did live.
+    void spaceRecordsABuildAndItsDrop() {
+        for (bool rush : {false, true}) {
+            std::string fx = std::string(kBeat) + fmt("page 3.0 7\ndown 3.2 1 %.3f %.3f\nup 3.5 1\n", columnX(0), rowY(2));
+            std::vector<VoiceInfo> v;
+            StudioView view;
+            testkit::play(fx + "end 4\n", [&](Session &s) {
+                v = voicesOf(s.view());
+                view = s.view();
+            });
+            QCOMPARE(int(v.size()), 1);
+            const double landing = view.beat + (3.2 - view.time) * view.bpm / 60.0;
+            double drop = v[0].end;
+            if (rush) {
+                // A click two bars before the drop pulls it to the next bar line.
+                const double click = drop - 8.5;
+                fx += fmt("click %.3f\n", timeOfBeat(view, click));
+                drop = std::ceil((click - 0.25) / 4.0) * 4.0;
+            }
+            const double space = timeOfBeat(view, drop + 4.5);
+            fx += fmt("key %.3f Space\n", space);
+            const double startBar = std::floor(landing / 4.0) * 4.0;
+            const double length = drop + 4.0 - startBar;
+            // Long enough for the loop to come round twice more.
+            const double end = timeOfBeat(view, drop + 4.0 + 2 * length + 1.0);
+            StudioView after;
+            testkit::play(fx + fmt("end %.3f\n", end), [&](Session &s) { after = s.view(); });
+            const PartView &fxv = after.parts[kFx];
+            QVERIFY2(fxv.playing >= 0, rush ? "rush" : "build");
+            QCOMPARE(double(fxv.clips[fxv.playing].lengthBeats), length);
+            // The drop of the latest pass sits on the same bar as the live one.
+            const double last = fxv.data[risers::pub::LastDrop];
+            QVERIFY2(last > drop + length - 0.01, qPrintable(QString::number(last)));
+            const double k = (last - drop) / length;
+            QVERIFY2(std::fabs(k - std::round(k)) < 1e-3, qPrintable(QString("%1 %2 %3").arg(last).arg(drop).arg(length)));
+            // And the mix it moved is home again after it.
+            QCOMPARE(after.master[MasterFilter], 0.5f);
+        }
+    }
+
     // Ten fingers on the busiest risers stay well inside the page's share of
     // the audio callback.
     void tenFingersStayInsideBudget() {

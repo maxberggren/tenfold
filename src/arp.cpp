@@ -647,6 +647,8 @@ struct Engine::Impl {
         bool lastAccent = false;
         int diceBars = 0; // a loop's bars against its take's, for chaos's two-bar phrase
         double freshBeat = -1e9; // when the pool last filled from empty
+        bool aligned = true;     // a loop on the take's own bars (not re-timed when it was made)
+        uint64_t stepAge = 0;    // the voice count before the last step started
     };
     struct Pending {
         uint64_t at;
@@ -671,14 +673,6 @@ struct Engine::Impl {
     float level = 0;
     std::vector<Fired> *log = nullptr; // a ring, sized at init
     uint64_t logCount = 0;
-    // Where the live pattern stood at each of its recent steps, so a loop
-    // of what it just played can start at the same place.
-    struct Mark {
-        double beat;
-        uint64_t before;
-    };
-    Mark marks[512] = {};
-    int markHead = 0;
     double expectBeat = -1;
     uint64_t jumpedAt = 0;
     int states = 0;
@@ -804,7 +798,7 @@ struct Engine::Impl {
                 // moment ago (held into the take); the pattern still starts
                 // where this bar's hand-over says it was.
                 if (c.i[3] >= 0 && L.lastFired < L.step && std::fabs(b - L.freshBeat) < 1e-6)
-                    L.counter = uint64_t(c.i[3]) + stepsBefore(L, eff[lane], b);
+                    L.counter = uint64_t(c.i[3]) + stepsBefore(L, eff[lane], b, double(c.f[2]), true);
                 return;
             }
         }
@@ -814,10 +808,24 @@ struct Engine::Impl {
             L.notes[at].released = false;
             return;
         }
+        // A note that landed on an empty hand starts the pattern over, even
+        // if a loop's quantising brought it a hair before the Offs of the
+        // notes it followed.
+        if (lane == 1 && (flags & kFresh)) {
+            L.count = 0;
+            L.running = false;
+        }
         bool held = false;
         for (int i = 0; i < L.count; ++i)
             held |= !L.notes[i].released;
         const int phase = c.i[3];
+        // A loop taking over from the hand comes in late (its note replayed
+        // after the place it first sounded): it doesn't catch the step the
+        // hand has just played, and counts it as played.
+        const Settings &e = eff[lane];
+        const double inBar = b - std::floor(b / kBeatsPerBar) * kBeatsPerBar;
+        const bool late = lane == 1 && inBar - double(c.f[2]) > 0.02 && inBar - double(c.f[2]) < kBeatsPerBar;
+        const bool handPlayed = late && lanes[0].lastFired == stepAt(b, e.rate, e.swing);
         if (!held && phase >= 0) {
             // A loop coming round: start the pattern where the live one was
             // when this bar began, so the loop is what was heard.
@@ -832,12 +840,23 @@ struct Engine::Impl {
         n.id = c.id;
         fill(n);
         if (fresh) {
-            L.counter = phase >= 0 ? uint64_t(phase) + (lane == 1 ? stepsBefore(L, eff[lane], b) : 0) : 0;
+            L.counter =
+                (phase >= 0 ? uint64_t(phase) : 0) + (lane == 1 ? stepsBefore(L, e, b, double(c.f[2]), !handPlayed) : 0);
             L.freshBeat = b;
         }
         if (!L.running) {
             L.running = true;
-            schedule(L, eff[lane], b, true);
+            // A new chord landed a hair after a step the old one played (the
+            // fingers changed a moment late): the new chord takes the step.
+            const int64_t k = stepAt(b, e.rate, e.swing);
+            if ((flags & kFresh) && !handPlayed && L.lastFired == k &&
+                b - stepStart(k, e.rate, e.swing) < 0.35 * stepBeats(e.rate)) {
+                for (Voice &v : voices)
+                    if (v.on && v.lane == lane && v.born > L.stepAge)
+                        v.fade(rate);
+                L.lastFired = k - 1;
+            }
+            schedule(L, e, b, !handPlayed);
         }
     }
 
@@ -845,16 +864,26 @@ struct Engine::Impl {
     // hears a bar's hand-over late: the pattern has moved on by the notes
     // that bar would already have played. Counts them, from the bar line to
     // b, leaving out the step the lane is about to catch.
-    uint64_t stepsBefore(const Lane &L, const Settings &s, double b) const {
-        const double bar = std::floor((b + 0.01) / kBeatsPerBar) * kBeatsPerBar;
+    // A loop replays a note late when it joins part way in: a note held
+    // into the take comes at the join, a bar's hand-over after its bar line.
+    // The pattern has moved on by the notes played since the note first
+    // sounded (from its own place in the bar, `from`). Counts them, leaving
+    // out the step the lane is about to catch. Not for a loop whose clock
+    // was reset when it was made: its bars are not the take's.
+    uint64_t stepsBefore(const Lane &L, const Settings &s, double b, double from, bool catching) const {
+        if (!L.aligned || rendered - jumpedAt < uint64_t(rate * 0.25))
+            return 0;
+        const double barStart = std::floor((b + 0.01) / kBeatsPerBar) * kBeatsPerBar;
+        const double bar = barStart + std::clamp(from, 0.0, double(kBeatsPerBar));
         if (b - bar < 0.01)
             return 0;
         const double sb = stepBeats(s.rate);
         const int64_t now = stepAt(b, s.rate, s.swing);
-        const bool caught = b - stepStart(now, s.rate, s.swing) < 0.35 * sb;
+        const bool caught = catching && b - stepStart(now, s.rate, s.swing) < 0.35 * sb;
         const int64_t last = caught ? now - 1 : now;
         uint64_t n = 0;
-        for (int64_t k = int64_t(std::llround(bar / sb)); k <= last; ++k) {
+        // (A note that landed a hair after its step counts that step.)
+        for (int64_t k = int64_t(std::ceil((bar - 0.02) / sb)); k <= last; ++k) {
             const StepPlan plan = planStep(s, k, n, k + int64_t(L.diceBars) * stepsPerBar(s.rate));
             if (plan.fire)
                 n += 1 + uint64_t(plan.skip);
@@ -906,22 +935,11 @@ struct Engine::Impl {
             retime(1, before, b);
             break;
         }
-        case kSync: {
-            // Ignored right after the clock jumped: beats from before the
-            // jump don't line up with the loop's.
-            Lane &L = lanes[1];
-            const double len = double(c.f[0]);
-            if (!L.running || len <= 0 || L.sub != 0 || rendered - jumpedAt < uint64_t(rate * 0.25))
-                break;
-            const double x = L.next - len;
-            const Mark *best = nullptr;
-            for (const Mark &m : marks)
-                if (m.beat >= x - 1e-4 && m.beat < x + 1.0 && (!best || m.beat < best->beat))
-                    best = &m;
-            if (best)
-                L.counter = best->before;
+        case kSync:
+            // A take just landed: its loop is on the take's own bars unless
+            // the clock was reset to make it (then the bars are new ones).
+            lanes[1].aligned = rendered - jumpedAt >= uint64_t(rate * 0.25);
             break;
-        }
         case kCut:
             for (Voice &v : voices)
                 if (v.on && v.lane == 0)
@@ -1025,10 +1043,6 @@ struct Engine::Impl {
                 float vel[16];
                 const int n = poolDegrees(L, s, h, perOct, deg, vel);
                 if (n > 0) {
-                    if (lane == 0) {
-                        marks[markHead] = {L.next, L.counter};
-                        markHead = (markHead + 1) % 512;
-                    }
                     PoolView pv;
                     // The climb stops at the octave that would pass the top
                     // of the range (E7), rather than folding back down and
@@ -1063,6 +1077,7 @@ struct Engine::Impl {
                             p.played = s.follow || floorModI(L.cur[k] - d0, perOct) == 0 || (i == 0 && p.stack > 0);
                     }
                     L.lastFired = L.step;
+                    L.stepAge = age;
                     L.lastInBar = int(floorModI(L.step, stepsPerBar(s.rate)));
                     L.lastRatchet = L.plan.ratchet;
                     L.lastAccent = L.plan.accent;
@@ -1540,13 +1555,11 @@ public:
             const bool landed = m_takesSeen != UINT32_MAX && pv.playing >= 0;
             m_takesSeen = pv.takes;
             if (landed && !m_takeHanded) {
-                // It starts part way into its bars: tell the loop where the
-                // live pattern stood that far back.
+                // Tell the loop whether it is on the take's own bars.
                 Command sync;
                 sync.type = kSync;
                 sync.flags = Command::NoRecord;
                 sync.id = kStateId;
-                sync.f[0] = pv.clips[pv.playing].lengthBeats;
                 ctx.send(sync);
                 if (anyNotes()) {
                     m_take = pv.playing;
@@ -1759,6 +1772,7 @@ private:
         float vel = 0.8f;
         double t0 = 0;
         bool first = false;
+        bool fresh = false; // the On about to go out lands on an empty hand
         float angle0 = 0;
         int stack0 = 0;
         double lastMove = 0;
@@ -1825,7 +1839,8 @@ private:
         c.id = n.id;
         c.t = t;
         c.i[0] = n.col;
-        c.i[1] = (n.first ? n.stack : 0) | n.row << 4 | ((renameFrom ? kRename : 0) | (n.key ? kKey : 0)) << 8;
+        c.i[1] = (n.first ? n.stack : 0) | n.row << 4 |
+                 ((renameFrom ? kRename : 0) | (n.key ? kKey : 0) | (type == Command::On && n.fresh ? kFresh : 0)) << 8;
         c.i[2] = renameFrom;
         c.i[3] = phase;
         c.f[0] = n.vel;
@@ -1836,7 +1851,14 @@ private:
         // Which of a two-bar phrase this bar was, so a loop rolls chaos's
         // dice the way the take did, pass after pass.
         if (type == Command::On)
-            c.f[1] = 1.0f + float(int(std::floor((ctx.beatAt(t) + 0.1) / kBeatsPerBar)) & 1);
+        {
+            const double beat = ctx.beatAt(t);
+            c.f[1] = 1.0f + float(int(std::floor((beat + 0.1) / kBeatsPerBar)) & 1);
+            // And where in its bar it sounded, for a loop that replays it late.
+            const double in = beat + 1e-6 - std::floor((beat + 1e-6) / kBeatsPerBar) * kBeatsPerBar;
+            // A note landed just before a bar line belongs to that bar.
+            c.f[2] = float(in > kBeatsPerBar - 0.125 ? in - kBeatsPerBar : in);
+        }
         ctx.send(c);
     }
 
@@ -1960,8 +1982,10 @@ private:
         n.stack = m_s.stack;
         n.stack0 = m_s.stack;
         n.first = first;
+        n.fresh = first;
         sendState(t, ctx, true);
         sendNote(Command::On, n, t, ctx);
+        n.fresh = false;
     }
 
     void liftNote(Note &n, double t, ControlContext &ctx, bool leaving = false) {
@@ -2276,10 +2300,9 @@ private:
                 spend(n, t, ctx);
                 any = true;
             }
-        if (any)
-            ctx.notice(m_latch ? QStringLiteral("Slot %1 plays on from here; the latch let go").arg(m_take + 1)
-                               : QStringLiteral("Slot %1 plays on from here; lift and land for a new layer")
-                                     .arg(m_take + 1));
+        // The session has said what it looped; a latch letting go is news.
+        if (any && m_latch)
+            ctx.notice(QStringLiteral("Slot %1 plays on; the latch let go").arg(m_take + 1));
         m_latch = false;
     }
 

@@ -141,7 +141,7 @@ public:
             c.id = kEveryone;
             c.t = t;
             ctx.send(c);
-            m_localDrop = -1;
+            m_localDrop = m_liveDrop = -1;
             ctx.notice(QStringLiteral("The build falls away"));
             return true;
         }
@@ -224,7 +224,9 @@ public:
             "sub drop during a build\tarms a sub onto the drop (the drop's boom gives way to it)\n"
             "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger\n"
             "hold the sweep\tslide left to close a low-pass on the whole mix, up to open a high-pass; press for drive\n"
-            "Space\tloop what you just played (as on every page)\n"
+            "Space\tloop what you just played (as on every page); Shift+Space layers it onto the loop playing\n"
+            "record a build and its drop\tbuild, let it drop, press Space in the bar after: the loop runs from the bar "
+            "the build began in to the bar after the drop, and drops on the same bar every pass\n"
             "A S D F G\tnoise, pitch, saw, roll, swell risers; Up / Down sets their length\n"
             "Z X C V B N M ,\tthe bottom row's hits, held as long as the key\n"
             "Left / Right\tdrop style: clean; gap, a half-beat breath before the ONE with only the risers' room ringing; "
@@ -389,6 +391,8 @@ private:
         c.f[4] = h.grit;
         c.f[5] = isRiser(h.kind) ? float(h.drop - ctx.beatAt(h.t0)) : 0.0f;
         ctx.send(c);
+        if (isRiser(h.kind))
+            m_liveDrop = h.drop;
         h.sent = true;
         h.last[0] = h.press;
         h.last[1] = h.tone;
@@ -451,12 +455,18 @@ private:
         c.t = t;
         ctx.send(c);
         if (flick) {
+            // And let go of it: the session counts what is held.
+            Command off;
+            off.type = Command::Off;
+            off.id = h.id;
+            off.t = t;
+            ctx.send(off);
             ctx.notice(QStringLiteral("%1 falls away").arg(QString::fromUtf8(kindName(h.kind)).toUpper()));
             bool others = false;
             for (const Finger &o : m_fingers)
                 others |= o.id >= 0 && o.id != h.id && isRiser(o.kind) && o.sent;
             if (!others && data(ctx)[pub::Layers] <= 1)
-                m_localDrop = -1;
+                m_localDrop = m_liveDrop = -1;
         }
         h.id = -1;
     }
@@ -481,6 +491,7 @@ private:
         const double target = std::ceil((beat - 0.25) / kBeatsPerBar - 1e-9) * kBeatsPerBar;
         const double pending = pendingDrop(ctx, beat);
         m_localDrop = pending > 0 ? std::min(pending, target) : target;
+        m_liveDrop = m_localDrop;
         ctx.notice(QStringLiteral("DROP on the next ONE"));
     }
 
@@ -590,6 +601,23 @@ private:
                         if (part != ctx.part())
                             pull(ch(part, Mute), 1, 1);
             }
+        }
+
+        // Recording a build and its drop with Space: once a live build's drop
+        // has fired, mark the beat before the next bar line as part of what
+        // was played. Space's take then runs from the build's first landing
+        // to the bar after the drop, in whole bars, and the loop replays the
+        // build with its drop on the same bar of every pass. The mark is not
+        // an onset of its own (Continue): it never starts a phrase.
+        if (m_liveDrop > 0 && beat >= m_liveDrop + 0.25) {
+            if (std::fabs(d[pub::LastDrop] - m_liveDrop) < 0.01) {
+                Command c;
+                c.type = CmdMark;
+                c.flags = Command::Quantize | Command::Continue;
+                c.t = ctx.timeAt(m_liveDrop + kBeatsPerBar - 1.0);
+                ctx.send(c);
+            }
+            m_liveDrop = -1;
         }
 
         // The lift: the drop comes in a notch louder than the music before
@@ -704,6 +732,7 @@ private:
     int m_style = Clean;
     int m_keyRow = 2; // keys play 4-bar risers until Up or Down says otherwise
     double m_localDrop = -1;
+    double m_liveDrop = -1; // the drop a build played live is aiming at
     double m_statusDrop = -1, m_statusBeat = 0;
     int m_take = -1;
     double m_liftDrop = -1;

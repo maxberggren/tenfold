@@ -135,13 +135,13 @@ enum : uint16_t {
     kState = Command::User,       // a lane's settings
     kOverlay = Command::User + 1, // the right hand shaping a playing loop (never recorded)
     kCut = Command::User + 2,     // the live lane's sounding notes fade at once (never recorded)
-    kSync = Command::User + 3,    // a loop that landed part way in: f[0] its length in beats (never recorded)
+    kSync = Command::User + 3,    // a take just landed (never recorded)
 };
 // On: i[0] column (degree within the octave row), i[1] stack | row << 4 |
 // flags << 8, i[2] the id this note takes over from (a bar's handover), i[3]
 // the pattern position at that bar or −1; f[0] velocity.
 // Move: the same i[0], i[1] and f[0].
-enum : int { kRename = 1, kKey = 2 };
+enum : int { kRename = 1, kKey = 2, kFresh = 4 }; // kFresh: landed on an empty hand, the pattern starts over
 // Overlay masks: which of the right hand's pads are shaping the loop.
 enum : int { kPadRate = 1, kPadRhythm = 2, kPadRange = 4, kPadTone = 8, kPadGroove = 16, kPadEcho = 32 };
 constexpr int kStateId = 0xFFFF00;

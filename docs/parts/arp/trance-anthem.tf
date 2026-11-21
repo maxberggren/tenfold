@@ -1,8 +1,8 @@
 # Trance anthem: a supersaw arp up and down through Am, F, C, G, accents
 # every three notes against the sixteenths, a dotted-eighth ping-pong echo,
 # the right hand opening the filter over eight bars and doubling the rate
-# for the last one. Space on the next ONE loops all eight bars and sets
-# the tempo; the hands lift, and with no notes held the right hand plays
+# for the last one. Space just after the next ONE loops all eight bars;
+# the hands lift, and with no notes held the right hand plays
 # the loop: a filter dive, rolls pressed out, and an echo throw.
 tempo 0 138
 page 0.05 5
@@ -31,7 +31,7 @@ down 13.913 30 0.6706 0.9147
 up 15.478 30
 tap 15.565 0.6706 0.8133
 down 13.913 50 0.3262 0.7000 p=0.5
-key 15.652 Space
+key 15.683 Space
 up 15.662 7
 up 15.662 8
 up 15.662 50

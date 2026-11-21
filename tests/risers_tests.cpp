@@ -355,6 +355,59 @@ private slots:
         QVERIFY(rmsDb(take, timeOf(32.0) - 0.2, timeOf(32.0) + 0.4) < -60);
     }
 
+    // Delete is the shared key for letting go: here the whole build falls
+    // away, as Q (its first key) still does.
+    void deleteDropsTheBuildAway() {
+        StudioView after;
+        testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\nkey 2.5 Delete\n", columnX(0), rowY(3)) +
+                          fmt("end %.3f\n", timeOf(32.0) + 0.5),
+                      [&](Session &s) { after = s.view(); });
+        QVERIFY(after.parts[kFx].data[risers::pub::LastDrop] < 0);
+        QVERIFY(voicesOf(after).empty());
+        QCOMPARE(after.master[MasterFilter], 0.5f);
+    }
+
+    // The band under the pad does what the keys do. On the scripts' window
+    // row 0 is 0.048 of the pad under it, row 1 0.119. Row 0: the clips to
+    // 0.55, then the three drop styles; row 1: shorter, the length, longer
+    // to 0.42, then DROP, FALL AWAY and MOVE MIX.
+    void theBandUnderThePadIsClickable() {
+        // DROP GAP.
+        testkit::play("page 0 7\nbutton 0.2 0.785 -0.048\nend 0.5\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("gap")), qPrintable(s.pageStatus()));
+        });
+        // DROP with nothing building: the next bar line.
+        StudioView after;
+        testkit::play(fmt("page 0 7\nbutton %.3f 0.53 -0.119\nend %.3f\n", timeOf(1.5), timeOf(4.0) + 0.2),
+                      [&](Session &s) { after = s.view(); });
+        QCOMPARE(double(after.parts[kFx].data[risers::pub::LastDrop]), 4.0);
+        // LONGER: the keys' noise riser is 8 bars instead of 4.
+        std::vector<VoiceInfo> v;
+        testkit::play("page 0 7\nbutton 0.2 0.35 -0.119\nkey 0.5 A\nend 0.8\n",
+                      [&](Session &s) { v = voicesOf(s.view()); });
+        QCOMPARE(int(v.size()), 1);
+        QCOMPARE(v[0].end, 32.0);
+        QVERIFY2(v[0].end - v[0].start > 20, qPrintable(QString::number(v[0].start)));
+        // FALL AWAY.
+        testkit::play(fmt("page 0 7\ntap 0.5 %.3f %.3f len=0.2\nbutton 1.5 0.72 -0.119\nend 3.0\n", columnX(0), rowY(3)),
+                      [&](Session &s) { after = s.view(); });
+        QVERIFY(after.parts[kFx].data[risers::pub::Drop] < 0);
+        QVERIFY(after.parts[kFx].data[risers::pub::LastDrop] < 0);
+    }
+
+    // A clip slot clicked stops the loop playing in it; Shift+F1 empties it.
+    void clipsAreClickedAndCleared() {
+        const std::string loop = fmt("page 0 7\ntap 0.5 %.3f 0.1\ntap 1.0 %.3f 0.1\ntap 1.5 %.3f 0.1\ntap 2.0 %.3f 0.1\n"
+                                     "key 2.5 Space\n",
+                                     hitX(3), hitX(3), hitX(0), hitX(3));
+        StudioView after;
+        testkit::play(loop + "button 4.0 0.03 -0.048\nend 6.5\n", [&](Session &s) { after = s.view(); });
+        QCOMPARE(after.parts[kFx].playing, -1);
+        QVERIFY(after.parts[kFx].clips[0].state != ClipView::Empty);
+        testkit::play(loop + "key 4.0 Backspace\nkey 6.0 Shift+F1\nend 6.5\n", [&](Session &s) { after = s.view(); });
+        QCOMPARE(int(after.parts[kFx].clips[0].state), int(ClipView::Empty));
+    }
+
     // The pitch riser lands on the key's tonic two octaves up, and follows a
     // key change.
     void pitchedRisersLandInKey() {

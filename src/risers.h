@@ -59,9 +59,11 @@ inline const char *kindName(int k) {
 //         the onset to the drop (risers).
 //   Move  f[0]..f[4] as in On.
 //   Drop  the drop comes at the next bar line: risers rush into it.
+//   Mark  nothing to play: the page marks the end of a build's take with it
+//         (see risers.cpp), and clips replay it as silence.
 //   Fall  the riser with this id (or every one, kEveryone) falls away, and a drop
 //         no riser aims at any more is called off.
-enum : uint16_t { CmdDrop = Command::User, CmdFall = Command::User + 1 };
+enum : uint16_t { CmdDrop = Command::User, CmdFall = Command::User + 1, CmdMark = Command::User + 2 };
 enum : int32_t { FlagEnterLate = 1 }; // a riser joining a drop enters its length before it
 // Param i[0]: the drop style, f[0] 0 clean, 1 gap, 2 strip. In a gap (and a
 // strip, which ends in one) the risers stop half a beat before the ONE.
@@ -484,10 +486,14 @@ public:
         d[pub::Layers] = float(layers);
     }
 
+    // What is sounding, as the studio's Space hears it: an impact counts for
+    // its first three beats only, so a take of a build and its drop ends on
+    // the bar after the drop, not wherever the crash's tail fades out.
     int voices() const override {
+        const float bar = float(3.0 * 60.0 / m_bpm);
         int n = 0;
         for (const Voice &v : m_voices)
-            n += v.active;
+            n += v.active && !(v.kind == Impact && v.t > bar);
         return n;
     }
 

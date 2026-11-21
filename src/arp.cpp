@@ -1533,6 +1533,7 @@ public:
         // without having waited (below).
         const StudioView &sv = ctx.studio();
         const PartView &pv = sv.parts[ctx.part()];
+        m_running = pv.data[kDataLiveRunning] > 0.5f || pv.data[kDataClipRunning] > 0.5f;
         if (pv.recording >= 0) {
             m_take = pv.recording;
             m_takeView = pv;
@@ -1730,7 +1731,7 @@ public:
             "ECHO\tacross: 1/16 to dotted 1/4 · up: amount · press: throw the feedback\n"
             "right hand, no notes held\tshapes the playing loop, and lets go of it on lifting\n"
             "click\tlatch: the pattern keeps running when the fingers lift (not while a pad is pressed)\n"
-            "Space\tloops what you just played, from the bar line; Space again calls it off\n"
+            "Space\tloops what you just played, from the bar line (a latch lets go: the loop plays it on); Space again calls it off\n"
             "F1–F8 · Backspace\tlaunch a slot · stop the loop at the bar\n"
             "A S D F G H J K L ; '\tnotes, held like fingers\n"
             "Q W E R T Y U I · Z X C V B\tthe eight patterns · the five sounds\n"
@@ -1738,6 +1739,18 @@ public:
             "O P · , .\tfewer or more hits · what the first note grows into\n"
             "Return\tlatch\n"
             "M · N\tfollow the chords page · new dice for random and chaos");
+    }
+
+    // What the tutorial asks: whether the arp follows the chords page, is
+    // latched, and runs (live or from its loop).
+    float tutorialProbe(const QString &name) const override {
+        if (name == QLatin1String("follow"))
+            return m_s.follow ? 1.0f : 0.0f;
+        if (name == QLatin1String("latched"))
+            return m_latch ? 1.0f : 0.0f;
+        if (name == QLatin1String("running"))
+            return m_running ? 1.0f : 0.0f;
+        return PartControl::tutorialProbe(name);
     }
 
     QString status() const override {
@@ -2300,9 +2313,17 @@ private:
                 spend(n, t, ctx);
                 any = true;
             }
-        // The session has said what it looped; a latch letting go is news.
-        if (any && m_latch)
-            ctx.notice(QStringLiteral("Slot %1 plays on; the latch let go").arg(m_take + 1));
+        // The loop plays what the latch held, so the latch lets go: said
+        // here, and on the LATCH chip for a few seconds, so the pattern that
+        // runs on is plainly the loop's and a click isn't needed to stop it.
+        if (m_latch) {
+            const int slot = m_take >= 0 ? m_take : ctx.studio().parts[ctx.part()].playing;
+            ctx.notice(any ? QStringLiteral("The loop in slot %1 plays what was latched; the latch let go").arg(slot + 1)
+                           : QStringLiteral("Unlatched: the loop in slot %1 plays on").arg(slot + 1));
+            m_latchToLoopAt = t;
+            m_latchToLoopSlot = slot;
+        }
+        (void)any;
         m_latch = false;
     }
 
@@ -2350,6 +2371,9 @@ private:
     std::array<Knob, 10> m_knobs{};
     std::array<int, 10> m_chipTouches{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool m_latch = false;
+    bool m_running = false;           // the arp plays, live or from its loop
+    double m_latchToLoopAt = -1e9;    // when a landing loop took the latch over
+    int m_latchToLoopSlot = -1;
     bool m_button = false, m_buttonIgnored = false;
     double m_lastPress = -1;
     int m_take = -1;
@@ -2523,6 +2547,12 @@ void ArpControl::paintChips(QPainter &p, const PaintContext &pc) {
             lit = m_latch;
             tint = c::amber();
             label = QStringLiteral("LATCH");
+            // A loop just took the latched notes over: the chip says where
+            // they went, blinking, for a few seconds.
+            if (!m_latch && pc.time - m_latchToLoopAt < 4.0 && m_latchToLoopSlot >= 0) {
+                label = QStringLiteral("→ LOOP %1").arg(m_latchToLoopSlot + 1);
+                lit = std::fmod(pc.time - m_latchToLoopAt, 0.6) < 0.3;
+            }
         }
         if (lit) {
             p.fillRect(r, tint);
@@ -2812,6 +2842,8 @@ void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
                                                     QString::fromUtf8(patternName(m_s.pattern)));
     if (m_latch)
         second = QStringLiteral("LATCHED · ") + second;
+    else if (pc.time - m_latchToLoopAt < 4.0 && m_latchToLoopSlot >= 0)
+        second = QStringLiteral("LATCH LET GO: LOOP %1 PLAYS IT · ").arg(m_latchToLoopSlot + 1) + second;
     c::text(p, QRectF(info.left(), info.top() + 15, info.width(), 15), second,
             m_latch ? c::amber() : c::alpha(pc.color, 0.55f), 11, true);
 }

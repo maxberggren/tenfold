@@ -18,14 +18,16 @@
 // time.
 //
 // Loops are made on purpose: play, then press Space (the studio's loop key,
-// the same on every page) and what was just played loops; Return loops the
-// last whole bars at the studio's tempo. The page shows a loop on its way
-// before it happens and says what it caught. Pressing the pad until it
-// clicks holds chords: each rings until the next one.
+// the same on every page) and what was just played loops; P loops the last
+// whole bars at the studio's tempo. The page shows a loop on its way before
+// it happens and says what it caught. Pressing the pad until it clicks, or
+// Return, holds chords: each rings until the next one, and Delete lets go.
 //
 // The keyboard plays the same chords: A S D F G H J are I to VII as triads,
 // the Q row adds the ninth, the Z row is sus, Shift makes sevenths (power on
-// the Z row). L holds too.
+// the Z row). The other keys are the ones every part page shares (← → the
+// sound, ↑ ↓ the voicing, Shift+← → the gate, - + the filter), and the band
+// under the pad has a chip for each, so the mouse alone reaches everything.
 //
 // Every chord that sounds, live or from a loop, tells the studio
 // (ctx.setChord), so Bass, Arp and Lead can follow it.
@@ -146,6 +148,32 @@ QString roman(const Tuning &t, int degree) {
     return r;
 }
 
+// Chips as the console draws them, each as wide as its label needs: the
+// width a row of them needs, and the row laid out across r with the room
+// left over shared out evenly.
+qreal chipWidth(const QString &label) { return QFontMetricsF(console::font(12, true)).horizontalAdvance(label) + 10; }
+
+qreal chipsWidth(const QStringList &labels, qreal gap) {
+    qreal w = gap * qreal(std::max<qsizetype>(0, labels.size() - 1));
+    for (const auto &l : labels)
+        w += chipWidth(l);
+    return w;
+}
+
+void fitChips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, const QList<bool> &lit,
+              const QList<int> &ids, qreal gap, console::Hotspots *spots) {
+    const qsizetype n = labels.size();
+    if (n == 0)
+        return;
+    const qreal extra = std::max<qreal>(0, r.width() - chipsWidth(labels, gap)) / qreal(n);
+    qreal x = r.left();
+    for (qsizetype i = 0; i < n; ++i) {
+        const qreal w = i == n - 1 ? r.right() - x : chipWidth(labels[i]) + extra;
+        console::chip(p, pc, QRectF(x, r.top(), w, r.height()), labels[i], lit.value(i), spots, ids.value(i, -1));
+        x += w + gap;
+    }
+}
+
 }
 
 class Control : public PartControl {
@@ -188,8 +216,8 @@ public:
         m_beatNow = ctx.beatAt(t);
         carryOn(t, ctx);
         m_take = ctx.studio().parts[ctx.part()];
-        // A loop just landed (Space's take is made at once, Return's at its
-        // bar line): say what it holds, for a bar.
+        // A loop just landed (Space's take is made at once, P's at its bar
+        // line): say what it holds, for a bar.
         if (m_take.takes != m_seenTakes) {
             if (m_seenTakesValid && m_take.playing >= 0) {
                 m_landedAt = m_beatNow;
@@ -199,9 +227,9 @@ public:
             m_seenTakes = m_take.takes;
         }
         m_seenTakesValid = true;
-        // Return's wait ends just before the bar line: the take goes to the
-        // studio, which lands it on that line. Until then Return again can
-        // still call it off.
+        // P's wait ends just before the bar line: the take goes to the
+        // studio, which lands it on that line. Until then P again can still
+        // call it off.
         if (m_retroEnd >= 0 && ctx.beatAt(t) >= m_retroEnd - 0.06) {
             const double end = m_retroEnd;
             m_retroEnd = -1;
@@ -274,36 +302,51 @@ public:
         case Qt::Key_Backspace:
             ctx.stop();
             return true;
+        // The keys every part page shares (docs/PARTS.md 4b): Return holds,
+        // Shift+Return overdubs, Delete lets go.
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (shift) {
-                m_overdub = !m_overdub;
-                ctx.overdub(m_overdub);
-                ctx.notice(m_overdub ? QStringLiteral("Overdub: what you play joins the loop")
-                                     : QStringLiteral("Overdub off"));
-            } else {
-                requestRetro(t, ctx);
-            }
+            if (shift)
+                toggleOverdub(ctx);
+            else
+                setHold(!m_hold, ctx, t);
             return true;
+        case Qt::Key_Delete:
+            letGo(t, ctx);
+            return true;
+        // Shift+← → steps the gate pattern ([ ] need AltGr on a Swedish
+        // keyboard, so they are only second keys); ← → alone, the sound.
         case Qt::Key_Left:
         case Qt::Key_Right:
+            if (shift) {
+                stepPattern(k.key == Qt::Key_Right ? 1 : -1, ctx);
+                return true;
+            }
             setStyle((m_style + (k.key == Qt::Key_Right ? 1 : StyleCount - 1)) % StyleCount, ctx);
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down:
-            setRegister(std::clamp(m_register + (k.key == Qt::Key_Up ? 1 : -1), -3, 3), t, ctx);
+            stepRegister(k.key == Qt::Key_Up ? 1 : -1, t, ctx);
             return true;
         case Qt::Key_BracketLeft:
         case Qt::Key_BracketRight:
-            setPattern((m_pattern[m_style] + (k.key == Qt::Key_BracketRight ? 1 : PatternCount - 1)) % PatternCount,
-                       ctx);
+            stepPattern(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
             return true;
+        // - and + for the filter (+ is a key of its own on a Swedish
+        // keyboard; = stays as a second key for US ones).
         case Qt::Key_Minus:
+        case Qt::Key_Plus:
         case Qt::Key_Equal:
-            setFilter(m_filter[m_style] + (k.key == Qt::Key_Equal ? 0.05f : -0.05f), t, ctx);
+            stepFilter(k.key == Qt::Key_Minus ? -1 : 1, t, ctx);
             return true;
+        // Second keys: L holds as it always has (the tutorial says so), and
+        // P loops the last whole bars, which was Return's job before Space
+        // took it over on every page.
         case Qt::Key_L:
             setHold(!m_hold, ctx, t);
+            return true;
+        case Qt::Key_P:
+            requestRetro(t, ctx);
             return true;
         default:
             return false;
@@ -332,6 +375,46 @@ public:
             sendParam(ParamRate, 0, 1.0f, ctx);
         }
         m_frame = Frame{};
+    }
+
+    // The mouse on the band under the pad: the clip slots, the sounds, and
+    // a chip for every setting a key reaches.
+    enum Spot {
+        SpotStyle = 100,
+        SpotHold = 200,
+        SpotLetGo,
+        SpotGateDown,
+        SpotGateUp,
+        SpotVoicingDown,
+        SpotVoicingUp,
+        SpotDarker,
+        SpotBrighter,
+        SpotOverdub,
+    };
+    bool click(QPointF at, ControlContext &ctx) override {
+        const int id = m_spots.at(at);
+        if (id < 0)
+            return false;
+        if (console::clickClip(id, ctx.studio().parts[ctx.part()], ctx))
+            return true;
+        const double t = ctx.now();
+        if (id >= SpotStyle && id < int(SpotStyle) + int(StyleCount)) {
+            if (id - SpotStyle != m_style)
+                setStyle(id - SpotStyle, ctx);
+            return true;
+        }
+        switch (id) {
+        case SpotHold: setHold(!m_hold, ctx, t); return true;
+        case SpotLetGo: letGo(t, ctx); return true;
+        case SpotGateDown: stepPattern(-1, ctx); return true;
+        case SpotGateUp: stepPattern(1, ctx); return true;
+        case SpotVoicingDown: stepRegister(-1, t, ctx); return true;
+        case SpotVoicingUp: stepRegister(1, t, ctx); return true;
+        case SpotDarker: stepFilter(-1, t, ctx); return true;
+        case SpotBrighter: stepFilter(1, t, ctx); return true;
+        case SpotOverdub: toggleOverdub(ctx); return true;
+        default: return false;
+        }
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
@@ -568,9 +651,9 @@ private:
     // it caught. Space is the studio's: the session finds the phrase (one
     // cycle of what was repeated, or the whole phrase in whole bars) and
     // loops it at once, setting the tempo when nothing else plays; the page
-    // announces it as it lands. Return is this page's own: the last whole
-    // bars at the tempo already running, taken at the bar line, with the
-    // page counting down to it.
+    // announces it as it lands. P is this page's own: the last whole bars at
+    // the tempo already running, taken at the bar line, with the page
+    // counting down to it.
 
     // Space ends a take a beat after the last onset it heard, which would
     // cut a chord held across a bar short. While a beat can be heard and a
@@ -620,7 +703,7 @@ private:
             return QStringLiteral("%1 BAR%2").arg(b).arg(b > 1 ? "S" : "");
         };
         if (m_retroEnd >= 0)
-            return QStringLiteral("LOOPING THE LAST %1 IN %2 · RETURN CALLS IT OFF")
+            return QStringLiteral("LOOPING THE LAST %1 IN %2 · P CALLS IT OFF")
                 .arg(bars(m_retroBars * kBeatsPerBar), beats(m_retroEnd - beat));
         if (v.recording >= 0) {
             const double at = v.takeBeats > 0 ? v.takeAt : std::ceil(beat / kBeatsPerBar - 1e-9) * kBeatsPerBar;
@@ -712,7 +795,43 @@ private:
             m_latched = 0;
             m_latchedOrder = 0;
         }
-        ctx.notice(on ? QStringLiteral("Hold: chords ring until the next one") : QStringLiteral("Hold off"));
+        ctx.notice(on ? QStringLiteral("Hold: chords ring until the next one (Delete lets go)")
+                      : QStringLiteral("Hold off"));
+    }
+
+    // Delete: the chord that hold keeps ringing stops; hold stays on for
+    // the next one.
+    void letGo(double t, ControlContext &ctx) {
+        if (m_latched == 0) {
+            ctx.notice(m_hold ? QStringLiteral("Nothing held yet: the next chord rings until another")
+                              : QStringLiteral("Nothing held: Return holds chords"));
+            return;
+        }
+        sendOff(m_latched, t, ctx);
+        m_latched = 0;
+        m_latchedOrder = 0;
+        ctx.notice(QStringLiteral("Let go"));
+    }
+
+    void toggleOverdub(ControlContext &ctx) {
+        m_overdub = !m_overdub;
+        ctx.overdub(m_overdub);
+        ctx.notice(m_overdub ? QStringLiteral("Overdub: what you play joins the loop") : QStringLiteral("Overdub off"));
+    }
+
+    void stepPattern(int dir, ControlContext &ctx) {
+        setPattern((m_pattern[m_style] + PatternCount + dir) % PatternCount, ctx);
+    }
+
+    void stepRegister(int dir, double t, ControlContext &ctx) {
+        setRegister(std::clamp(m_register + dir, -3, 3), t, ctx);
+    }
+
+    void stepFilter(int dir, double t, ControlContext &ctx) {
+        setFilter(m_filter[m_style] + 0.05f * float(dir), t, ctx);
+        ctx.notice(QStringLiteral("%1 filter %2%")
+                       .arg(QString::fromUtf8(styleDef(m_style).name))
+                       .arg(int(std::lround(m_filter[m_style] * 100))));
     }
 
     void setStyle(int s, ControlContext &ctx) {
@@ -774,11 +893,11 @@ private:
                 }
     }
 
-    // Return: the last whole bars played become a loop, at the tempo already
+    // P: the last whole bars played become a loop, at the tempo already
     // running. Pressed in the first beat of a bar it takes the bars up to
     // that bar line; later, it waits for the next one, so the bar being
-    // played is in. Return again while it waits calls it off, and it stands
-    // back for a loop Space has already set going.
+    // played is in. P again while it waits calls it off, and it stands back
+    // for a loop Space has already set going.
     void requestRetro(double t, ControlContext &ctx) {
         if (m_retroEnd >= 0) {
             m_retroEnd = -1;
@@ -797,7 +916,7 @@ private:
         }
         const int bars = retroBars(bar + kBeatsPerBar);
         if (bars == 0) {
-            ctx.notice(QStringLiteral("Play some chords first, then Return loops them"));
+            ctx.notice(QStringLiteral("Play some chords first, then P loops them"));
             return;
         }
         m_retroEnd = bar + kBeatsPerBar;
@@ -837,7 +956,7 @@ private:
     void retroCapture(double endBeat, ControlContext &ctx) {
         const int bars = retroBars(endBeat);
         if (bars == 0) {
-            ctx.notice(QStringLiteral("Play some chords first, then Return loops them"));
+            ctx.notice(QStringLiteral("Play some chords first, then P loops them"));
             return;
         }
         const int slot = ctx.freeSlot();
@@ -866,6 +985,7 @@ private:
     float m_landedBeats = 0;
     int m_retroBars = 0;
     Frame m_frame;
+    console::Hotspots m_spots; // what paint() drew to be clicked
     bool m_button = false, m_heard = false;
     int m_nextId = 0, m_order = 0;
 
@@ -963,8 +1083,25 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
 
     paintRail(p, pc, d);
 
+    // Along the top edge: the sound, hold, the register, overdub.
+    qreal tagsRight = pc.pad.left() + 110;
+    {
+        qreal &x = tagsRight;
+        const qreal y = pc.pad.top();
+        x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).name), col, 12).right() + 8;
+        if (m_hold)
+            x = c::tag(p, QPointF(x, y), QStringLiteral("HOLD"), c::amber(), 12).right() + 8;
+        if (m_register != 0)
+            x = c::tag(p, QPointF(x, y), QStringLiteral("VOICING %1%2").arg(m_register > 0 ? "+" : "").arg(m_register),
+                       c::alpha(col, 0.8f), 12)
+                    .right() +
+                8;
+        if (m_overdub)
+            x = c::tag(p, QPointF(x, y), QStringLiteral("OVERDUB"), c::red(), 12).right() + 8;
+    }
+
     // The progression so far along the top edge, newest at the right, just
-    // left of the beat lights.
+    // left of the beat lights and right of the tags.
     if (m_ribbonCount > 0) {
         QFont f = c::font(11, true);
         f.setCapitalization(QFont::MixedCase);
@@ -975,7 +1112,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
             const Shape &s = m_ribbon[(m_ribbonHead - m_ribbonCount + i + 2 * kRibbon) % kRibbon];
             const QString name = chordName(t, s);
             const qreal w = fm.horizontalAdvance(name) + 12;
-            if (x - w < pc.pad.left() + pc.pad.width() * 0.42)
+            if (x - w < std::max(pc.pad.left() + pc.pad.width() * 0.42, tagsRight))
                 break;
             x -= w;
             const bool last = i == m_ribbonCount - 1;
@@ -985,7 +1122,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         }
     }
 
-    // A loop on its way (Return's, or a take still waiting for its bar line):
+    // A loop on its way (P's, or a take still waiting for its bar line):
     // the pad framed in red, pulsing on the beat, and what is coming in amber.
     // A loop just landed: what it holds, in the part's own colour.
     bool waiting = false;
@@ -1021,24 +1158,65 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         c::finger(p, pc, tc, col, {}, 0.4f + 0.6f * level);
     }
 
-    // Along the top edge: the sound, hold, the register, overdub.
-    qreal x = pc.pad.left() + 110;
-    const qreal y = pc.pad.top();
-    x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).name), col, 12).right() + 8;
-    if (m_hold)
-        x = c::tag(p, QPointF(x, y), QStringLiteral("HOLD"), c::amber(), 12).right() + 8;
-    if (m_register != 0)
-        x = c::tag(p, QPointF(x, y), QStringLiteral("VOICING %1%2").arg(m_register > 0 ? "+" : "").arg(m_register),
-                   c::alpha(col, 0.8f), 12)
-                .right() +
-            8;
-    if (m_overdub)
-        c::tag(p, QPointF(x, y), QStringLiteral("OVERDUB"), c::red(), 12);
 
     c::beats(p, pc, col);
-    const QRectF band(pc.pad.left(), pc.pad.bottom() + 14, pc.pad.width(), 30);
-    c::clips(p, QRectF(band.left(), band.top(), band.width() * 0.52, band.height()), *pc.view, col, pc.time);
-    paintKeys(p, QRectF(band.left() + band.width() * 0.55, band.top(), band.width() * 0.45, band.height()), pc, d);
+
+    // Below the pad, every one clickable. Row 0: the clips, the sounds, and
+    // the chord's notes on a keyboard; row 1: a chip for each setting a key
+    // reaches, its key on it. Chips are as wide as their words need, so they
+    // read on a narrow window too.
+    m_spots.clear();
+    const qreal gap = 4, between = 12;
+    QStringList sounds;
+    QList<bool> soundLit;
+    QList<int> soundIds;
+    for (int s = 0; s < StyleCount; ++s) {
+        sounds << QString::fromUtf8(styleDef(s).name);
+        soundLit << (s == m_style);
+        soundIds << SpotStyle + s;
+    }
+    const QRectF top = c::bandRow(pc, 0);
+    const qreal keysW = top.width() * 0.2;
+    const qreal soundsW = std::max(chipsWidth(sounds, gap), top.width() * 0.41);
+    const qreal clipsW = top.width() - keysW - soundsW - 2 * between;
+    c::clips(p, QRectF(top.left(), top.top(), clipsW, top.height()), *pc.view, col, pc.time, &m_spots);
+    fitChips(p, pc, QRectF(top.left() + clipsW + between, top.top(), soundsW, top.height()), sounds, soundLit,
+             soundIds, gap, &m_spots);
+    paintKeys(p, QRectF(top.right() - keysW, top.top(), keysW, top.height()), pc, d);
+
+    struct Setting {
+        const char *name, *key;
+        int id;
+        bool lit;
+    };
+    const Setting settings[] = {
+        {"HOLD", "⏎", SpotHold, m_hold},
+        {"LET GO", "DEL", SpotLetGo, false},
+        {"GATE −", "⇧←", SpotGateDown, false},
+        {"GATE +", "⇧→", SpotGateUp, false},
+        {"VOICE −", "↓", SpotVoicingDown, false},
+        {"VOICE +", "↑", SpotVoicingUp, false},
+        {"DARKER", "-", SpotDarker, false},
+        {"BRIGHTER", "+", SpotBrighter, false},
+        {"OVERDUB", "⇧⏎", SpotOverdub, m_overdub},
+    };
+    const QRectF bottom = c::bandRow(pc, 1);
+    // On a narrow window the space between a setting and its key closes up.
+    QStringList labels;
+    QList<bool> lit;
+    QList<int> ids;
+    for (const char *sep : {"  ", " "}) {
+        labels.clear();
+        for (const auto &st : settings)
+            labels << QString::fromUtf8(st.name) + QLatin1String(sep) + QString::fromUtf8(st.key);
+        if (chipsWidth(labels, gap) <= bottom.width())
+            break;
+    }
+    for (const auto &st : settings) {
+        lit << st.lit;
+        ids << st.id;
+    }
+    fitChips(p, pc, bottom, labels, lit, ids, gap, &m_spots);
 }
 
 // The rail: a cell per pattern, its hits drawn as a bar of steps, this
@@ -1134,24 +1312,32 @@ void Control::paintKeys(QPainter &p, const QRectF &r, const PaintContext &pc, co
 }
 
 QString Control::help() const {
+    // The keys every part page shares come first, then this page's own.
     return QStringLiteral(
+        "← →\tthe sound: pad, trance, organ, piano, pluck, pump\n"
+        "↑ ↓\tthe voicing higher or lower\n"
+        "Shift+← →  (or [ ])\tthe gate pattern for this sound\n"
+        "- +  (or =)\tthe filter darker or brighter\n"
+        "Return (or L)\thold: chords ring until the next one (again: hold off)\n"
+        "Delete\tlet go of the chord hold keeps ringing\n"
+        "Shift+Return\toverdub on or off: what you play joins the loop\n"
+        "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot at the next bar · clear it · stop the loop\n"
+        "play, then Space\tloops what you just played at once: played twice, one cycle of it\n"
+        "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds, and a chip for every key "
+        "above: hold, let go, gate, voicing, darker, brighter, overdub\n"
         "touch a column\ta chord of the key, I to VII, voiced to flow from the last one\n"
         "the five rows\tits colour, bottom to top: power 5, sus, triad, add9, seventh\n"
         "slide up or down\tchange colour while it sounds; the voices glide\n"
         "another finger\ta new chord takes over; lift it and the one still held returns\n"
         "press harder · flat finger\tswell it · double it an octave under and over\n"
         "twist\tthe filter, a knob under the finger\n"
-        "press until it clicks, or L\thold: chords ring until the next one (again to let go)\n"
+        "press until it clicks\thold, as Return does\n"
         "tap the rail along the top\tkeep that gate rhythm for this sound\n"
         "hold the rail\tplay that rhythm over everything, loops too, while the finger stays\n"
         "higher on the rail · twist there\tlonger hits · swing\n"
         "two, three fingers on the rail\tdouble, then quadruple time, brighter: a build-up\n"
-        "play, then Space\tloops what you just played at once: played twice, one cycle of it\n"
         "A S D F G H J\tchords I to VII; Q row add9, Z row sus; Shift for sevenths (Z row: power)\n"
-        "Return · Shift+Return\tloop the last whole bars at the tempo running (1, 2, 4 or 8) · overdub\n"
-        "← → · ↑ ↓\tthe sound: pad, trance, organ, piano, pluck, pump · voicing higher or lower\n"
-        "[ ] · - =\tthe gate pattern · the filter\n"
-        "F1–F8 · Backspace\tlaunch a slot at the next bar (Shift: clear it) · stop the loop");
+        "P\tloop the last whole bars at the tempo running (1, 2, 4 or 8), at the bar line; again calls it off");
 }
 
 QString Control::status() const {

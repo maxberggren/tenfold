@@ -36,8 +36,8 @@ tap 12.688 0.433 0.5 len=0.2
 key 13.719 Space
 # FX (page 7). Drop style STRIP: drums and bass leave for the build's last bar.
 page 13.906 7
-key 13.953 Right
-key 14.000 Right
+key 13.953 Shift+Right
+key 14.000 Shift+Right
 # An 8-bar noise sweep from bar 8: it aims at the phrase line at bar 16
 # (32.375 s), sliding up as it goes.
 down 17.398 1 0.10 0.76 p=0.45

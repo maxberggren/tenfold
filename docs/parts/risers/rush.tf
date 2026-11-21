@@ -38,7 +38,7 @@ key 13.719 Space
 # FX (page 7). Drop style GAP: everything but the risers holds its breath for
 # the last half beat.
 page 13.906 7
-key 13.953 Right
+key 13.953 Shift+Right
 # Two pitch risers in the 8-bar row aiming at the phrase line at bar 16: one
 # lands on the tonic, the other slides two scale steps up, to the third.
 down 17.398 1 0.30 0.76 p=0.5

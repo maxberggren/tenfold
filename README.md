@@ -27,7 +27,7 @@ pick a page with its number:
 | 4 | Lead | A two-octave neck: glide, wiggle for vibrato, twist to bend, a second finger for legato, the left column for harmonies. Ten sounds from anthem to hoover, a vintage mono synth and a breathy flute. |
 | 5 | Arp | Hold notes on the left; the pads on the right set rate, rhythm, range, tone, groove and echo. Click to latch. Ten sounds from trance pluck and acid to marimba, harp, Rhodes and organ. |
 | 6 | Atmos | Five layers (drone, pad, choir, glass, air), one per finger; click to latch, F freezes, S swells. Scenes on Q–I. |
-| 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws. Click to drop now. |
+| 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws, in ten sets from EDM and analog to dub, lo-fi, trap, cinema and ambient. Click to drop now. |
 | 8 | Vocal | Your microphone, heard at once in the headphones. Each finger in the middle is your voice again as a harmony in the key (−8ve to +8ve, height the throat, giant to elf); touch a word on the tape and it plays again; the edges are filter, freeze and stutter, echo and reverb throws, radio and crush; click for tape stop. Hard tune, prism, choir, vocoder and robot on ← →. Space loops your last phrase as audio, cut in the breaths; Shift+Space layers it. |
 | 0 | Arrange | Every part's clips, scenes on the bar, a ten-finger mixer, a tension fader for builds and drops. I writes a whole track from your loops. |
 
@@ -77,9 +77,9 @@ also has a button in the band under the pad, so the mouse alone can play:
 
 | Key | Does |
 |---|---|
-| ← → | the sound: kit, preset, scene, drop style |
+| ← → | the sound: kit, preset, scene, FX set |
 | ↑ ↓ | octave or register (Drums: the loop longer or shorter, any time; FX: riser length) |
-| Shift ← → | the rhythm: swing, gate, arp rate |
+| Shift ← → | the rhythm: swing, gate, arp rate, FX drop style |
 | - + | tone: darker, brighter |
 | Return | hold or latch (FX: drop; Drums: keep the roll) |
 | Shift Return | overdub |

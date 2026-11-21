@@ -3,6 +3,8 @@
 // sample), and the page played through the real session.
 
 #include <QImage>
+#include <QJsonArray>
+#include <climits>
 #include <QPainter>
 #include <map>
 #include <set>
@@ -961,6 +963,153 @@ private slots:
                               }
                           QVERIFY(green > 200);
                       });
+    }
+
+    // --- song files -----------------------------------------------------------
+
+    void aSavedSongOpensWithTheArpAsItWasSet() {
+        // Every key-reachable choice moved off its default, a loop made, then
+        // the latch left on with nothing held.
+        const std::string script = "page 0 5\nkey 0.1 R\nkey 0.15 C\nkey 0.2 Shift+Right\nkey 0.25 Up\n"
+                                   "key 0.3 Shift+Up\nkey 0.35 +\nkey 0.4 .\nkey 0.45 N\nkey 0.5 O\nkey 0.55 §\n"
+                                   "down 1.0 1 " + gridX(2) + " 0.32\nkey 3.9 Space\nup 4.2 1\n"
+                                   "key 6.0 Return\nend 6.5\n";
+        testkit::reopen(script, 3.0, [](Session &before, Session &opened, const QJsonObject &doc) {
+            const QJsonObject part = doc[QStringLiteral("parts")].toArray()[4].toObject();
+            QCOMPARE(part[QStringLiteral("name")].toString(), QStringLiteral("Arp"));
+            const QJsonObject settings = part[QStringLiteral("settings")].toObject();
+            QCOMPARE(settings[QStringLiteral("pattern")].toString(), QStringLiteral("converge"));
+            QCOMPARE(settings[QStringLiteral("sound")].toString(), QStringLiteral("supersaw"));
+            QCOMPARE(settings[QStringLiteral("rate")].toString(), QStringLiteral("1/16T"));
+            QCOMPARE(settings[QStringLiteral("register")].toInt(), 2);
+            QCOMPARE(settings[QStringLiteral("octaves")].toInt(), 3);
+            QCOMPARE(settings[QStringLiteral("firstNote")].toString(), QStringLiteral("seventh"));
+            QCOMPARE(settings[QStringLiteral("follow")].toBool(), true);
+            QCOMPARE(settings[QStringLiteral("latch")].toBool(), true);
+            QVERIFY(std::fabs(settings[QStringLiteral("tone")].toDouble() - 0.6) < 1e-6);
+            QVERIFY(settings[QStringLiteral("dice")].toInteger() != 1);
+            QVERIFY(settings[QStringLiteral("density")].toDouble() < 1);
+            // What the opened song would save is what was saved.
+            const QJsonObject again = opened.saveSong()[QStringLiteral("parts")].toArray()[4].toObject();
+            QCOMPARE(again[QStringLiteral("settings")].toObject(), settings);
+            // The engine plays with the same settings, the page shows them.
+            QVERIFY(engineOf(opened)->laneSettings(0) == engineOf(before)->laneSettings(0));
+            QCOMPARE(opened.probe(4, QStringLiteral("latched")), 1.0f);
+            QCOMPARE(opened.probe(4, QStringLiteral("follow")), 1.0f);
+            const QString status = opened.pageStatus(4);
+            QVERIFY2(status.contains(QStringLiteral("converge · 1/16T · 3 oct · supersaw")), qPrintable(status));
+            // And the loop plays on.
+            QVERIFY(before.view().parts[4].playing >= 0);
+            QCOMPARE(opened.view().parts[4].playing, before.view().parts[4].playing);
+        });
+    }
+
+    void aBrokenSongLeavesTheArpSane() {
+        QJsonObject doc;
+        testkit::play("end 0.1\n", [&](Session &s) { doc = s.saveSong(); });
+        QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+        QJsonObject part = parts[4].toObject();
+        QCOMPARE(part[QStringLiteral("name")].toString(), QStringLiteral("Arp"));
+        part[QStringLiteral("settings")] = QJsonObject{
+            {QStringLiteral("pattern"), 42},
+            {QStringLiteral("sound"), QStringLiteral("kazoo")},
+            {QStringLiteral("rate"), QStringLiteral("1/7")},
+            {QStringLiteral("gate"), 1e300},
+            {QStringLiteral("swing"), -5},
+            {QStringLiteral("density"), QStringLiteral("lots")},
+            {QStringLiteral("rotate"), 1e12},
+            {QStringLiteral("register"), -2147483649.0},
+            {QStringLiteral("octaves"), 99},
+            {QStringLiteral("firstNote"), true},
+            {QStringLiteral("follow"), QStringLiteral("yes")},
+            {QStringLiteral("tone"), -1},
+            {QStringLiteral("resonance"), QJsonArray{1, 2}},
+            {QStringLiteral("accentEvery"), 6},
+            {QStringLiteral("chaos"), 7},
+            {QStringLiteral("dice"), -1},
+            {QStringLiteral("echoTime"), QJsonValue()},
+            {QStringLiteral("echo"), 2.5},
+            {QStringLiteral("latch"), 1},
+            {QStringLiteral("someday"), QStringLiteral("a setting a newer tenfold has")},
+        };
+        parts[4] = part;
+        doc[QStringLiteral("parts")] = parts;
+        // Opened over a song whose arp ran up·down, latched.
+        testkit::play("page 0 5\nkey 0.1 E\nkey 0.15 Return\nend 0.2\n", [&](Session &s) {
+            QCOMPARE(s.probe(4, QStringLiteral("latched")), 1.0f);
+            QString error;
+            QVERIFY2(s.openSong(doc, &error), qPrintable(error));
+            float buf[384 * 2];
+            for (int i = 0; i < 10; ++i)
+                s.studio()->render(buf, 384);
+            s.refresh();
+            const QJsonObject got =
+                s.saveSong()[QStringLiteral("parts")].toArray()[4].toObject()[QStringLiteral("settings")].toObject();
+            // Unknown names and wrong types keep the page's defaults, not
+            // the song before's up·down; numbers are clamped.
+            QCOMPARE(got[QStringLiteral("pattern")].toString(), QStringLiteral("up"));
+            QCOMPARE(got[QStringLiteral("sound")].toString(), QStringLiteral("pluck"));
+            QCOMPARE(got[QStringLiteral("rate")].toString(), QStringLiteral("1/16"));
+            QCOMPARE(got[QStringLiteral("gate")].toDouble(), 1.0);
+            QCOMPARE(got[QStringLiteral("swing")].toDouble(), 0.0);
+            QCOMPARE(got[QStringLiteral("density")].toDouble(), 1.0);
+            QCOMPARE(got[QStringLiteral("rotate")].toInt(), 31);
+            QCOMPARE(got[QStringLiteral("register")].toInt(), 0);
+            QCOMPARE(got[QStringLiteral("octaves")].toInt(), 4);
+            QCOMPARE(got[QStringLiteral("firstNote")].toString(), QStringLiteral("triad"));
+            QCOMPARE(got[QStringLiteral("follow")].toBool(), false);
+            QVERIFY(std::fabs(got[QStringLiteral("tone")].toDouble() - 0.04) < 1e-6);
+            QVERIFY(std::fabs(got[QStringLiteral("resonance")].toDouble() - 0.3) < 1e-6);
+            QCOMPARE(got[QStringLiteral("accentEvery")].toInt(), 0);
+            QCOMPARE(got[QStringLiteral("chaos")].toDouble(), 1.0);
+            QCOMPARE(got[QStringLiteral("dice")].toInteger(), 0);
+            QCOMPARE(got[QStringLiteral("echoTime")].toString(), QStringLiteral("1/8."));
+            QCOMPARE(got[QStringLiteral("echo")].toDouble(), 1.0);
+            QCOMPARE(got[QStringLiteral("latch")].toBool(), false);
+            QVERIFY(!got.contains(QStringLiteral("someday")));
+            const arp::Settings &e = engineOf(s)->laneSettings(0);
+            QCOMPARE(e.pattern, int(arp::Up));
+            QCOMPARE(e.octaves, 4);
+            QCOMPARE(e.rotate, 31);
+            QCOMPARE(e.gate, 1.0f);
+            QCOMPARE(s.probe(4, QStringLiteral("latched")), 0.0f);
+        });
+    }
+
+    void aLoopFromAFileCannotPushTheEngineOffItsGrid() {
+        // A clip's events come from disk: any int and any finite float.
+        // The engine plays them without reading past its tables or hanging.
+        std::unique_ptr<arp::Engine> owner;
+        arp::Engine &e = *fresh(owner);
+        Clock c;
+        state(e, c, arp::Settings{}, 0);
+        const int clip = (1 << 30) | (3 << 27);
+        const int ints[] = {INT_MAX, INT_MIN, -1, 1 << 20};
+        for (int k = 0; k < 4; ++k) {
+            Command on;
+            on.type = Command::On;
+            on.id = clip | (k + 1);
+            on.t = c.timeOfBeat(0.5 * k);
+            on.i[0] = ints[k];
+            on.i[1] = ints[(k + 1) % 4];
+            on.i[2] = ints[(k + 2) % 4];
+            on.i[3] = ints[(k + 3) % 4];
+            on.f[0] = k % 2 ? 3e38f : -3e38f;
+            on.f[1] = k % 2 ? 3e38f : 1.5f;
+            on.f[2] = k % 2 ? -3e38f : 3e38f;
+            e.command(on, c);
+            Command move = on;
+            move.type = Command::Move;
+            move.t = c.timeOfBeat(0.5 * k + 0.25);
+            move.i[0] = ints[(k + 2) % 4];
+            e.command(move, c);
+        }
+        c.runTo(e, 8);
+        QVERIFY(std::isfinite(c.peak));
+        const auto log = e.log();
+        QVERIFY(!log.empty());
+        for (const auto &f : log)
+            QVERIFY2(f.midi > 0 && f.midi < 140, qPrintable(QString::number(f.midi)));
     }
 };
 

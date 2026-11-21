@@ -165,8 +165,9 @@ Item {
                     text: backend.tutorialText
                     color: panel.paper
                     font.family: panel.mono
-                    font.pixelSize: 14
-                    lineHeight: 1.12
+                    // A small window keeps the whole instruction in view.
+                    font.pixelSize: panel.height < 380 ? 13 : 14
+                    lineHeight: panel.height < 380 ? 1.04 : 1.12
                     wrapMode: Text.Wrap
                 }
 

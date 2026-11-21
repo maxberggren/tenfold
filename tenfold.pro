@@ -27,6 +27,7 @@ HEADERS += \
     src/parts.h \
     src/phrase.h \
     src/session.h \
+    src/songfile.h \
     src/studio.h \
     src/surface.h \
     src/theme.h \
@@ -58,6 +59,7 @@ SOURCES += \
     src/offline.cpp \
     src/parts.cpp \
     src/session.cpp \
+    src/songfile.cpp \
     src/studio.cpp \
     src/surface.cpp \
     src/theme.cpp \

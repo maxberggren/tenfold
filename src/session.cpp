@@ -1,5 +1,6 @@
 #include "session.h"
 
+#include <QJsonArray>
 #include <QPainter>
 #include <Qt>
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <cstdlib>
 
 #include "parts.h"
+#include "songfile.h"
 
 namespace tf {
 
@@ -1442,10 +1444,12 @@ void Session::startOver() {
     context(m_page).notice(QStringLiteral("Starting over: the next loop sets the tempo"));
 }
 
-void Session::clearEverything() {
-    StudioMsg m;
-    m.kind = StudioMsg::ClearAll;
-    m_studio->post(m);
+void Session::clearEverything(bool studio) {
+    if (studio) {
+        StudioMsg m;
+        m.kind = StudioMsg::ClearAll;
+        m_studio->post(m);
+    }
     // The mix as the studio is about to set it, so the pages see it now.
     for (auto &page : m_pages)
         if (page->part >= 0 && page->part < m_view.partCount)
@@ -1506,6 +1510,245 @@ void Session::stopAll() {
     for (int i = 0; i < m_partCount; ++i)
         context(m_page).stopPart(i, false);
     context(m_page).notice(QStringLiteral("Everything stops at the bar"));
+}
+
+// --- song files ----------------------------------------------------------------
+
+namespace {
+
+// The names a song file gives the mixer's settings, in the order of the
+// Channel and Master enums.
+const char *const kChannelNames[ChannelCount] = {"gain", "pan", "filter", "reverb", "echo", "pump", "mute", "solo"};
+const char *const kMasterNames[MasterCount] = {"room", "shimmer", "echoTime", "echoFeedback", "filter", "drive", "gain"};
+
+// A setting from 0 to 1, or `fallback` when the file doesn't say.
+float unit(const QJsonObject &o, const char *name, float fallback) {
+    const QJsonValue v = o.value(QLatin1String(name));
+    return v.isDouble() && std::isfinite(v.toDouble()) ? float(std::clamp(v.toDouble(), 0.0, 1.0)) : fallback;
+}
+
+}
+
+bool Session::anythingMade() const {
+    std::lock_guard lock(m_lock);
+    for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+        for (const auto &c : m_view.parts[p].clips)
+            if (c.state != ClipView::Empty)
+                return true;
+    return false;
+}
+
+void Session::say(const QString &text) {
+    std::lock_guard lock(m_lock);
+    context(m_page).notice(text);
+}
+
+QJsonObject Session::saveSong(QString *error) {
+    std::lock_guard lock(m_lock);
+    ClipSet clips;
+    if (!m_studio->readClips(clips)) {
+        if (error)
+            *error = QStringLiteral("Not saved: the audio isn't answering");
+        return {};
+    }
+    QJsonObject doc;
+    doc[QStringLiteral("tenfold")] = kSongFormat;
+    doc[QStringLiteral("tempo")] = tidyNumber(m_view.bpm, 6);
+    QJsonObject key;
+    key[QStringLiteral("root")] = m_view.root;
+    key[QStringLiteral("family")] = m_view.family;
+    key[QStringLiteral("brightness")] = m_view.brightness;
+    const ScaleFamily &fam = family(m_view.family);
+    key[QStringLiteral("name")] = QStringLiteral("%1 %2").arg(
+        QString::fromUtf8(Tuning::noteName(m_view.root)),
+        QString::fromUtf8(fam.modeNames[std::clamp(m_view.brightness, 0, fam.modeCount - 1)]));
+    doc[QStringLiteral("key")] = key;
+    doc[QStringLiteral("metronome")] = m_view.metronome;
+    doc[QStringLiteral("page")] = m_pages[size_t(m_page)]->spec.name;
+    QJsonObject master;
+    for (int i = 0; i < MasterCount; ++i)
+        master[QLatin1String(kMasterNames[i])] = tidyFloat(m_view.master[i]);
+    doc[QStringLiteral("master")] = master;
+    QJsonArray parts;
+    for (auto &page : m_pages) {
+        if (page->part < 0)
+            continue;
+        const int p = page->part;
+        QJsonObject part;
+        part[QStringLiteral("name")] = page->spec.name;
+        QJsonObject mix;
+        for (int c = 0; c < ChannelCount; ++c)
+            mix[QLatin1String(kChannelNames[c])] = tidyFloat(m_view.parts[p].channel.value[c]);
+        part[QStringLiteral("mix")] = mix;
+        QJsonObject settings;
+        page->spec.control->save(settings);
+        part[QStringLiteral("settings")] = settings;
+        const bool known = p < clips.parts;
+        part[QStringLiteral("playing")] = known ? clips.playing[p] : -1;
+        QJsonArray list;
+        for (int c = 0; known && c < kClipSlots; ++c)
+            if (clips.clips[p][c].length > 0)
+                list.append(clipToJson(c, clips.clips[p][c]));
+        part[QStringLiteral("clips")] = list;
+        parts.append(part);
+    }
+    doc[QStringLiteral("parts")] = parts;
+    QJsonObject song;
+    m_pages[size_t(arrangePage())]->spec.control->save(song);
+    doc[QStringLiteral("song")] = song;
+    return doc;
+}
+
+bool Session::openSong(const QJsonObject &doc, QString *error) {
+    std::lock_guard lock(m_lock);
+    auto fail = [&](const QString &why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    if (!checkSongFormat(doc, error))
+        return false;
+
+    // Everything is read and checked first; nothing changes until the whole
+    // file has passed.
+    const QJsonValue tempoValue = doc.value(QStringLiteral("tempo"));
+    if (!tempoValue.isDouble() || !std::isfinite(tempoValue.toDouble()))
+        return fail(QStringLiteral("This song has no tempo"));
+    const double bpm = std::clamp(tempoValue.toDouble(), 40.0, 240.0);
+    const QJsonObject key = doc.value(QStringLiteral("key")).toObject();
+    const int root = std::clamp(key.value(QStringLiteral("root")).toInt(9), 0, 11);
+    const int fam = std::clamp(key.value(QStringLiteral("family")).toInt(0), 0, familyCount() - 1);
+    const int bright = std::clamp(key.value(QStringLiteral("brightness")).toInt(4), 0, family(fam).modeCount - 1);
+
+    struct PartIn {
+        int page = -1;
+        QJsonObject mix, settings;
+        int playing = -1;
+    };
+    std::vector<PartIn> partsIn;
+    auto set = std::make_unique<ClipSet>();
+    set->parts = m_partCount;
+    const QJsonValue partsValue = doc.value(QStringLiteral("parts"));
+    if (!partsValue.isArray())
+        return fail(QStringLiteral("This song has no parts"));
+    int unknown = 0;
+    for (const QJsonValue &pv : partsValue.toArray()) {
+        if (!pv.isObject())
+            return fail(QStringLiteral("A part of this song isn't an object"));
+        const QJsonObject po = pv.toObject();
+        const QString name = po.value(QStringLiteral("name")).toString();
+        int page = -1;
+        for (int i = 0; i < m_partCount; ++i)
+            if (m_pages[size_t(i)]->spec.name == name)
+                page = i;
+        if (page < 0) {
+            // A part this tenfold doesn't have (a newer one's, or a typo):
+            // the rest of the song still opens.
+            ++unknown;
+            continue;
+        }
+        for (const PartIn &in : partsIn)
+            if (in.page == page)
+                return fail(QStringLiteral("The song has two %1 parts").arg(name));
+        const int p = m_pages[size_t(page)]->part;
+        bool filled[kClipSlots] = {};
+        const QJsonValue clipsValue = po.value(QStringLiteral("clips"));
+        if (!clipsValue.isUndefined() && !clipsValue.isArray())
+            return fail(QStringLiteral("%1's clips aren't a list").arg(name));
+        for (const QJsonValue &cv : clipsValue.toArray()) {
+            int slot = -1;
+            ClipSet::Clip clip;
+            QString why;
+            if (!clipFromJson(cv, &slot, &clip, &why))
+                return fail(QStringLiteral("%1: %2").arg(name, why));
+            if (filled[slot])
+                return fail(QStringLiteral("%1 has two clips in slot %2").arg(name).arg(slot + 1));
+            filled[slot] = true;
+            set->clips[p][slot] = std::move(clip);
+        }
+        PartIn in;
+        in.page = page;
+        in.mix = po.value(QStringLiteral("mix")).toObject();
+        in.settings = po.value(QStringLiteral("settings")).toObject();
+        const int playing = po.value(QStringLiteral("playing")).toInt(-1);
+        in.playing = playing >= 0 && playing < kClipSlots && filled[playing] ? playing : -1;
+        partsIn.push_back(in);
+    }
+
+    // The song's in. What was going on stops, each page starts over, and
+    // the studio swaps every clip at once (no Ctrl+N first: between the two
+    // a page would see its slots empty and drop what belongs to them).
+    if (m_tutorial.active())
+        m_tutorial.stop();
+    m_startOverAsked = m_tutorialAsked = -1;
+    Page &showing = *m_pages[size_t(m_page)];
+    showing.spec.control->leave(*showing.ctx);
+    clearEverything(false);
+    float lengths[kMaxParts][kClipSlots] = {};
+    int counts[kMaxParts][kClipSlots] = {};
+    for (int p = 0; p < m_partCount && p < kMaxParts; ++p)
+        for (int c = 0; c < kClipSlots; ++c) {
+            lengths[p][c] = float(set->clips[p][c].length);
+            counts[p][c] = int(set->clips[p][c].events.size());
+        }
+    if (!m_studio->writeClips(*set)) {
+        showing.spec.control->enter(*showing.ctx);
+        return fail(QStringLiteral("Not opened: the audio isn't answering"));
+    }
+    // The clips as the studio now has them, so the pages see them as they
+    // load (the studio's next view says the same).
+    for (int p = 0; p < m_partCount && p < kMaxParts; ++p) {
+        PartView &pv = m_view.parts[p];
+        pv.playing = pv.queued = pv.recording = -1;
+        pv.overdub = false;
+        for (int c = 0; c < kClipSlots; ++c) {
+            ClipView &cv = pv.clips[c];
+            cv.state = lengths[p][c] > 0 ? ClipView::Stopped : ClipView::Empty;
+            cv.lengthBeats = lengths[p][c];
+            cv.events = counts[p][c];
+            cv.phase = 0;
+        }
+    }
+    Context &ctx = context(arrangePage());
+    ctx.setTempo(bpm);
+    ctx.setKey(root, fam, bright);
+    if (doc.value(QStringLiteral("metronome")).toBool() != m_view.metronome)
+        toggleMetronome();
+    const QJsonObject master = doc.value(QStringLiteral("master")).toObject();
+    static const float kMasterHome[MasterCount] = {0.35f, 0.1f, 0.5f, 0.35f, 0.5f, 0.0f, 0.8f};
+    for (int i = 0; i < MasterCount; ++i)
+        ctx.setMaster(i, unit(master, kMasterNames[i], kMasterHome[i]), 0);
+    for (int i = 0; i < m_partCount; ++i) {
+        const PartIn *in = nullptr;
+        for (const PartIn &x : partsIn)
+            if (x.page == i)
+                in = &x;
+        Page &page = *m_pages[size_t(i)];
+        for (int c = 0; c < ChannelCount; ++c)
+            ctx.setChannel(page.part, c, in ? unit(in->mix, kChannelNames[c], page.spec.channel[c]) : page.spec.channel[c], 0);
+        if (in)
+            page.spec.control->load(in->settings, *page.ctx);
+    }
+    Page &arrange = *m_pages[size_t(arrangePage())];
+    arrange.spec.control->load(doc.value(QStringLiteral("song")).toObject(), *arrange.ctx);
+    // What was playing plays again, every part from the same bar line.
+    for (const PartIn &in : partsIn)
+        if (in.playing >= 0)
+            ctx.launchPart(m_pages[size_t(in.page)]->part, in.playing, false);
+    // Back on the page that was showing when the song was saved.
+    const QString shown = doc.value(QStringLiteral("page")).toString();
+    for (int i = 0; i < pageCount(); ++i)
+        if (m_pages[size_t(i)]->spec.name == shown)
+            m_page = i;
+    m_ignored.clear();
+    for (int i = 0; i < m_last.count; ++i)
+        m_ignored.push_back(m_last.touches[i].id);
+    m_pages[size_t(m_page)]->spec.control->enter(*m_pages[size_t(m_page)]->ctx);
+    if (error)
+        *error = unknown == 0 ? QString()
+                 : unknown == 1 ? QStringLiteral("a part this tenfold doesn't have was left out")
+                                : QStringLiteral("%1 parts this tenfold doesn't have were left out").arg(unknown);
+    return true;
 }
 
 }

@@ -3,6 +3,8 @@
 // Helpers for testing pages: play a script through the real session and
 // studio and look at the sound and the studio's view afterwards.
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QObject>
 #include <QtTest>
 #include <cmath>
@@ -12,6 +14,7 @@
 
 #include "offline.h"
 #include "session.h"
+#include "songfile.h"
 #include "studio.h"
 
 namespace testkit {
@@ -111,6 +114,44 @@ inline Take watch(const std::string &script, const std::function<void(double, tf
     }
     take.view = session.view();
     return take;
+}
+
+// Plays a script, saves the song at its end (as Ctrl+S would), opens it in a
+// fresh studio and session (as Ctrl+O would, in a new tenfold), plays that
+// on for `after` seconds, and hands both sessions to `check`: how a page
+// tests that what it saves comes back. The saved JSON is in `doc`.
+inline Take reopen(const std::string &script, double after,
+                   const std::function<void(tf::Session &before, tf::Session &opened, const QJsonObject &doc)> &check) {
+    return play(script, [&](tf::Session &before) {
+        QString error;
+        const QJsonObject doc = before.saveSong(&error);
+        if (doc.isEmpty()) {
+            QFAIL(qPrintable(QStringLiteral("saveSong: ") + error));
+            return;
+        }
+        // Through the file's own bytes, so what is checked is what a file holds.
+        QJsonParseError pe;
+        const QJsonObject read = QJsonDocument::fromJson(tf::songJson(doc), &pe).object();
+        QVERIFY2(pe.error == QJsonParseError::NoError, qPrintable(pe.errorString()));
+        const double t0 = tf::scriptClock();
+        tf::Studio studio(48000.0f);
+        studio.setTimeOrigin(t0);
+        tf::Session opened(&studio);
+        opened.setClock(&tf::scriptClock);
+        if (!opened.openSong(read, &error) || !error.isEmpty()) {
+            QFAIL(qPrintable(QStringLiteral("openSong: ") + error));
+            return;
+        }
+        float buf[384 * 2];
+        for (int tick = 0; tick <= int(after * 125); ++tick) {
+            tf::setScriptClock(t0 + tick / 125.0);
+            opened.refresh();
+            opened.idle(tf::scriptClock());
+            studio.render(buf, 384);
+        }
+        opened.refresh();
+        check(before, opened, read);
+    });
 }
 
 // Every test class registers itself; the test binary runs them all.

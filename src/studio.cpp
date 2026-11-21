@@ -21,7 +21,6 @@ double floorMod(double a, double m) {
 }
 
 constexpr int kHistory = 4096;     // live commands remembered per part, for captures
-constexpr int kClipEvents = 2048;  // events a clip can hold
 constexpr int kReplayHeld = 96;    // replayed sounds a part can have on at once
 constexpr int kReplayBit = 1 << 30;
 
@@ -75,12 +74,7 @@ struct Studio::PartState {
     std::vector<Logged> history;
     size_t historyHead = 0; // total ever written
 
-    struct Event {
-        double pos;
-        Command c;
-        double after = -1e18; // an overdub: not replayed before this beat (it was just heard live)
-        int layer = 0;        // 0 the first take, 1… what was layered on top (see replayLayer)
-    };
+    using Event = ClipEvent;
     struct Clip {
         std::vector<Event> events;
         double length = 0; // beats; 0 = empty
@@ -1000,6 +994,60 @@ void Studio::apply(const StudioMsg &m) {
         for (int i = 0; i < MasterCount; ++i)
             s.masterTarget[i] = kDefaultMaster[i];
         break;
+    case StudioMsg::ReadClips: {
+        // Copied into room the reader made, never allocating here: a clip
+        // that has grown past it says so, and the reader asks again.
+        auto &set = *static_cast<ClipSet *>(m.ptr);
+        set.parts = std::min(int(m_parts.size()), kMaxParts);
+        set.tooSmall = false;
+        for (int pi = 0; pi < set.parts; ++pi) {
+            const PartState &q = *m_parts[size_t(pi)];
+            set.playing[pi] = q.playing;
+            for (int c = 0; c < kClipSlots; ++c) {
+                const auto &from = q.clips[c];
+                auto &to = set.clips[pi][c];
+                to.length = from.length;
+                to.anchor = from.anchor;
+                to.events.clear();
+                if (from.events.size() > to.events.capacity())
+                    set.tooSmall = true;
+                else
+                    to.events.assign(from.events.begin(), from.events.end());
+            }
+        }
+        m_exchanged.store(m.value, std::memory_order_release);
+        break;
+    }
+    case StudioMsg::WriteClips: {
+        // A song opened: its clips in place of every part's, swapped (the
+        // writer made their room, so later takes don't allocate either).
+        // Nothing plays and nothing can be taken back; the session launches
+        // what the song had playing.
+        auto &set = *static_cast<ClipSet *>(m.ptr);
+        s.pendingCount = 0;
+        for (int pi = 0; pi < int(m_parts.size()); ++pi) {
+            PartState &q = *m_parts[size_t(pi)];
+            stopClip(q, s);
+            q.queued = -1;
+            q.stopQueued = false;
+            q.recording = -1;
+            q.overdub = false;
+            q.undoCount = 0;
+            q.redoCount = 0;
+            q.engine->silence(false);
+            if (pi >= set.parts || pi >= kMaxParts)
+                continue;
+            for (int c = 0; c < kClipSlots; ++c) {
+                auto &to = q.clips[c];
+                auto &from = set.clips[pi][c];
+                std::swap(to.events, from.events);
+                std::swap(to.length, from.length);
+                std::swap(to.anchor, from.anchor);
+            }
+        }
+        m_exchanged.store(m.value, std::memory_order_release);
+        break;
+    }
     case StudioMsg::Silence:
         for (int i = 0; i < s.pendingCount;)
             if (s.pending[i].kind == StudioMsg::ToPart && (m.part < 0 || s.pending[i].part == m.part))
@@ -1017,12 +1065,83 @@ void Studio::apply(const StudioMsg &m) {
 
 // --- rendering ----------------------------------------------------------------
 
-void Studio::render(float *out, int frames) {
-    const auto t0 = std::chrono::steady_clock::now();
+void Studio::drain() {
     StudioMsg m;
     d->blockTime = m_time0 + double(m_sample) / double(m_rate);
     while (m_queue.pop(m))
         apply(m);
+}
+
+bool Studio::exchange(StudioMsg::Kind kind, ClipSet &set) {
+    StudioMsg m;
+    m.kind = kind;
+    m.ptr = &set;
+    {
+        std::lock_guard lock(m_postLock);
+        m.value = ++m_ticket;
+        if (!m_queue.push(m))
+            return false;
+    }
+    // On the thread that renders, or with nothing rendering yet, this
+    // thread is the one that may touch the clips: the queue is applied
+    // here, in order, as the next block would.
+    const std::thread::id renderer = m_renderer.load(std::memory_order_acquire);
+    if (renderer == std::thread::id() || renderer == std::this_thread::get_id()) {
+        drain();
+        return m_exchanged.load(std::memory_order_acquire) == m.value;
+    }
+    // Live: a block comes every few milliseconds. A second is the audio
+    // thread gone quiet (a stalled device), and the caller says so.
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (std::chrono::steady_clock::now() < until) {
+        if (m_exchanged.load(std::memory_order_acquire) == m.value)
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+
+// Both work on a set of their own on the heap: if the audio thread doesn't
+// answer in time, it may still read the message later, so that set is left
+// to it (a few bytes lost, once, on a device that has stalled) rather than
+// freed under it.
+bool Studio::readClips(ClipSet &out) {
+    auto work = std::make_unique<ClipSet>();
+    // Room for a few hundred events a clip first; a clip with more says so,
+    // and the second time there is room for the most a clip can hold.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        for (auto &part : work->clips)
+            for (auto &clip : part)
+                clip.events.reserve(attempt == 0 ? 256 : size_t(kClipEvents));
+        if (!exchange(StudioMsg::ReadClips, *work)) {
+            (void)work.release();
+            return false;
+        }
+        if (!work->tooSmall) {
+            out = std::move(*work);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Studio::writeClips(ClipSet &in) {
+    auto work = std::make_unique<ClipSet>(std::move(in));
+    for (auto &part : work->clips)
+        for (auto &clip : part)
+            clip.events.reserve(size_t(kClipEvents));
+    if (!exchange(StudioMsg::WriteClips, *work)) {
+        (void)work.release();
+        return false;
+    }
+    in = std::move(*work);
+    return true;
+}
+
+void Studio::render(float *out, int frames) {
+    const auto t0 = std::chrono::steady_clock::now();
+    m_renderer.store(std::this_thread::get_id(), std::memory_order_release);
+    drain();
     float l[kBlock], r[kBlock];
     int done = 0;
     while (done < frames) {

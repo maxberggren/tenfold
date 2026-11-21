@@ -25,6 +25,7 @@
 // Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
 // record the mix, quit). The pad is taken with the window's Play button.
 
+#include <QJsonObject>
 #include <QPointF>
 #include <QRectF>
 #include <QSizeF>
@@ -123,6 +124,18 @@ public:
     bool mixRecording() const { return m_mixRecording; }
     void setMixRecording(bool on) { m_mixRecording = on; }
 
+    // Song files (songfile.h). saveSong: the whole song as a song file's
+    // JSON, or an empty object and why not. openSong: a song file's JSON in
+    // place of everything playing now; every part of it is checked before
+    // anything changes, and a song that can't be opened leaves the studio
+    // as it was, with a sentence saying why.
+    QJsonObject saveSong(QString *error = nullptr);
+    bool openSong(const QJsonObject &doc, QString *error = nullptr);
+    // Whether there is anything to keep: a clip in any slot.
+    bool anythingMade() const;
+    // A notice in the window from outside the pages (a file saved, opened).
+    void say(const QString &text);
+
     // The walk from silence to a track. The session drives it: every
     // refresh() ticks it, paint() draws its spots over the pad.
     Tutorial &tutorial() { return m_tutorial; }
@@ -187,7 +200,9 @@ private:
     double m_loopSince[kMaxParts] = {};
     int m_lastPlaying[kMaxParts] = {};
     double m_startOverAsked = -1, m_tutorialAsked = -1;
-    void clearEverything(); // every loop, the mix home, each page's song state
+    // Every loop, the mix home, each page's song state. Opening a song
+    // leaves the studio's part to its own message (studio = false).
+    void clearEverything(bool studio = true);
     int m_undos = 0;
     std::vector<int> m_redoOrder; // parts, as Ctrl+Z took their steps back
     // The take Space just made, for ↑↓ to make it longer or shorter while

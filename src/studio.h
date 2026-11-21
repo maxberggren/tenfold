@@ -8,6 +8,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "dsp.h"
@@ -18,6 +19,32 @@ namespace tf {
 // A message to the studio itself, or through it to a part.
 // How many changes to its loops each part can take back (Ctrl+Z).
 constexpr int kUndoSteps = 16;
+
+// The most events a clip holds.
+constexpr int kClipEvents = 2048;
+
+// One event of a clip: a command at a position in beats from the clip's
+// start, as the studio replays it and a song file keeps it.
+struct ClipEvent {
+    double pos = 0;
+    Command c;
+    double after = -1e18; // an overdub: not replayed before this beat (it was just heard live)
+    int layer = 0;        // 0 the first take, 1… what was layered on top (see replayLayer)
+};
+
+// Every part's clips at once, copied out of the studio to save a song and
+// handed to it to open one (Studio::readClips, Studio::writeClips).
+struct ClipSet {
+    struct Clip {
+        std::vector<ClipEvent> events;
+        double length = 0; // beats; 0 = empty
+        double anchor = 0; // a beat where the clip's position is 0
+    };
+    int parts = 0;
+    Clip clips[kMaxParts][kClipSlots];
+    int playing[kMaxParts] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    bool tooSmall = false; // reading: a clip had more events than room was made for
+};
 
 struct StudioMsg {
     enum Kind : uint8_t {
@@ -45,6 +72,9 @@ struct StudioMsg {
         CopyClip,    // part, slot = from, value = to
         MergeClips,  // part, slot = into, value = the other, f = 0 layer / 1 chain
         ClearAll,    // every clip of every part goes, every sound stops: start over
+        ReadClips,   // ptr = a ClipSet, value = ticket: every clip copied into it
+        WriteClips,  // ptr = a ClipSet, value = ticket: every clip swapped for its own,
+                     // nothing playing, nothing to take back
     };
     Kind kind = ToPart;
     int8_t part = 0;
@@ -54,6 +84,7 @@ struct StudioMsg {
     double d2 = -1e18; // TakeBars layered: nothing played before this beat goes in (it is in the loop already)
     float f = 0;
     Command cmd;
+    void *ptr = nullptr;
 };
 
 class Studio {
@@ -74,6 +105,15 @@ public:
 
     // Producer side; safe from any thread (one at a time is enforced here).
     bool post(const StudioMsg &m);
+
+    // Saving and opening a song. Both wait for the audio thread to do the
+    // work between two blocks (after every message posted before them), or
+    // do it at once on the thread that renders (offline, the tests) or when
+    // nothing renders yet. False if the audio thread didn't answer in time.
+    // readClips makes its own room in `out`; writeClips takes `in`'s clips
+    // and leaves the studio's old ones in it, to be freed off the audio thread.
+    bool readClips(ClipSet &out);
+    bool writeClips(ClipSet &in);
 
     // Interleaved stereo. Audio thread only.
     void render(float *interleaved, int frames);
@@ -113,6 +153,8 @@ public:
 
 private:
     void apply(const StudioMsg &m);
+    void drain();
+    bool exchange(StudioMsg::Kind kind, ClipSet &set);
     void renderBlock(float *l, float *r, int n);
     void publish();
 
@@ -124,6 +166,11 @@ private:
     std::vector<std::unique_ptr<PartState>> m_parts;
     std::mutex m_postLock;
     SpscQueue<StudioMsg, 8192> m_queue;
+    // The thread that last rendered, and the last ticket readClips or
+    // writeClips handed it, done.
+    std::atomic<std::thread::id> m_renderer{};
+    std::atomic<int32_t> m_exchanged{0};
+    int32_t m_ticket = 0;
     TripleBuffer<StudioView> m_views;
 
     float m_scope[kScopeSize] = {};

@@ -38,7 +38,8 @@ double barAt(int n) { return kBar0 + 2.0 * n; }
 std::string loops(const std::string &rest) { return std::string(kLoops) + rest; }
 
 // The pad's lanes: seven parts under the scene strip (y 0..0.885).
-float laneY(int part) { return 0.885f * (1.0f - (part + 0.5f) / 7.0f); }
+// A lane per part, all eight of them.
+float laneY(int part) { return 0.885f * (1.0f - (part + 0.5f) / float(kMaxParts)); }
 float cellX(int slot) { return 0.12f + (0.73f - 0.12f) * (slot + 0.5f) / 8.0f; }
 
 // True on the views published just after the script time x (about every 8 ms).

@@ -74,8 +74,9 @@ public:
         m_lp.set(2800.0f, 0.7f, rate);
         std::fill(std::begin(m_buf), std::end(m_buf), 0.0f);
     }
-    // One sample in; true when a new estimate is ready.
-    bool push(float x) {
+    // One sample in; true when a new estimate is ready. Not listening (the
+    // gate shut: the room, not a voice), it says unvoiced without the work.
+    bool push(float x, bool listen = true) {
         const float y = m_lp.step(x).low;
         m_acc += y;
         if (++m_phase < kDecim)
@@ -86,7 +87,10 @@ public:
         if (++m_since < 32)
             return false;
         m_since = 0;
-        analyse();
+        if (listen)
+            analyse();
+        else
+            setUnvoiced();
         return true;
     }
     // The period in samples at the full rate (0: unvoiced), and how sure.

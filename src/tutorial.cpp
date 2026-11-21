@@ -15,7 +15,7 @@ namespace {
 
 // The pages, as the session counts them (the number keys are one more,
 // arrange is 0).
-enum Page { Drums = 0, Bass, Chords, Lead, Arp, Atmos, FX, Arrange };
+enum Page { Drums = 0, Bass, Chords, Lead, Arp, Atmos, FX, Vocal, Arrange };
 
 // The probes the steps compare against their start.
 const Tutorial::Probe kProbes[] = {
@@ -416,7 +416,7 @@ void Tutorial::build() {
     // --- Arrange: the mix and the song -----------------------------------------
     // Lanes run down from the scene strip (y 0.885), one per part; a lane's
     // clips sit between x 0.12 and 0.73. The bass is the second lane.
-    const float lane = 0.885f / 7.0f;
+    const float lane = 0.885f / float(kMaxParts); // a lane per part, all eight
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Point and tap"),
          QStringLiteral("Every part has a lane here, with its loops. One finger moves a pointer; a second finger's tap, "
                         "anywhere, does what it points at (the mouse just clicks). Tap the bass loop: it stops on the "

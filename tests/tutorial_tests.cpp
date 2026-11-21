@@ -180,7 +180,7 @@ std::string walkthrough() {
 
     s.comment("0 Arrange. The mouse clicks the bass loop: it stops on the bar; again: back.");
     s.key(bar(72), "0");
-    const double laneH = 0.885 / 7;
+    const double laneH = 0.885 / kMaxParts; // a lane per part, all eight
     const double bassY = 0.885 - 1.5 * laneH, clipX = 0.12 + 0.07625 / 2;
     s.add("mouse %.3f %.4f %.4f down", bar(73), clipX, bassY);
     s.add("mouse %.3f %.4f %.4f up", bar(73) + 0.1, clipX, bassY);

@@ -336,6 +336,15 @@ public:
         const float *in = ctx.input();
         m_hasInput = in != nullptr;
         Tape &tape = *m_tape;
+        // No microphone and nothing still sounding from it (a tail, a
+        // freeze, the tape): only the loops play.
+        if (!in && m_echoTail == 0 && m_revTail == 0 && m_frz.on < 0.5f && m_freezeLvl.y < 0.001f &&
+            m_stutterOn.y < 0.001f && !m_tapeStop && m_tapeBack <= 0) {
+            m_activeVoices = 0;
+            tape.written.store(int64_t(tr.sample) + n, std::memory_order_release);
+            renderLoops(outL, outR, n, ctx);
+            return;
+        }
 
         // 1. The microphone, cleaned up: rumble off, the room's hiss gated
         //    (gently: a soft consonant still gets through), levelled.
@@ -369,7 +378,7 @@ public:
             y *= comp * 1.8f;
             dry[i] = y;
             m_src.push(y);
-            if (m_pitch.push(y))
+            if (m_pitch.push(y, m_gate > 0.2f))
                 track();
         }
 
@@ -1124,6 +1133,13 @@ public:
             m_monitorSent = want;
             param(ctx, PMonitor, want ? 1 : 0);
         }
+        // A microphone still connecting after two seconds isn't coming.
+        if (ctx.studio().input == StudioView::InputConnecting) {
+            if (m_connectingSince < 0)
+                m_connectingSince = t;
+        } else {
+            m_connectingSince = -1;
+        }
         // Takes landing in the studio: the loop has changed since.
         if (v.takes != m_takesSeen || v.playing != m_playingSeen) {
             m_takesSeen = v.takes;
@@ -1368,11 +1384,12 @@ public:
         return s;
     }
 
-    void startOver(ControlContext &) override {
-        // Every loop is gone: so is their audio, once the engine has let go.
+    void startOver(ControlContext &ctx) override {
+        // Every loop is gone: so is their audio, once the engine has let go
+        // (a second on, long after the studio has stopped every clip).
         for (int h = 1; h < kMaxTakes; ++h)
             if (m_used[h])
-                m_graveyard.push_back({m_now + 1.0, h});
+                m_graveyard.push_back({ctx.now() + 1.0, h});
         m_pending.clear();
         m_last = {};
     }
@@ -2024,7 +2041,7 @@ private:
     bool m_latch = false, m_follow = false, m_shown = false, m_monitorSent = true, m_sentAll = false;
     float m_micDb = 0;
     float m_sungMedian = 57;
-    double m_lastRegister = 0, m_lastTrail = 0, m_now = 0;
+    double m_lastRegister = 0, m_lastTrail = 0, m_now = 0, m_connectingSince = -1;
     struct TrailPoint {
         double t = -1e9;
         float midi = -1, level = 0;
@@ -2065,7 +2082,8 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
 
     // No microphone: say so first, big, and why.
     const bool noMic = sv.input == StudioView::NoInput || sv.input == StudioView::InputFailed ||
-                       (sv.input == StudioView::InputConnecting && pc.time > 2.0);
+                       (sv.input == StudioView::InputConnecting && m_connectingSince >= 0 &&
+                        pc.time - m_connectingSince > 2.0);
 
     // The strips.
     auto strip = [&](float x0, float y0, float x1, float y1, const QString &label, bool lit, QColor tint) {

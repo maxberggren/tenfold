@@ -27,12 +27,14 @@
 #include <QPainter>
 #include <QFontMetricsF>
 #include <QPainterPath>
+#include <QJsonObject>
 #include <algorithm>
 #include <climits>
 #include <cmath>
 
 #include "console.h"
 #include "parts.h"
+#include "songfile.h"
 
 namespace tf::arp {
 
@@ -627,6 +629,10 @@ struct PoolNote {
 };
 
 constexpr int kPool = 24;
+// The grid's columns as an engine takes them: the page sends 0 to 7, a song
+// file could say anything, and a note far off the grid would be pitched
+// past any sound (and folded down an octave at a time, for ever).
+inline int gridColumn(int col) { return std::clamp(col, 0, 15); }
 
 } // namespace
 
@@ -790,9 +796,10 @@ struct Engine::Impl {
 
     void noteOn(int lane, const Command &c, double b) {
         Lane &L = lanes[lane];
-        const int col = c.i[0], row = c.i[1] >> 4 & 15, stack = c.i[1] & 15, flags = c.i[1] >> 8;
+        const int col = gridColumn(c.i[0]), row = c.i[1] >> 4 & 15, stack = c.i[1] & 15, flags = c.i[1] >> 8;
         if (lane >= 1 && c.f[1] >= 1.0f) {
-            const int parity = int(c.f[1]) - 1;
+            // 1 or 2; anything larger (a file's) is kept within an int.
+            const int parity = int(std::min(c.f[1], 2.0f)) - 1;
             const int bar = int(floorDiv(int64_t(std::floor((b + 0.1) / kBeatsPerBar)), 1));
             L.diceBars = (parity - bar) & 1;
         }
@@ -927,7 +934,7 @@ struct Engine::Impl {
         if (at < 0)
             return;
         PoolNote &n = L.notes[at];
-        n.col = c.i[0];
+        n.col = gridColumn(c.i[0]);
         n.row = c.i[1] >> 4 & 15;
         n.stack = c.i[1] & 15;
         if (c.f[0] > 0)
@@ -1791,6 +1798,122 @@ public:
         m_frame = Frame{};
     }
 
+    // Ctrl+N or a song opened: the studio has silenced the engine and
+    // emptied its pools, so the notes the latch held belong to the old
+    // song. Kept, they would come back at the next bar line's hand-over.
+    // The studio turns overdub off, and so does the page; the settings stay,
+    // as they always have after Ctrl+N (a song opened sets its own).
+    void startOver(ControlContext &ctx) override {
+        (void)ctx;
+        for (auto &n : m_notes)
+            n = Note{};
+        m_overdub = false;
+        m_take = -1;
+        m_takeHanded = false;
+        m_latchToLoopAt = -1e9;
+        m_latchToLoopSlot = -1;
+    }
+
+    // Ctrl+S: the arp as the player set it up, pattern, sound, rhythm,
+    // range, tone, groove, echo and latch. A choice from a list goes by its
+    // name, so a list that grows or is reordered still finds it. The
+    // presses (rolls, bite, harder accents, a thrown echo) end when the
+    // finger lifts, and the notes a latch holds are a hand's, so neither is
+    // kept; nor is overdub, which only means something while a take is
+    // being made.
+    void save(QJsonObject &out) const override {
+        const Settings &s = m_s;
+        out[QStringLiteral("pattern")] = QString::fromUtf8(patternName(s.pattern));
+        out[QStringLiteral("sound")] = QString::fromUtf8(soundName(s.sound));
+        out[QStringLiteral("color")] = tidyFloat(s.color);
+        out[QStringLiteral("rate")] = QString::fromUtf8(rateName(s.rate));
+        out[QStringLiteral("gate")] = tidyFloat(s.gate);
+        out[QStringLiteral("swing")] = tidyFloat(s.swing);
+        out[QStringLiteral("density")] = tidyFloat(s.density);
+        out[QStringLiteral("rotate")] = s.rotate;
+        out[QStringLiteral("register")] = s.reg;
+        out[QStringLiteral("octaves")] = s.octaves;
+        out[QStringLiteral("firstNote")] = QString::fromUtf8(stackName(s.stack));
+        out[QStringLiteral("follow")] = s.follow;
+        out[QStringLiteral("tone")] = tidyFloat(s.cutoff);
+        out[QStringLiteral("resonance")] = tidyFloat(s.res);
+        out[QStringLiteral("accentEvery")] = accentCycle(s.accent);
+        out[QStringLiteral("chaos")] = tidyFloat(s.chaos);
+        out[QStringLiteral("dice")] = qint64(s.seed);
+        out[QStringLiteral("echoTime")] = QString::fromUtf8(echoName(s.echoTime));
+        out[QStringLiteral("echo")] = tidyFloat(s.echo);
+        out[QStringLiteral("latch")] = m_latch;
+    }
+
+    // Ctrl+O, after startOver(): what save() wrote, checked value by value
+    // (the file may be old or edited by hand), over the page's defaults
+    // rather than the song before's. The engine then hears the settings the
+    // way a key sends them.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        Settings s;
+        auto choice = [&](const char *key, int count, const char *(*name)(int), int &to) {
+            const QString v = in.value(QLatin1String(key)).toString();
+            for (int i = 0; i < count; ++i)
+                if (v == QString::fromUtf8(name(i)))
+                    to = i;
+        };
+        auto number = [&](const char *key, double lo, double hi, float &to) {
+            const QJsonValue v = in.value(QLatin1String(key));
+            if (v.isDouble() && std::isfinite(v.toDouble()))
+                to = float(std::clamp(v.toDouble(), lo, hi));
+        };
+        auto whole = [&](const char *key, int lo, int hi, int &to) {
+            const QJsonValue v = in.value(QLatin1String(key));
+            if (v.isDouble() && std::isfinite(v.toDouble()))
+                to = int(std::lround(std::clamp(v.toDouble(), double(lo), double(hi))));
+        };
+        auto flag = [&](const char *key, bool &to) {
+            const QJsonValue v = in.value(QLatin1String(key));
+            if (v.isBool())
+                to = v.toBool();
+        };
+        choice("pattern", PatternCount, patternName, s.pattern);
+        choice("sound", SoundCount, soundName, s.sound);
+        // A sound without its colour starts from the one it sounds best in,
+        // as picking it does.
+        s.color = soundColor(s.sound);
+        number("color", 0, 1, s.color);
+        choice("rate", RateCount, rateName, s.rate);
+        number("gate", 0.04, 1, s.gate);
+        number("swing", 0, 1, s.swing);
+        number("density", 0, 1, s.density);
+        whole("rotate", 0, 31, s.rotate);
+        whole("register", 0, kRegisters - 1, s.reg);
+        whole("octaves", 1, kMaxOctaves, s.octaves);
+        choice("firstNote", kStacks, stackName, s.stack);
+        flag("follow", s.follow);
+        number("tone", 0.04, 1, s.cutoff);
+        number("resonance", 0, 1, s.res);
+        int every = -1;
+        whole("accentEvery", 0, 64, every);
+        for (int i = 0; i < kAccentChoices; ++i)
+            if (accentCycle(i) == every)
+                s.accent = i;
+        number("chaos", 0, 1, s.chaos);
+        int dice = int(s.seed);
+        whole("dice", 0, 0xFFFFFF, dice);
+        s.seed = uint32_t(dice);
+        choice("echoTime", kEchoTimes, echoName, s.echoTime);
+        number("echo", 0, 1, s.echo);
+        bool latch = false;
+        flag("latch", latch);
+        // No notes are held after startOver(), so the latch needs no
+        // letting go, only setting.
+        m_latch = latch;
+        m_s = s;
+        // Sent whole even when within flush()'s half a percent of what the
+        // engine has, so the arp plays exactly what the file says.
+        const double t = ctx.now();
+        if (m_s != m_sent)
+            sendState(t, ctx, false);
+        flush(t, ctx, true);
+    }
+
     void paint(QPainter &p, const PaintContext &pc) override {
         namespace c = console;
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -2017,11 +2140,15 @@ private:
         }
     }
 
+    // Each sound starts from the colour it sounds best in.
+    static float soundColor(int s) {
+        static const float colors[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f};
+        return colors[std::clamp(s, 0, SoundCount - 1)];
+    }
+
     void setSound(int s, ControlContext &ctx) {
         m_s.sound = s;
-        // Each sound starts from the colour it sounds best in.
-        static const float colors[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f};
-        m_s.color = colors[s];
+        m_s.color = soundColor(s);
         ctx.notice(QStringLiteral("Sound: %1").arg(QString::fromUtf8(soundName(s))));
     }
 

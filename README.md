@@ -96,6 +96,21 @@ cleared, the mix set back, nothing left muted.
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
 metronome, Ctrl+R record to `~/Music/tenfold`, Ctrl+Q quit.
 
+**Songs.** Ctrl+S saves the song to a `.tenfold` file to pick up where you
+left off: tempo, key and mode, every part's loops (layers too), which ones
+play, the mix, each page's sounds and settings, and the Song page's song and
+scenes. Ctrl+Shift+S saves it under a new name, Ctrl+O opens one (the
+buttons beside the pad do the same). Quitting keeps the song in
+`~/.local/state/tenfold/last.tenfold`, and the next start offers it back:
+Ctrl+Shift+O. A song file is JSON you can read; `tenfold check song.tenfold`
+says whether one opens and what is in it.
+
+| Key | Does |
+|---|---|
+| Ctrl S · Ctrl Shift S | save the song · save it as |
+| Ctrl O | open a song |
+| Ctrl Shift O | the song as it was when tenfold last quit |
+
 ## Without a trackpad
 
 Every page can be driven from a script, which is how it is tested:
@@ -104,6 +119,7 @@ Every page can be driven from a script, which is how it is tested:
 tenfold render docs/parts/drums/house_hands.tf out.wav --json
 tenfold screenshot shot.png docs/parts/lead/anthem.tf --page 4 --at 10
 tenfold bench
+tenfold check song.tenfold
 ```
 
 `src/offline.h` documents the script language (`page`, `down`, `move`,

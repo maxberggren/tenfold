@@ -65,6 +65,10 @@ ApplicationWindow {
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
     Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleRecording() }
+    Shortcut { sequence: "Ctrl+S"; context: Qt.ApplicationShortcut; onActivated: backend.saveSong() }
+    Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: backend.saveSongAs() }
+    Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: backend.openSong() }
+    Shortcut { sequence: "Ctrl+Shift+O"; context: Qt.ApplicationShortcut; onActivated: backend.reopenLastSong() }
     Shortcut {
         sequence: "F11"; context: Qt.ApplicationShortcut
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
@@ -370,6 +374,18 @@ ApplicationWindow {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
                             onClicked: win.helpVisible = !win.helpVisible
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                            label: qsTr("Open song"); key: "Ctrl O"; color: win.cyan
+                            onClicked: backend.openSong()
+                        }
+                        PanelButton {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                            label: qsTr("Save song"); key: "Ctrl S"; color: win.cyan
+                            onClicked: backend.saveSong()
                         }
                         PanelButton {
                             Layout.columnSpan: 2

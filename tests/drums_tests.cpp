@@ -1,5 +1,7 @@
 // The Drums page: its sounds, its timing, and every gesture it promises.
 
+#include <QJsonArray>
+#include <climits>
 #include <vector>
 
 #include "drums.h"
@@ -1197,6 +1199,136 @@ private slots:
         QCOMPARE(n, 5);
         // Shifting moves every step a sixteenth.
         QCOMPARE(ticks(drums::groovePattern(drums::Clap, drums::House, 1, 1)), (std::vector<int>{30, 78}));
+    }
+
+    // --- songs -----------------------------------------------------------------
+
+    void aSongKeepsTheDrumsSettings() {
+        // Trap, swing up two steps, held keys a step faster, the kick tuned,
+        // and a groove kept as a loop with its clap taken out.
+        const std::string script = "page 0 1\nkey 0.1 Right\nkey 0.15 Right\n"
+                                   "key 0.2 Shift+Right\nkey 0.25 Shift+Right\nkey 0.3 Up\n"
+                                   "down 1.0 1 " + at(drums::Kick) + "\nclick 1.05 len=0.6\n"
+                                   "glide 1.2 1.5 1 0.275 0.125\nup 1.8 1\n"
+                                   "down 2.00 2 " + at(drums::Kick) + "\ndown 2.02 3 " + at(drums::Clap) +
+                                   "\ndown 2.04 4 " + at(drums::Hat) +
+                                   "\nclick 3.0 len=0.15\nup 3.4 2\nup 3.4 3\nup 3.4 4\n"
+                                   "down 8.0 5 " + at(drums::Clap) + "\nkey 8.3 Delete\nup 8.6 5\nend 9\n";
+        bool checked = false;
+        testkit::reopen(script, 3.0, [&](Session &before, Session &opened, const QJsonObject &doc) {
+            const QJsonObject saved = doc[QStringLiteral("parts")].toArray()[0].toObject()[QStringLiteral("settings")].toObject();
+            QCOMPARE(saved[QStringLiteral("kit")].toString(), QStringLiteral("trap"));
+            QCOMPARE(saved[QStringLiteral("swing")].toDouble(), 0.54);
+            QCOMPARE(saved[QStringLiteral("keyRate")].toInt(), 1);
+            QVERIFY(saved[QStringLiteral("sounds")].toObject().contains(QStringLiteral("kick")));
+            const QJsonArray muted = saved[QStringLiteral("muted")].toArray();
+            QCOMPARE(muted.size(), 1);
+            QCOMPARE(muted[0].toObject()[QStringLiteral("slot")].toInt(), 0);
+            QCOMPARE(muted[0].toObject()[QStringLiteral("pads")].toArray(), QJsonArray{QStringLiteral("clap")});
+            // What the opened song saves is what the file said.
+            const QJsonObject again = opened.saveSong()[QStringLiteral("parts")].toArray()[0].toObject()[QStringLiteral("settings")].toObject();
+            QCOMPARE(again, saved);
+            // The engine has the kit and the kick's shaping, and the loop
+            // plays on without its clap.
+            const PartView &a = before.view().parts[0], &b = opened.view().parts[0];
+            QCOMPARE(int(b.data[34]), int(drums::Trap));
+            QVERIFY(b.data[40 + 3 * drums::Kick] != 0.0f);
+            QCOMPARE(b.data[40 + 3 * drums::Kick], a.data[40 + 3 * drums::Kick]);
+            QCOMPARE(b.playing, 0);
+            const QString status = opened.pageStatus(0);
+            QVERIFY2(status.contains(QStringLiteral("CLAP out of loop 1")), qPrintable(status));
+            QVERIFY2(status.contains(QStringLiteral("trap kit, swing 54%")), qPrintable(status));
+            checked = true;
+        });
+        QVERIFY(checked);
+    }
+
+    void aSongFileOfNonsenseLeavesTheDrumsSane() {
+        // A loop with a drum out of it, then the same song opened over it
+        // with settings no tenfold wrote: every value is checked or clamped,
+        // and the old song's mute doesn't linger.
+        const std::string script = "page 0 1\nkey 0.1 Right\n"
+                                   "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Clap) +
+                                   "\ndown 1.04 3 " + at(drums::Hat) +
+                                   "\nclick 2.0 len=0.15\nup 2.4 1\nup 2.4 2\nup 2.4 3\n"
+                                   "down 6.0 4 " + at(drums::Clap) + "\nkey 6.3 Delete\nup 6.6 4\nend 7\n";
+        bool checked = false;
+        testkit::reopen(script, 1.0, [&](Session &, Session &opened, const QJsonObject &doc) {
+            const QJsonObject nonsense = QJsonDocument::fromJson(R"({
+                "kit": 7, "swing": 1e300, "keyRate": "fast", "extra": true,
+                "sounds": {"kick": {"tune": 1e9, "decay": -1e9, "tone": "loud"}, "snare": [1, 2],
+                           "rim": {"tune": 0.5}, "nope": {"tune": 3}},
+                "muted": [{"slot": 99, "pads": ["kick"]}, {"slot": 3, "pads": ["kick"]},
+                          {"slot": 0, "pads": [3, "nope", "hat"]}, "x", {"slot": 0.5, "pads": ["snare"]}]
+            })").object();
+            QVERIFY(!nonsense.isEmpty());
+            QJsonObject edited = doc;
+            QJsonArray parts = edited[QStringLiteral("parts")].toArray();
+            QJsonObject drums = parts[0].toObject();
+            drums[QStringLiteral("settings")] = nonsense;
+            parts[0] = drums;
+            edited[QStringLiteral("parts")] = parts;
+            QString error;
+            QVERIFY2(opened.openSong(edited, &error), qPrintable(error));
+            float buf[384 * 2];
+            for (int i = 0; i < 4; ++i)
+                opened.studio()->render(buf, 384);
+            opened.refresh();
+            const QJsonObject got = opened.saveSong()[QStringLiteral("parts")].toArray()[0].toObject()[QStringLiteral("settings")].toObject();
+            QCOMPARE(got[QStringLiteral("kit")].toString(), QStringLiteral("house"));
+            QCOMPARE(got[QStringLiteral("swing")].toDouble(), 0.7);
+            QCOMPARE(got[QStringLiteral("keyRate")].toInt(), 0);
+            const QJsonObject sounds = got[QStringLiteral("sounds")].toObject();
+            QCOMPARE(sounds.keys(), (QStringList{QStringLiteral("kick"), QStringLiteral("rim")}));
+            const QJsonObject kick = sounds[QStringLiteral("kick")].toObject();
+            QCOMPARE(kick[QStringLiteral("tune")].toDouble(), 7.0);
+            QCOMPARE(kick[QStringLiteral("decay")].toDouble(), -2.0);
+            QCOMPARE(kick[QStringLiteral("tone")].toDouble(), 0.0);
+            // Only the hat is out, and only of the loop the song has.
+            const QJsonArray muted = got[QStringLiteral("muted")].toArray();
+            QCOMPARE(muted.size(), 1);
+            QCOMPARE(muted[0].toObject()[QStringLiteral("slot")].toInt(), 0);
+            QCOMPARE(muted[0].toObject()[QStringLiteral("pads")].toArray(), QJsonArray{QStringLiteral("hat")});
+            QCOMPARE(int(opened.view().parts[0].data[34]), int(drums::House));
+            QCOMPARE(opened.view().parts[0].data[40 + 3 * drums::Kick], 7.0f);
+            checked = true;
+        });
+        QVERIFY(checked);
+    }
+
+    void anyDegreeAClipSaysIsSafe() {
+        // A song file's clip may hold any int: the engine keeps the scale's
+        // arithmetic in range, and the sound finite.
+        Ctx ctx;
+        drums::Engine e;
+        e.init(kRate);
+        int id = 1;
+        for (int degree : {INT_MIN, INT_MAX, -100000, 100000})
+            for (int pad : {int(drums::Kick), int(drums::TomHi), int(drums::Bell), int(drums::Sub)}) {
+                Command c;
+                c.type = pad == drums::Sub ? uint16_t(Command::On) : drums::Hit;
+                c.id = id++;
+                c.i[0] = pad;
+                c.i[1] = degree;
+                c.i[2] = INT_MAX;
+                c.f[0] = 0.8f;
+                e.command(c, ctx);
+                if (pad == drums::Sub) {
+                    Command m;
+                    m.type = Command::Move;
+                    m.id = c.id;
+                    m.i[1] = degree == INT_MIN ? INT_MAX : -degree;
+                    e.command(m, ctx);
+                }
+            }
+        float l[kBlock], r[kBlock];
+        for (int b = 0; b < 200; ++b) {
+            std::fill(l, l + kBlock, 0.0f);
+            std::fill(r, r + kBlock, 0.0f);
+            e.render(l, r, kBlock, ctx);
+            for (int i = 0; i < kBlock; ++i)
+                QVERIFY(std::isfinite(l[i]) && std::isfinite(r[i]));
+        }
     }
 };
 

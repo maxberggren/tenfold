@@ -1181,6 +1181,9 @@ class Engine : public PartEngine {
 public:
     static constexpr int kVoices = 48;
     static constexpr int kPending = 256;
+    // A clip from a song file can say any degree: far past where a drum
+    // could be tuned, the scale's arithmetic would overflow.
+    static constexpr int kMaxDegrees = 48;
 
     void init(float rate) override {
         m_rate = rate;
@@ -1386,7 +1389,7 @@ private:
         case Command::On: {
             Strike s;
             s.pad = pad;
-            s.degrees = c.i[1];
+            s.degrees = std::clamp(c.i[1], -kMaxDegrees, kMaxDegrees);
             s.vel = c.f[0];
             s.sx = c.f[1];
             s.sy = c.f[2];
@@ -1409,7 +1412,7 @@ private:
         }
         case Command::Move:
             if (m_sub.active && m_sub.id == c.id) {
-                m_sub.targetDegree = float(c.i[1]);
+                m_sub.targetDegree = float(std::clamp(c.i[1], -kMaxDegrees, kMaxDegrees));
                 m_sub.glide = 0.05f;
             }
             break;

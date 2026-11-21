@@ -27,6 +27,9 @@ Rectangle {
         "Ctrl Shift Z\t" + qsTr("bring back what Ctrl Z took back, on the same page"),
         "Ctrl Z\t" + qsTr("take back this page's newest loop change (a loop, a layer, a pass played into it), up to 16 back; on the Song page, the newest anywhere"),
         "Ctrl N, Ctrl N\t" + qsTr("start over: every loop cleared, every part unmuted and the mix set back, the next loop sets the tempo"),
+        "Ctrl S\t" + qsTr("save the song: every loop, the mix, each page's sounds and the Song page, to pick up where you left off (Shift: save as)"),
+        "Ctrl O\t" + qsTr("open a saved song in place of what plays now"),
+        "Ctrl Shift O\t" + qsTr("pick up the song as it was when tenfold last quit"),
         "Ctrl R\t" + qsTr("record to ~/Music/tenfold"),
         "Ctrl T\t" + qsTr("the tutorial: a whole track, step by step, from a cleared studio (with loops made, press it twice; Ctrl Return next, Ctrl Shift Return back, Esc leaves)"),
         "Ctrl Q\t" + qsTr("quit")

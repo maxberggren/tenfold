@@ -104,6 +104,14 @@ enum Pub : int {
 // How loud the loop plays while the player holds a note over it.
 constexpr float kLoopUnderHand = 0.5f;
 
+// A loop's commands may come from a song file, so nothing in one is
+// trusted. A degree is kept within a few octaves of the pad's (wider would
+// only be out of hearing, and near the int's ends its octave overflows); a
+// float that picks from a list is clamped before it becomes an int, since
+// converting one too big for an int is undefined.
+inline int clampDegree(int degree) { return std::clamp(degree, -32, 64); }
+inline int indexOf(float v, int count) { return int(clampf(v, 0, float(count - 1))); }
+
 // --- the sounds -----------------------------------------------------------------
 
 struct Recipe {
@@ -517,13 +525,16 @@ public:
             Note &n = m_notes[k];
             if (n.id != c.id)
                 continue;
-            const bool slide = n.degree != c.i[0] || n.octave != c.i[1];
-            n.degree = c.i[0];
-            n.octave = c.i[1];
-            n.pressure = c.f[0];
-            n.tone = c.f[1];
-            n.morph = c.f[2];
-            n.fat = c.f[3];
+            // Clamped as a note's start is: a loop's moves may come from a
+            // song file.
+            const int degree = clampDegree(c.i[0]), octave = std::clamp(c.i[1], -1, 3);
+            const bool slide = n.degree != degree || n.octave != octave;
+            n.degree = degree;
+            n.octave = octave;
+            n.pressure = clampf(c.f[0], 0, 1);
+            n.tone = clampf(c.f[1], 0, 1);
+            n.morph = clampf(c.f[2], 0, 1);
+            n.fat = clampf(c.f[3], 0, 1);
             if (k == m_count - 1) {
                 m_cur = n;
                 // A move that comes with its note (a loop carrying in a note
@@ -1158,7 +1169,7 @@ private:
         case Command::On: {
             Note n;
             n.id = c.id;
-            n.degree = c.i[0];
+            n.degree = clampDegree(c.i[0]);
             n.octave = std::clamp(c.i[1], -1, 3);
             n.flags = c.i[2];
             n.sound = std::clamp(c.i[3], 0, SoundCount - 1);
@@ -1168,7 +1179,7 @@ private:
             n.fat = clampf(c.f[3], 0, 1);
             n.glide = clampf(c.f[4], 0, 1);
             n.pressure = n.vel;
-            n.rate = std::clamp(int(c.f[5]), 0, kRateCount - 1);
+            n.rate = indexOf(c.f[5], kRateCount);
             lane.noteOn(n, ctx.harmony(), eff, ctx.transport().beatAt(off));
             break;
         }
@@ -1185,11 +1196,11 @@ private:
                 break;
             case ShapeRoll:
                 own.roll = clampf(c.f[0], 0, 1);
-                own.pattern = std::clamp(int(c.f[1]), 0, kPatternCount - 1);
+                own.pattern = indexOf(c.f[1], kPatternCount);
                 break;
             case ShapeWob:
                 own.wob = clampf(c.f[0], 0, 1);
-                own.rate = std::clamp(int(c.f[1]), 0, kRateCount - 1);
+                own.rate = indexOf(c.f[1], kRateCount);
                 break;
             case ShapeGrit:
                 own.grit = clampf(c.f[0], 0, 1);
@@ -1206,7 +1217,7 @@ private:
             case ResetSlot:
                 // The page is about to fill a slot: what an old loop there
                 // left set goes with it.
-                m_shapeSlot[std::clamp(int(c.f[0]), 0, kClipSlots - 1)] = Shape{};
+                m_shapeSlot[indexOf(c.f[0], kClipSlots)] = Shape{};
                 break;
             default:
                 break;

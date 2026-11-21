@@ -2,6 +2,7 @@
 // follow, colours, gates on the beat, loops that keep driving the harmony,
 // keys, hold, and the low end left to the bass.
 
+#include <QJsonArray>
 #include <array>
 #include <complex>
 #include <functional>
@@ -852,6 +853,119 @@ private slots:
         QVERIFY(take.finite());
         QVERIFY(take.peak() < 1.0);
         QVERIFY(take.view.parts[kChords].voices <= 10);
+    }
+
+    // A song keeps the page's settings: the sound chosen, the voicing, hold,
+    // and each sound's own gate, length and filter. They come back in a new
+    // tenfold exactly as saved, and the engine gates the organ as before.
+    void aSongKeepsTheSoundAndItsGates() {
+        const std::string settings = "key 0.1 Right\nkey 0.15 Right\nkey 0.2 Shift+Right\nkey 0.25 Up\nkey 0.3 Up\n"
+                                     "key 0.35 -\nkey 0.4 -\ndown 0.5 20 " +
+                                     rail(Hold, 0.85f) + "\nup 1.0 20\n";
+        const std::string s = recordedLoop({0, 5, 2, 6}, Triad, settings) + "key 4.5 L\nend 5.5\n";
+        testkit::reopen(s, 3.0, [](Session &, Session &opened, const QJsonObject &doc) {
+            const QJsonObject part = doc[QStringLiteral("parts")].toArray()[kChords].toObject();
+            QCOMPARE(part[QStringLiteral("name")].toString(), QStringLiteral("Chords"));
+            const QJsonObject saved = part[QStringLiteral("settings")].toObject();
+            QCOMPARE(saved[QStringLiteral("sound")].toString(), QStringLiteral("ORGAN"));
+            QCOMPARE(saved[QStringLiteral("voicing")].toInt(), 2);
+            QCOMPARE(saved[QStringLiteral("hold")].toBool(), true);
+            const QJsonObject organ = saved[QStringLiteral("sounds")].toObject()[QStringLiteral("ORGAN")].toObject();
+            QCOMPARE(organ[QStringLiteral("gate")].toString(), QStringLiteral("8THS"));
+            QVERIFY(std::fabs(organ[QStringLiteral("filter")].toDouble() - 0.4) < 1e-4);
+            QVERIFY(std::fabs(organ[QStringLiteral("length")].toDouble() - 0.4) < 1e-4);
+            // What the opened song would save is what the file holds.
+            const QJsonObject again = opened.saveSong()[QStringLiteral("parts")]
+                                          .toArray()[kChords]
+                                          .toObject()[QStringLiteral("settings")]
+                                          .toObject();
+            QCOMPARE(again, saved);
+            // The engine gates the organ on eighths again, and the loop plays.
+            QCOMPARE(int(opened.view().parts[kChords].data[40 + 2]), int(Eighths));
+            QCOMPARE(opened.view().parts[kChords].playing, 0);
+            const QString status = opened.pageStatus();
+            QVERIFY2(status.contains(QStringLiteral("ORGAN")) && status.contains(QStringLiteral("hold")) &&
+                         status.contains(QStringLiteral("voicing +2")),
+                     qPrintable(status));
+        });
+    }
+
+    // A song edited by hand: wrong types, numbers far out of range, names
+    // this tenfold doesn't know, and a loop of chords no page would play.
+    // The settings open as sane values and the chords stay finite.
+    void aGarbledSongOpensSane() {
+        QJsonObject doc;
+        testkit::play("page 0 3\nend 0.1\n", [&](Session &s) { doc = s.saveSong(); });
+        QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+        QJsonObject part = parts[kChords].toObject();
+        QJsonObject sounds;
+        sounds[QStringLiteral("PAD")] = 7;
+        sounds[QStringLiteral("ORGAN")] =
+            QJsonObject{{"gate", "BOSSA"}, {"length", 1e30}, {"swing", -5}, {"filter", "x"}};
+        sounds[QStringLiteral("PIANO")] = QJsonObject{{"gate", "8ths"}, {"swing", 0.25}};
+        sounds[QStringLiteral("KAZOO")] = QJsonObject{{"gate", "WUB"}};
+        part[QStringLiteral("settings")] = QJsonObject{
+            {"sound", "KAZOO"}, {"voicing", 1e9}, {"hold", "yes"}, {"sounds", sounds}, {"extra", QJsonArray{1, 2}}};
+        auto event = [](double at, const char *type, int id, QJsonArray i, QJsonArray f) {
+            return QJsonObject{{"at", at}, {"type", type}, {"id", id}, {"i", i}, {"f", f}};
+        };
+        const QJsonArray events = {
+            event(0, "on", 1, {2147483647, 99, -99, 2147483647}, {1e6, -1e6, 1e6, 1e6}),
+            event(1, "on", 2, {-2147483647 - 1, -2147483647 - 1, 2147483647, -2147483647 - 1}, {-1e6, 1e6, -1e6, -1e6}),
+            event(1.5, "param", 3, {2147483647, 2147483647}, {1e6}),
+            event(1.6, "param", 4, {0, -2147483647 - 1}, {-1e6}),
+            QJsonObject{{"at", 3}, {"type", "off"}, {"id", 1}},
+            QJsonObject{{"at", 3.5}, {"type", "off"}, {"id", 2}},
+        };
+        part[QStringLiteral("clips")] =
+            QJsonArray{QJsonObject{{"slot", 0}, {"beats", 4}, {"anchor", 0}, {"events", events}}};
+        part[QStringLiteral("playing")] = 0;
+        parts[kChords] = part;
+        doc[QStringLiteral("parts")] = parts;
+
+        Studio studio(48000.0f);
+        studio.setTimeOrigin(0);
+        setScriptClock(0);
+        Session session(&studio);
+        session.setClock(&scriptClock);
+        QString error;
+        QVERIFY2(session.openSong(doc, &error) && error.isEmpty(), qPrintable(error));
+        float buf[384 * 2];
+        bool finite = true;
+        for (int tick = 0; tick <= 5 * 125; ++tick) {
+            setScriptClock(tick / 125.0);
+            session.refresh();
+            session.idle(scriptClock());
+            studio.render(buf, 384);
+            for (float x : buf)
+                finite = finite && std::isfinite(x);
+        }
+        session.refresh();
+        QVERIFY(finite);
+        QCOMPARE(session.view().parts[kChords].playing, 0);
+        QVERIFY(session.view().parts[kChords].voices <= 10);
+
+        const QJsonObject got = session.saveSong()[QStringLiteral("parts")]
+                                    .toArray()[kChords]
+                                    .toObject()[QStringLiteral("settings")]
+                                    .toObject();
+        QCOMPARE(got[QStringLiteral("sound")].toString(), QStringLiteral("PAD"));
+        QCOMPARE(got[QStringLiteral("voicing")].toInt(), 3);
+        QCOMPARE(got[QStringLiteral("hold")].toBool(), false);
+        QVERIFY(!got.contains(QStringLiteral("extra")));
+        const QJsonObject s = got[QStringLiteral("sounds")].toObject();
+        QVERIFY(!s.contains(QStringLiteral("KAZOO")));
+        const QJsonObject pad = s[QStringLiteral("PAD")].toObject(), organ = s[QStringLiteral("ORGAN")].toObject(),
+                          piano = s[QStringLiteral("PIANO")].toObject();
+        QCOMPARE(pad[QStringLiteral("gate")].toString(), QStringLiteral("HOLD"));
+        QCOMPARE(pad[QStringLiteral("length")].toDouble(), 0.55);
+        QCOMPARE(organ[QStringLiteral("gate")].toString(), QStringLiteral("OFFBEAT"));
+        QCOMPARE(organ[QStringLiteral("length")].toDouble(), 1.0);
+        QCOMPARE(organ[QStringLiteral("swing")].toDouble(), 0.0);
+        QCOMPARE(organ[QStringLiteral("filter")].toDouble(), 0.5);
+        QCOMPARE(piano[QStringLiteral("gate")].toString(), QStringLiteral("8THS"));
+        QCOMPARE(piano[QStringLiteral("swing")].toDouble(), 0.25);
+        QCOMPARE(int(session.view().parts[kChords].data[40 + 3]), int(Eighths));
     }
 };
 

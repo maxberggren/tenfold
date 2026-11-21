@@ -27,6 +27,7 @@
 //     ids must stay below 1 << 24: replayed clips set the bits above.
 
 #include <QColor>
+#include <QJsonObject>
 #include <QRectF>
 #include <QString>
 #include <cmath>
@@ -410,6 +411,18 @@ public:
     // Ctrl+N twice (or the tutorial starting): the studio has been cleared,
     // its mix set back home. Drop whatever belongs to the old song.
     virtual void startOver(ControlContext &ctx) { (void)ctx; }
+    // Ctrl+S: the page's own settings, the ones a player chose and would
+    // want back when the song is opened again (a kit, a sound, a style, a
+    // latch, a song written on the page), as JSON values the page names
+    // itself. Not what a hand is doing this moment, and not the clips: the
+    // studio saves those.
+    virtual void save(QJsonObject &out) const { (void)out; }
+    // Ctrl+O, after startOver() and once the studio has the song's clips:
+    // the page takes back what save() wrote and sends its engine whatever
+    // makes it sound that way. The file may be old or edited by hand, so a
+    // name the page doesn't know is ignored, a missing one keeps the page's
+    // default, and every value is checked and clamped to its range.
+    virtual void load(const QJsonObject &in, ControlContext &ctx) { (void)in, (void)ctx; }
     // Ctrl+Z, before the studio takes back a step: a change the page has
     // promised but not yet made (a roll kept for the next bar line) is the
     // newest thing done, so taking it back is the page's. True if it did.

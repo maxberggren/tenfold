@@ -3,6 +3,8 @@
 
 #include "testkit.h"
 
+#include <QJsonArray>
+
 #include "../src/risers.h"
 #include "parts.h"
 
@@ -679,6 +681,128 @@ private slots:
         QVERIFY(st.error.empty());
         QVERIFY2(st.p99Load < 0.12, qPrintable(QString::number(st.p99Load)));
         QVERIFY(st.peakDb < 0);
+    }
+
+    // A song keeps the page's settings: the drop style, the keys' riser
+    // length and whether builds move the mix come back with the loop.
+    void theSongKeepsTheFxSettings() {
+        const std::string script =
+            fmt("page 0 7\nkey 0.2 Right\nkey 0.25 Right\nkey 0.3 Up\nkey 0.35 W\n"
+                "tap 0.5 %.3f 0.1\ntap 1.0 %.3f 0.1\ntap 1.5 %.3f 0.1\ntap 2.0 %.3f 0.1\nkey 2.5 Space\nend 3.5\n",
+                hitX(3), hitX(3), hitX(0), hitX(3));
+        bool checked = false;
+        testkit::reopen(script, 2.5, [&](Session &, Session &opened, const QJsonObject &doc) {
+            const QJsonObject part = doc[QStringLiteral("parts")].toArray()[kFx].toObject();
+            QCOMPARE(part[QStringLiteral("name")].toString(), opened.pageName(kFx)); // scripts count pages from 1
+            const QJsonObject settings = part[QStringLiteral("settings")].toObject();
+            QCOMPARE(settings[QStringLiteral("dropStyle")].toString(), QStringLiteral("strip"));
+            QCOMPARE(settings[QStringLiteral("riserBars")].toInt(), 8);
+            QCOMPARE(settings[QStringLiteral("buildMix")].toBool(true), false);
+            const QJsonObject again = opened.saveSong()[QStringLiteral("parts")].toArray()[kFx].toObject();
+            QCOMPARE(again[QStringLiteral("settings")].toObject(), settings);
+            // The page shows the style, the loop plays again, and the keys
+            // play 8-bar risers.
+            QCOMPARE(opened.page(), kFx);
+            QVERIFY2(opened.pageStatus().contains(QStringLiteral("strip")), qPrintable(opened.pageStatus()));
+            QCOMPARE(opened.view().parts[kFx].playing, 0);
+            KeyEvent a;
+            a.key = Qt::Key_A;
+            QVERIFY(opened.key(a));
+            float buf[384 * 2];
+            for (int tick = 0; tick < 20; ++tick) {
+                setScriptClock(scriptClock() + 1 / 125.0);
+                opened.refresh();
+                opened.idle(scriptClock());
+                opened.studio()->render(buf, 384);
+            }
+            opened.refresh();
+            bool eightBars = false;
+            for (const VoiceInfo &v : voicesOf(opened.view()))
+                eightBars |= v.kind == risers::Noise && v.end - v.start > 20;
+            QVERIFY(eightBars);
+            checked = true;
+        });
+        QVERIFY(checked);
+    }
+
+    // A file edited by hand: wrong types, numbers out of range and names
+    // the page doesn't know leave it on sane settings.
+    void garbageSettingsOpenSanely() {
+        testkit::play("page 0 7\nkey 0.2 Right\nkey 0.3 Down\nend 0.5\n", [](Session &s) {
+            auto settingsAfter = [&](const QJsonObject &garbage) {
+                QJsonObject doc = s.saveSong();
+                QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+                QJsonObject fx = parts[kFx].toObject();
+                fx[QStringLiteral("settings")] = garbage;
+                parts[kFx] = fx;
+                doc[QStringLiteral("parts")] = parts;
+                QString error;
+                if (!s.openSong(doc, &error))
+                    return QJsonObject{{QStringLiteral("error"), error}};
+                return s.saveSong()[QStringLiteral("parts")].toArray()[kFx].toObject()[QStringLiteral("settings")].toObject();
+            };
+            const QJsonObject defaults{{QStringLiteral("dropStyle"), QStringLiteral("clean")},
+                                       {QStringLiteral("riserBars"), 4},
+                                       {QStringLiteral("buildMix"), true}};
+            QCOMPARE(settingsAfter({}), defaults);
+            QCOMPARE(settingsAfter({{QStringLiteral("dropStyle"), 7},
+                                    {QStringLiteral("riserBars"), QStringLiteral("8")},
+                                    {QStringLiteral("buildMix"), QStringLiteral("no")},
+                                    {QStringLiteral("extra"), QJsonArray{1, 2}}}),
+                     defaults);
+            QJsonObject s1 = settingsAfter({{QStringLiteral("dropStyle"), QStringLiteral("boom")},
+                                            {QStringLiteral("riserBars"), 1e300}});
+            QCOMPARE(s1[QStringLiteral("dropStyle")].toString(), QStringLiteral("clean"));
+            QCOMPARE(s1[QStringLiteral("riserBars")].toInt(), 16);
+            QCOMPARE(settingsAfter({{QStringLiteral("riserBars"), -1e300}})[QStringLiteral("riserBars")].toInt(), 1);
+            // A length the field has no row for is the nearest one it has.
+            QCOMPARE(settingsAfter({{QStringLiteral("riserBars"), 6}})[QStringLiteral("riserBars")].toInt(), 8);
+            QJsonObject gap = settingsAfter({{QStringLiteral("dropStyle"), QStringLiteral("gap")}});
+            QCOMPARE(gap[QStringLiteral("dropStyle")].toString(), QStringLiteral("gap"));
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("gap")), qPrintable(s.pageStatus()));
+        });
+    }
+
+    // A clip from a file may hold any number in a command's values: the
+    // engine takes them all without reading out of bounds, and plays on.
+    void anyCommandValuesAreSafe() {
+        PartSpec spec = makeRisers();
+        auto &e = *spec.engine;
+        FxAudio ctx;
+        ctx.tr.rate = 48000;
+        ctx.tr.bpm = 124;
+        ctx.tr.beatsPerSample = 124 / 60.0 / 48000.0;
+        e.init(48000);
+        auto run = [&](double seconds) {
+            for (int b = 0; b < int(seconds * 48000 / kBlock); ++b) {
+                ctx.tr.beat = double(ctx.tr.sample) * ctx.tr.beatsPerSample;
+                float l[kBlock] = {}, r[kBlock] = {};
+                e.render(l, r, kBlock, ctx);
+                ctx.tr.sample += kBlock;
+            }
+        };
+        const int32_t ints[] = {INT32_MIN, -1, 0, 7, 12, INT32_MAX};
+        const float floats[] = {-3e38f, -1e6f, 0.0f, 1e6f, 3e38f};
+        const uint16_t types[] = {Command::On, Command::Move, Command::Param, Command::Off, risers::CmdDrop,
+                                  risers::CmdFall, risers::CmdMark};
+        int n = 0;
+        for (uint16_t type : types)
+            for (int32_t i : ints)
+                for (float f : floats) {
+                    Command c;
+                    c.type = type;
+                    c.id = (n++ % 3) + (i & 1 ? (1 << 30) : 0);
+                    for (int32_t &v : c.i)
+                        v = i;
+                    for (float &v : c.f)
+                        v = f;
+                    e.command(c, ctx);
+                    run(0.002);
+                }
+        run(0.5);
+        float data[kPartData];
+        e.publish(data);
+        QVERIFY(e.voices() <= risers::Engine::kVoices);
     }
 };
 

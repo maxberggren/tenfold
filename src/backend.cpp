@@ -22,8 +22,14 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
     m_audio = std::make_unique<AudioOut>(m_studio.get());
     m_session = std::make_unique<Session>(m_studio.get());
     m_touch = std::make_unique<TouchSource>(m_session.get());
-    if (!live)
+    m_picker = std::make_unique<PortalFilePicker>();
+    m_picker->onError = [this](const QString &why) { m_session->say(why); };
+    m_songs = std::make_unique<SongFiles>(m_session.get(), m_picker.get());
+    if (!live) {
         m_session->setClock(&scriptClock);
+        // A screenshot neither keeps nor offers a song of its own.
+        m_songs->setAutosavePath({});
+    }
 
     if (live) {
         // Debugging Space takes: ~/.cache/tenfold/debug.log, fresh each run.
@@ -31,6 +37,10 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         QDir().mkpath(cache);
         m_session->setDebugLog(cache + "/debug.log");
         m_audio->start();
+        // The song kept when tenfold last quit is offered, quietly: a notice,
+        // not a dialog, since most starts are for something new.
+        if (m_songs->hasAutosave())
+            m_session->say(QStringLiteral("Ctrl+Shift+O picks up where you left off"));
         const auto pads = Device::findTouchpads();
         if (!pads.isEmpty())
             m_device = pads.first().path;
@@ -57,6 +67,13 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
 Backend::~Backend() { shutdown(); }
 
 void Backend::shutdown() {
+    if (m_shutDown)
+        return;
+    m_shutDown = true;
+    // Kept before the audio stops: the clips are copied out of the studio
+    // by the audio thread.
+    if (!m_simulated)
+        m_songs->autosave();
     m_tickerRun = false;
     if (m_ticker.joinable())
         m_ticker.join();

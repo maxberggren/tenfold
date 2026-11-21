@@ -2,6 +2,7 @@
 // moves (build, drop, breakdown, echo-out, cut, lift), and the song, written
 // or recorded, replayed from background() whatever page is showing.
 
+#include <QJsonArray>
 #include <fstream>
 #include <sstream>
 
@@ -75,6 +76,55 @@ std::string mouseHold(double t, float x, float y) { return mouseClick(t, x, y, 0
 
 // How far a beat is from the nearest bar line, in beats.
 double offBar(double beat) { return beat - 4.0 * std::round(beat / 4.0); }
+
+// Plays an opened session on for so many seconds from the script clock's
+// now, pressing keys on the showing page `at` seconds in, and calls fn
+// after every tick.
+struct KeyAt {
+    double at;
+    int key;
+};
+void press(Session &s, int key) {
+    KeyEvent e;
+    e.key = key;
+    if (key >= Qt::Key_Space && key <= Qt::Key_AsciiTilde)
+        e.text = QString(QChar(key)).toLower();
+    s.key(e);
+    e.down = false;
+    s.key(e);
+}
+void playOn(Session &s, double seconds, const std::vector<KeyAt> &keys,
+            const std::function<void(double, Session &)> &fn = {}) {
+    const double t0 = scriptClock();
+    float buf[384 * 2];
+    for (int tick = 1; tick <= int(seconds * 125); ++tick) {
+        const double t = t0 + tick / 125.0;
+        setScriptClock(t);
+        s.refresh();
+        for (const KeyAt &k : keys)
+            if (k.at > (tick - 1) / 125.0 && k.at <= tick / 125.0)
+                press(s, k.key);
+        s.idle(t);
+        s.studio()->render(buf, 384);
+        s.refresh();
+        if (fn)
+            fn(t - t0, s);
+    }
+}
+
+// The clip each part plays in each bar of a song file's "song", -1 for none.
+std::vector<std::array<int, 7>> songBars(const QJsonObject &song, Session &s) {
+    std::vector<std::array<int, 7>> out;
+    for (const QJsonValue &b : song[QStringLiteral("bars")].toArray()) {
+        std::array<int, 7> row;
+        row.fill(-1);
+        const QJsonObject play = b.toObject()[QStringLiteral("play")].toObject();
+        for (int p = 0; p < 7 && p < s.partCount(); ++p)
+            row[size_t(p)] = play.value(s.pageName(p)).toInt(-1);
+        out.push_back(row);
+    }
+    return out;
+}
 
 }
 
@@ -876,6 +926,205 @@ private slots:
                 }
         });
         QVERIFY2(changes < 6000, qPrintable(QString::number(changes)));
+    }
+
+    // --- song files ---
+
+    void aSavedSongComesBackStoppedAndPlaysAsItDid() {
+        // A written track (I twice), stopped (P); scene 3 stored over the
+        // four loops (Shift+F3); the bass muted (W). Saved, opened in a fresh
+        // tenfold: the song is all there, and waits for P.
+        const std::string script = loops("key 15.1 Shift+F3\nkey 15.2 I\nkey 15.4 I\nkey 16.0 P\nkey 16.2 W\nend 17\n");
+        bool ran = false;
+        testkit::reopen(script, 3.0, [&](Session &before, Session &opened, const QJsonObject &doc) {
+            ran = true;
+            const QJsonObject song = doc[QStringLiteral("song")].toObject();
+            QCOMPARE(song[QStringLiteral("bars")].toArray().size(), 76);
+            QCOMPARE(int(std::lround(song[QStringLiteral("tempo")].toDouble())), 120);
+            QStringList moves;
+            for (const QJsonValue &m : song[QStringLiteral("moves")].toArray())
+                moves << m.toObject()[QStringLiteral("move")].toString();
+            for (const char *m : {"build", "breakdown", "echoOut"})
+                QVERIFY2(moves.contains(QLatin1String(m)), qPrintable(moves.join(' ')));
+            QVERIFY(song[QStringLiteral("channels")].toObject().contains(QStringLiteral("Drums")));
+            const QJsonArray scenes = song[QStringLiteral("scenes")].toArray();
+            QCOMPARE(scenes.size(), 1);
+            QCOMPARE(scenes[0].toObject()[QStringLiteral("scene")].toInt(), 2);
+            // What the opened page saves is what the file holds.
+            QCOMPARE(opened.saveSong()[QStringLiteral("song")].toObject(), song);
+            // The song waits for P; the loops play on, the bass still muted.
+            const int arrange = opened.arrangePage();
+            QVERIFY2(!opened.pageStatus(arrange).contains(QStringLiteral("song "), Qt::CaseInsensitive),
+                     qPrintable(opened.pageStatus(arrange)));
+            QCOMPARE(opened.view().parts[1].channel.value[Mute], 1.0f);
+            for (int p = 0; p < 7; ++p)
+                QCOMPARE(opened.view().parts[p].playing, before.view().parts[p].playing);
+
+            // Everything stopped, then F3 brings back the stored scene.
+            playOn(opened, 5.0, {{0.3, Qt::Key_Backspace}, {2.6, Qt::Key_F3}});
+            for (int p : {0, 1, 2, 5})
+                QCOMPARE(opened.view().parts[p].playing, 0);
+
+            // P (half way through a bar): the song launches the clips its
+            // bars name, bar by bar, from the next.
+            const auto want = songBars(song, opened);
+            std::vector<std::array<int, 7>> got;
+            int origin = -1;
+            playOn(opened, 50.0, {}, [&](double, Session &s) {
+                const double beat = s.view().beat;
+                if (origin < 0 && beat - 4 * std::floor(beat / 4) >= 2.0) {
+                    press(s, Qt::Key_P);
+                    origin = int(std::floor(beat / 4)) + 1;
+                }
+                if (origin < 0)
+                    return;
+                const double into = beat - (origin + int(got.size())) * 4.0;
+                if (into >= 2.0 && into < 4.0 && got.size() < 22) {
+                    std::array<int, 7> row;
+                    for (int p = 0; p < 7; ++p)
+                        row[size_t(p)] = s.view().parts[p].playing;
+                    got.push_back(row);
+                }
+            });
+            QCOMPARE(int(got.size()), 22);
+            for (size_t b = 0; b < got.size(); ++b)
+                for (int p = 0; p < 7; ++p)
+                    QVERIFY2(got[b][size_t(p)] == want[b][size_t(p)],
+                             qPrintable(QString("bar %1 part %2: %3, the song says %4")
+                                            .arg(b).arg(p).arg(got[b][size_t(p)]).arg(want[b][size_t(p)])));
+            QVERIFY2(opened.pageStatus(arrange).contains(QStringLiteral("song "), Qt::CaseInsensitive),
+                     qPrintable(opened.pageStatus(arrange)));
+        });
+        QVERIFY(ran);
+    }
+
+    void aRecordedSongComesBackWithItsMutes() {
+        // The recorded song of aRecordedSongReplaysBarByBarFromAnyPage: the
+        // drums muted for two of its four bars. Opened again, P replays the
+        // mute on the same bars of the song.
+        bool ran = false;
+        testkit::reopen(loops("key 15.3 O\nkey 18.6 Q\nkey 22.6 Q\nkey 23.3 O\nend 26\n"), 1.0,
+                        [&](Session &, Session &opened, const QJsonObject &doc) {
+                            ran = true;
+                            const QJsonObject song = doc[QStringLiteral("song")].toObject();
+                            QCOMPARE(song[QStringLiteral("bars")].toArray().size(), 4);
+                            const QJsonArray mute =
+                                song[QStringLiteral("channels")][QStringLiteral("Drums")][QStringLiteral("mute")].toArray();
+                            QVERIFY2(mute.size() == 3, qPrintable(QString::number(mute.size())));
+                            QCOMPARE(opened.saveSong()[QStringLiteral("song")].toObject(), song);
+                            // Muted from about bar 1 + 1/16 of the song to bar 3 + 1/16 (18.6 and 22.6 after 16.5).
+                            std::vector<std::pair<double, float>> mutes;
+                            double origin = -1;
+                            playOn(opened, 12.0, {}, [&](double, Session &s) {
+                                const StudioView &v = s.view();
+                                if (origin < 0 && v.beat - 4 * std::floor(v.beat / 4) >= 2.0) {
+                                    press(s, Qt::Key_P);
+                                    origin = (std::floor(v.beat / 4) + 1) * 4;
+                                }
+                                if (origin < 0)
+                                    return;
+                                const float m = v.parts[0].channel.value[Mute];
+                                if (mutes.empty() || mutes.back().second != m)
+                                    mutes.push_back({v.beat - origin, m});
+                            });
+                            QVERIFY2(mutes.size() >= 3, qPrintable(QString::number(mutes.size())));
+                            QVERIFY2(std::fabs(mutes[1].first - 4.2) < 0.3, qPrintable(QString::number(mutes[1].first)));
+                            QVERIFY2(std::fabs(mutes[2].first - 12.2) < 0.3, qPrintable(QString::number(mutes[2].first)));
+                        });
+        QVERIFY(ran);
+    }
+
+    void aSongFileOfNonsenseOpensSane() {
+        // The loops, saved; the song in the file replaced by wrong types,
+        // huge numbers, slots and steps out of range and parts that aren't
+        // there. It opens, plays, and saves back only what made sense.
+        QJsonObject doc;
+        testkit::play(loops("end 16\n"), [&](Session &s) { doc = s.saveSong(); });
+        QVERIFY(!doc.isEmpty());
+        QJsonArray bars;
+        bars.append(QJsonObject{{"label", 7},
+                                {"join", "yes"},
+                                {"play", QJsonObject{{"Drums", 12}, {"Bass", -3}, {"Vocals", 0}, {"Chords", 0.5}, {"Atmos", 0}}},
+                                {"fromTop", QJsonArray{"Drums", "Nobody", 3, "Atmos"}}});
+        bars.append("junk");
+        bars.append(5);
+        for (int i = 0; i < 400; ++i)
+            bars.append(QJsonObject{{"label", "Drop"}, {"play", QJsonObject{{"Drums", 0}, {"Bass", 1e300}}}});
+        QJsonObject song{
+            {"tempo", 1e300},
+            {"key", QJsonObject{{"root", -50}, {"family", 99}, {"brightness", "x"}}},
+            {"bars", bars},
+            {"channels", QJsonObject{{"Drums", QJsonObject{{"gain", QJsonArray{QJsonArray{0, 5}, QJsonArray{-4, 0.3},
+                                                                               QJsonArray{1e12, 0.2}, "x", QJsonArray{3},
+                                                                               QJsonArray{16, 0.4}}},
+                                                           {"mute", "loud"}}},
+                                     {"Nobody", QJsonObject{{"gain", QJsonArray{QJsonArray{0, 1}}}}},
+                                     {"Bass", 4}}},
+            {"tension", QJsonArray{QJsonArray{10, 99}, QJsonArray{0, -7}}},
+            {"moves", QJsonArray{QJsonObject{{"at", 1e9}, {"move", "drop"}},
+                                 QJsonObject{{"at", 16}, {"move", "build"}, {"bars", 1e9}},
+                                 QJsonObject{{"at", 32}, {"move", "breakdown"}, {"parts", QJsonArray{"Drums", "Ghost"}}, {"bars", -4}},
+                                 QJsonObject{{"at", 48}, {"move", "teleport"}},
+                                 QJsonObject{{"at", "soon"}, {"move", "cut"}},
+                                 QJsonObject{{"at", 8}, {"move", "lift"}, {"semitones", 400}},
+                                 7}},
+            {"scenes", QJsonArray{QJsonObject{{"scene", 12}, {"play", QJsonObject{{"Drums", 0}}}},
+                                  QJsonObject{{"scene", 1}, {"play", QJsonObject{{"Drums", 99}, {"Bass", 0}}},
+                                              {"stop", QJsonArray{"Chords", "Ghost"}}},
+                                  "x"}},
+            {"surprise", true}};
+        doc[QStringLiteral("song")] = song;
+        doc[QStringLiteral("page")] = QStringLiteral("Arrange");
+
+        setScriptClock(100);
+        Studio studio(48000.0f);
+        studio.setTimeOrigin(scriptClock());
+        Session s(&studio);
+        s.setClock(&scriptClock);
+        QString error;
+        QVERIFY2(s.openSong(doc, &error), qPrintable(error));
+        playOn(s, 1.0, {});
+        const QJsonObject back = s.saveSong()[QStringLiteral("song")].toObject();
+        const QJsonArray b = back[QStringLiteral("bars")].toArray();
+        QCOMPARE(b.size(), 256);
+        QCOMPARE(back[QStringLiteral("tempo")].toDouble(), 240.0);
+        QCOMPARE(back[QStringLiteral("key")][QStringLiteral("root")].toInt(), 0);
+        QVERIFY(back[QStringLiteral("key")][QStringLiteral("family")].toInt() < 99);
+        QCOMPARE(b[0].toObject()[QStringLiteral("play")].toObject(), (QJsonObject{{"Atmos", 0}}));
+        QCOMPARE(b[0].toObject()[QStringLiteral("fromTop")].toArray(), (QJsonArray{"Atmos"}));
+        QVERIFY(!b[0].toObject().contains(QStringLiteral("label")));
+        QCOMPARE(b[1].toObject(), QJsonObject{});
+        QCOMPARE(b[3].toObject()[QStringLiteral("play")].toObject(), (QJsonObject{{"Drums", 0}}));
+        const QJsonObject drums = back[QStringLiteral("channels")][QStringLiteral("Drums")].toObject();
+        QCOMPARE(drums[QStringLiteral("gain")].toArray(), (QJsonArray{QJsonArray{0, 1}, QJsonArray{16, 0.4}}));
+        QCOMPARE(drums[QStringLiteral("mute")].toArray(), (QJsonArray{QJsonArray{0, 0}}));
+        QVERIFY(!back[QStringLiteral("channels")].toObject().contains(QStringLiteral("Nobody")));
+        QCOMPARE(back[QStringLiteral("tension")].toArray(), (QJsonArray{QJsonArray{0, -1}, QJsonArray{10, 1}}));
+        const QJsonArray moves = back[QStringLiteral("moves")].toArray();
+        QCOMPARE(moves.size(), 3);
+        QCOMPARE(moves[0].toObject(), (QJsonObject{{"at", 8}, {"move", "lift"}, {"semitones", 12}}));
+        QCOMPARE(moves[1].toObject(), (QJsonObject{{"at", 16}, {"move", "build"}, {"bars", 32}}));
+        QCOMPARE(moves[2].toObject(),
+                 (QJsonObject{{"at", 32}, {"move", "breakdown"}, {"parts", QJsonArray{"Drums"}}, {"bars", 1}}));
+        QCOMPARE(back[QStringLiteral("scenes")].toArray(),
+                 (QJsonArray{QJsonObject{{"scene", 1}, {"play", QJsonObject{{"Bass", 0}}}, {"stop", QJsonArray{"Chords"}}}}));
+        QVERIFY(!back.contains(QStringLiteral("surprise")));
+
+        // It plays: P takes the song's tempo; F2 is the scene as far as it made sense.
+        float peak = 0;
+        playOn(s, 8.0, {{0.3, Qt::Key_P}}, [&](double, Session &x) { peak = std::max(peak, x.view().peak); });
+        QVERIFY(std::isfinite(peak));
+        QVERIFY2(std::fabs(s.view().bpm - 240) < 1e-6, qPrintable(QString::number(s.view().bpm)));
+        QVERIFY(s.pageStatus(s.arrangePage()).contains(QStringLiteral("song "), Qt::CaseInsensitive));
+        playOn(s, 3.0, {{0.1, Qt::Key_P}, {0.5, Qt::Key_F2}});
+        QCOMPARE(s.view().parts[1].playing, 0);
+
+        // A song that is nothing but the wrong types opens as no song at all.
+        doc[QStringLiteral("song")] = QJsonObject{{"bars", "many"}, {"moves", 3}, {"scenes", QJsonObject{}}, {"tension", "high"}};
+        QVERIFY(s.openSong(doc, &error));
+        playOn(s, 1.0, {{0.3, Qt::Key_P}});
+        QCOMPARE(s.saveSong()[QStringLiteral("song")].toObject(), QJsonObject{});
+        QVERIFY(!s.pageStatus(s.arrangePage()).contains(QStringLiteral("song "), Qt::CaseInsensitive));
     }
 
     void debugSong() {

@@ -2,6 +2,7 @@
 // chord follower, the roll, the two lanes), and its controls through real
 // scripted performances.
 
+#include <QJsonArray>
 #include <memory>
 
 #include "bass.h"
@@ -911,6 +912,108 @@ private slots:
         const auto take = testkit::play("page 0 2\ndown 0.2 1 0.3 0.5\npage 1.0 3\nend 2.0\n");
         QVERIFY(take.rms(0.4, 0.9) > 0.03);
         QVERIFY(take.rms(1.6, 2.0) < 0.002);
+    }
+
+    // A song saved and opened again keeps the bass as it was set: REESE with
+    // its saw squared, up an octave, the tone up, the slide shorter, more
+    // morph, following the chords, a roll latched from the keys and a
+    // wobble latched with a click.
+    void aSongKeepsTheBassAsItWasSet() {
+        QJsonObject home;
+        testkit::play("end 0.1\n", [&](Session &s) { home = bassSettings(s.saveSong()); });
+        const char *script = "page 0 2\nkey 0.1 E\nkey 0.15 Shift+E\nkey 0.2 Up\nkey 0.25 +\nkey 0.3 Shift+Down\n"
+                             "key 0.35 Shift+]\nkey 0.4 O\nkey 0.45 ]\nkey 0.5 ]\n"
+                             "down 0.6 2 0.55 0.9\nclick 0.7\nup 0.8 2\nend 1.2\n";
+        testkit::reopen(script, 1.0, [&](Session &, Session &opened, const QJsonObject &doc) {
+            QCOMPARE(doc[QStringLiteral("parts")].toArray()[1].toObject()[QStringLiteral("name")].toString(),
+                     QStringLiteral("Bass"));
+            const QJsonObject settings = bassSettings(doc);
+            QCOMPARE(bassSettings(opened.saveSong()), settings);
+            QVERIFY(!settings.isEmpty() && settings != home);
+            QCOMPARE(settings[QStringLiteral("sound")].toString(), QStringLiteral("REESE"));
+            QCOMPARE(settings[QStringLiteral("octave")].toInt(), 1);
+            QCOMPARE(settings[QStringLiteral("follow")].toBool(), true);
+            QCOMPARE(settings[QStringLiteral("square")].toArray(), QJsonArray{QStringLiteral("REESE")});
+            const QJsonObject latched = settings[QStringLiteral("latched")].toObject();
+            QCOMPARE(latched[QStringLiteral("roll")].toObject()[QStringLiteral("pattern")].toString(),
+                     QStringLiteral("SKIP"));
+            QVERIFY(latched[QStringLiteral("wobble")].isObject());
+            // The page and the engine have it back.
+            QCOMPARE(int(opened.probe(1, QStringLiteral("sound"))), int(bass::Reese));
+            QCOMPARE(opened.probe(1, QStringLiteral("follow")), 1.0f);
+            QCOMPARE(int(opened.view().parts[1].data[bass::PubRoll]), 2);
+            const QString status = opened.pageStatus(1);
+            QVERIFY2(status.contains(QStringLiteral("roll latched")) && status.contains(QStringLiteral("wob latched")),
+                     qPrintable(status));
+        });
+    }
+
+    // A file edited by hand: wrong types keep the default, numbers are
+    // clamped, unknown names are ignored, and nothing breaks.
+    void aBadBassInAFileOpensSane() {
+        QJsonObject home;
+        testkit::play("end 0.1\n", [&](Session &s) { home = bassSettings(s.saveSong()); });
+        testkit::play("page 0 2\nkey 0.1 ]\nend 0.3\n", [&](Session &s) {
+            QJsonObject doc = s.saveSong();
+            const QJsonObject garbage = QJsonDocument::fromJson(R"({
+                "sound": 5, "octave": 1e300, "tone": -50, "slide": "short", "follow": 1,
+                "morph": {"ACID": 99, "SUB": "x", "NOPE": 0.5},
+                "square": ["NOPE", 3, "acid", "SUB"],
+                "roll": {"pattern": "NOPE", "gate": 1e9},
+                "wobble": {"rate": 7, "depth": -1},
+                "grit": [1, 2],
+                "latched": {"octave": 99, "roll": {"pattern": 7e9}, "filter": {"cutoff": -9, "morph": 9},
+                            "wobble": true, "bogus": {}},
+                "extra": null
+            })").object();
+            QVERIFY(!garbage.isEmpty());
+            QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+            QJsonObject bassPart = parts[1].toObject();
+            bassPart[QStringLiteral("settings")] = garbage;
+            parts[1] = bassPart;
+            doc[QStringLiteral("parts")] = parts;
+            QString error;
+            QVERIFY2(s.openSong(doc, &error), qPrintable(error));
+            const QJsonObject got = bassSettings(s.saveSong());
+            QCOMPARE(got[QStringLiteral("sound")].toString(), QStringLiteral("PLUCK"));
+            QCOMPARE(got[QStringLiteral("octave")].toInt(), 2);
+            QCOMPARE(got[QStringLiteral("tone")].toDouble(), 0.0);
+            QCOMPARE(got[QStringLiteral("slide")].toDouble(), 0.5);
+            QCOMPARE(got[QStringLiteral("follow")].toBool(), false);
+            const QJsonObject morph = got[QStringLiteral("morph")].toObject();
+            QCOMPARE(morph[QStringLiteral("ACID")].toDouble(), 1.0);
+            QCOMPARE(morph[QStringLiteral("SUB")].toDouble(), 0.3);
+            QVERIFY(!morph.contains(QStringLiteral("NOPE")));
+            // SUB has no saw to turn square.
+            QCOMPARE(got[QStringLiteral("square")].toArray(), QJsonArray{QStringLiteral("ACID")});
+            const QJsonObject roll = got[QStringLiteral("roll")].toObject();
+            QCOMPARE(roll[QStringLiteral("pattern")].toString(), QStringLiteral("PSY"));
+            QCOMPARE(roll[QStringLiteral("gate")].toDouble(), 1.0);
+            const QJsonObject wobble = got[QStringLiteral("wobble")].toObject();
+            QCOMPARE(wobble[QStringLiteral("rate")].toString(), QStringLiteral("1/8"));
+            QCOMPARE(wobble[QStringLiteral("depth")].toDouble(), 0.05);
+            QCOMPARE(got[QStringLiteral("grit")].toObject()[QStringLiteral("amount")].toDouble(), 0.5);
+            const QJsonObject latched = got[QStringLiteral("latched")].toObject();
+            QCOMPARE(latched.keys(), (QStringList{QStringLiteral("filter"), QStringLiteral("octave"), QStringLiteral("roll")}));
+            QCOMPARE(latched[QStringLiteral("octave")].toInt(), 2);
+            QCOMPARE(latched[QStringLiteral("roll")].toObject()[QStringLiteral("pattern")].toString(), QStringLiteral("PSY"));
+            QCOMPARE(latched[QStringLiteral("filter")].toObject()[QStringLiteral("cutoff")].toDouble(), -0.7);
+            QCOMPARE(latched[QStringLiteral("filter")].toObject()[QStringLiteral("morph")].toDouble(), 1.0);
+            // Settings that aren't an object at all: a new page's.
+            parts = doc[QStringLiteral("parts")].toArray();
+            bassPart = parts[1].toObject();
+            bassPart[QStringLiteral("settings")] = QStringLiteral("nope");
+            parts[1] = bassPart;
+            doc[QStringLiteral("parts")] = parts;
+            QVERIFY2(s.openSong(doc, &error), qPrintable(error));
+            QCOMPARE(bassSettings(s.saveSong()), home);
+            QVERIFY(!s.pageStatus(1).contains(QStringLiteral("latched")));
+        });
+    }
+
+private:
+    static QJsonObject bassSettings(const QJsonObject &doc) {
+        return doc[QStringLiteral("parts")].toArray()[1].toObject()[QStringLiteral("settings")].toObject();
     }
 };
 

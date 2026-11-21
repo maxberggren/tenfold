@@ -329,6 +329,15 @@ ApplicationWindow {
                             onClicked: backend.toggleRecording()
                         }
                         PanelButton {
+                            // The whole row: the transport. Every loop stops at once, remembered;
+                            // again, they play on together from a downbeat.
+                            Layout.columnSpan: 2
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                            label: backend.loopsPaused ? qsTr("▶  Play") : qsTr("❚❚  Pause")
+                            key: "Ctrl P"; color: win.green; active: backend.loopsPaused
+                            onClicked: backend.togglePause()
+                        }
+                        PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                             label: qsTr("Tempo −"); key: "Ctrl ↓"; color: win.amber

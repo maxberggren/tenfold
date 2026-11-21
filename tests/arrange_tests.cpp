@@ -457,6 +457,38 @@ private slots:
         QVERIFY(take.peak() < 1.0);
     }
 
+    // A song paused (Ctrl+P) stops where it is and plays on from the top of
+    // that bar: everything after comes that much later, on the new bars.
+    void aPausedSongPlaysOnFromWhereItStopped() {
+        // The written track plays from 16.5 (bars every 2 s). Paused 0.7 s
+        // into its fourth bar (23.2), played at 26.3: that bar again from the
+        // top, 3.8 s after it first began, and the rest 3.8 s late.
+        auto firstBass = [&](const std::string &pause, float *whilePaused, float *after) {
+            double first = -1;
+            bool wasOff = false;
+            watch(loops("key 15.2 I\nkey 15.4 I\n" + pause + "end 48\n"), [&](double t, Session &s) {
+                if (whilePaused && std::fabs(t - 25.0) < 0.004)
+                    *whilePaused = s.probe(s.arrangePage(), QStringLiteral("songPlaying"));
+                if (after && std::fabs(t - 27.0) < 0.004)
+                    *after = s.probe(s.arrangePage(), QStringLiteral("songPlaying"));
+                // The intro has no bass: the first time it comes back.
+                const bool on = s.view().parts[1].playing >= 0;
+                if (t > 16.6 && first < 0 && on && wasOff)
+                    first = t;
+                if (t > 16.6)
+                    wasOff |= !on;
+            });
+            return first;
+        };
+        float whilePaused = -1, after = -1;
+        const double plain = firstBass("", nullptr, nullptr);
+        const double paused = firstBass("key 23.2 Ctrl+P\nkey 26.3 Ctrl+P\n", &whilePaused, &after);
+        QCOMPARE(whilePaused, 0.0f);
+        QCOMPARE(after, 1.0f);
+        QVERIFY(plain > 23.2);
+        QVERIFY2(std::fabs(paused - plain - 3.8) < 0.05, qPrintable(QString("bass at %1, unpaused %2").arg(paused).arg(plain)));
+    }
+
     void aRecordedSongReplaysBarByBarFromAnyPage() {
         // Record: four bars of everything, F1-less: mute the drums for two
         // bars with the keys, then stop recording. Play it back from another

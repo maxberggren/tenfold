@@ -11,6 +11,7 @@
 //   Ctrl+← / Ctrl+→         key down / up a fifth
 //   Ctrl+[ / Ctrl+]         mode darker / brighter
 //   Ctrl+M                  metronome
+//   Ctrl+P                  pause every loop at once; again, play them on from a downbeat
 //   Ctrl+Backspace          stop every clip at the next bar
 //   Ctrl+Z                  take back the newest loop (on any page)
 //   Ctrl+N, Ctrl+N          start over: every loop cleared
@@ -108,6 +109,12 @@ public:
     void shiftMode(int step);
     void toggleMetronome();
     void stopAll();
+    // Pause and play (Ctrl+P, the window's button): every loop stops at
+    // once, remembered; play brings the same loops back, together, from the
+    // top of a bar (at once when nothing else plays). paused(): something
+    // is remembered and nothing plays.
+    void togglePause();
+    bool paused() const;
     // Ctrl+Z: take back the newest loop on any page; what played before
     // plays again. Ctrl+N: start over, every loop cleared (asks first).
     void undoTake();
@@ -243,6 +250,9 @@ private:
     static constexpr double kHandOverSecs = 0.18; // a tap already on its way, not the next one played
     void handOver();
     QString m_notice;
+    // What a pause (or Ctrl+Backspace) stopped: each part's slot, or −1.
+    int m_pausedSlots[kMaxParts] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    bool m_songPaused = false;
     uint32_t m_noticeSeq = 0;
     double (*m_clock)() = nullptr;
 };

@@ -582,6 +582,7 @@ bool Session::key(const KeyEvent &k) {
         case Qt::Key_BracketRight: shiftMode(-1); return true;
         case Qt::Key_M: toggleMetronome(); return true;
         case Qt::Key_Backspace: stopAll(); return true;
+        case Qt::Key_P: togglePause(); return true;
         case Qt::Key_Z:
             if (shift)
                 redoTake();
@@ -1507,6 +1508,8 @@ void Session::clearEverything(bool studio) {
     m_takeOrder.clear();
     m_redoOrder.clear();
     m_lastTake = {};
+    std::fill(std::begin(m_pausedSlots), std::end(m_pausedSlots), -1);
+    m_songPaused = false;
     for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
         m_view.parts[p].playing = -1;
         for (auto &c : m_view.parts[p].clips)
@@ -1547,9 +1550,88 @@ void Session::toggleMetronome() {
 
 void Session::stopAll() {
     std::lock_guard lock(m_lock);
+    // Remembered, as a pause is: play brings it back.
+    bool any = false;
+    for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+        any |= m_view.parts[p].playing >= 0 || m_view.parts[p].queued >= 0;
+    if (any)
+        for (int p = 0; p < kMaxParts; ++p)
+            m_pausedSlots[p] = p < m_view.partCount ? (m_view.parts[p].playing >= 0 ? m_view.parts[p].playing
+                                                                                     : m_view.parts[p].queued)
+                                                    : -1;
     for (int i = 0; i < m_partCount; ++i)
         context(m_page).stopPart(i, false);
-    context(m_page).notice(QStringLiteral("Everything stops at the bar"));
+    context(m_page).notice(QStringLiteral("Everything stops at the bar · Ctrl+P plays it again"));
+}
+
+bool Session::paused() const {
+    std::lock_guard lock(m_lock);
+    for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+        if (m_view.parts[p].playing >= 0 || m_view.parts[p].queued >= 0)
+            return false;
+    for (int p = 0; p < kMaxParts; ++p)
+        if (m_pausedSlots[p] >= 0)
+            return true;
+    return m_songPaused;
+}
+
+void Session::togglePause() {
+    std::lock_guard lock(m_lock);
+    Context &ctx = context(m_page);
+    bool playing = false;
+    for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+        playing |= m_view.parts[p].playing >= 0 || m_view.parts[p].queued >= 0;
+    Page &arrange = *m_pages[size_t(arrangePage())];
+    if (playing) {
+        // Pause: every loop stops now, and what played is remembered. The
+        // Song page's song stops where it is.
+        for (int p = 0; p < kMaxParts; ++p) {
+            m_pausedSlots[p] = -1;
+            if (p >= m_view.partCount)
+                continue;
+            PartView &pv = m_view.parts[p];
+            m_pausedSlots[p] = pv.playing >= 0 ? pv.playing : pv.queued;
+        }
+        m_songPaused = arrange.spec.control->pause(*arrange.ctx);
+        for (int i = 0; i < m_partCount; ++i)
+            ctx.stopPart(i, true);
+        // Shown at once; the studio's next view says the same.
+        for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+            m_view.parts[p].playing = m_view.parts[p].queued = -1;
+        // A loop can't be made longer or shorter across a pause: the clock
+        // moves on to a bar line when play comes.
+        m_lastTake = {};
+        ctx.notice(QStringLiteral("Paused · Ctrl+P plays it again"));
+        return;
+    }
+    uint32_t which = 0;
+    int count = 0;
+    for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
+        const int slot = m_pausedSlots[p];
+        if (slot >= 0 && slot < kClipSlots && m_view.parts[p].clips[slot].state != ClipView::Empty) {
+            which |= uint32_t(slot + 1) << (4 * p);
+            ++count;
+        }
+    }
+    if (count == 0 && !m_songPaused) {
+        ctx.notice(QStringLiteral("Nothing to play yet: play, then Space makes a loop"));
+        return;
+    }
+    StudioMsg m;
+    m.kind = StudioMsg::Resume;
+    m.value = int32_t(which);
+    m_studio->post(m);
+    // The bar the loops start again on: the one coming now (the studio moves
+    // its clock on to it at once, as nothing plays).
+    const double beat = m_view.beat + std::max(0.0, now() - m_view.time) * m_view.bpm / 60.0;
+    const int bar = int(std::ceil(beat / kBeatsPerBar - 1e-9));
+    if (m_songPaused)
+        arrange.spec.control->resume(bar, *arrange.ctx);
+    m_songPaused = false;
+    for (int p = 0; p < kMaxParts; ++p)
+        m_pausedSlots[p] = -1;
+    m_lastTake = {};
+    ctx.notice(QStringLiteral("Playing"));
 }
 
 // --- song files ----------------------------------------------------------------

@@ -50,6 +50,50 @@ private slots:
         QCOMPARE(take.view.parts[0].playing, 0);         // the beat is untouched
     }
 
+    // Pause (Ctrl+P) stops every loop at once; play brings the same loops
+    // back together, at once, on a downbeat (the clock moves on to the bar
+    // line), not up to a bar later.
+    void pauseStopsEveryLoopAndPlayBringsThemBackOnTheOne() {
+        const std::string script = std::string(kBeat) +
+                                   "page 3.0 2\n"
+                                   "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                   "key 6.7 Space\nkey 7.3 Ctrl+P\nkey 8.9 Ctrl+P\nend 12\n";
+        bool pausedSeen = false, stoppedAtOnce = true;
+        int afterPlay[2] = {-2, -2};
+        double beatAtPlay = -1;
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            if (t > 7.32 && t < 8.85) {
+                pausedSeen |= s.paused();
+                stoppedAtOnce &= s.view().parts[0].playing < 0 && s.view().parts[1].playing < 0;
+            }
+            if (t > 8.93 && t < 8.95) {
+                afterPlay[0] = s.view().parts[0].playing;
+                afterPlay[1] = s.view().parts[1].playing;
+                beatAtPlay = s.view().beat;
+            }
+        });
+        QVERIFY(take.error.empty());
+        QVERIFY(pausedSeen);
+        QVERIFY(stoppedAtOnce);
+        // Silent while paused (once the last hits have rung away).
+        QVERIFY2(take.rms(7.8, 8.85) < 0.002, qPrintable(QString::number(take.rms(7.8, 8.85))));
+        // Both loops again, at once, the beat's first kick with them.
+        QCOMPARE(afterPlay[0], 0);
+        QCOMPARE(afterPlay[1], 0);
+        QVERIFY(take.rms(8.9, 9.0) > 0.02);
+        const double into = beatAtPlay - 4.0 * std::floor(beatAtPlay / 4.0);
+        QVERIFY2(into < 0.2, qPrintable(QString("%1 beats into the bar").arg(into)));
+        // And they go on together.
+        QVERIFY(take.rms(10, 12) > 0.01);
+        QVERIFY(take.finite());
+    }
+
+    void playWithNothingToPlaySaysSo() {
+        QString notice;
+        testkit::play("page 0 1\nkey 0.5 Ctrl+P\nend 1\n", [&](Session &s) { notice = s.notice(nullptr); });
+        QVERIFY2(notice.contains(QStringLiteral("Nothing to play")), qPrintable(notice));
+    }
+
     void aNewLoopPlaysItsFirstBeatOnTheFirstPass() {
         // Space closes the phrase where the next kick would land: that kick
         // comes from the loop at once, not a whole bar later.

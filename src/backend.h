@@ -52,6 +52,7 @@ class Backend : public QObject {
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
     Q_PROPERTY(QString position READ position NOTIFY changed)
     Q_PROPERTY(bool metronome READ metronome NOTIFY changed)
+    Q_PROPERTY(bool loopsPaused READ loopsPaused NOTIFY changed)
     Q_PROPERTY(int clips READ clips NOTIFY changed)
     Q_PROPERTY(int voices READ voices NOTIFY changed)
     Q_PROPERTY(double cpu READ cpu NOTIFY changed)
@@ -115,6 +116,7 @@ public:
     double bpm() const { return m_session->view().bpm; }
     QString position() const;
     bool metronome() const { return m_session->view().metronome; }
+    bool loopsPaused() const { return m_session->paused(); }
     int clips() const;
     int voices() const;
     double cpu() const { return m_session->view().cpu; }
@@ -154,6 +156,7 @@ public:
     Q_INVOKABLE void windowActive(bool active);
     Q_INVOKABLE void toggleRecording();
     Q_INVOKABLE void toggleMetronome() { m_session->toggleMetronome(); }
+    Q_INVOKABLE void togglePause() { m_session->togglePause(); }
     Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
     Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }
     Q_INVOKABLE void undoTake() { m_session->undoTake(); }

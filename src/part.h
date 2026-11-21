@@ -477,6 +477,12 @@ public:
     virtual void openAudio(const QJsonObject &in, const std::vector<Command *> &sounds, ControlContext &ctx) {
         (void)in, (void)sounds, (void)ctx;
     }
+    // Pause (Ctrl+P): every loop stops at once. A page that plays on its own
+    // (the Song page's song) stops too and remembers where it was; resume()
+    // starts it again from there, from `bar` (the studio's bar where the
+    // loops start again). True if the page had something to pause.
+    virtual bool pause(ControlContext &ctx) { (void)ctx; return false; }
+    virtual void resume(int bar, ControlContext &ctx) { (void)bar, (void)ctx; }
     // Ctrl+Z, before the studio takes back a step: a change the page has
     // promised but not yet made (a roll kept for the next bar line) is the
     // newest thing done, so taking it back is the page's. True if it did.

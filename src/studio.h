@@ -75,6 +75,8 @@ struct StudioMsg {
         ReadClips,   // ptr = a ClipSet, value = ticket: every clip copied into it
         WriteClips,  // ptr = a ClipSet, value = ticket: every clip swapped for its own,
                      // nothing playing, nothing to take back
+        Resume,      // value = for each part four bits, the slot it plays again + 1 (0: none):
+                     // a pause ends, from the top of a bar, at once if nothing plays
     };
     Kind kind = ToPart;
     int8_t part = 0;

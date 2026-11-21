@@ -2280,8 +2280,37 @@ private:
         }
     }
 
+    // Pause: the song stops where it is, and plays on from the top of that
+    // bar when play comes. A song being recorded ends at the bar.
+    bool pause(ControlContext &) override {
+        if (!m_playing)
+            return false;
+        const int bar = int(std::floor(m_beat / kBeatsPerBar));
+        m_pausedBar = std::max(0, bar - m_origin);
+        m_pausedLoop = m_loop;
+        if (m_recording || m_recArmBar >= 0)
+            m_recStopBar = bar + 1;
+        for (auto &mv : m_moves)
+            mv.b1 = std::min(mv.b1, m_beat);
+        stopSong();
+        return true;
+    }
+    void resume(int bar, ControlContext &ctx) override {
+        if (m_pausedBar < 0)
+            return;
+        // The studio starts what was playing on `bar` itself; the song takes
+        // over from the bar after, so nothing here launches again now.
+        startSong(bar, m_pausedLoop, ctx);
+        m_origin = bar - m_pausedBar;
+        m_jumpBar = -1;
+        m_moveCursorOrigin = -1;
+        m_plannedBar = std::max(m_plannedBar, bar);
+        m_pausedBar = -1;
+    }
+
     void startOver(ControlContext &ctx) override {
         (void)ctx;
+        m_pausedBar = -1;
         if (m_playing)
             stopSong();
         m_playing = m_loop = m_recording = false;
@@ -3339,6 +3368,8 @@ private:
     int m_drops = 0; // drops that have landed, live or the song's, for the tutorial
     std::vector<Section> m_sections;
     bool m_playing = false, m_loop = false, m_recording = false;
+    int m_pausedBar = -1; // a paused song: the bar of it to play on from
+    bool m_pausedLoop = false;
     int m_origin = 0, m_jumpBar = -1;
     int m_recArmBar = -1, m_recStopBar = -1, m_recStartBar = 0, m_recBarDone = -1000000;
     long m_recStep = -1;

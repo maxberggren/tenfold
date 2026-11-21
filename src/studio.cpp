@@ -901,6 +901,38 @@ void Studio::apply(const StudioMsg &m) {
             p->stopQueued = false;
         }
         break;
+    case StudioMsg::Resume: {
+        // A pause ends: what played plays again, from the top of a bar. With
+        // nothing playing or being recorded, that bar is now: the clock moves
+        // on to the next bar line (what was played is moved with it, so a
+        // phrase Space takes still lines up), and the loops start there at
+        // once, on the one, rather than waiting up to a bar in silence.
+        bool idle = true;
+        for (auto &q : m_parts)
+            idle &= q->playing < 0 && q->queued < 0 && q->recording < 0;
+        const double bar = nextBar();
+        if (idle && bar - nowBeat > 1e-9) {
+            const double delta = bar - nowBeat;
+            tr.beat += delta;
+            for (auto &q : m_parts)
+                for (auto &lg : q->history)
+                    lg.beat += delta;
+        }
+        for (size_t i = 0; i < m_parts.size() && i < 8; ++i) {
+            const int slot = int((uint32_t(m.value) >> (4 * i)) & 0xFu) - 1;
+            PartState &q = *m_parts[i];
+            if (slot < 0 || slot >= kClipSlots || q.clips[slot].length <= 0)
+                continue;
+            if (idle) {
+                startClip(q, s, slot, tr.beat);
+            } else {
+                q.queued = slot;
+                q.queuedAt = bar;
+                q.stopQueued = false;
+            }
+        }
+        break;
+    }
     case StudioMsg::Stop:
         if (!p)
             return;

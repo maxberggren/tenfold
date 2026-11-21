@@ -118,13 +118,19 @@ about 60 times a second and the page reads as `pc.view->data`.
    |---|---|
    | ← → | the sound: kit, preset, scene, drop style (step through them) |
    | ↑ ↓ | octave or register (Drums: roll rate, FX: riser length). For three seconds after Space the session takes them for the loop's length |
-   | [ ] | the rhythm: swing, gate pattern, arp pattern, trance gate |
-   | - = | tone: darker, brighter (the page's filter or brightness) |
+   | Shift+← → (or [ ]) | the rhythm: swing, gate pattern, arp pattern, trance gate |
+   | - and + (or =) | tone: darker, brighter (the page's filter or brightness) |
    | Return | hold or latch (FX: drop on the next bar; Drums: keep what rolls) |
    | Shift+Return | overdub on or off |
-   | \\ | follow the Chords page, on or off |
+   | the key left of 1 (§ on Nordic and Mac layouts, ` on US; or \\) | follow the Chords page, on or off |
    | Delete | let go or reset (latched layers, held chords, drum sounds) |
    | F1–F8 · Shift+F1–F8 · Backspace | launch a slot · clear it · stop the loop at the bar |
+
+   The primary keys work without AltGr on Nordic layouts too (on a Swedish
+   keyboard [ ] \\ need AltGr, = needs Shift and ` is dead): match
+   Qt::Key_Minus and Qt::Key_Plus (and Key_Equal), Qt::Key_section and
+   Qt::Key_QuoteLeft (and Key_Backslash), Shift with Key_Left/Key_Right
+   (and Key_BracketLeft/Right). Chips show the primary key.
 
    Space, Shift+Space and every Ctrl key are the session's. Old keys for
    the same things may stay as second keys, but help() lists the shared

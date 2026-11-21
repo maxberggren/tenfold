@@ -328,6 +328,42 @@ private slots:
             QVERIFY(std::fabs(on[i] - on[i - 1] - 0.25 * kSpb) < 0.002);
     }
 
+    // A tap just after Space is the next hit, not the hand still going: on
+    // the drums it sounds (other pages let a finger landing then pass).
+    void aTapJustAfterSpaceSounds() {
+        const std::string s = "page 0 1\ntap 0.5 " + at(drums::Kick) + "\ntap 1.0 " + at(drums::Kick) + "\ntap 1.5 " +
+                              at(drums::Kick) + "\ntap 2.0 " + at(drums::Kick) + "\nkey 2.45 Space\n";
+        const std::string clap = "tap 2.57 " + at(drums::Clap) + " p=0.6 len=0.06\n";
+        const auto without = testkit::play(s + "end 3.2\n");
+        const auto with = testkit::play(s + clap + "end 3.2\n");
+        const auto alone = testkit::play("page 0 1\n" + clap + "end 3.2\n");
+        QVERIFY(with.error.empty());
+        // What the clap added over the loop, against the clap on its own.
+        const double a = with.rms(2.57, 2.67), b = without.rms(2.57, 2.67);
+        const double added = std::sqrt(std::max(0.0, a * a - b * b));
+        QVERIFY2(added > 0.5 * alone.rms(2.57, 2.67),
+                 qPrintable(QString("added %1, the clap alone %2").arg(added).arg(alone.rms(2.57, 2.67))));
+    }
+
+    // A finger that comes down softly reads light on its first frame; its
+    // hit waits for the pad's next readings and is as loud as it pressed,
+    // even when the app's clock (its ticker, every few milliseconds) passes
+    // the wait before the next frame arrives.
+    void aSoftLandingIsAsLoudAsItPressed() {
+        auto level = [](const std::string &script) {
+            const auto take = testkit::watch(script, [](double t, Session &s) { s.idle(t + 0.007); });
+            double p = 0;
+            for (size_t i = size_t(1.0 * kRate); i < size_t(1.1 * kRate) && i < take.left.size(); ++i)
+                p = std::max({p, double(std::fabs(take.left[i])), double(std::fabs(take.right[i]))});
+            return p;
+        };
+        const std::string pad = at(drums::Snare);
+        const double firm = level("page 0 1\ndown 1.0 1 " + pad + " p=0.5\nup 1.08 1\nend 1.5\n");
+        const double soft = level("page 0 1\ndown 1.0 1 " + pad + " p=0.02\nmove 1.008 1 " + pad + " p=0.3\nmove 1.016 1 " +
+                                  pad + " p=0.5\nmove 1.024 1 " + pad + " p=0.45\nup 1.08 1\nend 1.5\n");
+        QVERIFY2(soft > 0.7 * firm, qPrintable(QString("soft %1, firm %2").arg(soft).arg(firm)));
+    }
+
     void aTapIsOneHitNotARoll() {
         const auto take = testkit::play("page 0 1\nkey 0.1 Right\ntap 1.0 " + at(drums::Hat) + " len=0.15\nend 2\n");
         QCOMPARE(int(onsets(take, 0.9, 2.0).size()), 1);
@@ -485,6 +521,45 @@ private slots:
         QCOMPARE(undone.view.parts[0].playing, -1);
     }
 
+    // The drums have no octave: ↑ and ↓ make the loop longer or shorter at
+    // any time, as the Loop longer / Loop shorter buttons do, not only in
+    // the moments after Space.
+    void arrowsResizeTheLoopLongAfterSpace() {
+        std::string script = "page 0 1\n";
+        const double kicks[] = {1.0, 1.94, 2.86, 3.8, 4.73, 5.66};
+        for (double t : kicks)
+            script += "tap " + std::to_string(t) + " " + at(drums::Kick) + "\n";
+        const double space = 6.6;
+        script += "key " + std::to_string(space) + " Space\n";
+        const auto made = testkit::play(script + "end 14\n");
+        const int beats = int(made.view.parts[0].clips[0].lengthBeats);
+        QVERIFY(beats > 0);
+        const double bpm = made.view.bpm;
+        // Five seconds on, well past the moment after Space.
+        const auto longer = testkit::play(script + "key " + std::to_string(space + 5) + " Up\nend 14\n");
+        QCOMPARE(int(longer.view.parts[0].clips[0].lengthBeats), 2 * beats);
+        QVERIFY2(std::fabs(longer.view.bpm - bpm) <= 3, qPrintable(QString("%1 then %2").arg(bpm).arg(longer.view.bpm)));
+        const auto shorter = testkit::play(script + "key " + std::to_string(space + 5) + " Up\nkey " +
+                                           std::to_string(space + 6) + " Down\nkey " + std::to_string(space + 7) +
+                                           " Down\nend 14\n");
+        QCOMPARE(int(shorter.view.parts[0].clips[0].lengthBeats), beats / 2);
+        // The chips under the pad do the same: LOOP + is the last of the
+        // five in row 1 of the band, LOOP − the one before it.
+        const auto clicked = testkit::play(script + "button " + std::to_string(space + 5) + " 0.495 -0.119\nend 14\n");
+        QCOMPARE(int(clicked.view.parts[0].clips[0].lengthBeats), 2 * beats);
+        const auto clickedShorter =
+            testkit::play(script + "button " + std::to_string(space + 5) + " 0.385 -0.119\nend 14\n");
+        QCOMPARE(int(clickedShorter.view.parts[0].clips[0].lengthBeats), beats / 2);
+    }
+
+    // Held keys that roll still take the arrows for their rate.
+    void arrowsSpeedUpAHeldKeyRoll() {
+        const std::string held = "page 0 1\nkey 0.1 Right\nkey 1.0 V down\n";
+        const auto plain = testkit::play(held + "key 3.0 V up\nend 3.2\n");
+        const auto faster = testkit::play(held + "key 1.5 Up\nkey 3.0 V up\nend 3.2\n");
+        QVERIFY(onsets(faster, 1.7, 2.9, 0.02).size() > onsets(plain, 1.7, 2.9, 0.02).size());
+    }
+
     // Space while a groove plays under the fingers keeps it the way a click
     // does: whole bars of the groove on the clock, the tempo unchanged, and
     // none of the taps and rolls tried before it.
@@ -540,11 +615,12 @@ private slots:
     void theBandUnderThePadIsClickable() {
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
         // is 0.048 of it under the pad, row 1 0.119. The kits fill row 0
-        // from 0.57 of the width, five across.
+        // from 0.57 of the width, five across; row 1 starts with five chips
+        // across 0.55 of it (swing −, the swing, swing +, loop −, loop +).
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 1\nbutton 0.2 0.35 -0.119\nbutton 0.3 0.35 -0.119\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 1\nbutton 0.2 0.275 -0.119\nbutton 0.3 0.275 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
         });
     }
@@ -700,14 +776,14 @@ private slots:
     // --- rolls start where they can ------------------------------------------
 
     void aRollStartsOnTheFirstGridStepItCan() {
-        // Straight sixteenths (techno) at 124: landing at 1.009 s, the first
-        // step at least 90 ms later is the one at 1.2097 s, and nothing is
+        // Straight sixteenths (techno) at 124: landing at 1.0 s, the first
+        // step at least 200 ms later is the one at 1.2097 s, and nothing is
         // left out after it.
         const auto take = testkit::play("page 0 1\nkey 0.1 Right\n"
-                                        "down 1.009 1 " + at(drums::Hat) + " p=0.6\nup 2.0 1\nend 2.2\n");
+                                        "down 1.0 1 " + at(drums::Hat) + " p=0.6\nup 2.0 1\nend 2.2\n");
         const auto on = onsets(take, 0.95, 2.0);
         QVERIFY(on.size() >= 8);
-        QVERIFY(std::fabs(on[0] - 1.009) < 0.012);
+        QVERIFY(std::fabs(on[0] - 1.0) < 0.012);
         const double firstStep = 10 * 0.25 * kSpb;
         QVERIFY2(std::fabs(on[1] - firstStep) < 0.004, qPrintable(QString::number(on[1])));
         for (size_t i = 2; i < on.size(); ++i)
@@ -722,16 +798,18 @@ private slots:
 
     void longTapsDontSproutASecondHit() {
         // 24 taps spread across a sixteenth, at each length, on the hat
-        // (1/16) and the rim (1/8), at 124 BPM in the house kit: a tap of
-        // 110 ms never sprouts a step, one of 130 ms almost never.
-        auto strays = [&](int pad, double len) {
+        // (1/16) and the rim (1/8), at 124 BPM in the house kit: a tap of up
+        // to 170 ms never sprouts a step, the app's ticker running between
+        // the pad's frames or not.
+        auto strays = [&](int pad, double len, bool ticker = false) {
             std::string s = "page 0 1\n";
             for (int i = 0; i < 24; ++i) {
                 const double t = 1.0 + i * 1.0 + i * (0.25 * kSpb / 24.0);
                 s += "tap " + std::to_string(t) + " " + at(pad) + " p=0.6 len=" + std::to_string(len) + "\n";
             }
             s += "end 26\n";
-            const auto take = testkit::play(s);
+            const auto take = ticker ? testkit::watch(s, [](double t, Session &ses) { ses.idle(t + 0.004); })
+                                     : testkit::play(s);
             int extra = 0;
             for (int i = 0; i < 24; ++i) {
                 const double t = 1.0 + i * 1.0 + i * (0.25 * kSpb / 24.0);
@@ -742,8 +820,13 @@ private slots:
         QCOMPARE(strays(drums::Hat, 0.09), 0);
         QCOMPARE(strays(drums::Hat, 0.11), 0);
         QCOMPARE(strays(drums::Hat, 0.13), 0);
+        QCOMPARE(strays(drums::Hat, 0.15), 0);
+        QCOMPARE(strays(drums::Hat, 0.17), 0);
+        QCOMPARE(strays(drums::Hat, 0.17, true), 0);
         QCOMPARE(strays(drums::Rim, 0.11), 0);
         QCOMPARE(strays(drums::Rim, 0.13), 0);
+        QCOMPARE(strays(drums::Rim, 0.17), 0);
+        QCOMPARE(strays(drums::Rim, 0.17, true), 0);
     }
 
     void aRollStartsAsLoudAsItsHitAndPressureSwellsIt() {

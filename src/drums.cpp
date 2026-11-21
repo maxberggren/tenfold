@@ -48,11 +48,14 @@ constexpr int kCols = 4, kRows = 4;
 // A finger still down after kHoldSecs is held: it stops being a possible
 // fill and becomes a roll or a groove. Its first repeat is the first grid
 // step at least kFirstStepSecs after landing, and goes out only if the
-// finger is still down kFirstLeadSecs before it. So a tap must last about
-// 130 ms to sprout a step, longer than a tap lasts, while a roll still
-// starts within a step and kFirstStepSecs of landing, with no hole after.
+// finger is still down kFirstLeadSecs before it (up to kMaxLeadSecs when
+// the ticks come slowly). So a tap must last about 180 ms to sprout a step:
+// a relaxed tap on glass, finger arriving and leaving softly, can last 160,
+// and one that sprouts a step sounds like a roll the player never asked
+// for. A roll still starts within a step and kFirstStepSecs of landing,
+// with no hole after.
 constexpr double kHoldSecs = 0.08;
-constexpr double kFirstStepSecs = 0.17;
+constexpr double kFirstStepSecs = 0.2;
 constexpr double kFirstLeadSecs = 0.012;
 // A held step must go out before its time comes, so the lead is at least
 // the longest recent gap between ticks (250 Hz live: 4 ms; a still finger
@@ -73,9 +76,17 @@ constexpr double kSnapSecs = 0.03;
 constexpr double kRepeatGapSecs = 0.08; // the closest a first repeat may follow a landing that plays at once
 
 // A light first reading is often a finger still coming down: such a landing
-// waits one more frame (a few milliseconds) and takes the hardest it pressed.
-// A firm one plays at once.
+// waits for the pad's next readings and takes the hardest it pressed, going
+// out at the first frame kVelocitySecs on whose pressure has stopped rising,
+// or kVelocityMaxSecs on whatever it reads. Only frames say how hard a finger
+// pressed, so the wait is counted in their time: the clock can run past a
+// frame the session hasn't handed over yet, and a landing sent on the clock
+// then played the first, near-silent reading (a tap heard as nothing). A
+// finger that sends no frames for kLandingStillSecs is still, pressing no
+// harder, and the clock sends it then. A firm landing plays at once.
 constexpr double kVelocitySecs = 0.006;
+constexpr double kVelocityMaxSecs = 0.012;
+constexpr double kLandingStillSecs = 0.025;
 constexpr float kFirmPressure = 0.45f;
 constexpr double kLookahead = 0.06;    // how far ahead rolls are scheduled
 constexpr float kLadderStep = 0.07f;   // pad heights of travel per rate or density step
@@ -154,11 +165,13 @@ public:
             }
             h->x = t.x;
             h->y = t.y;
+            const bool rising = t.pressure > h->pressure;
             h->pressure = t.pressure;
             h->size = t.size;
             h->angle = t.angle;
             h->peak = std::max(h->peak, t.pressure);
-            if (h->landing && f.t - h->t0 >= kVelocitySecs)
+            h->seen = f.t;
+            if (h->landing && f.t - h->t0 >= kVelocitySecs && (!rising || f.t - h->t0 >= kVelocityMaxSecs))
                 sendLanding(*h, ctx);
             follow(*h, f.t, ctx);
         }
@@ -173,7 +186,7 @@ public:
 
     void idle(double t, ControlContext &ctx) override {
         for (auto &h : m_holders)
-            if (h.used && h.landing && t - h.t0 >= kVelocitySecs)
+            if (h.used && h.landing && t - h.seen >= kLandingStillSecs)
                 sendLanding(h, ctx);
         resolve(t, ctx);
     }
@@ -242,8 +255,19 @@ public:
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down: {
-            // Held keys roll faster or slower, and so will the next ones.
+            // The drums have no octave, so the arrows are the loop's length,
+            // at any time, as the Loop longer / Loop shorter buttons: the
+            // loop Space last made here, re-taken from what was played. Only
+            // while keys hold a roll do they set its rate instead (and the
+            // next held keys').
             const int step = k.key == Qt::Key_Up ? 1 : -1;
+            bool keyRolls = false;
+            for (const auto &h : m_holders)
+                keyRolls |= h.used && h.key && h.gen >= 0 && !m_gens[size_t(h.gen)].groove;
+            if (!keyRolls) {
+                loopStep(step, ctx);
+                return true;
+            }
             m_keyRate = std::clamp(m_keyRate + step, -3, 3);
             for (auto &h : m_holders)
                 if (h.used && h.key && h.gen >= 0 && !m_gens[size_t(h.gen)].groove) {
@@ -318,6 +342,11 @@ public:
         return false;
     }
 
+    // A tap just after Space is the next hit, not the hand still going: on
+    // the drums every landing sounds. (The engine lets a live hit win over
+    // the loop's copy of it, so the loop isn't doubled.)
+    bool quietAfterSpace() const override { return false; }
+
     void leave(ControlContext &ctx) override {
         for (auto &h : m_holders)
             if (h.used)
@@ -349,10 +378,12 @@ public:
             "hold the 808\tsustains; slide sideways to glide through the scale\n"
             "Z X C V · A S D F · Q W E R · U I O P\tthe pads, row by row from the bottom (M , . / and J K L ; too); "
             "hold to roll, Shift for an accent, hold several together for a groove\n"
-            "Up / Down\tfaster or slower key rolls\n"
+            "Up / Down\tthe loop longer or shorter, any time (as the Loop longer / shorter buttons: the loop Space "
+            "last made here, in whole bars); with keys held rolling, their roll faster or slower\n"
             "Left / Right\tthe kit: house, techno, trap, breaks, garage\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
-            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, overdub, sounds back\n"
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, the loop shorter or longer, "
+            "overdub, sounds back\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
             "Shift+Enter\toverdub on or off: what you play joins the loop\n"
             "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in); with no loop, only its "
@@ -457,6 +488,7 @@ private:
         int degree = 0; // the 808's glide, in degrees
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
+        double seen = 0; // the time of the last frame it was in
         float p0 = 0.5f; // the pressure its landing was played at
         Edit editFrom;
     };
@@ -534,7 +566,7 @@ private:
             return;
         }
         h->pad = padAt(t.x, t.y);
-        h->t0 = now;
+        h->t0 = h->seen = now;
         h->x0 = h->x = t.x;
         h->y0 = h->y = t.y;
         h->angle0 = h->angle = t.angle;
@@ -1295,6 +1327,12 @@ private:
         ctx.send(c);
     }
 
+    // ↑ ↓ and their chips: the loop a step longer or shorter.
+    void loopStep(int dir, ControlContext &ctx) {
+        if (!ctx.resizeLoop(dir))
+            ctx.notice(QStringLiteral("No loop to make longer or shorter: Space makes one"));
+    }
+
     void shiftSwing(int dir, ControlContext &ctx) {
         m_swing = clampf(m_swing + 0.02f * float(dir), 0.5f, 0.7f);
         ctx.notice(QStringLiteral("Swing %1%").arg(int(std::lround(m_swing * 100))));
@@ -1317,7 +1355,7 @@ private:
     }
 
     // The mouse on the band under the pad.
-    enum Spot { SpotKit = 100, SpotSwingDown = 200, SpotSwingUp, SpotOverdub, SpotReset };
+    enum Spot { SpotKit = 100, SpotSwingDown = 200, SpotSwingUp, SpotOverdub, SpotReset, SpotLoopShorter, SpotLoopLonger };
     bool click(QPointF at, ControlContext &ctx) override {
         const int id = m_spots.at(at);
         if (id < 0)
@@ -1334,6 +1372,8 @@ private:
         case SpotSwingUp: shiftSwing(1, ctx); return true;
         case SpotOverdub: toggleOverdub(ctx); return true;
         case SpotReset: resetSounds(ctx); return true;
+        case SpotLoopShorter: loopStep(-1, ctx); return true;
+        case SpotLoopLonger: loopStep(1, ctx); return true;
         default: return false;
         }
     }
@@ -1628,7 +1668,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.6f), 13, true);
     c::beats(p, pc, col);
     // Below the pad, every one clickable: the clips and the kits, then the
-    // swing, overdub and the drums' own sounds back.
+    // swing, the loop's length (↑ ↓), overdub and the drums' own sounds back.
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
     QStringList kits;
@@ -1636,7 +1676,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         kits << QString::fromUtf8(kitName(k)).toUpper();
     c::chips(p, pc, c::bandRow(pc, 0, 0.57, 1), kits, m_kit, &m_spots, SpotKit);
     const QRectF row = c::bandRow(pc, 1, 0, 0.55);
-    const double w = row.width() / 4;
+    const double w = row.width() / 5;
     c::chip(p, pc, QRectF(row.left(), row.top(), w - 4, row.height()), QStringLiteral("SWING −  ⇧←"), false, &m_spots,
             SpotSwingDown);
     const QRectF gauge(row.left() + w, row.top(), w - 4, row.height());
@@ -1645,6 +1685,11 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::gauge(p, QRectF(gauge.left() + 6, gauge.bottom() - 10, gauge.width() - 12, 7), (m_swing - 0.5f) / 0.2f, col, 10);
     c::chip(p, pc, QRectF(row.left() + 2 * w, row.top(), w - 4, row.height()), QStringLiteral("SWING +  ⇧→"), false,
             &m_spots, SpotSwingUp);
+    // The arrows: the loop Space last made, shorter or longer.
+    c::chip(p, pc, QRectF(row.left() + 3 * w, row.top(), w - 4, row.height()), QStringLiteral("LOOP −  ↓"), false,
+            &m_spots, SpotLoopShorter);
+    c::chip(p, pc, QRectF(row.left() + 4 * w, row.top(), w - 4, row.height()), QStringLiteral("LOOP +  ↑"), false,
+            &m_spots, SpotLoopLonger);
     c::chips(p, pc, c::bandRow(pc, 1, 0.57, 1),
              {QStringLiteral("OVERDUB  ⇧↵"), QStringLiteral("SOUNDS BACK  DEL")}, m_userOverdub ? 0 : -1, &m_spots,
              SpotOverdub);

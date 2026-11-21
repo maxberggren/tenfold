@@ -117,7 +117,7 @@ about 60 times a second and the page reads as `pc.view->data`.
    | Key | On every part page |
    |---|---|
    | ← → | the sound: kit, preset, scene, drop style (step through them) |
-   | ↑ ↓ | octave or register (Drums: roll rate, FX: riser length). For three seconds after Space the session takes them for the loop's length |
+   | ↑ ↓ | octave or register (FX: riser length). For three seconds after Space the session takes them for the loop's length; Drums, with no octave, take them for it at any time (`ctx.resizeLoop`), and for the roll rate only while keys hold a roll |
    | Shift+← → (or [ ]) | the rhythm: swing, gate pattern, arp pattern, trance gate |
    | - and + (or =) | tone: darker, brighter (the page's filter or brightness) |
    | Return | hold or latch (FX: drop on the next bar; Drums: keep what rolls) |

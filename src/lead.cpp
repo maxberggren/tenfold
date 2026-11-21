@@ -333,8 +333,9 @@ private:
             for (int s = 0; s < kHarmSlots; ++s) {
                 const int row = unpackRow(c.i[3], s);
                 if (row >= 0) {
+                    // Three bits hold up to 6; a clip from a file may say so.
                     if (line.harmLevel[s] <= 0)
-                        line.harmRow[s] = float(row);
+                        line.harmRow[s] = float(std::min(row, kRows - 1));
                     line.harmLevel[s] = std::max(line.harmLevel[s], 0.75f);
                 } else if (li != 0) {
                     line.harmLevel[s] = 0;
@@ -394,8 +395,11 @@ private:
     static NoteIn noteFrom(const Command &c) {
         NoteIn n;
         n.id = c.id;
-        n.degree = c.i[0];
-        n.octave = c.i[1];
+        // A clip read from a file may hold any degree and octave; far past
+        // the keyboard they would overflow the pitch sums and the tuning's
+        // table, so they are kept to a few octaves either side of the neck.
+        n.degree = std::clamp(c.i[0], -24, 24);
+        n.octave = std::clamp(c.i[1], -2, 10);
         n.y = clampf(c.f[1], 0.0f, 1.0f);
         n.off = clampf(c.f[2], -1.5f, 1.5f);
         n.motion = clampf(c.f[3], 0.0f, 1.0f);
@@ -1218,6 +1222,58 @@ public:
         m_frame = Frame{};
     }
 
+    // The song file keeps what the player chose here: the sound and the
+    // trance gate by name (their lists may grow or be reordered), the
+    // neck's octave, the glide and the tone in steps, and whether notes
+    // follow the chord and the harmony holds. Fingers, keys and the harmony
+    // they hold this moment are not kept, and neither is overdub, which is
+    // the studio's.
+    void save(QJsonObject &out) const override {
+        out[QStringLiteral("sound")] = QString::fromUtf8(sound(m_sound).name);
+        out[QStringLiteral("octave")] = m_shift;
+        out[QStringLiteral("glide")] = m_glide;
+        out[QStringLiteral("gate")] = QString::fromUtf8(gateName(m_gate));
+        out[QStringLiteral("tone")] = m_tone;
+        out[QStringLiteral("follow")] = m_follow;
+        out[QStringLiteral("hold")] = m_latch;
+    }
+
+    // Each value is taken only when it is of its kind and within its range
+    // (a number out of range is pulled into it); anything else falls back
+    // to the page's own default, not to what the last song left, so a song
+    // opens the same whatever came before it. The glide, gate and tone go
+    // to the engine as their keys send them; the sound, follow and the
+    // octave travel with each note.
+    void load(const QJsonObject &in, ControlContext &ctx) override {
+        auto number = [&](const char *key, int lo, int hi, int fallback) {
+            const QJsonValue v = in.value(QLatin1String(key));
+            if (!v.isDouble() || !std::isfinite(v.toDouble()))
+                return fallback;
+            return int(std::lround(std::clamp(v.toDouble(), double(lo), double(hi))));
+        };
+        auto flag = [&](const char *key) { return in.value(QLatin1String(key)).toBool(false); };
+        const QString soundName = in.value(QStringLiteral("sound")).toString();
+        m_sound = 0;
+        for (int i = 0; i < kSounds; ++i)
+            if (soundName == QString::fromUtf8(sound(i).name))
+                m_sound = i;
+        const QString gate = in.value(QStringLiteral("gate")).toString();
+        int g = 0;
+        for (int i = 0; i < kGates; ++i)
+            if (gate == QString::fromUtf8(gateName(i)))
+                g = i;
+        m_shift = number("octave", -1, 1, 0);
+        m_follow = flag("follow");
+        const bool hold = flag("hold");
+        if (m_latch && !hold)
+            releaseHeldHarmony(ctx);
+        m_latch = hold;
+        setGlide(number("glide", -2, 2, 0), ctx);
+        setGate(g, ctx);
+        setTone(number("tone", -kToneSteps, kToneSteps, 0), ctx);
+        m_status = describe();
+    }
+
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const bool used = handleKey(k, ctx);
         m_status = describe();
@@ -1341,21 +1397,18 @@ public:
     }
 
     void shiftGlide(int step, ControlContext &ctx) {
-        m_glide = std::clamp(m_glide + step, -2, 2);
-        param(ctx, PGlide, 0, std::exp2(float(m_glide)), 0, ctx.now());
+        setGlide(m_glide + step, ctx);
         ctx.notice(QStringLiteral("Glide ×%1").arg(double(std::exp2(float(m_glide)))));
     }
 
     void stepGate(int step, ControlContext &ctx) {
-        m_gate = (m_gate + step + kGates) % kGates;
-        param(ctx, PGate, m_gate, 0, 0, ctx.now());
+        setGate((m_gate + step + kGates) % kGates, ctx);
         ctx.notice(m_gate ? QStringLiteral("Gate %1").arg(QString::fromUtf8(gateName(m_gate)))
                           : QStringLiteral("Gate off"));
     }
 
     void shiftTone(int step, ControlContext &ctx) {
-        m_tone = std::clamp(m_tone + step, -kToneSteps, kToneSteps);
-        param(ctx, PTone, m_tone, 0, 0, ctx.now());
+        setTone(m_tone + step, ctx);
         ctx.notice(m_tone == 0 ? QStringLiteral("Tone: the sound's own")
                                : QStringLiteral("Tone %1%2").arg(m_tone > 0 ? "+" : "−").arg(std::abs(m_tone)));
     }
@@ -1558,6 +1611,21 @@ private:
         c.f[0] = a;
         c.f[1] = b;
         ctx.send(c);
+    }
+
+    // The settings the engine keeps on the live line, without a word: the
+    // keys say what they did, and an opened song says nothing.
+    void setGlide(int glide, ControlContext &ctx) {
+        m_glide = std::clamp(glide, -2, 2);
+        param(ctx, PGlide, 0, std::exp2(float(m_glide)), 0, ctx.now());
+    }
+    void setGate(int gate, ControlContext &ctx) {
+        m_gate = std::clamp(gate, 0, kGates - 1);
+        param(ctx, PGate, m_gate, 0, 0, ctx.now());
+    }
+    void setTone(int tone, ControlContext &ctx) {
+        m_tone = std::clamp(tone, -kToneSteps, kToneSteps);
+        param(ctx, PTone, m_tone, 0, 0, ctx.now());
     }
 
     void off(ControlContext &ctx, int id, double t) {

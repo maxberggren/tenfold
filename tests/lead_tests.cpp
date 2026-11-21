@@ -563,9 +563,9 @@ private slots:
     }
 
     void theGateChopsInTimeWithTheStudio() {
-        // ` twice: a sixteenth-note gate. A held note pulses at four steps a
+        // Shift+→ twice: a sixteenth-note gate. A held note pulses at four steps a
         // beat (124 BPM: 8.27 Hz), with real gaps between the pulses.
-        const auto tr = trace("page 0 4\nkey 0.1 `\nkey 0.15 `\n" + fmt("down 0.3 1 %.4f 0.6\nup 2.3 1\nend 2.4\n", cellX(7)));
+        const auto tr = trace("page 0 4\nkey 0.1 Shift+Right\nkey 0.15 Shift+Right\n" + fmt("down 0.3 1 %.4f 0.6\nup 2.3 1\nend 2.4\n", cellX(7)));
         const auto &l = tr.take.left;
         const int w = 240; // 5 ms
         std::vector<double> env;
@@ -587,29 +587,30 @@ private slots:
     }
 
     void theSharedKeysWorkHereToo() {
-        // \ follows the chord, as on every part page; Enter still does, for the tutorial.
-        testkit::play("page 0 4\nkey 0.1 \\\nend 0.3\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), qPrintable(s.pageStatus()));
-        });
-        testkit::play("page 0 4\nkey 0.1 Return\nend 0.3\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), qPrintable(s.pageStatus()));
-        });
-        // ] steps the trance gate on, [ back.
-        testkit::play("page 0 4\nkey 0.1 ]\nkey 0.15 ]\nend 0.3\n", [](Session &s) {
+        // The key left of 1 follows the chord, as on every part page (§ on
+        // a Nordic keyboard, ` on a US one); \ still does.
+        for (const char *key : {"§", "`", "\\"})
+            testkit::play(std::string("page 0 4\nkey 0.1 ") + key + "\nend 0.3\n", [&](Session &s) {
+                QVERIFY2(s.pageStatus().contains(QStringLiteral("on the chord")), key);
+            });
+        // Shift+← → step the trance gate, the sound stays.
+        testkit::play("page 0 4\nkey 0.1 Shift+Right\nkey 0.15 Shift+Right\nend 0.3\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/16")), qPrintable(s.pageStatus()));
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("Anthem")), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 4\nkey 0.1 ]\nkey 0.15 ]\nkey 0.2 [\nend 0.3\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/8")), qPrintable(s.pageStatus()));
-            QVERIFY2(!s.pageStatus().contains(QStringLiteral("gated 1/8T")), qPrintable(s.pageStatus()));
-        });
-        testkit::play("page 0 4\nkey 0.1 [\nend 0.3\n", [](Session &s) {
+        testkit::play("page 0 4\nkey 0.1 Shift+Right\nkey 0.15 Shift+Right\nkey 0.2 Shift+Left\nend 0.3\n",
+                      [](Session &s) {
+                          QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/8")), qPrintable(s.pageStatus()));
+                          QVERIFY2(!s.pageStatus().contains(QStringLiteral("gated 1/8T")), qPrintable(s.pageStatus()));
+                      });
+        testkit::play("page 0 4\nkey 0.1 Shift+Left\nend 0.3\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/8T")), qPrintable(s.pageStatus()));
         });
         // Shift+Return overdubs.
         const auto dub = testkit::play("page 0 4\nkey 0.1 Shift+Return\nend 0.3\n");
         QVERIFY(dub.view.parts[kLead].overdub);
-        // Held harmony stays after the finger lifts, and Delete lets it go.
-        const std::string held = "page 0 4\nkey 0.1 F12\n" +
+        // Return holds the harmony after the finger lifts, and Delete lets it go.
+        const std::string held = "page 0 4\nkey 0.1 Return\n" +
                                  fmt("down 0.3 1 %.4f 0.6\ndown 0.4 2 0.1 %.4f\nup 0.8 2\n", cellX(4), rowY(1));
         testkit::play(held + "end 1.0\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("harmony 3RD")), qPrintable(s.pageStatus()));
@@ -619,7 +620,7 @@ private slots:
         });
     }
 
-    void minusAndEqualsSetTheTone() {
+    void minusAndPlusSetTheTone() {
         // The same held Anthem note, darker four steps and brighter four:
         // the sound's own sits between them in its high end (the energy of
         // the first difference against the signal's).
@@ -636,7 +637,7 @@ private slots:
         };
         const double dark = edge("key 0.05 -\nkey 0.08 -\nkey 0.11 -\nkey 0.14 -\n");
         const double own = edge("");
-        const double bright = edge("key 0.05 =\nkey 0.08 =\nkey 0.11 =\nkey 0.14 =\n");
+        const double bright = edge("key 0.05 +\nkey 0.08 +\nkey 0.11 +\nkey 0.14 +\n");
         QVERIFY2(dark < 0.7 * own, qPrintable(QStringLiteral("%1 %2").arg(dark).arg(own)));
         QVERIFY2(bright > 1.2 * own, qPrintable(QStringLiteral("%1 %2").arg(bright).arg(own)));
     }

@@ -1263,7 +1263,11 @@ public:
             return true;
         case Qt::Key_Left:
         case Qt::Key_Right:
-            setSound((m_sound + (k.key == Qt::Key_Left ? kSounds - 1 : 1)) % kSounds, ctx);
+            // Shift with ← →: the trance gate, the shared rhythm keys.
+            if (shift)
+                stepGate(k.key == Qt::Key_Right ? 1 : -1, ctx);
+            else
+                setSound((m_sound + (k.key == Qt::Key_Left ? kSounds - 1 : 1)) % kSounds, ctx);
             return true;
         case Qt::Key_Up:
         case Qt::Key_Down:
@@ -1273,31 +1277,21 @@ public:
             else
                 shiftOctave(k.key == Qt::Key_Up ? 1 : -1, ctx);
             return true;
-        case Qt::Key_BracketLeft:
-        case Qt::Key_BracketRight:
-            stepGate(k.key == Qt::Key_BracketRight ? 1 : -1, ctx);
-            return true;
-        case Qt::Key_QuoteLeft:
-        case Qt::Key_section: // the key left of 1: ` on a US keyboard, § on a Nordic one
-            stepGate(1, ctx);
-            return true;
         case Qt::Key_Minus:
-        case Qt::Key_Equal:
-        case Qt::Key_Plus: // + on a Nordic keyboard, Shift+= on a US one
+        case Qt::Key_Plus:  // its own key on a Nordic keyboard, Shift+= on a US one
+        case Qt::Key_Equal: // a second key: Shift+0 on a Nordic keyboard
             shiftTone(k.key == Qt::Key_Minus ? -1 : 1, ctx);
             return true;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-            if (shift) {
+            if (shift)
                 toggleOverdub(ctx);
-                return true;
-            }
-            // Return is the shared hold key, but the tutorial teaches
-            // "press Enter" to follow the chord, so here it still follows
-            // until the tutorial names \ instead.
-            toggleFollow(ctx);
+            else
+                toggleLatch(ctx);
             return true;
-        case Qt::Key_Backslash:
+        case Qt::Key_section:   // the key left of 1: § on a Nordic keyboard,
+        case Qt::Key_QuoteLeft: // ` on a US one
+        case Qt::Key_Backslash: // AltGr on a Nordic keyboard, so a second key
         case Qt::Key_F11:
         case Qt::Key_AsciiTilde: // Shift+` on a US keyboard
         case Qt::Key_onehalf:    // Shift+§ on a Nordic one
@@ -1441,11 +1435,11 @@ public:
         return QStringLiteral(
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
-            "[ ]\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat (§ or ` steps it too)\n"
-            "- =\ttone: darker, brighter\n"
-            "\\ (or Enter, F11, Shift+§)\tfollow the chord: notes and harmony land on chord tones\n"
-            "F12\tharmony holds after the fingers lift\n"
-            "Shift+Enter (or F10)\toverdub onto the playing loop\n"
+            "Shift+← →\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
+            "- and + (or =)\ttone: darker, brighter\n"
+            "Return (or F12)\tharmony holds after the fingers lift\n"
+            "Shift+Return (or F10)\toverdub onto the playing loop\n"
+            "the key left of 1: § (` on US; or \\, F11)\tfollow the chord: notes and harmony land on chord tones\n"
             "Delete\tlet the held harmony go\n"
             "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
             "Backspace\tstop this part at the next bar\n"
@@ -1845,9 +1839,9 @@ private:
             {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G, Qt::Key_H, Qt::Key_J, Qt::Key_K, Qt::Key_L,
              Qt::Key_Semicolon, Qt::Key_Apostrophe, 0},
             {Qt::Key_Q, Qt::Key_W, Qt::Key_E, Qt::Key_R, Qt::Key_T, Qt::Key_Y, Qt::Key_U, Qt::Key_I, Qt::Key_O,
-             Qt::Key_P, 0, 0}};
-        // [ ] and - are the shared rhythm and tone keys (docs/PARTS.md 4b),
-        // so the rows end before them.
+             Qt::Key_P, Qt::Key_BracketLeft, Qt::Key_BracketRight}};
+        // - is the shared tone key (docs/PARTS.md 4b), so the Nordic Z row
+        // ends before it.
         static const int nordic[3][12] = {
             {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
             {0, 0, 0, 0, 0, 0, 0, 0, 0, Qt::Key_Odiaeresis, Qt::Key_Adiaeresis, 0},
@@ -2169,7 +2163,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         m_loopText = m_landed;
     // The loop machinery, at the top of the neck where it can't be missed:
     // a loop counting down to its bar line, a recording armed or running,
-    // or, quietly, what Enter would loop right now.
+    // or, quietly, what Space would loop right now.
     {
         const QPointF at(neck.center().x(), neck.top() + 16 * unit);
         if (!m_loopText.isEmpty()) {
@@ -2312,15 +2306,15 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
              (float(m_shift) + 1) / 2, 2, true},
             {QStringLiteral("GLIDE"), QStringLiteral("⇧↓"), QStringLiteral("⇧↑"), SpotGlideDown, SpotGlideUp,
              (float(m_glide) + 2) / 4, 4, true},
-            {QStringLiteral("TONE"), QStringLiteral("-"), QStringLiteral("="), SpotDarker, SpotBrighter,
+            {QStringLiteral("TONE"), QStringLiteral("-"), QStringLiteral("+"), SpotDarker, SpotBrighter,
              (float(m_tone) + kToneSteps) / (2 * kToneSteps), 2 * kToneSteps, true},
-            {m_gate ? QString::fromUtf8(gateName(m_gate)) : QStringLiteral("GATE"), QStringLiteral("["),
-             QStringLiteral("]"), SpotGateDown, SpotGateUp, float(m_gate) / (kGates - 1), kGates - 1, false},
+            {m_gate ? QString::fromUtf8(gateName(m_gate)) : QStringLiteral("GATE"), QStringLiteral("⇧←"),
+             QStringLiteral("⇧→"), SpotGateDown, SpotGateUp, float(m_gate) / (kGates - 1), kGates - 1, false},
         };
         const Switch switches[] = {
-            {QStringLiteral("FOLLOW \\"), m_follow, SpotFollow},
-            {QStringLiteral("HOLD F12"), m_latch, SpotHold},
-            {QStringLiteral("OVERDUB ⇧⏎"), pv.overdub, SpotOverdub},
+            {QStringLiteral("FOLLOW §"), m_follow, SpotFollow},
+            {QStringLiteral("HOLD ↵"), m_latch, SpotHold},
+            {QStringLiteral("OVERDUB ⇧↵"), pv.overdub, SpotOverdub},
             {QStringLiteral("LET GO DEL"), false, SpotLetGo},
         };
         const qreal end = chipWant(QStringLiteral("⇧↓"));

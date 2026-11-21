@@ -372,6 +372,27 @@ private slots:
         QVERIFY(again.topRms(0.5, 0.56) > slide.topRms(0.5, 0.56) + 3);
     }
 
+    // An upright is plucked, never slid onto: a second finger while the
+    // first still holds plucks its own note, as loud as the first, even once
+    // the first has rung away. Lifting it pulls off to the note still held.
+    void uprightPlucksEveryFinger() {
+        Rig rig;
+        rig.send(noteOn(1, 0, bass::Upright, 0, 0.8f, 0.6f)); // A1
+        rig.run(1.2);
+        rig.send(noteOn(2, 4, bass::Upright, 0, 0.8f, 0.6f)); // E2, the first still held
+        rig.run(0.6);
+        const double first = rig.topRms(0.0, 0.06), second = rig.topRms(1.2, 1.26), before = rig.topRms(1.1, 1.18);
+        qInfo("first pluck %.1f dB, before the second %.1f dB, second pluck %.1f dB", first, before, second);
+        QVERIFY2(second > first - 3, qPrintable(QStringLiteral("%1 vs %2 dB").arg(second).arg(first)));
+        QVERIFY(second > before + 10);
+        // In tune at once: no slide up from A.
+        QVERIFY(std::fabs(cents(rig.pitch(0.25), 40)) < 15);
+        rig.send(noteOff(2));
+        rig.run(0.3);
+        QVERIFY(std::fabs(cents(rig.pitch(0.2), 33)) < 15);
+        QVERIFY(rig.finite());
+    }
+
     // A line that follows the chords moves its root with them; one that
     // doesn't, stays.
     void followTheChordsMovesTheLine() {

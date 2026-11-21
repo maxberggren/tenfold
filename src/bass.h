@@ -531,7 +531,8 @@ struct Note {
 
 // One mono synth with a note stack: a note that lands while another is held
 // slides to it without a new attack (legato, the 303's slide), and lifting
-// it slides back.
+// it slides back. A plucked string (the upright) is never slid onto: every
+// finger plucks its note, and lifting one pulls off to the note still held.
 class Lane {
 public:
     static constexpr int kStack = 16;
@@ -576,8 +577,10 @@ public:
         remove(n.id);
         // A different note while one is held slides to it; the same note
         // again is struck again, so two fingers drumming one note, which
-        // always overlap a little, still articulate.
-        const bool legato = m_count > 0 && (n.degree != m_cur.degree || n.octave != m_cur.octave);
+        // always overlap a little, still articulate. A string is plucked
+        // each time: a slide onto a string that has rung away is silence.
+        const bool legato = m_count > 0 && (n.degree != m_cur.degree || n.octave != m_cur.octave) &&
+                            recipe(n.sound).string <= 0;
         if (m_count == kStack)
             remove(m_notes[0].id);
         m_notes[m_count++] = n;
@@ -606,7 +609,8 @@ public:
             return;
         if (m_count > 0) {
             m_cur = m_notes[m_count - 1];
-            m_glideTau = glideTime(m_cur) / 3.0f;
+            // A string pulls off: the held note at once, no slide.
+            m_glideTau = recipe(m_cur.sound).string > 0 ? 0.0f : glideTime(m_cur) / 3.0f;
         } else {
             release();
         }

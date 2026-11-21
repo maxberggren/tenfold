@@ -724,6 +724,27 @@ void Studio::apply(const StudioMsg &m) {
         p->recRecount = landed;
         break;
     }
+    case StudioMsg::Recapture: {
+        // A loop that set the tempo, again with more or fewer rounds of its
+        // pattern: taken back as Ctrl+Z would, then captured anew in its
+        // place, counted as the same take.
+        if (!p || m.slot < 0 || m.slot >= kClipSlots || m.d1 <= m.d0)
+            return;
+        bool landed = false;
+        if (p->undoCount > 0 && p->undo[p->undoCount - 1].slot == m.slot) {
+            StudioMsg u = m;
+            u.kind = StudioMsg::UndoTake;
+            apply(u);
+            landed = true;
+        }
+        const uint32_t before = p->takes;
+        StudioMsg c = m;
+        c.kind = StudioMsg::Capture;
+        apply(c);
+        if (landed && p->takes > before)
+            --p->takes;
+        break;
+    }
     case StudioMsg::CancelRecord:
         if (p)
             p->recording = -1;

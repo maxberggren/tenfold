@@ -660,6 +660,7 @@ double repeats(const std::vector<Hit> &hits, double a, double b, double period, 
 struct Cycle {
     double period = 0, start = 0, end = 0;
     int cycles = 0, matched = 0;
+    std::vector<double> rounds; // when each whole round began, oldest first
 };
 
 Cycle findCycle(const std::vector<Hit> &hits) {
@@ -769,6 +770,8 @@ Cycle findCycle(const std::vector<Hit> &hits) {
         // hand's own feel; one when it is long already.
         const int take = chain.size() >= 2 && 2 * p <= 6.0 ? 2 : 1;
         c.cycles = take;
+        for (int i : chain)
+            c.rounds.push_back(hits[size_t(i)].x);
         c.start = hits[size_t(chain[chain.size() - size_t(take)])].x;
         found.push_back(c);
     }
@@ -971,8 +974,18 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
              first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
         ctx.capture(slot, start, stop, 0.85f);
         m_view.parts[part].recording = slot;
-        ctx.notice(settled ? QStringLiteral("Loop of what you repeated, slot %1: it sets the tempo").arg(slot + 1)
-                           : QStringLiteral("Loop in slot %1: it sets the tempo").arg(slot + 1));
+        m_lastTake = {};
+        m_lastTake.part = part;
+        m_lastTake.slot = slot;
+        m_lastTake.end = stop;
+        m_lastTake.at = now();
+        m_lastTake.takes = m_view.parts[part].takes;
+        m_lastTake.free = true;
+        m_lastTake.unit = settled ? cycle.period : stop - start;
+        m_lastTake.n = settled ? cycle.cycles : 1;
+        m_lastTake.rounds = settled ? cycle.rounds : std::vector<double>{start};
+        ctx.notice(settled ? QStringLiteral("Loop of what you repeated, slot %1, sets the tempo · ↑↓").arg(slot + 1)
+                           : QStringLiteral("Loop in slot %1 sets the tempo · ↑↓").arg(slot + 1));
         return;
     }
 bars:
@@ -1092,10 +1105,34 @@ bars:
         ctx.notice(QStringLiteral("Looping %1 in slot %2 · ↑↓ longer, shorter").arg(what).arg(slot + 1));
 }
 
+int Session::freeRounds(int dir) const {
+    const LastTake &lt = m_lastTake;
+    std::vector<int> rounds{1, 2, 4, 8};
+    if (std::find(rounds.begin(), rounds.end(), lt.n) == rounds.end())
+        rounds.push_back(lt.n);
+    std::sort(rounds.begin(), rounds.end());
+    const long at = long(std::find(rounds.begin(), rounds.end(), lt.n) - rounds.begin()) + dir;
+    if (at < 0 || at >= long(rounds.size()) || rounds[size_t(at)] * lt.unit < 0.2)
+        return 0;
+    return rounds[size_t(at)];
+}
+
 double Session::retakeLength(int dir) const {
     const LastTake &lt = m_lastTake;
     if (lt.part < 0 || lt.part != m_pages[size_t(m_page)]->part || m_view.parts[lt.part].takes > lt.takes + 1)
         return 0;
+    if (lt.free) {
+        // As the studio sizes a loop that sets the tempo: whole beats,
+        // doubling until the tempo is at least 88.
+        const int n = freeRounds(dir);
+        if (n <= 0)
+            return 0;
+        const double secs = n * lt.unit;
+        double len = 1;
+        while (len * 60.0 / secs < 88.0 && len < 32)
+            len *= 2;
+        return len;
+    }
     // Whole bars, by doubling and halving, through the length Space chose.
     std::vector<double> lengths{4, 8, 16, 32, 64};
     if (std::find(lengths.begin(), lengths.end(), lt.length) == lengths.end())
@@ -1105,9 +1142,9 @@ double Session::retakeLength(int dir) const {
     return at >= 0 && at < long(lengths.size()) ? lengths[size_t(at)] : 0;
 }
 
-int Session::loopBars(int dir) const {
+int Session::loopBeats(int dir) const {
     std::lock_guard lock(m_lock);
-    return int(std::lround(retakeLength(dir) / kBeatsPerBar));
+    return int(std::lround(retakeLength(dir)));
 }
 
 void Session::resizeLoop(int dir) {
@@ -1122,9 +1159,35 @@ bool Session::adjustTake(int dir) {
     if (retakeLength(0) <= 0)
         return false;
     const double next = retakeLength(dir);
-    const double length = next > 0 ? next : lt.length;
     lt.at = t; // each press keeps the arrows' window open
     Context &ctx = context(m_page);
+    if (lt.free) {
+        const int n = freeRounds(dir);
+        const int beats = int(std::lround(next));
+        const QString what = beats < int(kBeatsPerBar) ? QStringLiteral("%1 beats").arg(beats)
+                             : beats == int(kBeatsPerBar) ? QStringLiteral("1 bar")
+                                                          : QStringLiteral("%1 bars").arg(beats / int(kBeatsPerBar));
+        if (n <= 0) {
+            ctx.notice(dir > 0 ? QStringLiteral("Loop: as long as it goes") : QStringLiteral("Loop: as short as it goes"));
+            return true;
+        }
+        StudioMsg m;
+        m.kind = StudioMsg::Recapture;
+        m.part = int8_t(lt.part);
+        m.slot = int8_t(lt.slot);
+        // From the hit that began that round, as played; rounds before the
+        // pattern settled go back a period at a time.
+        const long r = long(lt.rounds.size()) - n;
+        m.d0 = r >= 0 ? lt.rounds[size_t(r)] : lt.rounds.front() + double(r) * lt.unit;
+        m.d1 = lt.end;
+        m.f = 0.85f;
+        ctx.post(m);
+        lt.n = n;
+        dlog("RECAPTURE part=%d slot=%d %d rounds of %.4f s", lt.part, lt.slot + 1, n, lt.unit);
+        ctx.notice(QStringLiteral("Loop: %1 (%2 rounds) · ↑↓").arg(what).arg(n));
+        return true;
+    }
+    const double length = next > 0 ? next : lt.length;
     const int bars = int(std::lround(length / kBeatsPerBar));
     const QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (length == lt.length) {

@@ -222,12 +222,12 @@ private slots:
                               "tap 4.55 0.21 0.4\ntap 5.05 0.37 0.4\ntap 5.55 0.29 0.4\ntap 6.05 0.46 0.4\n"
                               "tap 6.55 0.54 0.4\ntap 7.05 0.62 0.4\nkey 7.6 Space\n";
         testkit::play(s + "end 15\n", [](Session &ses) {
-            QCOMPARE(ses.loopBars(0), 2);
-            QCOMPARE(ses.loopBars(-1), 1);
-            QCOMPARE(ses.loopBars(1), 4);
+            QCOMPARE(ses.loopBeats(0), 8);
+            QCOMPARE(ses.loopBeats(-1), 4);
+            QCOMPARE(ses.loopBeats(1), 16);
         });
-        testkit::play(s + "page 9 1\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBars(0), 0); });
-        testkit::play(s + "key 9 Ctrl+Z\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBars(0), 0); });
+        testkit::play(s + "page 9 1\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBeats(0), 0); });
+        testkit::play(s + "key 9 Ctrl+Z\nend 10\n", [](Session &ses) { QCOMPARE(ses.loopBeats(0), 0); });
     }
 
     void aWaitBeforeSpaceKeepsTheTempo() {

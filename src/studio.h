@@ -41,6 +41,7 @@ struct StudioMsg {
         UndoTake,    // part: take back that part's latest take or edit, and play what played before
         RedoTake,    // part: bring back the last step Ctrl+Z took back
         Retake,      // as TakeBars, in place of the take just made into that slot (a longer or shorter window)
+        Recapture,   // as Capture, in place of the capture just made into that slot
         CopyClip,    // part, slot = from, value = to
         MergeClips,  // part, slot = into, value = the other, f = 0 layer / 1 chain
         ClearAll,    // every clip of every part goes, every sound stops: start over

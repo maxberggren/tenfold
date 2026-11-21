@@ -53,10 +53,10 @@ class Backend : public QObject {
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
     // The tutorial's step, for its panel.
     // The loop Space last made on this page, while it can be resized: its
-    // bars, and what Shorter / Longer would make it (0: none that way).
-    Q_PROPERTY(int loopBars READ loopBars NOTIFY changed)
-    Q_PROPERTY(int loopShorterBars READ loopShorterBars NOTIFY changed)
-    Q_PROPERTY(int loopLongerBars READ loopLongerBars NOTIFY changed)
+    // beats, and what Shorter / Longer would make it (0: none that way).
+    Q_PROPERTY(int loopBeats READ loopBeats NOTIFY changed)
+    Q_PROPERTY(int loopShorterBeats READ loopShorterBeats NOTIFY changed)
+    Q_PROPERTY(int loopLongerBeats READ loopLongerBeats NOTIFY changed)
     Q_PROPERTY(bool tutorialActive READ tutorialActive NOTIFY changed)
     Q_PROPERTY(int tutorialStep READ tutorialStep NOTIFY changed)
     Q_PROPERTY(int tutorialCount READ tutorialCount CONSTANT)
@@ -146,9 +146,9 @@ public:
     Q_INVOKABLE void undoTake() { m_session->undoTake(); }
     Q_INVOKABLE void redoTake() { m_session->redoTake(); }
     Q_INVOKABLE void resizeLoop(int dir) { m_session->resizeLoop(dir); }
-    int loopBars() const { return m_session->loopBars(0); }
-    int loopShorterBars() const { return m_session->loopBars(-1); }
-    int loopLongerBars() const { return m_session->loopBars(1); }
+    int loopBeats() const { return m_session->loopBeats(0); }
+    int loopShorterBeats() const { return m_session->loopBeats(-1); }
+    int loopLongerBeats() const { return m_session->loopBeats(1); }
     Q_INVOKABLE void startOver() { m_session->startOver(); }
     Q_INVOKABLE void toggleTutorial();
     Q_INVOKABLE void tutorialNext();

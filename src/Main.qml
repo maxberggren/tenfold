@@ -48,7 +48,11 @@ ApplicationWindow {
     }
     // The number a page answers to: 1–7 for the parts, 0 for arrange.
     function pageKey(i) { return i === backend.pageCount - 1 ? "0" : String(i + 1) }
-    function barsText(n) { return n === 1 ? qsTr("→ 1 bar") : qsTr("→ %1 bars").arg(n) }
+    function barsText(beats) {
+        if (beats % 4 !== 0)
+            return beats === 1 ? qsTr("→ 1 beat") : qsTr("→ %1 beats").arg(beats)
+        return beats === 4 ? qsTr("→ 1 bar") : qsTr("→ %1 bars").arg(beats / 4)
+    }
 
     Shortcut {
         sequence: "Esc"; context: Qt.ApplicationShortcut
@@ -380,21 +384,21 @@ ApplicationWindow {
                         // ↑ ↓ do the same for three seconds after Space.
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            visible: backend.loopBars > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
-                            opacity: backend.loopShorterBars > 0 ? 1 : 0.35
+                            visible: backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
+                            opacity: backend.loopShorterBeats > 0 ? 1 : 0.35
                             label: qsTr("Loop shorter")
-                            key: backend.loopShorterBars > 0 ? win.barsText(backend.loopShorterBars) : "—"
+                            key: backend.loopShorterBeats > 0 ? win.barsText(backend.loopShorterBeats) : "—"
                             color: win.pageColor
-                            onClicked: if (backend.loopShorterBars > 0) backend.resizeLoop(-1)
+                            onClicked: if (backend.loopShorterBeats > 0) backend.resizeLoop(-1)
                         }
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                            visible: backend.loopBars > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
-                            opacity: backend.loopLongerBars > 0 ? 1 : 0.35
+                            visible: backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
+                            opacity: backend.loopLongerBeats > 0 ? 1 : 0.35
                             label: qsTr("Loop longer")
-                            key: backend.loopLongerBars > 0 ? win.barsText(backend.loopLongerBars) : "—"
+                            key: backend.loopLongerBeats > 0 ? win.barsText(backend.loopLongerBeats) : "—"
                             color: win.pageColor
-                            onClicked: if (backend.loopLongerBars > 0) backend.resizeLoop(1)
+                            onClicked: if (backend.loopLongerBeats > 0) backend.resizeLoop(1)
                         }
                     }
                 }

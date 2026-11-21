@@ -418,7 +418,7 @@ private slots:
         QCOMPARE(data[lead::kLineData * 1 + 0], 1.0f);
         QVERIFY(std::fabs(data[lead::kLineData * 1 + 1] - first) < 0.02f);
         // ...and both sound.
-        QVERIFY(data[lead::kVoiceCount] >= 2.0f);
+        QVERIFY2(data[lead::kVoiceCount] >= 2.0f, qPrintable(QStringLiteral("voices %1 at %2, layer line on %3").arg(data[lead::kVoiceCount]).arg(lead::kVoiceCount).arg(data[lead::kLineData * lead::shownLine(0, 1)])));
         // The layer's note ends; the first take's goes on.
         spec.engine->command(note(Command::Off, layer1, 6, 1), ctx);
         run(*spec.engine, ctx, 0.2, data);

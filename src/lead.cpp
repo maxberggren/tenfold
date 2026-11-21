@@ -263,17 +263,23 @@ public:
     }
 
     void publish(float *data) override {
-        // See lead.h for what each number is. A slot shows its first layer
-        // that is sounding.
+        // See lead.h for what each number is. The layers above the first
+        // are shown for the slot that sounds them (one plays at a time).
+        auto sounding = [&](int l) {
+            const Line &c = m_lines[size_t(l)];
+            return c.voice >= 0 && m_voices[size_t(c.voice)].active && m_voices[size_t(c.voice)].owner == l;
+        };
         for (int shown = 0; shown < kShownLines; ++shown) {
             int li = shown;
-            if (shown > 0)
-                for (int layer = kClipLayers - 1; layer >= 0; --layer) {
-                    const int l2 = shown + kClipSlots * layer;
-                    const Line &c = m_lines[size_t(l2)];
-                    if (c.voice >= 0 && m_voices[size_t(c.voice)].active && m_voices[size_t(c.voice)].owner == l2)
-                        li = l2;
-                }
+            if (shown > kClipSlots) {
+                const int layer = shown - kClipSlots;
+                li = 1 + kClipSlots * layer;
+                for (int s = 0; s < kClipSlots; ++s)
+                    if (sounding(1 + s + kClipSlots * layer)) {
+                        li = 1 + s + kClipSlots * layer;
+                        break;
+                    }
+            }
             float *d = data + kLineData * shown;
             const Line &line = m_lines[size_t(li)];
             const Voice *v = line.voice >= 0 ? &m_voices[size_t(line.voice)] : nullptr;
@@ -1175,10 +1181,11 @@ public:
         const PartView &v = ctx.studio().parts[ctx.part()];
         TrailPoint &p = m_trail[size_t(m_trailHead++ % kTrail)];
         p.t = t;
-        for (int k = 0; k < 2; ++k) {
-            const int line = k == 0 ? 0 : (v.playing >= 0 ? 1 + v.playing : -1);
+        for (int k = 0; k <= kClipLayers; ++k) {
+            const int line = k == 0 ? 0 : (v.playing >= 0 ? shownLine(v.playing, k - 1) : -1);
             if (line < 0) {
-                p.level[k][0] = 0;
+                for (float &lv : p.level[k])
+                    lv = 0;
                 continue;
             }
             const float *d = v.data + kLineData * line;
@@ -1517,8 +1524,9 @@ private:
     static constexpr int kTrail = 360;
     struct TrailPoint {
         double t = -1;
-        float pos[2][1 + kHarmSlots] = {};
-        float level[2][1 + kHarmSlots] = {};
+        // [0] the live line, [1 + layer] the playing loop's layers
+        float pos[1 + kClipLayers][1 + kHarmSlots] = {};
+        float level[1 + kClipLayers][1 + kHarmSlots] = {};
     };
 
     Held *find(int id) {
@@ -2008,7 +2016,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         const double now = pc.time;
         const qreal floorY = neck.bottom() - 40 * unit, rise = neck.height() - 40 * unit;
         auto xAt = [&](float pos) { return neck.left() + (xOf(pos) - kColumn) / (1 - kColumn) * neck.width(); };
-        for (int k = 1; k >= 0; --k) {
+        for (int k = kClipLayers; k >= 0; --k) {
             const QColor lc = k == 0 ? col : c::alpha(col, 0.55f);
             for (int b = 0; b < 1 + kHarmSlots; ++b) {
                 QPolygonF poly;
@@ -2062,9 +2070,10 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         p.restore();
     }
 
-    // Where each line sings right now: a bright string across the neck.
-    for (int k = 1; k >= 0; --k) {
-        const int line = k == 0 ? 0 : (pv.playing >= 0 ? 1 + pv.playing : -1);
+    // Where each line sings right now: a bright string across the neck, the
+    // live one and each layer of the playing loop.
+    for (int k = kClipLayers; k >= 0; --k) {
+        const int line = k == 0 ? 0 : (pv.playing >= 0 ? shownLine(pv.playing, k - 1) : -1);
         if (line < 0)
             continue;
         const float *d = pv.data + kLineData * line;

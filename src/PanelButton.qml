@@ -35,20 +35,27 @@ Item {
         border.color: button.color
         border.width: 2
     }
+    // A short button (a small window) has one line: the label on it, and
+    // its key only where both fit side by side.
+    readonly property bool roomy: height >= 44
     Text {
+        id: labelText
         x: 10
         y: 5
         width: parent.width - 20
+        elide: button.roomy ? Text.ElideNone : Text.ElideRight
+        maximumLineCount: button.roomy ? 3 : 1
         text: button.label
         color: button.lit ? "#0a0806" : button.color
         font.family: "Noto Sans Mono"
         font.pixelSize: button.labelSize
         font.weight: Font.DemiBold
         font.capitalization: Font.AllUppercase
-        wrapMode: Text.Wrap
+        wrapMode: button.roomy ? Text.Wrap : Text.NoWrap
     }
     Text {
-        visible: button.key !== ""
+        id: keyText
+        visible: button.key !== "" && (button.roomy || labelText.implicitWidth + implicitWidth + 28 < button.width)
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 6

@@ -398,12 +398,12 @@ bool Session::key(const KeyEvent &k) {
     Page &p = *m_pages[size_t(m_page)];
     if (p.spec.control->key(k, *p.ctx))
         return true;
-    // Space records a loop on any part's page that doesn't record its own
-    // way: from the next bar into the next free slot, and Space again closes
-    // it at the bar after.
+    // Space loops what was just played. Over this part's own playing loop it
+    // layers on top of it, as one loop; Shift+Space makes a new loop instead,
+    // in a free slot, in that loop's place.
     if (k.key == Qt::Key_Space) {
         if (k.down && !k.repeat && p.part >= 0)
-            toggleRecording(*p.ctx, (k.modifiers & Qt::ShiftModifier) != 0);
+            toggleRecording(*p.ctx, (k.modifiers & Qt::ShiftModifier) == 0);
         return true;
     }
     return false;
@@ -754,7 +754,8 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     m.slot = int8_t(slot);
     m.d0 = end - length;
     m.d1 = end;
-    // Shift+Space: on top of this part's playing loop, as one loop.
+    // Space: on top of this part's playing loop, as one loop (Shift+Space
+    // asks for a new loop instead).
     const int into = m_view.parts[part].playing;
     if (layer && into >= 0)
         m.value = into + 1;
@@ -764,7 +765,9 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     if (settled)
         what = QStringLiteral("the %1 you repeated").arg(what);
     if (layer && into >= 0)
-        ctx.notice(QStringLiteral("Layered %1 onto slot %2 (Ctrl+Z takes it off)").arg(what).arg(into + 1));
+        ctx.notice(QStringLiteral("Layered %1 onto slot %2 (Ctrl+Z takes it off, Shift+Space makes a new loop)")
+                       .arg(what)
+                       .arg(into + 1));
     else
         ctx.notice(QStringLiteral("Looping %1 in slot %2").arg(what).arg(slot + 1));
 }

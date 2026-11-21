@@ -252,23 +252,36 @@ private slots:
         QCOMPARE(studio.view().parts[0].clips[3].events, 4);
     }
 
-    void shiftSpaceLayersOntoThePlayingLoop() {
+    void spaceLayersOntoThePlayingLoop() {
         // A bar of bass looped, then a second line played over it twice
-        // and Shift+Space: one loop with both lines, no new slot used.
-        // Ctrl+Z takes the layer back off.
+        // and Space: one loop with both lines, no new slot used. Ctrl+Z
+        // takes the layer back off.
         const std::string base = std::string(kBeat) +
                                   "page 3.0 2\n"
                                   "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
                                   "key 6.6 Space\n"
-                                  "tap 6.8 0.6 0.5\ntap 7.8 0.7 0.5\ntap 8.8 0.6 0.5\ntap 9.8 0.7 0.5\n"
-                                  "key 10.6 Shift+Space\n";
-        const auto take = testkit::play(base + "end 12\n");
+                                  "tap 6.8 0.6 0.5\ntap 7.8 0.7 0.5\ntap 8.8 0.6 0.5\ntap 9.8 0.7 0.5\n";
+        const auto take = testkit::play(base + "key 10.6 Space\nend 12\n");
         QCOMPARE(take.view.parts[1].playing, 0);
         QCOMPARE(take.view.parts[1].clips[0].events, 12);
         QVERIFY(take.view.parts[1].clips[1].state == ClipView::Empty);
-        const auto undone = testkit::play(base + "key 11.0 Ctrl+Z\nend 12\n");
+        const auto undone = testkit::play(base + "key 10.6 Space\nkey 11.0 Ctrl+Z\nend 12\n");
         QCOMPARE(undone.view.parts[1].playing, 0);
         QCOMPARE(undone.view.parts[1].clips[0].events, 8);
+    }
+
+    void shiftSpaceMakesANewLoopInstead() {
+        // The same, with Shift+Space: the second line alone becomes a new
+        // loop in the next slot, in the first one's place.
+        const std::string base = std::string(kBeat) +
+                                  "page 3.0 2\n"
+                                  "tap 4.55 0.1 0.5\ntap 5.05 0.3 0.5\ntap 5.55 0.2 0.5\ntap 6.05 0.1 0.5\n"
+                                  "key 6.6 Space\n"
+                                  "tap 6.8 0.6 0.5\ntap 7.8 0.7 0.5\ntap 8.8 0.6 0.5\ntap 9.8 0.7 0.5\n";
+        const auto take = testkit::play(base + "key 10.6 Shift+Space\nend 12\n");
+        QCOMPARE(take.view.parts[1].playing, 1);
+        QCOMPARE(take.view.parts[1].clips[0].events, 8);
+        QVERIFY(take.view.parts[1].clips[1].state == ClipView::Playing);
     }
 
     void spaceWithNothingPlayedMakesNoLoop() {

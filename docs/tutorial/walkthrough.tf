@@ -41,7 +41,7 @@ up 18.319 2
 up 18.319 3
 up 18.319 4
 
-# Over the loop, open hats on the off-beats; Shift+Space layers them in.
+# Over the loop, open hats on the off-beats; Space layers them in.
 tap 23.468 0.8800 0.3800 p=0.55 len=0.08
 tap 23.952 0.8800 0.3800 p=0.55 len=0.08
 tap 24.435 0.8800 0.3800 p=0.55 len=0.08
@@ -50,7 +50,7 @@ tap 25.403 0.8800 0.3800 p=0.55 len=0.08
 tap 25.887 0.8800 0.3800 p=0.55 len=0.08
 tap 26.371 0.8800 0.3800 p=0.55 len=0.08
 tap 26.855 0.8800 0.3800 p=0.55 len=0.08
-key 27.147 Shift+Space
+key 27.147 Space
 
 # 3 Chords. Am, F, C, G, a bar each, twice round; Space with the last one held.
 key 29.032 3
@@ -85,10 +85,10 @@ tap 55.403 0.2083 0.3000 p=0.70 len=0.20
 tap 55.887 0.2083 0.3000 p=0.70 len=0.20
 key 56.179 Space
 
-# A variation: the root held, OFFBEAT on the ROLL rail; Space. Then Ctrl+Z takes it back.
+# A variation: the root held, OFFBEAT on the ROLL rail; Shift+Space makes it a new loop. Then Ctrl+Z takes it back.
 down 59.980 20 0.2083 0.3 p=0.7
 down 60.000 21 0.2662 0.94
-key 63.921 Space
+key 63.921 Shift+Space
 up 64.071 20
 up 64.071 21
 key 66.306 Ctrl+Z

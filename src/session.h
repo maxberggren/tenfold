@@ -18,8 +18,10 @@
 //                           goes to its next step, Ctrl+Shift+Return back
 //   Ctrl+R                  (scripts only: the window keeps it) marks the mix as
 //                           recording, as the window's recorder would
-//   Space                   record a loop on this page from the next bar; Space
-//                           again closes it (unless the page records its own way)
+//   Space                   loop what was just played; over this page's own
+//                           loop it layers on top, as one loop. Space again
+//                           while a take waits calls it off
+//   Shift+Space             a new loop, in place of this page's playing loop
 // Escape, ?, Ctrl+R and Ctrl+Q are the window's (give the pad back, help,
 // record the mix, quit). The pad is taken with the window's Play button.
 
@@ -103,8 +105,9 @@ public:
     // Locks the session for a caller that reads the tutorial from another
     // thread than the UI's.
     std::recursive_mutex &lock() const { return m_lock; }
-    // Space: arm a loop on this part from the next bar, or close it.
-    void toggleRecording(ControlContext &ctx, bool layer = false);
+    // Space: loop what was just played, layered onto the part's playing loop
+    // unless layer is false (Shift+Space).
+    void toggleRecording(ControlContext &ctx, bool layer = true);
 
     // The clock the touch frames use (the same one live, script time
     // offline), so a page's ctx.now() is right between frames.

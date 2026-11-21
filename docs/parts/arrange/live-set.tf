@@ -128,7 +128,7 @@ tap 46.000 0.4333 0.5 p=0.5 len=0.12
 tap 46.250 0.6333 0.5 p=0.5 len=0.12
 key 46.650 Space
 # 1 Drums again: four on the floor, open hats off the beat, closed hats before the beat and a
-# snare pickup, single hits again: for the second drop.
+# snare pickup, single hits again: for the second drop. Shift+Space makes it a new loop, not a layer.
 page 47.500 1
 tap 48.500 0.12 0.12 p=0.8 len=0.06
 tap 48.750 0.88 0.38 p=0.5 len=0.06
@@ -155,7 +155,7 @@ tap 51.875 0.38 0.12 p=0.5 len=0.05
 tap 52.000 0.12 0.12 p=0.8 len=0.06
 tap 51.875 0.88 0.12 p=0.35 len=0.05
 tap 52.250 0.88 0.38 p=0.5 len=0.06
-key 52.650 Space
+key 52.650 Shift+Space
 # --- 0 Arrange: a live set, recorded as a song (O) while it is played ---
 page 53.000 0
 # Record from the next bar; strip to drums and atmos on that bar (Shift: mutes land on the line).

@@ -561,7 +561,7 @@ private slots:
                                    "tap 0.2 0.04 0.9\n" // LOOP: the first loop, bar 2
                                    "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.04 0.9\n"
                                    "tap 4.5 0.29 0.4\ntap 5.0 0.46 0.4\n"
-                                   "key 5.5 Space\n";
+                                   "key 5.5 Shift+Space\n"; // a new loop beside the first
         QString status, notice;
         const auto take = testkit::play(script + "end 5.8\n", [&](Session &s) {
             status = s.pageStatus();
@@ -591,7 +591,7 @@ private slots:
                 script += "down " + std::to_string(t) + " " + std::to_string(id) + " " + std::to_string(x) +
                           " 0.4\nup " + std::to_string(t + n[2] * 0.5 - 0.01) + " " + std::to_string(id) + "\n";
             }
-        script += "key 9.05 Space\nend 13.0\n";
+        script += "key 9.05 Shift+Space\nend 13.0\n";
         const auto take = testkit::play(script);
         const ClipView &clip = take.view.parts[1].clips[1];
         QCOMPARE(int(clip.state), int(ClipView::Playing));
@@ -626,7 +626,7 @@ private slots:
         const std::string take = "page 0 2\ntempo 0 120\n"
                                  "tap 0.2 0.04 0.9\ntap 2.1 0.37 0.4\ntap 3.0 0.04 0.9\n" // a first loop
                                  "down 7.93 1 0.21 0.4 p=0.6\nup 9.4 1\n" // A1 from just before bar 8 s
-                                 "key 9.0 Space\n";                        // loops 8-10 s at 10 s
+                                 "key 9.0 Shift+Space\n";                  // loops 8-10 s at 10 s
         const auto t = testkit::play(take + "end 14.4\n");
         QCOMPARE(int(t.view.parts[1].clips[1].state), int(ClipView::Playing));
         QCOMPARE(int(t.view.parts[1].clips[1].lengthBeats), 4);

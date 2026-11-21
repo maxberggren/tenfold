@@ -102,7 +102,9 @@ about 60 times a second and the page reads as `pc.view->data`.
    The player plays first, then presses Space. With nothing else playing they
    press it where the phrase would start again, and that loop sets the tempo.
    Over a playing loop, the bars that hold the phrase become a loop from the
-   bar line. Space again while a take waits calls it off. The session finds
+   bar line. Over the page's own playing loop the take layers on top of it,
+   as one loop; Shift+Space makes a new loop in its place instead. Space again
+   while a take waits calls it off. The session finds
    the phrase from your onsets, so send every onset as `On` or flagged
    `Command::Quantize`, and flag an `On` that only carries on a sound already
    heard (a bar-line handover, a re-asserted latched layer) `Command::Continue`. Show it on your page from `pc.view->recording` (a take

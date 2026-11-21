@@ -196,12 +196,12 @@ void Tutorial::build() {
          {spot(0.0f, 0.06f, 1.0f, 0.25f, QStringLiteral("HOLD THE GROOVE · CLICK"))},
          {{QStringLiteral("A drum loop plays"), [](Look &l) { return l.playing(Drums); }}}});
 
-    add({QStringLiteral("Beat"), Drums, QStringLiteral("Layer on top: Shift+Space"),
+    add({QStringLiteral("Beat"), Drums, QStringLiteral("Layer on top: Space again"),
          QStringLiteral("Over the loop, play something extra: OPEN on the off-beats, or a few SHAKER hits. Then "
-                        "Shift+Space: what you just played joins this loop, as one loop."),
-         QStringLiteral("Plain Space would make a new loop in its place; Ctrl+Z takes a loop back."),
+                        "Space: what you just played joins this loop, as one loop."),
+         QStringLiteral("Over a page's own loop Space always layers; Ctrl+Z takes a layer back off."),
          QStringLiteral("Thicker. Loops grow by layers."),
-         {QStringLiteral("Shift Space")},
+         {QStringLiteral("Space")},
          {},
          {spot(0.5f, 0.25f, 0.75f, 0.5f, QStringLiteral("SHAKER")), spot(0.75f, 0.25f, 1.0f, 0.5f, QStringLiteral("OPEN"))},
          // The same slot plays on, with a take more in it: layered, not
@@ -264,10 +264,12 @@ void Tutorial::build() {
 
     add({QStringLiteral("Bass"), Bass, QStringLiteral("Try a variation"),
          QStringLiteral("Hold ROOT with one finger and touch OFFBEAT or GALLOP on the ROLL rail with another: the bass "
-                        "plays that pattern by itself. Slide up on FILTER to open it, then Space loops the new line."),
-         QStringLiteral("FILTER rides whatever the bass plays, its loop too."),
+                        "plays that pattern by itself. Slide up on FILTER to open it, then Shift+Space: a new loop of this line, in place "
+                        "of the first instead of on top of it."),
+         QStringLiteral("Plain Space would layer it onto the first bassline. FILTER rides whatever the bass plays, its "
+                        "loop too."),
          QStringLiteral("A second bassline. Which one's better?"),
-         {QStringLiteral("Space")},
+         {QStringLiteral("Shift Space")},
          {},
          {root, spot(0.24f, 0.76f, 0.45f, 1.0f, QStringLiteral("ROLL")),
           spot(0.66f, 0.76f, 0.83f, 1.0f, QStringLiteral("FILTER"), A::Up)},

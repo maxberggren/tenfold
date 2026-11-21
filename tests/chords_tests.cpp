@@ -523,7 +523,7 @@ private slots:
     void theLoopIsAnnounced() {
         QString landed, counting;
         const std::string over = recordedLoop({0, 5, 2, 6}) + "down " + num(3 * kBar + 0.01) + " 70 " + cell(3, Triad) +
-                                 "\nup " + num(4 * kBar - 0.05) + " 70\nkey " + num(4 * kBar + 0.02) + " Space\nend " +
+                                 "\nup " + num(4 * kBar - 0.05) + " 70\nkey " + num(4 * kBar + 0.02) + " Shift+Space\nend " +
                                  num(4 * kBar + 0.5) + "\n";
         const auto take = testkit::play(over, [&](Session &s) { landed = s.pageStatus(); });
         QVERIFY2(landed.contains("looped") && landed.contains("slot 2"), qPrintable(landed));

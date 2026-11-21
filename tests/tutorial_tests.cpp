@@ -76,10 +76,10 @@ std::string walkthrough() {
     s.add("up %.3f 3", bar(9) + 0.9);
     s.add("up %.3f 4", bar(9) + 0.9);
 
-    s.comment("Over the loop, open hats on the off-beats; Shift+Space layers them in.");
+    s.comment("Over the loop, open hats on the off-beats; Space layers them in.");
     for (int b = 48; b < 56; ++b)
         s.tap(beat(b + 0.5), 0.88, 0.38, 0.55);
-    s.key(beat(56) + 0.05, "Shift+Space");
+    s.key(beat(56) + 0.05, "Space");
 
     s.comment("3 Chords. Am, F, C, G, a bar each, twice round; Space with the last one held.");
     s.key(bar(15), "3");
@@ -101,10 +101,10 @@ std::string walkthrough() {
         s.tap(beat(b + 0.5), 0.2083, 0.3, 0.7, 0.2);
     s.key(beat(116) + 0.05, "Space");
 
-    s.comment("A variation: the root held, OFFBEAT on the ROLL rail; Space. Then Ctrl+Z takes it back.");
+    s.comment("A variation: the root held, OFFBEAT on the ROLL rail; Shift+Space makes it a new loop. Then Ctrl+Z takes it back.");
     s.add("down %.3f 20 0.2083 0.3 p=0.7", bar(31) - 0.02);
     s.add("down %.3f 21 0.2662 0.94", bar(31));
-    s.key(bar(33) + 0.05, "Space");
+    s.key(bar(33) + 0.05, "Shift+Space");
     s.add("up %.3f 20", bar(33) + 0.2);
     s.add("up %.3f 21", bar(33) + 0.2);
     s.key(bar(34) + 0.5, "Ctrl+Z");

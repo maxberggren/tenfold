@@ -196,7 +196,7 @@ Taken takeOverALoop(const std::vector<std::pair<double, int>> &taps, double spac
     std::string s = riffInBarTwo() + fmt("key %.4f Space\n", 8 * spb);
     for (const auto &[beat, q] : taps)
         s += fmt("tap %.4f %.4f 0.5 len=0.15\n", from + beat * spb, cellX(q));
-    s += fmt("key %.4f Space\n", from + space * spb);
+    s += fmt("key %.4f Shift+Space\n", from + space * spb); // a new loop, not a layer
     Taken got;
     const auto take = testkit::play(s + fmt("end %.4f\n", from + space * spb + 0.3),
                                     [&](Session &ss) { got.status = ss.pageStatus(); });

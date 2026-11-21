@@ -5,7 +5,7 @@
 // page's controls run, whether a touch frame, a key or the screen calls.
 //
 // Global keys, whatever page is showing:
-//   1–7 (and the keypad's)  the parts' pages     0  the arrange page
+//   1–8 (and the keypad's)  the parts' pages     0  the arrange page
 //   Tab / Shift+Tab         next / previous page
 //   Ctrl+↑ / Ctrl+↓         tempo ±1 BPM (with Shift ±5)
 //   Ctrl+← / Ctrl+→         key down / up a fifth
@@ -22,6 +22,8 @@
 //                           loop it layers on top, as one loop. Space again
 //                           while a take waits calls it off
 //   Shift+Space             a new loop, in place of this page's playing loop
+//                           (the Vocal page takes Space itself and the other
+//                           way round: Space a new loop, Shift+Space a layer)
 // Escape, ?, Ctrl+R, Ctrl+S, Ctrl+O and Ctrl+Q are the window's (give the
 // pad back, help, record the mix, save and open songs, quit). The pad is taken with the window's Play button.
 

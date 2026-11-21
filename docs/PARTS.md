@@ -3,7 +3,7 @@
 tenfold is a studio of pages. Each part of an electronic track has its own
 page and is played with up to ten fingers on the trackpad, plus the keyboard
 where that helps. The pages are 1 Drums, 2 Bass, 3 Chords, 4 Lead, 5 Arp,
-6 Atmos, 7 FX, and 0 Arrange, where the parts' clips become a track. Each page
+6 Atmos, 7 FX, 8 Vocal, and 0 Arrange, where the parts' clips become a track. Each page
 is a different instrument, designed from scratch for what that part needs to
 do in a great track.
 
@@ -71,6 +71,17 @@ about 60 times a second and the page reads as `pc.view->data`.
   buttons, fingers, grid, the bar's beats and the clip strip. Use it, so every
   page reads as one panel: black glass, phosphor lines in your part's colour,
   condensed capitals.
+- **Live input and audio loops.** `ctx.input()` on the audio side is the
+  microphone for the block (null when there is none); `StudioView::input`
+  and its latencies say how it is. A part that monitors it sets
+  `PartSpec::monitors`, and the studio mixes it after the master limiter, so
+  the voice isn't delayed by the limiter's look-ahead. A part whose loops
+  are recorded audio rather than its Commands handles Space in `key()` and
+  calls `ctx.takeAudio(…)`: the clip is one On flagged `Command::Sampled`,
+  which the engine plays from audio it keeps, and everything else (slots,
+  launch, layers, Ctrl+Z, the Song page) works as for any clip. It answers
+  `loopBeats` / `resizeLoop` for the window's loop buttons. The Vocal page
+  (`src/vocal.cpp`, `src/vocal.h`) is the example.
 - **Background time.** `PartControl::background(t, ctx)` reaches every page,
   showing or not, with every frame and idle tick (about 60–125 Hz). Use it for
   anything that must keep going while another page is showing, such as an

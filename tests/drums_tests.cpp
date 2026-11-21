@@ -1204,15 +1204,17 @@ private slots:
     // --- songs -----------------------------------------------------------------
 
     void aSongKeepsTheDrumsSettings() {
-        // Trap, swing up two steps, held keys a step faster, the kick tuned,
+        // Trap, swing up two steps, held keys a step faster (↑ while a key
+        // rolls: alone, ↑ is the loop's length), the kick tuned,
         // and a groove kept as a loop with its clap taken out.
         const std::string script = "page 0 1\nkey 0.1 Right\nkey 0.15 Right\n"
-                                   "key 0.2 Shift+Right\nkey 0.25 Shift+Right\nkey 0.3 Up\n"
+                                   "key 0.2 Shift+Right\nkey 0.25 Shift+Right\n"
                                    "down 1.0 1 " + at(drums::Kick) + "\nclick 1.05 len=0.6\n"
                                    "glide 1.2 1.5 1 0.275 0.125\nup 1.8 1\n"
                                    "down 2.00 2 " + at(drums::Kick) + "\ndown 2.02 3 " + at(drums::Clap) +
                                    "\ndown 2.04 4 " + at(drums::Hat) +
                                    "\nclick 3.0 len=0.15\nup 3.4 2\nup 3.4 3\nup 3.4 4\n"
+                                   "key 4.0 V down\nkey 4.5 Up\nkey 4.6 V up\n"
                                    "down 8.0 5 " + at(drums::Clap) + "\nkey 8.3 Delete\nup 8.6 5\nend 9\n";
         bool checked = false;
         testkit::reopen(script, 3.0, [&](Session &before, Session &opened, const QJsonObject &doc) {

@@ -201,10 +201,10 @@ key 134.048 Backspace
 
 # 0 Arrange. The mouse clicks the bass loop: it stops on the bar; again: back.
 key 139.355 0
-mouse 141.290 0.1581 0.6954 down
-mouse 141.390 0.1581 0.6954 up
-mouse 145.161 0.1581 0.6954 down
-mouse 145.261 0.1581 0.6954 up
+mouse 141.290 0.1581 0.7191 down
+mouse 141.390 0.1581 0.7191 up
+mouse 145.161 0.1581 0.7191 down
+mouse 145.261 0.1581 0.7191 up
 
 # Q mutes the drums; Q again brings them back.
 key 149.032 Q

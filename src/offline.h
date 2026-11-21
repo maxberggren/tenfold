@@ -15,7 +15,7 @@
 // The script language, one event per line (times in seconds, positions 0..1
 // with y up, twist in degrees; # starts a comment):
 //
-//   page  T N                                         show page N (1–7, 0 arrange)
+//   page  T N                                         show page N (1–8, 0 arrange)
 //   down  T ID X Y [p=0.5] [size=1] [twist=0]
 //   move  T ID X Y [p=…] [size=…] [twist=…]           jump there
 //   glide T1 T2 ID X Y [p=…] [size=…] [twist=…]       move there smoothly
@@ -28,6 +28,12 @@
 //   mouse T X Y down|up|move                          the mouse on the pad: pressed, it is
 //                                                     one more finger; move alone hovers
 //   tempo T BPM
+//   voice T DUR [hz=220] [to=HZ] [level=0.3] [vowel=a|e|i|o|u]
+//                                                     a sung word into the microphone
+//                                                     (a glide to `to`, vibrato when held)
+//   mic   T FILE.wav [gain=1]                         a recording into the microphone from T
+//                                                     (with either, the script has a mic;
+//                                                     without, it has none)
 //   end   T
 namespace tf {
 

@@ -78,6 +78,9 @@ struct Command {
         Continue = 4, // an On that carries on a sound already heard (a voice handed over at a
                       // bar line, a latched layer re-asserted): recorded, but not an onset, so
                       // Space's phrase finder doesn't mistake it for playing
+        Sampled = 8,  // an On that starts recorded audio (a Vocal loop): when a loop joins part
+                      // way in, the studio sets its t to when it should have begun, in the past,
+                      // so the engine starts the audio that far in and it stays in place
     };
     uint16_t type = On;
     uint16_t flags = 0;
@@ -147,6 +150,17 @@ public:
     // for a part that wants to pump its own way (the studio already ducks
     // every channel by its pump depth).
     virtual const float *duck() const = 0;
+    // The microphone for this block: n mono samples at the studio's rate, as
+    // they arrived (nothing added on the way), or null when there is no
+    // microphone at all.
+    virtual const float *input() const { return nullptr; }
+    // A part that monitors live input (PartSpec::monitors): where to add,
+    // in place of l and r, what must be heard the moment it arrives (the
+    // live voice), n frames per channel (0 left, 1 right), zeroed. It goes
+    // through the part's channel but round the master's look-ahead limiter.
+    // What can wait (its loops) goes into l and r and the mix as usual.
+    // Null for any other part.
+    virtual float *monitor(int channel) { (void)channel; return nullptr; }
 };
 
 class PartEngine {
@@ -243,6 +257,14 @@ struct StudioView {
     float master[MasterCount] = {};
     float peak = 0, rms = 0, cpu = 0, cpuPeak = 0;
     float scope[256] = {}; // the last few milliseconds of the mix, for drawing
+    // The microphone, as the audio server gives it.
+    enum Input : int { NoInput = 0, InputConnecting, InputLive, InputFailed };
+    int input = NoInput;
+    // Milliseconds from a sound at the microphone to the same sound leaving
+    // the speakers: the server's capture and playback latency (the devices'
+    // buffers included, as it reports them), and the studio's own: the
+    // quantum it renders plus what waits in its input ring.
+    float inputMs = 0, outputMs = 0, bufferMs = 0;
 };
 
 // A key press or release, for parts that play from the keyboard too. The
@@ -300,6 +322,22 @@ public:
     // that step would give, or 0.
     virtual bool resizeLoop(int dir) { (void)dir; return false; }
     virtual int loopStep(int dir) const { (void)dir; return 0; }
+    // A loop of recorded audio (the Vocal page's), made as Space makes one
+    // but from a window the page chose: the clip is one sound, `sound` (an
+    // On flagged Command::Sampled, which the page's engine plays from audio
+    // it keeps), starting at beat b0, the loop running b0..b1 and landing at
+    // b1. The studio puts into sound.i[3] how many samples into the audio
+    // the clip's own start falls (the window needn't start on the bar).
+    // into ≥ 0: layered onto that slot's clip. retake: in place of the take
+    // just made into that slot (longer or shorter). With free, nothing else
+    // plays: b0 and b1 are touch-clock seconds and the loop sets the tempo,
+    // as a capture does.
+    virtual void takeAudio(int slot, double b0, double b1, const Command &sound, int into = -1, bool retake = false,
+                           bool free = false) {
+        (void)slot, (void)b0, (void)b1, (void)sound, (void)into, (void)retake, (void)free;
+    }
+    // Space again while a take waits: it is called off.
+    virtual void cancelTake() {}
     int freeSlot() const {
         if (part() < 0)
             return -1;
@@ -437,6 +475,13 @@ public:
     // when the page doesn't know the name; each page lists its names in its
     // own override.
     virtual float tutorialProbe(const QString &name) const { (void)name; return std::nanf(""); }
+    // A page whose loops are recorded audio, not its Commands (the Vocal
+    // page), makes its own takes: it handles Space in key() and calls
+    // ControlContext::takeAudio. The window's Loop shorter / longer buttons
+    // then ask it too: the loop's beats one step that way (dir −1, 0, +1),
+    // 0 when there is no such step, or −1 when it has no take to change.
+    virtual int loopBeats(int dir) const { (void)dir; return -1; }
+    virtual void resizeLoop(int dir, ControlContext &ctx) { (void)dir, (void)ctx; }
 };
 
 // One part, as the studio and the session know it.
@@ -447,6 +492,11 @@ struct PartSpec {
     std::unique_ptr<PartControl> control;
     std::unique_ptr<PartEngine> engine;
     float channel[ChannelCount] = {0.8f, 0.5f, 0.5f, 0.15f, 0.0f, 0.6f, 0.0f, 0.0f};
+    // A part that monitors live input (the microphone) gets a second bus
+    // (AudioContext::monitor) mixed after the master bus's look-ahead
+    // limiter, so the voice reaches the headphones without the limiter's
+    // delay; it still has its channel and the room.
+    bool monitors = false;
     // Whether what it plays depends on the chord of the moment (bass, arp,
     // pads…): Space then hears the same notes over a new chord as new
     // playing, so a line that follows a progression loops the progression.

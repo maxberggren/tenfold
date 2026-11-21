@@ -351,9 +351,11 @@ public:
                 this->act(act, QStringLiteral("key"), ctx);
             return true;
         }
-        // Solos are held: A S D F G H J, while the key is down.
-        static const int soloKeys[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G, Qt::Key_H, Qt::Key_J};
-        for (int p = 0; p < 7; ++p)
+        // Solos are held: A S D F G H J K, while the key is down (the Vocal
+        // part, eighth, has no mute key: I writes the track).
+        static const int soloKeys[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F,
+                                       Qt::Key_G, Qt::Key_H, Qt::Key_J, Qt::Key_K};
+        for (int p = 0; p < 8; ++p)
             if (k.key == soloKeys[p]) {
                 if (p >= m_parts || k.repeat)
                     return true;
@@ -3556,9 +3558,9 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
             tx = c::tag(p, QPointF(tx, ty), QStringLiteral("SOLO"), pc.color, 10).right() + 4;
         if (!muted && !soloed) {
             // Where its clips come from (its page), and its mute and solo keys.
-            static const char *keys[] = {"Q A", "W S", "E D", "R F", "T G", "Y H", "U J"};
+            static const char *keys[] = {"Q A", "W S", "E D", "R F", "T G", "Y H", "U J", "  K"};
             c::text(p, QRectF(tx, ty - 7, name.width(), 14),
-                    QStringLiteral("PAGE %1  %2").arg(i + 1).arg(QString::fromLatin1(i < 7 ? keys[i] : "")),
+                    QStringLiteral("PAGE %1  %2").arg(i + 1).arg(QString::fromLatin1(i < 8 ? keys[i] : "")),
                     c::alpha(col, 0.4f), 9);
         }
         c::gauge(p, QRectF(name.left(), name.bottom() - 6, name.width(), 5),

@@ -205,14 +205,15 @@ constexpr float kBellowsAir = 2.6f;
 constexpr float kBreathS = 0.4f;
 
 // How much more of a sitar string's sound the taraf takes up once the string
-// is let go than while it sounds.
-constexpr float kTarafBloom = 12.0f;
+// is let go than while it sounds (the string dies within a fifth of a
+// second of it, so this is a short, strong push).
+constexpr float kTarafBloom = 32.0f;
 
 // How narrow the sitar's jawari formant is, and how loud the mizrab's scrape.
 constexpr float kJawQ = 9.0f;
 constexpr float kJawSweepS = 0.7f; // how long the formant takes to slide down from the stroke
 constexpr float kScrape = 0.5f;
-constexpr float kJawLoop = 0.16f; // how far the bridge shortens the string, a share of it for each unit of swing
+constexpr float kSizzle = 0.8f; // how loud the wire sizzles on the bridge while it touches, in the formant's band
 
 // How long the erhu's bow is, in seconds of an ordinary stroke.
 constexpr float kBowStrokeS = 3.2f;
@@ -364,7 +365,7 @@ struct Bank {
     int pluck = 0, pluckLen = 1;
     OnePoleLp pluckLp;
     bool wasLive = false; // a harmony string coming in is plucked
-    Svf jawF;
+    Svf jawF, jawN;
     float swing = 0, swingTop = 0; // the string's swing, and how wide it was just after the pluck
     float jawSweep = 0;            // how far the jawari's formant still has to slide down, 1 at the stroke
     // Pan: each mode's ringing energy, the struck part on top of it that a
@@ -901,6 +902,7 @@ private:
             k.pluckLp.y = 0;
             k.wasLive = levels[b] > 0;
             k.jawF.reset();
+            k.jawN.reset();
             k.swing = k.swingTop = 0;
             k.jawSweep = 0;
             for (int m = 0; m < kModes; ++m) {
@@ -1543,7 +1545,9 @@ private:
                     const float hi = std::max(clampf(14.0f * f0, 3500.0f, 7500.0f) * (0.6f + 0.4f * v.vel), lo);
                     const float drop = 20.0f * std::log10(std::max(k.swingTop, 1e-6f) / std::max(k.swing, 1e-6f));
                     const float sweep = k.jawSweep * k.jawSweep * (3.0f - 2.0f * k.jawSweep);
-                    k.jawF.set(std::max(lo * std::pow(hi / lo, sweep) * std::exp2(-drop / 30.0f), lo), kJawQ, rate);
+                    const float jawHz = std::max(lo * std::pow(hi / lo, sweep) * std::exp2(-drop / 30.0f), lo);
+                    k.jawF.set(jawHz, kJawQ, rate);
+                    k.jawN.set(jawHz, 2.0f, rate);
                     k.jawSweep = std::max(0.0f, k.jawSweep - dt / kJawSweepS);
                 }
             }
@@ -1929,14 +1933,13 @@ private:
                         in = v.vel * (1.6f * shape + 0.8f * k.pluckLp.step(v.rng.bipolar()));
                         --k.pluck;
                     }
-                    // Inside the loop as well, the bridge shortens the
-                    // string while it lies on the curve (by as much as it
-                    // swings past it): the string's own motion keeps
-                    // feeding its upper partials, so they ring on where
-                    // another string's die away, and a hard stroke starts a
-                    // hair sharp.
-                    const float shorten = std::min(std::max(0.0f, k.strLp - 0.02f) * kJawLoop * D, 0.08f * D);
-                    const float y = k.string.read(std::max(D - shorten, 4.0f));
+                    // The loop itself stays linear: the bridge is heard on
+                    // the way out (below), never fed back. A string whose
+                    // length followed its own swing, sample by sample, was
+                    // chaotic: a rounding's difference grew into another
+                    // buzz within a few hundred passes, so a compiler that
+                    // fuses a multiply-add played another note.
+                    const float y = k.string.read(D);
                     k.strLp += (y - k.strLp) * (1.0f - strB);
                     k.string.push(clampf(k.strLp * strG[b] + in, -3.0f, 3.0f));
                     // What is heard is the string as it slaps the bridge:
@@ -1955,6 +1958,14 @@ private:
                     const float lean = std::min(std::max(0.0f, y / ref - 0.05f) * jaw * D * 0.5f, 0.5f * D);
                     const float heard = k.string.read(1.0f + lean);
                     float buzz = heard + jawGain * k.jawF.step(heard).band;
+                    // And while it touches, the wire sizzles on the bridge:
+                    // noise in the formant's band, as loud as the swing and
+                    // fading as the stroke's "jiii" slides down, so the
+                    // stroke is a buzz and not a filter closing on a saw.
+                    if (lean > 0.0f)
+                        buzz += kSizzle * k.swing * k.jawSweep * k.jawN.step(v.rng.bipolar()).band;
+                    else
+                        k.jawN.step(0.0f);
                     // The mizrab, the wire plectrum on the player's finger,
                     // scraping off the steel string: a few milliseconds of
                     // bright noise, the "chik" before the note.

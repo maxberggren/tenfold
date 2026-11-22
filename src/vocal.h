@@ -517,7 +517,6 @@ public:
         m_len.setTime(0.006f, rate);
         m_len.reset(rate / 220.0f);
         m_dc.r = 1.0f - kTwoPi * 3.0f / rate;
-        m_swingA = 1.0f - std::exp(-kTwoPi * 1200.0f / rate);
         clear();
         setHz(220.0f);
         m_len.reset(m_want);
@@ -527,6 +526,7 @@ public:
         m_w = 0;
         m_brS = 0;
         m_apX = m_apY = m_z1 = m_z2 = 0;
+        m_swingLp.reset();
         m_dc = DcBlock{0, 0, m_dc.r};
         m_exc = 0;
         m_excN = kPluck;
@@ -538,6 +538,7 @@ public:
         // A period less the loop filter's one sample and the bridge's.
         m_want = clampf(m_rate / hz - 2.0f, 8.0f, float(kSize - 8));
         m_fb = std::pow(10.0f, -3.0f / (m_t60 * hz));
+        m_swingLp.set(0.7f * hz, 0.7071f, m_rate);
     }
     void jump() { m_len.reset(m_want); }
     // How long a note rings (its T60, seconds) and how much it buzzes (the
@@ -573,13 +574,18 @@ public:
         // The bridge: while the string's swing is past the threshold, on
         // the side the bridge is, the allpass's coefficient is `reach` (a
         // quarter sample's delay at 0.6, where it is a whole one at rest).
-        // The swing is the string's slow motion (under 1.2 kHz), not the
-        // buzz itself: touched once a period, at the top of the swing, as
-        // a string is, rather than scattering its own scatter into hiss.
-        m_swing += (x - m_swing) * m_swingA;
+        // The swing is the string's slow motion, its fundamental (two
+        // poles a little under the note's pitch), not the buzz itself:
+        // touched once a period, at the top of the swing, as a string is.
+        // Were the bridge to feel its own scatter (the partials it has
+        // just made) it would decide each touch on them, a loop on a knife
+        // edge: the string turns chaotic, a rounding's difference becomes
+        // another buzz within a second, and a compiler that fuses a
+        // multiply-add plays another sitar.
+        const float swing = m_swingLp.step(x).low;
         // (Eased in over a second threshold's worth, so the buzz thins out
         // as the swing shrinks instead of stopping at a line.)
-        const float k = m_reach * clampf((m_swing - m_theta) / m_theta, 0.0f, 1.0f);
+        const float k = m_reach * clampf((swing - m_theta) / m_theta, 0.0f, 1.0f);
         m_buzz = std::max(k, m_buzz * 0.9995f);
         const float c = std::sqrt(1.0f - k * k);
         const float bx = k * x + c * m_brS;
@@ -616,9 +622,10 @@ private:
     int m_w = 0, m_excN = kPluck;
     Smooth m_len;
     DcBlock m_dc;
+    Svf m_swingLp;
     float m_rate = 48000, m_want = 200, m_fb = 0.999f, m_t60 = 3.0f;
     float m_apX = 0, m_apY = 0, m_z1 = 0, m_z2 = 0, m_exc = 0, m_brS = 0;
-    float m_reach = 0.6f, m_theta = 0.04f, m_side = 0.008f, m_swing = 0, m_swingA = 0.15f, m_buzz = 0, m_scr = 0;
+    float m_reach = 0.6f, m_theta = 0.04f, m_side = 0.008f, m_buzz = 0, m_scr = 0;
     float m_pushN = 20.0f, m_scrapeAmt = 0.5f;
 };
 

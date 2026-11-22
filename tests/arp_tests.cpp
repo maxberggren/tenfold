@@ -620,7 +620,7 @@ private slots:
     }
 
     void everySoundIsInTuneCleanAndDiesAway() {
-        // Each of the ten on one A3: finite, under the ceiling, no DC, its
+        // Each of the fifteen on one A3: finite, under the ceiling, no DC, its
         // fundamental on 220 Hz to a few cents (the harp's string and the
         // marimba's bar are tuned by their own arithmetic, not by an
         // oscillator's increment), and silent with no voices left once the
@@ -660,7 +660,7 @@ private slots:
         }
     }
 
-    void theTenSoundsAreTenSounds() {
+    void theFifteenSoundsAreFifteenSounds() {
         // A blind ear tells each sound from every other: how its harmonics
         // stand (in dB, against its strongest), how fast a note falls, and
         // how wide it sits. Every pair differs by a margin in the sum.
@@ -817,8 +817,10 @@ private slots:
         // / is the same switch, and so is the lit chip tapped again.
         testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.2 /\nend 0.4\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains(QStringLiteral("Leslie fast")), qPrintable(status));
+        // The organ sits at the faded end of the lower row, so picking it
+        // draws the row along by one: it is tapped again where it now is.
         testkit::play("page 0 5\nmouse 0.2 0.373 0.04 down\nmouse 0.3 0.373 0.04 up\n"
-                      "mouse 0.4 0.373 0.04 down\nmouse 0.5 0.373 0.04 up\nend 0.7\n",
+                      "mouse 0.4 0.29 0.04 down\nmouse 0.5 0.29 0.04 up\nend 0.7\n",
                       [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains(QStringLiteral("organ (Leslie fast)")), qPrintable(status));
         const std::string again = "down 0.8 8 0.9 0.5 p=0.5\nmove 0.85 8 0.9 0.5 p=0.92\nup 1.0 8\n";
@@ -829,11 +831,92 @@ private slots:
         QVERIFY2(status.contains(QStringLiteral("chorus I)")), qPrintable(status));
     }
 
+    void theThirdFivePlayInKeyAndComeBackByName() {
+        // Steel pan, sitar, log drum, chip and gamelan, each picked by Shift
+        // and its letter pressed twice: one finger runs the A minor triad
+        // in key and under the ceiling, the status names the sound, and a
+        // song saved with it opens with it, by its name.
+        const char *letters[] = {"Z", "X", "C", "V", "B"};
+        for (int i = 0; i < 5; ++i) {
+            const int sound = arp::Steelpan + i;
+            const QString name = QString::fromUtf8(arp::soundName(sound));
+            const std::string pick =
+                std::string("key 0.1 Shift+") + letters[i] + "\nkey 0.15 Shift+" + letters[i] + "\n";
+            std::vector<arp::Engine::Fired> log;
+            QString status;
+            const auto take = testkit::play("page 0 5\n" + pick + "down 0.5 1 " + gridX(0) + " 0.32\nup 4.5 1\nend 5.5\n",
+                                            [&](Session &s) {
+                                                log = engineOf(s)->log();
+                                                status = s.pageStatus();
+                                            });
+            QVERIFY(take.error.empty());
+            QVERIFY(take.finite());
+            QVERIFY2(take.peak() < 0.99, qPrintable(QStringLiteral("%1: peak %2").arg(name).arg(take.peak())));
+            QVERIFY2(take.rms(1, 4) > 0.02, qPrintable(name));
+            QVERIFY2(status.contains(name), qPrintable(status));
+            QVERIFY(log.size() >= 30);
+            std::set<int> pcs;
+            for (const auto &f : log) {
+                QVERIFY(inAMinor(f.midi));
+                pcs.insert(int(std::lround(f.midi)) % 12);
+            }
+            QCOMPARE(pcs, (std::set<int>{9, 0, 4}));
+            testkit::reopen("page 0 5\n" + pick + "end 0.4\n", 0.3,
+                            [&](Session &before, Session &opened, const QJsonObject &doc) {
+                                const QJsonObject settings = doc[QStringLiteral("parts")]
+                                                                 .toArray()[4]
+                                                                 .toObject()[QStringLiteral("settings")]
+                                                                 .toObject();
+                                QCOMPARE(settings[QStringLiteral("sound")].toString(), name);
+                                QCOMPARE(engineOf(opened)->laneSettings(0).sound, sound);
+                                QCOMPARE(engineOf(before)->laneSettings(0).sound, sound);
+                                QVERIFY2(opened.pageStatus(4).contains(name), qPrintable(opened.pageStatus(4)));
+                            });
+        }
+        // Once more round goes back to the second five's.
+        QString status;
+        testkit::play("page 0 5\nkey 0.1 Shift+V\nkey 0.15 Shift+V\nkey 0.2 Shift+V\nend 0.3\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("juno")), qPrintable(status));
+    }
+
+    void theLowerRowIsAWindowOntoTheSoundsPastTheDanceFloor() {
+        // Five chips in the lower row for ten sounds: with the marimba lit
+        // they show marimba to organ, so the chip under the last column
+        // is the organ; with the gamelan lit the window has moved to the
+        // end, and its first column, faded, is the steel pan; touching it
+        // picks it, and the row moves back by one so the organ is under the
+        // first column.
+        const std::string lower = " 0.04\n";
+        auto chipX = [](int col) { return std::to_string(0.58 * (col + 0.5) / 7.0); };
+        QString status;
+        testkit::play("page 0 5\nkey 0.1 Shift+Z\ntap 0.3 " + chipX(4) + lower + "end 0.6\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("organ")), qPrintable(status));
+        testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\nend 0.3\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("gamelan")), qPrintable(status));
+        testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\ntap 0.3 " + chipX(0) + lower + "end 0.6\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("steel pan")), qPrintable(status));
+        testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\ntap 0.3 " + chipX(0) + lower + "tap 0.5 " +
+                          chipX(0) + lower + "end 0.8\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("organ")), qPrintable(status));
+        // The top row stays put: Z is the pluck whatever the window shows.
+        testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\ntap 0.3 " + chipX(0) + " 0.11\nend 0.6\n",
+                      [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("pluck")), qPrintable(status));
+        // And ← → walk through all fifteen.
+        testkit::play("page 0 5\nkey 0.1 Left\nend 0.3\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains(QStringLiteral("gamelan")), qPrintable(status));
+    }
+
     void aStringOrBarStruckAgainIsTheSameStringOrBar() {
         // The same A3 eight times on the harp and the marimba: each stroke
         // damps what rings of the last, so no more than two voices ever
         // sound (the old one fading under the new).
-        for (int sound : {int(arp::Harp), int(arp::Marimba)}) {
+        for (int sound : {int(arp::Harp), int(arp::Marimba), int(arp::Steelpan), int(arp::Sitar), int(arp::Gamelan)}) {
             const SoundTake t = playSound(sound);
             QVERIFY2(t.mostVoices <= 2, qPrintable(QStringLiteral("%1: %2 voices")
                                                        .arg(arp::soundName(sound))
@@ -853,7 +936,10 @@ private slots:
 
     void everySoundSitsAtASimilarLevel() {
         std::vector<double> levels;
-        for (const char *key : {"Z", "X", "C", "V", "B", "Shift+Z", "Shift+X", "Shift+C", "Shift+V", "Shift+B"}) {
+        // The third five are Shift and the letter twice.
+        for (const char *key : {"Z", "X", "C", "V", "B", "Shift+Z", "Shift+X", "Shift+C", "Shift+V", "Shift+B",
+                                "Shift+Z\nkey 0.25 Shift+Z", "Shift+X\nkey 0.25 Shift+X", "Shift+C\nkey 0.25 Shift+C",
+                                "Shift+V\nkey 0.25 Shift+V", "Shift+B\nkey 0.25 Shift+B"}) {
             const auto take = testkit::play(std::string("page 0 5\nkey 0.2 ") + key + "\ndown 0.5 1 " + gridX(0) +
                                             " 0.32\nup 4.5 1\nend 4.6\n");
             QVERIFY(take.finite());
@@ -862,7 +948,10 @@ private slots:
         }
         const double lo = *std::min_element(levels.begin(), levels.end());
         const double hi = *std::max_element(levels.begin(), levels.end());
-        QVERIFY2(hi - lo < 5.0, qPrintable(QStringLiteral("%1 .. %2 dB").arg(lo).arg(hi)));
+        QString all;
+        for (double l : levels)
+            all += QStringLiteral(" %1").arg(l, 0, 'f', 1);
+        QVERIFY2(hi - lo < 5.0, qPrintable(QStringLiteral("%1 .. %2 dB:%3").arg(lo).arg(hi).arg(all)));
     }
 
     void aClickLatchesAndTheLatchChipReleases() {
@@ -1132,7 +1221,7 @@ private slots:
                           status = s.pageStatus();
                           follow = s.probe(4, QStringLiteral("follow"));
                       });
-        QVERIFY2(status.contains(QStringLiteral("organ")), qPrintable(status)); // round the end to the tenth
+        QVERIFY2(status.contains(QStringLiteral("gamelan")), qPrintable(status)); // round the end to the last
         QVERIFY2(status.contains(QStringLiteral("3 oct")), qPrintable(status));
         // Z X C V B pick the first five, with Shift the second five.
         testkit::play("page 0 5\nkey 0.1 Shift+X\nend 0.3\n", [&](Session &s) { status = s.pageStatus(); });

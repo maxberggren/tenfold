@@ -27,10 +27,15 @@ enum Rate : int { Eighth, EighthTriplet, Sixteenth, SixteenthTriplet, ThirtySeco
 // The first five are the dance floor's; the second five reach past it: a
 // marimba for ambient and afro house, a plucked harp for film and lo-fi, an
 // electric piano for neo-soul, an eighties poly through its chorus for
-// synthwave and Italo, and a drawbar organ for house and gospel. New sounds
-// go on the end, so songs and loops keep their index.
-enum Sound : int { Pluck, Glass, Saw, Pulse, Acid, Marimba, Harp, Rhodes, Juno, Organ };
-constexpr int PatternCount = 8, RateCount = 5, SoundCount = 10;
+// synthwave and Italo, and a drawbar organ for house and gospel. The third
+// five leave the studio's usual world: a Trinidad steel pan for calypso and
+// soca, a sitar with its buzzing bridge for raga and psychedelia, the log
+// drum of South African amapiano, a Game Boy's pulse channel for chiptune,
+// and a Balinese gangsa pair beating against each other for gamelan. New
+// sounds go on the end, so songs and loops keep their index.
+enum Sound : int { Pluck, Glass, Saw, Pulse, Acid, Marimba, Harp, Rhodes, Juno, Organ,
+                   Steelpan, Sitar, LogDrum, Chip, Gamelan };
+constexpr int PatternCount = 8, RateCount = 5, SoundCount = 15;
 constexpr int kEchoTimes = 5;
 constexpr int kAccentChoices = 6;
 constexpr int kStacks = 5;
@@ -51,16 +56,19 @@ inline const char *rateName(int r) {
 }
 inline const char *soundName(int s) {
     static const char *n[] = {"pluck", "glass", "supersaw", "pulse", "acid",
-                              "marimba", "harp", "rhodes", "juno", "organ"};
+                              "marimba", "harp", "rhodes", "juno", "organ",
+                              "steel pan", "sitar", "log drum", "chip", "gamelan"};
     return n[std::clamp(s, 0, SoundCount - 1)];
 }
 inline const char *soundShort(int s) {
-    static const char *n[] = {"PLUCK", "GLASS", "SAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN"};
+    static const char *n[] = {"PLUCK", "GLASS", "SAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN",
+                              "PAN", "SITAR", "LOG", "CHIP", "GAMELAN"};
     return n[std::clamp(s, 0, SoundCount - 1)];
 }
 // The colour each sound starts from, the one it sounds best in.
 inline float soundColor(int s) {
-    static const float c[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f, 0.4f, 0.55f, 0.4f, 0.7f, 0.45f};
+    static const float c[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f, 0.4f, 0.55f, 0.4f, 0.7f, 0.45f,
+                              0.4f, 0.5f, 0.35f, 0.45f, 0.45f};
     return c[std::clamp(s, 0, SoundCount - 1)];
 }
 

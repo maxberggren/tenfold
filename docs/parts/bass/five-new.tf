@@ -5,7 +5,7 @@ page 0 2
 key 0.6000 P
 tempo 0.6500 112
 key 0.7000 Right
-# LOG: amapiano. The log drum's off-grid phrase, every finger struck. A low note is held
+# LOG: amapiano, an octave over the pad. The log drum's off-grid phrase, every finger struck. A low note is held
 # while the others land: each slides in from it (an octave slowly, a step quickly), and
 # lifting slides back and strikes the held note again, softly. Then Shift+] twice: it rings longer.
 down 1.1000 1 0.2083 0.304 p=0.7
@@ -58,7 +58,7 @@ tempo 10.3214 132
 key 10.3714 Right
 # TUBA: a Balkan brass oompah, staccato: the roots blown hard (they blat and scoop), the
 # fifths between soft and dark. Then a slurred run up, swelling from soft to fortissimo, and
-# Shift+] for full blare on a last long note, which scoops up two semitones.
+# Shift+] for full blare on a last long note, which scoops up two semitones and stays brassy as it is held.
 down 10.7714 1 0.2083 0.38 p=0.92
 up 10.9760 1
 down 11.2260 2 0.5417 0.38 p=0.35
@@ -120,7 +120,8 @@ tempo 22.1032 150
 key 22.1532 Right
 # CHIP: an NES bass at the console's frame rate. Octaves in eighths on the bare triangle,
 # each note's pulse chirping 12.5 % to 25 % to 50 %; the downbeats pressed hard for the kick
-# blip. Then Shift+] four times: the twist arpeggiates each held note's chord a frame a note.
+# blip (the triangle's sweep and the noise channel's burst). Then Shift+] four times: the twist
+# arpeggiates each held note's chord a frame a note over the root the sub holds.
 down 22.5532 1 0.2083 0.114 p=0.9
 up 22.7212 1
 down 22.7532 2 0.7917 0.114 p=0.5
@@ -267,7 +268,7 @@ tempo 43.7699 100
 key 43.8199 Right
 # DIDGE: a drone; the finger is the mouth. It climbs the field and comes down (the one
 # formant sweeps 800 Hz to 2 kHz and back: wah, yoi), pressed harder on the way. Hard presses
-# toot a tenth up. Shift+] sings a voice into it that growls; Shift+→ three times rolls it,
+# toot a tenth up. Shift+] sings a voice into it that growls (heard through the mouth); Shift+→ three times rolls it,
 # the breath pumping on a gallop; Shift+← three times lets it go.
 down 44.2199 1 0.2083 0.038 p=0.5
 glide 44.8199 46.0199 1 0.2083 0.722 p=0.6

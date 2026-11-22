@@ -115,9 +115,9 @@ QString morphName(int sound) {
     case Upright: return QStringLiteral("RING");
     case Log: return QStringLiteral("DECAY");
     case Tuba: return QStringLiteral("BLARE");
-    case Chip: return QStringLiteral("WIDTH");
+    case Chip: return QStringLiteral("ARP");
     case Tabla: return QStringLiteral("SWOOP");
-    case Didge: return QStringLiteral("MOUTH");
+    case Didge: return QStringLiteral("VOICE");
     default: return QStringLiteral("MORPH");
     }
 }
@@ -701,8 +701,8 @@ public:
     QString help() const override {
         return QStringLiteral(
             "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce, moog, upright (or Q W E R T Y U I O P), "
-            "then past P: log (amapiano log drum), tuba (Balkan brass), chip (NES triangle), tabla (the bayan), "
-            "didge (didgeridoo)\n"
+            "then past P, → once to five times (their chips say P→1 … P→5): log (amapiano log drum), "
+            "tuba (Balkan brass), chip (NES bass), tabla (the bayan), didge (didgeridoo)\n"
             "↑ ↓\tthe pad's octave\n"
             "Shift+← → (or [ ])\tthe roll: off, then OFFBEAT … 8THS, latched on whatever plays\n"
             "- + (or =)\tdarker, brighter: the tone of notes played on the keys\n"
@@ -718,7 +718,7 @@ public:
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back "
             "(UPRIGHT: another note is plucked, and lifting pulls off to the one held)\n"
             "twist / flatten the finger\tmorph the sound (ACID squelch, MOOG contour, UPRIGHT ring, LOG decay, "
-            "TUBA blare, CHIP pulse width, TABLA swoop, DIDGE mouth) / fatten it\n"
+            "TUBA blare, CHIP arpeggio, TABLA swoop, DIDGE voice) / fatten it\n"
             "OCT: +12 row / BEND row\tup an octave while held (two fingers, two): tap to pump; any finger there bends with its height\n"
             "ROLL\tland on a pattern: the held note strikes it on the bar; slide along the row, up/down the gate\n"
             "WOB\tland on a rate (straight on top, triplets below): a wobble on the tempo; up/down the depth\n"
@@ -729,9 +729,16 @@ public:
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
             "Shift+↑ ↓   Shift+[ ]   Shift+Q … P\tslide time   morph   that sound with a square for its saw (UPRIGHT: palm-muted)\n"
             "UPRIGHT pressed lightly\ta ghost note: mostly the finger\n"
-            "LOG, TABLA\tstruck: every finger strikes its note, sliding in from the one held\n"
-            "TABLA pressed harder after the strike\tthe wrist on the skin: bends it up, up to four semitones\n"
-            "DIDGE\tthe mouth moves at the WOB rate (the last one played)\n"
+            "LOG, TABLA\tstruck: every finger strikes its note, sliding in from the one held (a wider slide takes "
+            "longer); lift it and the held note slides back and is struck again, softly\n"
+            "TUBA played hard\tbrass flares: past mezzo-forte the attack blats brighter, the lips catch, the twist "
+            "scoops it up to two semitones\n"
+            "CHIP\tmoves once a frame, as the NES did: the pulse's duty steps 12.5 %, 25 %, 50 %; twist for the "
+            "chord's arpeggio (faster, then the octave on top); an accent is the kick blip\n"
+            "TABLA\tan octave up, where the bayan speaks; pressed lightly it is the closed ke, harder the open ghe; "
+            "pressed harder after the strike, the wrist bends it up, up to four semitones\n"
+            "DIDGE\theight is the mouth (800 Hz to 2 kHz), pressing harder opens it more; twist sings a voice into it "
+            "that growls; an accent toots a tenth up; ROLL pumps the breath on its steps\n"
             "the sound chips\tthe row shows those around the one playing; the faded ends have more beyond, click to move along");
     }
 
@@ -816,7 +823,8 @@ private:
     float glideSeconds() const { return recipe(m_sound).glide * std::exp2((m_glide - 0.5f) * 4.0f); }
 
     // A note's name and octave as it sounds, with the key (and chord) of
-    // the last screen frame.
+    // the last screen frame, and the register the sound carries (the bayan
+    // sounds an octave over the pad).
     QString noteName(int degree, int octave) const {
         Tuning t;
         t.set(m_root, m_family, m_brightness, false);
@@ -824,7 +832,7 @@ private:
         h.tuning = t;
         h.chordRoot = m_chordRoot;
         const int shift = m_follow ? chordShift(h) : 0;
-        const long m = std::lround(h.midi(degree + shift, octave) + rootShift(t));
+        const long m = std::lround(h.midi(degree + shift, octave) + rootShift(t) + recipe(m_sound).octave);
         return QString::fromUtf8(Tuning::noteName(int(((m % 12) + 12) % 12))) + QString::number(m / 12 - 1);
     }
 
@@ -1415,7 +1423,7 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
         if (k < -kLowDegree)
             p.fillRect(col, QColor(0, 0, 0, 90)); // under the root: there, but quieter
         const double midi = tuning.baseMidi() + tuning.degreeSemis(deg + shift) + 12.0 * m_octave +
-                            rootShift(tuning);
+                            rootShift(tuning) + recipe(m_sound).octave;
         const long m = std::lround(midi);
         const int pc12 = int(((m % 12) + 12) % 12);
         const QString name = QString::fromUtf8(Tuning::noteName(pc12)) + QString::number(m / 12 - 1);
@@ -1722,8 +1730,11 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
     c::clips(p, c::bandRow(pc, 0, 0, 0.36), *pc.view, pc.color, pc.time, &m_spots);
     static const char keys[] = "QWERTYUIOP";
     static_assert(sizeof(keys) - 1 == kLetteredSounds, "a key for every lettered sound");
-    // A sound's key: its letter, or ← → for those past P.
-    auto keyOf = [](int s) { return s < kLetteredSounds ? QString(QChar(keys[s])) : QStringLiteral("← →"); };
+    // A sound's key: its letter, or, for those past P, how many steps of →
+    // from P reach it.
+    auto keyOf = [](int s) {
+        return s < kLetteredSounds ? QString(QChar(keys[s])) : QStringLiteral("P→%1").arg(s - kLetteredSounds + 1);
+    };
     {
         // As many chips as fit with their names whole at the full size;
         // more sounds than that, and the row is a window onto them that
@@ -1785,9 +1796,22 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
     auto toggle = [&](int i, const QString &name, const QString &key, bool lit, int id) {
         keyChip(p, pc, QRectF(x + i * w, row.top(), w - 4, row.height()), name, key, lit, m_spots, id);
     };
-    toggle(0, recipe(m_sound).string > 0 ? QStringLiteral("MUTE") : m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
-           m_sound < kLetteredSounds ? QStringLiteral("⇧%1").arg(QChar(keys[m_sound])) : QString(), m_square[m_sound],
-           SpotSquare);
+    {
+        // A sound with nothing to switch (no saw, no string) shows the
+        // switch dimmed and dashed out, so it doesn't sit there looking lit.
+        const bool has = hasSwitch(m_sound);
+        if (!has) {
+            p.save();
+            p.setOpacity(0.25);
+        }
+        toggle(0, recipe(m_sound).string > 0 ? QStringLiteral("MUTE") : !has ? QStringLiteral("—")
+                  : m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
+               has ? m_sound < kLetteredSounds ? QStringLiteral("⇧%1").arg(QChar(keys[m_sound])) : QStringLiteral("\\")
+                   : QString(),
+               has && m_square[m_sound], SpotSquare);
+        if (!has)
+            p.restore();
+    }
     toggle(1, QStringLiteral("FOLLOW"), QStringLiteral("§"), m_follow, SpotFollow);
     toggle(2, QStringLiteral("LATCH"), QStringLiteral("⏎"), m_latchNext ? blink : latched, SpotLatch);
     toggle(3, QStringLiteral("OVERDUB"), QStringLiteral("⇧⏎"), pc.view->overdub, SpotOverdub);

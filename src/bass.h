@@ -12,10 +12,13 @@
 // 808, a bouncing house bass, a Minimoog-style ladder bass and an upright,
 // whose top is a plucked string (Karplus–Strong) in a wooden body. Five
 // more reach past the dance floor: an amapiano log drum (a struck bar's
-// inharmonic modes over a falling sine), a Balkan brass tuba (FM whose
-// brightness follows the breath), the NES's four-bit triangle, a tabla's
-// bayan (a skin whose pitch the wrist pushes up) and a didgeridoo (a lip
-// buzz through a mouth that moves on the beat).
+// inharmonic modes over a falling sine, gliding from note to note), a
+// Balkan brass tuba (a saw through lopsided lips, flaring bright only when
+// played hard), the NES's bass (its four-bit triangle and a pulse, moving
+// once a frame as the console did), a tabla's bayan (a skin whose pitch the
+// wrist pushes up, closed by a light hand) and a didgeridoo (a lip buzz
+// down a bore that rings on odd harmonics, its one mouth formant on the
+// finger).
 //
 // There are two lanes, each a mono synth with its own note stack: the
 // player's fingers and keys, and the clip that is looping. While the
@@ -185,38 +188,71 @@ struct Recipe {
     // whole sound, and the sub a little more. A house bass breathes with the
     // kick; an 808 plays with it.
     float pump = 0.4f, subPump = 0.3f;
+    // Where the lane's soft knee begins (its output never passes 1.45
+    // times this): lower, a sound whose strike stands far over its body is
+    // rounded there, as a drum is clipped on a mix bus, rather than left
+    // for the master limiter to swallow.
+    float knee = 0.55f;
     // Every finger strikes: a note landing while another is held is struck
     // anew (a slide onto a drum that has died away would be silence), its
-    // pitch sliding in from the held one, as an amapiano log glides; lifting
-    // it jumps back to the held one.
+    // pitch sliding in from the held one, as an amapiano log glides. The
+    // slide takes longer the further it goes, by slideSpan of the glide for
+    // every fifth (a player draws a wide slide out); lifting it slides back
+    // to the held note and strikes that again at restrike of the velocity.
     bool struck = false;
+    float slideSpan = 0, restrike = 0;
+    // Semitones the sound sits above the pad: a drum whose voice lives
+    // higher than a sub's carries its own register.
+    float octave = 0;
     // The twist scales the drop (a negative drop is a scoop up into the
     // note) by adding this many semitones at full twist.
     float mDrop = 0;
     // Pressing harder after the strike bends the note up by as many as
     // this many semitones: the bayan player's wrist on the skin.
     float gumki = 0;
-    // Two inharmonic partials of a struck bar or skin, as ratios of the
-    // note, each falling away on its own, the second at 0.55 the first's
-    // level; height brings them up by modeTone.
+    // Up to three inharmonic partials of a struck bar or skin, as ratios of
+    // the note, each falling away on its own at its own level; height
+    // brings them up by modeTone. The twist that sets the ring (mRing)
+    // stretches them by half as much.
     float modes = 0, modeTone = 0;
-    float modeRatio[2] = {2.756f, 5.404f}, modeDecay[2] = {0.08f, 0.03f};
-    // The hand's slap on a skin as it strikes.
-    float thump = 0;
-    // A cutoff that follows the breath: it opens by this much at full
-    // amplitude played hard, so a note brightens as it swells and darkens
-    // as it dies, and a harder one is brighter, as brass is.
-    float cutAmp = 0;
+    float modeRatio[3] = {2.756f, 5.404f, 8.933f}, modeDecay[3] = {0.08f, 0.03f, 0.02f};
+    float modeLevel[3] = {1, 0.55f, 0};
+    // The hand's slap on a skin as it strikes: noise of slapTime seconds
+    // through a band-pass at slapHz, louder accented.
+    float slap = 0, slapHz = 600, slapTime = 0.02f;
+    // A light press damps the skin (pressed under about 0.55 velocity): the
+    // closed "ke", all slap and no ring.
+    bool damp = false;
+    // Brass: a cutoff that follows the breath, opening by cutAmp at full
+    // amplitude, so a note brightens as it swells and darkens as it dies.
+    // Brassiness (brassy) adds almost nothing up to mezzo-forte and then
+    // flares: past 0.7 velocity the drive and the envelope's opening climb
+    // steeply, the upper harmonics bursting in as a brass player's do at
+    // fortissimo. lipBuzz is the lips catching on a note, harder the harder
+    // it is blown: for its first 40 ms the pitch wanders (by up to half a
+    // semitone at 1) and the buzz flutters.
+    float cutAmp = 0, brassy = 0, lipBuzz = 0;
     // Breath noise through a band-pass at breathHz, with the amp envelope
     // and a chiff on the attack.
     float breath = 0, breathHz = 1200;
     // The NES's triangle: sixteen levels up and sixteen down, the steps
-    // band-limited; and a pulse whose width the twist sets (12.5 % to 50 %),
-    // which height brings in over it (pulseTone) for the Game Boy's buzz.
-    float chipTri = 0, pulse = 0, pulseTone = 0, pulseWidth = 0.25f, mWidth = 0;
-    // The twist deepens its own wobble by this much (the didgeridoo's
-    // mouth moving on the beat).
-    float mWob = 0;
+    // band-limited, and a pulse over it (pulse, plus pulseTone with height).
+    // With nes, everything moves as the console did, once a frame (60 Hz):
+    // the pitch (from the triangle's 11-bit period table, so upper notes
+    // sit a few cents off), the pulse's volume (sixteen steps falling to a
+    // floor) and its duty (12.5 %, then 25 %, then 50 %), the twist's
+    // arpeggio over the chord, and an accent's kick blip, the triangle
+    // sweeping down two octaves onto the note.
+    float chipTri = 0, pulse = 0, pulseTone = 0;
+    bool nes = false;
+    // A didgeridoo: lips buzzing (an asymmetric pulse, open longer than
+    // shut) into a bore that rings on the note's odd harmonics, through one
+    // strong mouth formant the finger's height sweeps from 800 Hz to 2 kHz
+    // (pressure pushes it further). The twist is the voice, sung into the
+    // drone a little off its fifth, so the two beat and growl; an accent
+    // overblows a toot, a tenth (toot semitones) above. Rolled, the breath
+    // pumps on the pattern's steps instead of the note being struck again.
+    float didge = 0, toot = 0;
 };
 
 inline const Recipe &recipe(int sound) {
@@ -447,140 +483,172 @@ inline const Recipe &recipe(int sound) {
             // The amapiano log drum: a hollow wooden bar struck with a
             // mallet. A sine that falls a fourth onto its note in a few
             // milliseconds (shorter and smaller than the 808's drop, so it
-            // knocks rather than booms), and the bar's own two upper modes
-            // (2.76 and 5.40 times the note, a free bar's) ringing briefly
-            // over it: the "tok". Driven into a tube, hollow in the low
-            // mids, and short; every finger strikes, and the twist is how
-            // long it rings, from a dry knock to a long, gliding boom.
+            // knocks rather than booms), and the bar's own upper modes (a
+            // free bar's 2.76, 5.40 and 8.93 times the note) over it: the
+            // last two are the "tok" and gone in tens of milliseconds, the
+            // first rings on under the note for a third of a second, the
+            // hollow, rubbery voice that keeps it a log and not an 808.
+            // Held, it keeps a little of its boom.
+            // Driven only gently and lopsidedly (a tube's even harmonics,
+            // little third, which would beat against the 2.76 mode). Every
+            // finger strikes, sliding in from the note held, slower the
+            // further it goes; lifting slides back and strikes the held
+            // note again, softly. The twist is how long it rings, from a
+            // dry knock to a long, gliding boom.
             Recipe &s = r[Log];
             s.name = "LOG";
             s.what = "struck log, amapiano";
             s.sine = 1;
-            s.sub = 1;
-            s.modes = 0.55f, s.modeTone = 1.4f;
-            s.modeRatio[0] = 2.756f, s.modeRatio[1] = 5.404f;
-            s.modeDecay[0] = 0.09f, s.modeDecay[1] = 0.035f;
-            s.cutLo = 0.32f, s.cutHi = 0.8f, s.res = 0.12f;
-            s.envAmt = 0.3f, s.envDecay = 0.05f;
-            s.attack = 0.001f, s.decay = 0.3f, s.sustain = 0, s.release = 0.06f;
-            s.drive = 0.42f, s.character = 0.42f, s.toneDrive = 0.45f, s.driveFirst = true;
+            s.sub = 1.25f;
+            s.modes = 1.1f, s.modeTone = 1.0f;
+            s.modeRatio[0] = 2.756f, s.modeRatio[1] = 5.404f, s.modeRatio[2] = 8.933f;
+            s.modeDecay[0] = 0.35f, s.modeDecay[1] = 0.03f, s.modeDecay[2] = 0.05f;
+            s.modeLevel[0] = 0.8f, s.modeLevel[1] = 0.5f, s.modeLevel[2] = 0.35f;
+            s.cutLo = 0.4f, s.cutHi = 0.85f, s.res = 0.1f;
+            s.envAmt = 0.25f, s.envDecay = 0.05f;
+            s.attack = 0.001f, s.decay = 0.3f, s.sustain = 0.3f, s.release = 0.08f;
+            s.drive = 0.0f, s.character = 0.5f, s.toneDrive = 0.15f, s.driveFirst = true;
             s.drop = 5, s.dropTime = 0.016f;
             s.mRing = 2.0f;
-            s.glide = 0.05f;
+            s.glide = 0.055f, s.slideSpan = 0.9f, s.restrike = 0.6f;
             s.struck = true;
-            s.lowMid = 1.2f;
-            s.accent = 0.5f;
-            s.level = 1.0f;
-            s.pump = 0.2f, s.subPump = 0.15f;
+            s.accent = 0.35f;
+            s.level = 0.7f;
+            s.pump = 0.5f, s.subPump = 0.45f;
+            s.knee = 0.25f;
         }
         {
             // A tuba in a Balkan brass band (or a sousaphone on a second
-            // line): lips buzzing into a long brass tube. Brass gets
-            // brighter as it gets louder, so the cutoff follows the amp
-            // envelope as it swells in over 30 ms, with a short burst more
-            // on the attack (the blare as the lips catch), and the note
-            // scoops up into pitch from a little under it. Breath in the
-            // tone, and a bell that sits in the low mids. Height is the
-            // embouchure; the twist is how hard the attack blares and how
-            // far it scoops.
+            // line): lips buzzing into a long brass tube. A saw, and a little
+            // of one an octave up, so every harmonic is there and the second
+            // and fourth are as strong as brass has them (a square's odd
+            // ones would make it a clarinet), shaped by a lopsided drive, as
+            // lips are. Brass
+            // gets brighter as it gets louder, but not evenly: the cutoff
+            // follows the breath as it swells, and past mezzo-forte it
+            // flares, the drive and the attack's opening climbing steeply,
+            // the blat of a fortissimo. A hard note's lips catch for a few
+            // milliseconds (the pitch wanders) and it scoops up into
+            // pitch, by up to two semitones at full twist, settling in
+            // about 50 ms. Breath in the tone, the bell in the low mids.
+            // Height is the embouchure; the twist is the blare.
             Recipe &s = r[Tuba];
             s.name = "TUBA";
             s.what = "brass oompah, Balkan, second line";
-            s.saw = 0.85f, s.square = 0.25f;
+            s.saw = 1, s.octSaw = 0.18f;
             // The mouthpiece's cup and the bell: a broad "o" in the tone.
-            s.formant = 0.4f, s.vowel = 1.0f, s.vowelTone = 0.5f;
+            s.formant = 0.6f, s.vowel = 1.0f, s.vowelTone = 0.5f;
             s.sub = 0.75f;
             s.lowThrough = 0.25f;
-            s.cutLo = 0.1f, s.cutHi = 0.38f, s.res = 0.08f, s.cutAmp = 0.22f;
-            s.envAmt = 0.2f, s.envDecay = 0.07f, s.mEnv = 0.35f;
-            s.attack = 0.028f, s.decay = 0.7f, s.sustain = 0.82f, s.release = 0.07f;
-            s.drive = 0.22f, s.character = 0.3f;
-            s.drop = -0.6f, s.dropTime = 0.03f, s.mDrop = -1.0f;
-            s.breath = 0.12f, s.breathHz = 950;
-            s.lowMid = 2.0f;
+            s.cutLo = 0.08f, s.cutHi = 0.3f, s.res = 0.05f, s.cutAmp = 0.12f;
+            s.envAmt = 0.12f, s.envDecay = 0.07f, s.mEnv = 0.2f;
+            s.brassy = 0.75f, s.lipBuzz = 0.8f;
+            s.attack = 0.03f, s.decay = 0.7f, s.sustain = 0.82f, s.release = 0.07f;
+            s.drive = 0.1f, s.character = 0.5f;
+            s.drop = -1.1f, s.dropTime = 0.02f, s.mDrop = -1.2f;
+            s.breath = 0.14f, s.breathHz = 950;
+            s.lowMid = 0.4f;
             s.glide = 0.04f;
             s.width = 0.12f;
             s.accent = 0.5f;
-            s.level = 0.66f;
+            s.level = 0.68f;
             s.pump = 0.3f, s.subPump = 0.2f;
+            s.knee = 0.28f;
         }
         {
-            // The NES's bass: its triangle channel, a ramp of sixteen
-            // steps up and sixteen down with no volume control, so every
-            // note is the same flat, buzzy-soft tone (the steps band-limited
-            // here, so no note aliases). Height brings in a pulse over it,
-            // the Game Boy's square, and the twist is that pulse's width,
-            // from a thin 12.5 % reed to a hollow 50 %. No filter, no
-            // drive: chiptune, 8-bit, bitpop.
+            // The NES's bass, moving at the console's frame rate. Its
+            // triangle channel, a ramp of sixteen steps up and sixteen
+            // down with no volume control (the steps band-limited here,
+            // so no note aliases), pitched from its 11-bit period table;
+            // and over it a pulse whose volume steps down from full to a
+            // floor and whose duty steps from 12.5 % to 25 % to 50 % over
+            // the first frames, the chirp at the front of every note.
+            // Height brings the pulse up; the twist is the arpeggio, the
+            // chord's notes once every two frames and then every frame,
+            // the octave on top at full twist; an accent is the bitpop
+            // kick blip. No filter, no drive: chiptune, 8-bit, bitpop.
             Recipe &s = r[Chip];
             s.name = "CHIP";
-            s.what = "NES triangle, pulse on top";
-            s.chipTri = 1;
-            s.pulse = 0, s.pulseTone = 0.7f, s.pulseWidth = 0.125f, s.mWidth = 0.375f;
+            s.what = "NES triangle, frame arpeggios";
+            s.chipTri = 1, s.nes = true;
+            s.pulse = 0.3f, s.pulseTone = 0.6f;
             s.sub = 0.85f;
             s.cutLo = 0.86f, s.cutHi = 1.0f, s.res = 0;
             s.envAmt = 0, s.envDecay = 0.1f;
-            s.attack = 0.001f, s.decay = 0.3f, s.sustain = 1, s.release = 0.025f;
+            s.attack = 0.001f, s.decay = 0.3f, s.sustain = 1, s.release = 0.017f;
             s.drive = 0.02f, s.character = 0;
             s.glide = 0.03f;
             s.accent = 0.3f;
-            s.level = 0.9f;
+            s.level = 0.85f;
             s.pump = 0.35f, s.subPump = 0.25f;
         }
         {
             // The bayan, the tabla's big drum: a skin loaded with paste,
-            // struck by the flat of the hand. A sine whose pitch swoops up
-            // into its note (the "ghe"; the twist is how far below it
-            // starts), the skin's own two lower modes over it (1.59 and
-            // 2.14 times the note, a membrane's), and the slap of the
-            // hand. Pressing harder after the strike bends it up, as the
-            // wrist pushes into the skin: the gumki. Every finger strikes.
-            // Hindustani, Asian underground, dub.
+            // struck by the flat of the hand. It sits an octave over the
+            // pad, where a bayan speaks (80 to 150 Hz across the field's
+            // middle). A sine that swoops up into its note, the "ghe",
+            // from a few semitones under it (the twist is how far), the
+            // skin's own two lower modes over it (1.59 and 2.14 times the
+            // note, a membrane's), and the slap of the palm, a burst of
+            // noise around 600 Hz. Pressing harder after the strike bends
+            // it up, as the wrist pushes into the skin: the gumki. Pressed
+            // lightly it is the "ke", the flat hand laid on the skin, a
+            // closed slap with no ring, so ghe and ke alternate from one
+            // finger. Every finger strikes. Hindustani, Asian underground.
             Recipe &s = r[Tabla];
             s.name = "TABLA";
-            s.what = "bayan, press to bend it up";
+            s.what = "bayan: ghe, ke, press to bend";
             s.sine = 1;
             s.sub = 1;
-            s.modes = 0.4f, s.modeTone = 1.2f;
+            s.octave = 12;
+            s.modes = 0.45f, s.modeTone = 1.2f;
             s.modeRatio[0] = 1.59f, s.modeRatio[1] = 2.14f;
             s.modeDecay[0] = 0.16f, s.modeDecay[1] = 0.08f;
-            s.thump = 0.12f;
-            s.cutLo = 0.3f, s.cutHi = 0.78f, s.res = 0.15f;
+            s.modeLevel[0] = 1, s.modeLevel[1] = 0.55f, s.modeLevel[2] = 0;
+            s.slap = 0.55f, s.slapHz = 650, s.slapTime = 0.02f;
+            s.damp = true;
+            s.cutLo = 0.32f, s.cutHi = 0.8f, s.res = 0.12f;
             s.envAmt = 0.35f, s.envDecay = 0.04f;
-            s.attack = 0.001f, s.decay = 0.6f, s.sustain = 0, s.release = 0.12f;
-            s.drive = 0.3f, s.character = 0.3f, s.toneDrive = 0.4f, s.driveFirst = true;
-            s.drop = 0.8f, s.dropTime = 0.085f, s.mDrop = -6.0f;
+            s.attack = 0.001f, s.decay = 0.8f, s.sustain = 0, s.release = 0.15f;
+            s.drive = 0.3f, s.character = 0.4f, s.toneDrive = 0.35f, s.driveFirst = true;
+            s.drop = -2.0f, s.dropTime = 0.07f, s.mDrop = -4.0f;
             s.gumki = 4;
-            s.glide = 0.05f;
+            s.glide = 0.05f, s.slideSpan = 0.5f, s.restrike = 0.8f;
             s.struck = true;
             s.width = 0.15f;
             s.accent = 0.6f;
-            s.level = 1.1f;
-            s.pump = 0.25f, s.subPump = 0.2f;
+            s.level = 1.45f;
+            s.pump = 0.5f, s.subPump = 0.45f;
+            s.knee = 0.27f;
         }
         {
-            // A didgeridoo: lips buzzing into a eucalyptus tube, a narrow
-            // pulse, its resonance a ladder with some emphasis, and the
-            // player's mouth (a vowel filter) moving on the beat, "wa-oo-wa",
-            // at the WOB rate. Breath through it. Height opens the mouth;
-            // the twist is how far it moves. Tribal, psytrance, ambient.
+            // A didgeridoo: lips buzzing into a eucalyptus tube a termite
+            // hollowed out. The lips open slowly and shut fast, a lopsided
+            // pulse; the bore, stopped at the mouth and open at the end,
+            // rings on the note's odd harmonics. Over that one formant, the
+            // tongue and cheeks, swept by the finger's height from about
+            // 800 Hz to 2 kHz and pushed on by pressing harder: "wah",
+            // "yoi", wherever the finger goes, not on any clock. The twist
+            // sings into it, a voice a hair off the drone's fifth, which
+            // beats and growls against it; an accent overblows a toot a
+            // tenth up. With the roll, the breath pumps on its steps.
+            // Australian drone, tribal, psy-dub.
             Recipe &s = r[Didge];
             s.name = "DIDGE";
-            s.what = "lip drone, mouth on the beat";
-            s.pulse = 1, s.pulseWidth = 0.16f;
+            s.what = "lip drone, mouth on the finger";
+            s.didge = 1, s.toot = 16;
             s.sub = 0.8f;
-            s.cutLo = 0.3f, s.cutHi = 0.68f, s.res = 0.35f;
-            s.envAmt = 0.12f, s.envDecay = 0.15f;
-            s.formant = 0.65f, s.vowel = 0.2f, s.vowelTone = 1.6f;
-            s.attack = 0.04f, s.decay = 0.5f, s.sustain = 0.95f, s.release = 0.15f;
-            s.drive = 0.3f, s.character = 0.35f;
-            s.breath = 0.05f, s.breathHz = 700;
-            s.wobble = 0.1f, s.mWob = 0.8f, s.wobCut = 0.12f, s.wobVowel = 1.1f;
-            s.glide = 0.08f;
-            s.width = 0.35f;
+            s.cutLo = 0.75f, s.cutHi = 0.95f, s.res = 0;
+            s.envAmt = 0.05f, s.envDecay = 0.15f;
+            s.attack = 0.035f, s.decay = 0.5f, s.sustain = 0.95f, s.release = 0.15f;
+            s.drive = 0.05f, s.character = 0.4f;
+            s.breath = 0.04f, s.breathHz = 1400;
+            s.glide = 0.09f;
+            s.width = 0.3f;
             s.accent = 0.4f;
-            s.level = 1.2f;
+            s.level = 1.4f;
             s.pump = 0.35f;
+            s.knee = 0.28f;
         }
         return r;
     }();
@@ -742,6 +810,8 @@ public:
         m_knockBp.set(320.0f, 1.4f, rate);
         m_fingerLp.set(800.0f, rate);
         m_lowMid.set(240.0f, 1.0f, rate);
+        m_lipC = 1.0f - std::exp(-kTwoPi * 50.0f / rate);
+        m_lipLpC = 1.0f - std::exp(-kTwoPi * 6000.0f / rate);
         // The top's fundamental, read against the sub's own phase, settles
         // in about 15 ms.
         m_demod = 1.0f - std::exp(-kTwoPi * 11.0f / rate);
@@ -776,9 +846,10 @@ public:
             m_glideTau = glideTime(n) / 3.0f;
             return;
         }
-        // A drum struck while another note is held slides in from it.
+        // A drum struck while another note is held slides in from it, the
+        // further the longer.
         const bool slideIn = m_count > 1 && recipe(n.sound).struck && m_amp >= 0.02f;
-        m_glideTau = slideIn ? glideTime(n) / 3.0f : 0.0f;
+        m_glideTau = slideIn ? struckSlide(n, m_target - m_midi) : 0.0f;
         if (!slideIn)
             m_midi = m_target;
         // Held, the lane runs, even while a roll waits for its next step.
@@ -797,9 +868,19 @@ public:
         if (m_count > 0) {
             m_cur = m_notes[m_count - 1];
             // A string pulls off: the held note at once, no slide. A drum
-            // does the same.
+            // slides back to the held note (render times the slide, once it
+            // knows the pitch it goes to) and strikes it again, softly: a
+            // slide back onto a note that has died away would be silence.
             const Recipe &R = recipe(m_cur.sound);
-            m_glideTau = R.string > 0 || R.struck ? 0.0f : glideTime(m_cur) / 3.0f;
+            m_glideTau = R.string > 0 ? 0.0f : glideTime(m_cur) / 3.0f;
+            if (R.struck) {
+                m_slideBack = true;
+                // The slide is the stroke's movement: no drop or swoop.
+                if (R.restrike > 0 && !m_rolling) {
+                    trigger(R.restrike, false);
+                    m_drop = 0;
+                }
+            }
         } else {
             release();
         }
@@ -853,6 +934,10 @@ public:
                 md.reset();
             m_modeHit = 0;
             m_blep.reset();
+            std::fill(std::begin(m_bore), std::end(m_bore), 0.0f);
+            m_boreLp = m_toot = m_pump = 0;
+            m_tootLeft = m_lipLeft = 0;
+            m_slapT = 1e9f;
         } else {
             release();
         }
@@ -892,6 +977,10 @@ public:
         }
         m_target = pitchOf(m_cur, h) + 12.0 * double(m_oct);
         m_sinceOn = std::min(m_sinceOn + n, 1 << 30);
+        if (m_slideBack) {
+            m_slideBack = false;
+            m_glideTau = struckSlide(m_cur, m_target - m_midi);
+        }
 
         // The roll starting or stopping under a held note.
         const bool rolling = sh.roll > 0 && m_count > 0;
@@ -928,18 +1017,27 @@ public:
         float ampDecay = R.mRing != 0 ? R.decay * std::exp2(R.mRing * (morph - 0.3f)) : R.decay;
         const float dead = R.string > 0 ? deadness() : 0.0f;
         ampDecay = lerpf(ampDecay, 0.04f, dead);
+        // A damped skin (the "ke") is over in 30 ms.
+        ampDecay = lerpf(ampDecay, 0.03f, m_damp);
+        // A bar's modes ring longer with the note, by half as much.
+        const float modeRing = R.mRing != 0 ? std::exp2(0.5f * R.mRing * (morph - 0.3f)) : 1.0f;
+        // Brass past mezzo-forte: how far into the flare this note was played.
+        const float brass = R.brassy > 0 ? R.brassy * brassiness(m_vel) : 0.0f;
         const float decayCoef = std::exp(-1.0f / (std::max(0.01f, ampDecay) * rate));
         const float releaseCoef = std::exp(-1.0f / (std::max(0.004f, R.release) * rate));
-        const float attackInc = 1.0f / (std::max(0.0005f, R.attack) * rate);
+        // A hard brass note is tongued: it speaks sooner.
+        const float attackInc = 1.0f / (std::max(0.0005f, R.attack * (1.0f - 0.6f * brass)) * rate);
         const float envDecay = R.envDecay * (1.0f + morph * R.mDecay) * (1.0f - 0.35f * m_accent) *
                                (R.contour != 0 ? std::exp2(R.contour * (morph - 0.3f)) : 1.0f) *
                                (1.0f - R.toneDecay * tone);
         const float fenvCoef = std::exp(-1.0f / (std::max(0.01f, envDecay) * rate));
         const float dropCoef = std::exp(-1.0f / (std::max(0.005f, R.dropTime) * rate));
-        const float drop = R.drop + morph * R.mDrop;
+        const float pumpCoef = std::exp(-1.0f / (0.11f * rate));
+        const float tootCoef = 1.0f - std::exp(-1.0f / (0.006f * rate));
+        const float drop = (R.drop + morph * R.mDrop) * (1.0f - m_damp);
         const float sustain = R.sustain;
 
-        const float wobDepth = sh.wob > 0 ? sh.wob : std::min(1.0f, R.wobble + morph * R.mWob);
+        const float wobDepth = sh.wob > 0 ? sh.wob : R.wobble;
         const int wobRate = std::clamp(sh.wob > 0 ? sh.rate : m_cur.rate, 0, kRateCount - 1);
         const float grit = sh.grit;
         const float character =
@@ -953,12 +1051,35 @@ public:
         const float sawL = R.saw * (1.0f - 0.85f * sqMix);
         const float sqL = R.square + 0.8f * sqMix * (R.saw > 0 ? 1.0f : 0.0f);
         const float fmL = R.fm + grit * sh.gritChar * 0.5f;
-        // The chip's pulse (the didgeridoo's lips too): its width, and how
-        // much of it height brings in.
-        const float pulseW = clampf(R.pulseWidth + morph * R.mWidth, 0.05f, 0.5f);
+        // The chip's pulse: how much of it height brings in.
         const float pulseL = R.pulse + R.pulseTone * std::max(0.0f, tone - 0.1f);
-        // A struck bar's or skin's modes, louder the higher the finger.
-        const float modeL = R.modes * std::max(0.0f, 1.0f + R.modeTone * (tone - 0.5f));
+        // A struck bar's or skin's modes, louder the higher the finger, and
+        // none on a damped skin.
+        const float modeL = R.modes * std::max(0.0f, 1.0f + R.modeTone * (tone - 0.5f)) * (1.0f - m_damp);
+        // The chip's arpeggio, once its twist is past 0.4: the chord's notes
+        // (or, not following, the key's triad on the note), every other
+        // frame, then every frame, the octave on top past two thirds.
+        int arpN = 0, arpFrames = 2;
+        float arpSemis[5] = {};
+        if (R.nes && morph > 0.4f) {
+            const float a = (morph - 0.4f) / 0.6f;
+            const int d = m_cur.degree + ((m_cur.flags & Follow) ? chordShift(h) : 0);
+            const double base = h.midi(d, m_cur.octave);
+            if (m_cur.flags & Follow) {
+                const int count = std::clamp(h.chordCount, 1, 4);
+                for (int k = 0; k < count; ++k)
+                    arpSemis[arpN++] = float(h.midi(d + h.chordTones[k] - h.chordTones[0], m_cur.octave) - base);
+            } else {
+                for (int k : {0, 2, 4})
+                    arpSemis[arpN++] = float(h.midi(d + k, m_cur.octave) - base);
+            }
+            if (a > 0.66f)
+                arpSemis[arpN++] = 12;
+            arpFrames = a < 0.33f ? 2 : 1;
+        }
+        // The didgeridoo's voice, sung into the drone as the twist turns up.
+        const float voice = R.didge > 0 ? clampf((morph - 0.3f) / 0.7f, 0.0f, 1.0f) : 0.0f;
+        const bool drone = R.didge > 0;
         if (R.breath > 0)
             m_breathBp.set(R.breathHz, 1.1f, rate);
         // A held note sits about 14 dB under full scale, the sub's peak near
@@ -967,7 +1088,9 @@ public:
         const float ghost = R.string > 0 ? ghostness() : 0.0f;
         const float fingerGain = R.level * (0.5f + 0.5f * m_vel) * 0.42f;
         const float topGain = fingerGain * (1.0f - 0.82f * ghost);
-        const float subGain = R.sub * (0.86f + 0.14f * m_vel) * (1.0f + 0.25f * fat) * 0.235f * (1.0f - 0.82f * ghost);
+        // A damped skin is mostly the hand: its sub 8 dB down.
+        const float subGain = R.sub * (0.86f + 0.14f * m_vel) * (1.0f + 0.25f * fat) * 0.235f * (1.0f - 0.82f * ghost) *
+                              (1.0f - 0.6f * m_damp);
         const float width = std::min(1.0f, R.width + 0.4f * fat);
         const int unison = R.unison;
         const float uniNorm = 1.0f / std::sqrt(float(unison));
@@ -1005,17 +1128,24 @@ public:
                         // The step after the beat's middle lifts a little: a
                         // roll leans into the offbeat, which is where it grooves.
                         const bool lean = within * 2 == steps || (steps == 3 && within == 1);
-                        trigger(lean ? 1.0f : 0.86f, false);
+                        // A drone isn't struck again: its breath pumps.
+                        if (drone && m_gate)
+                            m_pump = lean ? 1.0f : 0.8f;
+                        else
+                            trigger(lean ? 1.0f : 0.86f, false);
                         m_gateEnd = (double(step) + gateLen * double(untilNext(pattern, within))) / double(steps);
                     }
                 }
-                if (m_gate && beat >= m_gateEnd && gateLen < 0.999f)
+                if (m_gate && beat >= m_gateEnd && gateLen < 0.999f && !drone)
                     closeGate();
             }
 
             // Every eight samples: the filter, the vowel, the drive.
             if ((i & 7) == 0) {
-                const float hz0 = midiToHz(m_midi + double(m_bend));
+                // The chip's pitch is the frame's (its arpeggio and blip
+                // included), and a toot's the note it overblows, so the
+                // crossover follows the note that sounds.
+                const float hz0 = R.nes ? m_nesHz : midiToHz(m_midi + double(m_bend + R.toot * m_toot));
                 if (wobDepth > 0.001f) {
                     const double ph = beat / kRateBeats[wobRate];
                     lfo = 0.5f - 0.5f * std::cos(kTwoPi * float(ph - std::floor(ph)));
@@ -1032,8 +1162,8 @@ public:
                     m_dj.set(16000.0f * std::exp2(cutOff / 0.7f * 6.7f), 0.7f, rate);
                 if (wobDepth > 0.001f)
                     cut = lerpf(cut, lerpf(R.cutLo * 0.6f, cut + 0.22f, lfo), wobDepth * R.wobCut);
-                envAmt = (R.envAmt + morph * R.mEnv) * (1.0f + 1.4f * m_accent * R.accent);
-                cut += envAmt * m_fenv * 0.6f + R.cutAmp * m_amp * (0.3f + 0.7f * m_vel);
+                envAmt = (R.envAmt + morph * R.mEnv) * (1.0f + 1.4f * m_accent * R.accent) + 0.9f * brass;
+                cut += envAmt * m_fenv * 0.6f + R.cutAmp * m_amp * (0.3f + 0.7f * m_vel) + 0.03f * brass * m_amp;
                 cutNow = clampf(cut, 0.0f, 1.0f);
                 const float fc = std::min(50.0f * std::exp2(cutNow * 8.3f), rate * (0.42f - 0.1f * R.res));
                 m_ladder.set(fc, std::min(0.97f, R.res + morph * R.mRes + 0.12f * m_accent * R.accent), rate);
@@ -1049,7 +1179,8 @@ public:
                 foldMax = 1.6f + 2.4f * hiScale * hiScale;
                 fmIndex = (R.fmIndex + tone * R.fmTone + morph * R.mFm + wobDepth * lfo * R.wobFm + grit * sh.gritChar * 3.0f) * hiScale;
                 const float drv = R.drive + tone * R.toneDrive + morph * R.mDrive + grit * 1.1f +
-                                  m_accent * 0.15f * R.accent + std::max(0.0f, press - 0.55f) * 0.5f;
+                                  m_accent * 0.15f * R.accent + std::max(0.0f, press - 0.55f) * 0.5f +
+                                  brass * (0.05f + 0.8f * m_fenv);
                 // High up the drive eases off: there its harmonics would
                 // reach past what even twice the rate can hold.
                 g = 1.0f + 14.0f * drv * drv * hiScale * hiScale;
@@ -1073,8 +1204,19 @@ public:
                 if (R.string > 0)
                     tuneString(midiToHz(m_midi + double(m_bend + drop * m_drop)), tone, R.ring, dead);
                 if (R.modes > 0)
-                    for (int k = 0; k < 2; ++k)
-                        m_modes[k].set(hz0 * R.modeRatio[k], R.modeDecay[k], rate);
+                    for (int k = 0; k < 3; ++k)
+                        m_modes[k].set(hz0 * R.modeRatio[k], R.modeDecay[k] * modeRing, rate);
+                if (drone) {
+                    // The mouth: height sweeps it from 800 Hz to 2 kHz,
+                    // pressing harder, a breath's pump and a toot push it on.
+                    const float open = tone + 0.6f * std::max(0.0f, press - 0.5f) + 0.25f * m_pump + 0.1f * m_toot;
+                    const float fm = std::min(800.0f * std::pow(2.5f, open), 2400.0f);
+                    m_mouth.set(fm, 4.5f, rate);
+                    // The lips' buzz falls away up high; the mouth opening
+                    // there is louder for it, so the higher it goes the
+                    // brighter it sounds.
+                    m_mouthGain = std::min(2.4f * std::pow(fm / 800.0f, 2.3f), 20.0f);
+                }
             }
 
             // Envelopes.
@@ -1101,11 +1243,39 @@ public:
             }
             m_fenv *= fenvCoef;
             m_drop *= dropCoef;
+            m_pump *= pumpCoef;
             m_midi += (m_target - m_midi) * double(glideCoef);
             m_bend += (bendTarget - m_bend) * bendCoef;
 
-            // Oscillators.
-            const float hz = midiToHz(m_midi + double(m_bend + drop * m_drop));
+            // Oscillators. A hard brass note's lips catch for its first
+            // 40 ms: the pitch wanders by up to half a semitone and the
+            // buzz flutters, less and less.
+            float wander = 0, flutter = 1;
+            if (m_lipLeft > 0) {
+                const float k = float(m_lipLeft--) / m_lipLen;
+                m_lipN += m_lipC * (m_rng.bipolar() - m_lipN);
+                wander = R.lipBuzz * (0.3f + brass) * k * k * 16.0f * m_lipN;
+                flutter = 1.0f + 1.5f * wander;
+            }
+            // A toot: up a tenth for 140 ms, there and back in a few.
+            if (R.toot > 0) {
+                m_toot += ((m_tootLeft > 0 ? 1.0f : 0.0f) - m_toot) * tootCoef;
+                if (m_tootLeft > 0)
+                    --m_tootLeft;
+            }
+            float hz;
+            if (R.nes) {
+                // Once a frame, as the console's sound driver ran: the pitch
+                // latched from the period table, the pulse's volume and duty.
+                if (m_frameLeft <= 0) {
+                    m_frameLeft += rate / 60.0f;
+                    nesFrame(arpSemis, arpN, arpFrames);
+                }
+                m_frameLeft -= 1;
+                hz = m_nesHz;
+            } else {
+                hz = midiToHz(m_midi + double(m_bend + drop * m_drop + wander + R.toot * m_toot));
+            }
             const float inc = std::min(hz / rate, 0.45f);
             m_phase += inc;
             if (m_phase >= 1.0f) {
@@ -1178,20 +1348,28 @@ public:
             if (R.string > 0)
                 osc += R.string * pluckedString(R.body);
             if (R.chipTri > 0 || pulseL > 0)
-                osc += chipOsc(ph, inc, R.chipTri, pulseL, pulseW);
+                osc += chipOsc(ph, inc, R.chipTri, pulseL * (R.nes ? m_nesVol : 1.0f), R.nes ? m_nesDuty : 0.25f);
+            if (R.didge > 0)
+                osc += R.didge * didgeridoo(ph, inc, voice, tone);
             if (R.modes > 0) {
                 // Struck: one sample's impulse into each resonator, which
                 // then rings as a sine starting from zero, so it clicks no
                 // more than a mallet does.
                 const float hit = m_modeHit;
                 m_modeHit = 0;
-                osc += modeL * (m_modes[0].step(hit) + 0.55f * m_modes[1].step(hit));
+                float m = 0;
+                for (int k = 0; k < 3; ++k)
+                    if (R.modeLevel[k] > 0)
+                        m += R.modeLevel[k] * m_modes[k].step(hit);
+                osc += modeL * m;
             }
             if (R.breath > 0) {
                 // Breath: steady with the note, and a chiff as it starts.
                 const float b = m_breathBp.k * m_breathBp.step(m_rng.bipolar()).band;
                 osc += R.breath * 3.0f * (m_amp + 1.5f * m_fenv) * b;
             }
+
+            osc *= flutter;
 
             // Filters (the ladder, and the vowel bank beside it) and drive,
             // the drive at twice the rate so its harmonics don't fold back.
@@ -1241,7 +1419,11 @@ public:
             // The crossover: two 2-pole high-passes, a 24 dB slope.
             y = m_hp2.step(m_hp1.step(y).high).high;
 
-            const float amp = m_amp;
+            // A drone rolled breathes: down between the pattern's pumps. A
+            // toot, an octave and a third up, is as loud with less.
+            float amp = drone && m_rolling ? m_amp * (0.5f + 0.6f * m_pump) : m_amp;
+            if (drone)
+                amp *= 1.0f - 0.5f * m_toot;
             const float mute = m_mute.step(muteTarget);
             const float dk = duck[std::min(off0 + i, kBlock - 1)];
             const float pumped = 1.0f - R.pump * dk;
@@ -1269,8 +1451,8 @@ public:
             // accented, fat, resonant attack rounds off instead of hitting
             // the bus limiter, and the low end stays one signal.
             const float mag = std::fabs(mono) + std::fabs(side);
-            if (mag > 0.55f) {
-                const float k = (0.55f + 0.25f * fastTanh((mag - 0.55f) / 0.25f)) / mag;
+            if (mag > R.knee) {
+                const float k = (R.knee + 0.45f * R.knee * fastTanh((mag - R.knee) / (0.45f * R.knee))) / mag;
                 mono *= k;
                 side *= k;
             }
@@ -1302,7 +1484,14 @@ private:
 
     double pitchOf(const Note &n, const Harmony &h) const {
         const int d = n.degree + ((n.flags & Follow) ? chordShift(h) : 0);
-        return h.midi(d, n.octave) + rootShift(h.tuning);
+        return h.midi(d, n.octave) + rootShift(h.tuning) + double(recipe(n.sound).octave);
+    }
+    // A struck note's slide from a held one: the sound's glide for a short
+    // step, drawn out by slideSpan of it for every fifth further.
+    float struckSlide(const Note &n, double semitones) const {
+        const Recipe &R = recipe(n.sound);
+        const float span = R.slideSpan > 0 ? 0.45f + R.slideSpan * float(std::fabs(semitones)) / 7.0f : 1.0f;
+        return glideTime(n) / 3.0f * span;
     }
     float glideTime(const Note &n) const {
         // The glide setting scales the sound's own slide from a quarter to
@@ -1331,6 +1520,12 @@ private:
             // The triangle starts at its middle step, as the phase does.
             m_triU = 7.5f;
             m_triLvl = 8;
+            m_voicePh = 0;
+            // And from the height and twist it was played with: smoothed
+            // from the last note's, its first moments (a scoop, a swoop)
+            // would be the last note's.
+            m_tone.reset(m_cur.tone);
+            m_morph.reset(m_cur.morph);
         }
         m_vel = clampf(m_cur.vel * velScale, 0.05f, 1.0f);
         m_accent = accent || m_cur.vel > 0.9f ? 1.0f : 0.0f;
@@ -1341,14 +1536,28 @@ private:
         const Recipe &R = recipe(m_cur.sound);
         if (R.string > 0)
             pluckString();
+        // Pressed lightly, a skin that damps is the closed "ke".
+        m_damp = R.damp ? clampf((0.56f - m_vel) / 0.14f, 0.0f, 1.0f) : 0.0f;
         if (R.modes > 0)
             m_modeHit = 1.0f + 0.5f * m_accent;
-        if (R.thump > 0) {
-            // The hand on the skin: the finger's thump, harder accented.
-            m_thumpT = 0;
-            m_thumpAmp = R.thump * (0.6f + 0.4f * m_vel) * (1.0f + 0.5f * m_accent);
-            m_noiseLeft = std::max(m_noiseLeft, int(0.03f * m_rate));
+        if (R.slap > 0) {
+            // The palm on the skin, harder accented, and most of a ke.
+            m_slapT = 0;
+            m_slapLen = R.slapTime * m_rate;
+            m_slapAmp = R.slap * (0.5f + 0.5f * m_vel) * (1.0f + 0.8f * m_accent) * (1.0f + 3.0f * m_damp);
+            m_slapBp.set(R.slapHz, 1.1f, m_rate);
+            m_noiseLeft = std::max(m_noiseLeft, int((R.slapTime + 0.02f) * m_rate));
         }
+        if (R.lipBuzz > 0) {
+            m_lipLen = 0.04f * m_rate;
+            m_lipLeft = int(m_lipLen);
+        }
+        // The chip starts its frames again, and an accent is its kick blip.
+        m_frame = 0;
+        m_frameLeft = 0;
+        m_blip = R.nes && m_accent > 0;
+        if (R.toot > 0 && m_accent > 0)
+            m_tootLeft = int(0.14f * m_rate);
         m_gate = true;
         m_active = true;
     }
@@ -1379,6 +1588,13 @@ private:
         m_step = step;
         m_rolling = true;
         const int within = int(((step % steps) + steps) % steps);
+        // A drone sounds at once and keeps sounding; the roll only pumps it.
+        if (recipe(m_cur.sound).didge > 0) {
+            if (!m_gate || m_amp < 0.02f)
+                trigger(1, m_cur.flags & Accent);
+            m_pump = kPatterns[pattern].steps[within] == 'x' ? 1.0f : 0.0f;
+            return;
+        }
         if (kPatterns[pattern].steps[within] == 'x' && sp - double(step) < 0.5) {
             trigger(1, m_cur.flags & Accent);
             m_gateEnd = (double(step) + std::clamp(sh.roll, 0.12f, 1.0f) * double(untilNext(pattern, within))) /
@@ -1490,10 +1706,18 @@ private:
             k = m_knockAmp * w * w * m_rng.bipolar();
             m_knockT += 1;
         }
+        // The palm's slap on a skin: brighter, so after the low-pass.
+        float sl = 0;
+        if (m_slapT < m_slapLen) {
+            const float w = std::sin(kPi * m_slapT / m_slapLen);
+            sl = m_slapAmp * w * w * m_rng.bipolar();
+            m_slapT += 1;
+        }
         --m_noiseLeft;
         // A gentle low-pass after them both: a finger is soft, and noise
         // would otherwise leave a hiss on the band-passes' skirts.
-        return m_fingerLp.step(m_thumpBp.k * 3.0f * m_thumpBp.step(t).band + m_knockBp.k * 3.0f * m_knockBp.step(k).band);
+        return m_fingerLp.step(m_thumpBp.k * 3.0f * m_thumpBp.step(t).band + m_knockBp.k * 3.0f * m_knockBp.step(k).band) +
+               m_slapBp.k * 2.5f * m_slapBp.step(sl).band;
     }
     void stopStrings() {
         for (String &s : m_strings) {
@@ -1523,8 +1747,7 @@ private:
     // --- the chip's oscillators ----------------------------------------------
     //
     // The NES's triangle channel, a ramp through sixteen levels up and down
-    // in phase with the sub, and a pulse (the chip's, and the didgeridoo's
-    // lips). Every step and edge is a jump, and a jump has harmonics past
+    // in phase with the sub, and its pulse. Every step and edge is a jump, and a jump has harmonics past
     // any rate. With no filter after them to hide what folds back, each is
     // band-limited with a four-point BLEP (the integral of a cubic
     // B-spline), cleaner than the two-point one the saws use: its residual
@@ -1586,6 +1809,87 @@ private:
         }
         m_blep.q[2] += naive;
         return m_blep.q[0];
+    }
+
+    // One frame of the console's sound driver: the pitch it plays now (the
+    // arpeggio's note, the blip's sweep), as the triangle's period register
+    // can hold it (the CPU clock over 32 times eleven bits plus one, so
+    // high notes land a few cents off, as they do on the console); the
+    // pulse's volume, from full down two steps of sixteen a frame to a
+    // floor of six; and its duty, 12.5 % for two frames, 25 % for two, then
+    // 50 %.
+    void nesFrame(const float *arpSemis, int arpN, int arpFrames) {
+        static constexpr float kBlip[] = {24, 17, 11, 6, 2};
+        const int f = m_frame++;
+        float semis = arpN > 0 ? arpSemis[(f / arpFrames) % arpN] : 0.0f;
+        if (m_blip && f < 5)
+            semis += kBlip[f];
+        const float want = midiToHz(m_midi + double(m_bend + semis));
+        const float period = clampf(std::round(1789773.0f / (32.0f * want) - 1.0f), 0.0f, 2047.0f);
+        m_nesHz = 1789773.0f / (32.0f * (period + 1.0f));
+        m_nesVol = float(std::max(6, 15 - 2 * f)) / 15.0f;
+        m_nesDuty = f < 2 ? 0.125f : f < 4 ? 0.25f : 0.5f;
+    }
+
+    // Brass's flare: almost nothing up to mezzo-forte (0.7), then steeply
+    // on to fortissimo.
+    static float brassiness(float vel) {
+        const float b = clampf((vel - 0.7f) / 0.3f, 0.0f, 1.0f);
+        return b * b * (3.0f - 2.0f * b);
+    }
+
+    // --- the didgeridoo ------------------------------------------------------
+    //
+    // The lips: a Rosenberg pulse, opening over 45 % of the cycle as a
+    // half cosine and snapping shut over 20 % (7 % with the lips
+    // tightened, the finger high), then closed; what sounds is
+    // how fast the flow changes (its slope, as a mouth radiates it), so
+    // the snap is a sharp kick each cycle, rich up to where the mouth's
+    // formant sits. It shuts with a corner, not a step, so the flow's
+    // harmonics fall 12 dB an octave (the slope's 6) and nothing that
+    // matters folds back at these pitches. The voice sung into it (a fifth up, a
+    // little sharp) rattles the lips (it modulates their flow, which puts
+    // sidebands half a note under and over the drone's harmonics, the
+    // growl) and is heard itself, beating against the drone's third
+    // harmonic. The bore is a delay of half a period fed back inverted,
+    // through a gentle low-pass: its peaks are the note's odd harmonics, a
+    // tube stopped at one end. Then the mouth's one formant, strong over a
+    // little of the bore straight through.
+    inline float didgeridoo(float ph, float inc, float voice, float tone) {
+        // Tighter lips (the finger higher) snap shut faster: brighter.
+        constexpr float tp = 0.45f;
+        const float tn = 0.2f - 0.13f * tone;
+        const float flow = ph < tp ? 0.5f - 0.5f * std::cos(kPi * ph / tp)
+                                   : ph < tp + tn ? std::cos(0.5f * kPi * (ph - tp) / tn) : 0.0f;
+        // Its slope per cycle, scaled so the snap's peak is about 1.
+        float g = (flow - m_lipFlow) / std::max(inc, 1e-4f) * (tn / 1.5708f);
+        m_lipFlow = flow;
+        // The snap is a step in that slope: softened by flesh (two poles
+        // near 6 kHz), it kicks without the sharpest spikes.
+        m_lipLp[0] += m_lipLpC * (g - m_lipLp[0]);
+        m_lipLp[1] += m_lipLpC * (m_lipLp[0] - m_lipLp[1]);
+        g = m_lipLp[1];
+        float sung = 0;
+        if (voice > 0) {
+            m_voicePh += inc * 1.5f * 1.006f;
+            if (m_voicePh >= 1.0f)
+                m_voicePh -= 1.0f;
+            const float v = std::sin(kTwoPi * m_voicePh);
+            g *= 1.0f + 0.8f * voice * v;
+            sung = 0.3f * voice * (v + 0.35f * std::sin(2.0f * kTwoPi * m_voicePh));
+        }
+        const float d = clampf(0.5f / std::max(inc, 1e-4f), 2.0f, float(kBore - 4));
+        const float pos = float(m_boreW + kBore) - d;
+        const int i0 = int(pos);
+        const float f = pos - float(i0);
+        const float back = lerpf(m_bore[i0 & (kBore - 1)], m_bore[(i0 + 1) & (kBore - 1)], f);
+        m_boreLp += 0.55f * (back - m_boreLp);
+        const float y = 1.6f * (g + sung) - 0.74f * m_boreLp;
+        m_bore[m_boreW] = y;
+        m_boreW = (m_boreW + 1) & (kBore - 1);
+        // A tenth of it into the drive, which would otherwise flatten the
+        // mouth's peak as it rises.
+        return 0.1f * (0.35f * y + m_mouthGain * m_mouth.k * m_mouth.step(y).band);
     }
 
     // Steps from a lit step to the next: the gate is a share of that, so an
@@ -1701,9 +2005,33 @@ private:
         }
         void reset() { y1 = y2 = 0; }
     };
-    Mode m_modes[2];
+    Mode m_modes[3];
     float m_modeHit = 0; // the strike, for the next sample
     Svf m_breathBp;
+    // How damped the skin was struck (the ke), and the palm's slap.
+    float m_damp = 0, m_slapT = 1e9f, m_slapLen = 1, m_slapAmp = 0;
+    Svf m_slapBp;
+    // A brass note's lips catching: samples left, of how many, and the
+    // wander (noise low-passed near 50 Hz).
+    int m_lipLeft = 0;
+    float m_lipLen = 1, m_lipN = 0, m_lipC = 0.015f;
+    // A drum lifted off slides back to the held note, timed once render
+    // knows how far.
+    bool m_slideBack = false;
+    // The chip's frames: samples to the next, which one, and what it set.
+    float m_frameLeft = 0;
+    int m_frame = 0;
+    float m_nesHz = 55, m_nesVol = 1, m_nesDuty = 0.125f;
+    bool m_blip = false;
+    // The didgeridoo: its bore, its mouth, the voice sung into it, the
+    // toot's samples left and how far up it is, and the breath's pump.
+    static constexpr int kBore = 2048;
+    float m_bore[kBore] = {};
+    int m_boreW = 0;
+    float m_boreLp = 0, m_voicePh = 0, m_toot = 0, m_pump = 0, m_lipFlow = 0, m_mouthGain = 2.4f;
+    float m_lipLp[2] = {}, m_lipLpC = 0.3f;
+    int m_tootLeft = 0;
+    Svf m_mouth;
     // The chip's triangle: the step it is on and where it was; and what
     // its band-limiting holds of the samples to come.
     float m_triU = 7.5f;

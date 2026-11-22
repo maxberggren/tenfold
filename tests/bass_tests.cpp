@@ -227,6 +227,66 @@ Command shaper(int which, float a, float b, int id = 1) {
 }
 double hzOf(double midi) { return 440.0 * std::exp2((midi - 69.0) / 12.0); }
 double cents(double hz, double midi) { return 1200 * std::log2(hz / hzOf(midi)); }
+
+// A stretch of a rig's output, t0 to t1 seconds, as a rig of its own.
+Rig slice(const Rig &r, double t0, double t1) {
+    Rig out;
+    out.left.assign(r.left.begin() + long(t0 * 48000), r.left.begin() + long(t1 * 48000));
+    out.right.assign(r.right.begin() + long(t0 * 48000), r.right.begin() + long(t1 * 48000));
+    return out;
+}
+// The power at one frequency between t0 and t1 (a Hann-windowed DFT of the
+// middle), in dB.
+double powerAt(const Rig &r, double t0, double t1, double hz) {
+    const size_t a = size_t(t0 * 48000), n = size_t((t1 - t0) * 48000);
+    double re = 0, im = 0;
+    const double w = 2 * M_PI * hz / 48000.0;
+    for (size_t i = 0; i < n; ++i) {
+        const double v = 0.5 * (r.left[a + i] + r.right[a + i]) * (0.5 - 0.5 * std::cos(2 * M_PI * double(i) / double(n)));
+        re += v * std::cos(w * double(i));
+        im += v * std::sin(w * double(i));
+    }
+    return 10 * std::log10((re * re + im * im) / double(n) / double(n) + 1e-20);
+}
+// The pitch cycle by cycle between t0 and t1: the rising zero crossings of
+// what is under cut Hz (four one-pole low-passes), as (time, Hz).
+std::vector<std::pair<double, double>> cycles(const Rig &r, double t0, double t1, double cut) {
+    const double a = std::exp(-2 * M_PI * cut / 48000.0);
+    double y[4] = {};
+    std::vector<double> lo;
+    for (size_t i = 0; i < size_t(t1 * 48000) && i < r.left.size(); ++i) {
+        double x = 0.5 * (r.left[i] + r.right[i]);
+        for (double &v : y)
+            x = v = x + a * (v - x);
+        lo.push_back(x);
+    }
+    std::vector<double> at;
+    for (size_t i = size_t(t0 * 48000); i + 1 < lo.size(); ++i)
+        if (lo[i] <= 0 && lo[i + 1] > 0)
+            at.push_back((double(i) + lo[i] / (lo[i] - lo[i + 1])) / 48000.0);
+    std::vector<std::pair<double, double>> out;
+    for (size_t k = 1; k < at.size(); ++k)
+        out.push_back({at[k - 1], 1.0 / (at[k] - at[k - 1])});
+    return out;
+}
+// Where, between lo and hi Hz, the spectrum of t0..t1 is strongest once
+// smoothed over 200 Hz: a formant's centre, whatever harmonics lie under it.
+double formantAt(const Rig &r, double t0, double t1, double lo, double hi) {
+    std::vector<double> p;
+    for (double f = lo - 100; f <= hi + 100; f += 10)
+        p.push_back(std::pow(10.0, powerAt(r, t0, t1, f) / 10));
+    double best = 0, bestHz = lo;
+    for (size_t k = 10; k + 10 < p.size(); ++k) {
+        double sum = 0;
+        for (size_t j = k - 10; j <= k + 10; ++j)
+            sum += p[j];
+        if (sum > best) {
+            best = sum;
+            bestHz = lo - 100 + 10.0 * double(k);
+        }
+    }
+    return bestHz;
+}
 constexpr int kReplay = 1 << 30; // how the studio marks a clip's ids
 
 }
@@ -265,7 +325,9 @@ private slots:
                 rig.send(noteOn(1, 2 * k, s, 0, 1.0f, 0.9f));
                 rig.run(0.9);
                 const QString what = QStringLiteral("%1 degree %2").arg(bass::recipe(s).name).arg(2 * k);
-                QVERIFY2(std::fabs(cents(rig.pitch(), expect[k])) < 15, qPrintable(what));
+                // A sound that carries its own register (the bayan) plays
+                // the note that much higher.
+                QVERIFY2(std::fabs(cents(rig.pitch(), expect[k] + bass::recipe(s).octave)) < 15, qPrintable(what));
                 QVERIFY2(rig.sideBelow(120) < -30, qPrintable(what + " is wide under 120 Hz"));
                 QVERIFY(rig.finite());
                 QVERIFY2(rig.peak() < 0.95, qPrintable(what + QStringLiteral(" peaks at %1").arg(rig.peak())));
@@ -1261,8 +1323,9 @@ private slots:
     }
 
     // The five sounds past P, each from the keys: it plays its note in the
-    // key (A1 and E2), peaks under 0 dBFS played hard and bright, is named
-    // in the status line, and is saved and opened again by its name.
+    // key (A1 and E2, the bayan an octave up), peaks under 0 dBFS played
+    // hard and bright, is named in the status line, and is saved and opened
+    // again by its name.
     void theFiveNewSoundsPlaySaveAndReopen() {
         const int sounds[] = {bass::Log, bass::Tuba, bass::Chip, bass::Tabla, bass::Didge};
         const char *names[] = {"LOG", "TUBA", "CHIP", "TABLA", "DIDGE"};
@@ -1272,7 +1335,8 @@ private slots:
                 rig.send(noteOn(1, degree, sounds[k], bass::Accent, 1.0f, 1.0f));
                 rig.run(0.9);
                 const QString what = QStringLiteral("%1 degree %2").arg(QLatin1String(names[k])).arg(degree);
-                QVERIFY2(std::fabs(cents(rig.pitch(), degree == 0 ? 33 : 40)) < 15, qPrintable(what));
+                const double expect = (degree == 0 ? 33 : 40) + bass::recipe(sounds[k]).octave;
+                QVERIFY2(std::fabs(cents(rig.pitch(), expect)) < 15, qPrintable(what));
                 QVERIFY2(rig.peak() < 0.95, qPrintable(what + QStringLiteral(" peaks at %1").arg(rig.peak())));
                 QVERIFY(rig.finite());
             }
@@ -1294,9 +1358,11 @@ private slots:
 
     // LOG and TABLA are struck: a second finger while the first holds
     // strikes again, as hard as the first, its pitch sliding in from the
-    // held note; lifting it jumps back.
+    // held note; lifting it slides back and strikes the held note again,
+    // softly.
     void logAndTablaStrikeEveryFinger() {
         for (int sound : {int(bass::Log), int(bass::Tabla)}) {
+            const double up = bass::recipe(sound).octave;
             Rig rig;
             rig.send(noteOn(1, 0, sound, 0, 0.8f, 0.6f)); // A1
             rig.run(0.5);
@@ -1305,21 +1371,65 @@ private slots:
             const double first = rig.topRms(0.0, 0.06), second = rig.topRms(0.5, 0.56), before = rig.topRms(0.42, 0.5);
             const QString what = QStringLiteral("%1: %2 %3 %4 dB").arg(bass::recipe(sound).name).arg(first).arg(before).arg(second);
             QVERIFY2(second > first - 3 && second > before + 6, qPrintable(what));
-            QVERIFY2(std::fabs(cents(rig.pitch(0.25), 40)) < 15, qPrintable(what));
+            QVERIFY2(std::fabs(cents(rig.pitch(0.25), 40 + up)) < 15, qPrintable(what));
             rig.send(noteOff(2));
             rig.run(0.3);
-            QVERIFY(std::fabs(cents(rig.pitch(0.2), 33)) < 15);
+            QVERIFY(std::fabs(cents(rig.pitch(0.2), 33 + up)) < 15);
+            const double lifted = rig.topRms(0.9, 0.96), held = rig.topRms(0.82, 0.9);
+            // (Over what still rings of the note lifted: the bayan's rings long.)
+            QVERIFY2(lifted > held + 2, qPrintable(QStringLiteral("%1: struck again at %2 dB, from %3")
+                                                       .arg(bass::recipe(sound).name).arg(lifted).arg(held)));
         }
+    }
+
+    // LOG's slides are drawn out the further they go: struck an octave over
+    // the held note it takes well over twice as long to arrive as a step of
+    // a tone, as an amapiano player draws a wide slide.
+    void logSlidesLongerTheFurtherItGoes() {
+        auto arrive = [](int degree, double target) {
+            Rig rig;
+            rig.send(noteOn(1, 0, bass::Log, 0, 0.8f, 0.4f));
+            rig.run(0.3);
+            rig.send(noteOn(2, degree, bass::Log, 0, 0.8f, 0.4f));
+            rig.run(0.4);
+            // The first cycle from which it stays within 30 cents.
+            double at = 1;
+            for (const auto &c : cycles(rig, 0.3, 0.7, 120))
+                if (std::fabs(1200 * std::log2(c.second / hzOf(target))) >= 30)
+                    at = 1;
+                else if (at == 1)
+                    at = c.first - 0.3;
+            return at;
+        };
+        const double tone = arrive(1, 35), octave = arrive(7, 45);
+        QVERIFY2(octave > 2.2 * tone && octave < 0.25,
+                 qPrintable(QStringLiteral("a tone in %1 s, an octave in %2 s").arg(tone).arg(octave)));
+    }
+
+    // LOG keeps the bar alive under the note: a quarter of a second in, the
+    // bar's first mode (2.756 times the note) is still within 15 dB of the
+    // fundamental, and the third harmonic (which would beat against it) is
+    // well under it.
+    void logBarRingsUnderTheNote() {
+        Rig rig;
+        rig.send(noteOn(1, 0, bass::Log, 0, 0.8f, 0.45f));
+        rig.run(0.5);
+        const double f0 = hzOf(33);
+        const double fund = powerAt(rig, 0.1, 0.3, f0), mode = powerAt(rig, 0.1, 0.3, f0 * 2.756),
+                     third = powerAt(rig, 0.1, 0.3, f0 * 3);
+        const QString what = QStringLiteral("fundamental %1, mode %2, third %3 dB").arg(fund).arg(mode).arg(third);
+        QVERIFY2(mode > fund - 15 && mode > third + 6, qPrintable(what));
     }
 
     // The tabla's gumki: pressing harder after the strike bends the note
     // up, by four semitones at most; easing off lets it back down. The
-    // twist is the swoop: turned up, the note starts further under itself.
+    // twist is the swoop: the ghe rises into the note, from further under
+    // it the more the twist is turned.
     void tablaPressBendsItUp() {
         Rig rig;
         rig.send(noteOn(1, 0, bass::Tabla, 0, 0.6f, 0.5f));
         rig.run(0.3);
-        QVERIFY(std::fabs(cents(rig.pitch(0.15), 33)) < 20);
+        QVERIFY(std::fabs(cents(rig.pitch(0.15), 45)) < 20);
         Command press;
         press.type = Command::Move;
         press.id = 1;
@@ -1328,55 +1438,134 @@ private slots:
         press.f[2] = 0.3f;
         rig.send(press);
         rig.run(0.25);
-        const double up = cents(rig.pitch(0.15), 33);
+        const double up = cents(rig.pitch(0.15), 45);
         QVERIFY2(up > 300 && up < 430, qPrintable(QStringLiteral("%1 cents").arg(up)));
         press.f[0] = 0.6f;
         rig.send(press);
         rig.run(0.25);
-        QVERIFY(std::fabs(cents(rig.pitch(0.15), 33)) < 25);
+        QVERIFY(std::fabs(cents(rig.pitch(0.15), 45)) < 25);
         QVERIFY(rig.finite());
 
-        // The swoop: the first 40 ms, under the note, more with the twist.
-        auto early = [](float morph) {
+        // The swoop: the first cycles, under the note (2 to 4 semitones at
+        // the usual twist), more with the twist.
+        auto start = [](float morph) {
             Rig r;
             Command on = noteOn(1, 0, bass::Tabla, 0, 0.8f, 0.5f);
             on.f[2] = morph;
             r.send(on);
             r.run(0.06);
-            r.left.erase(r.left.begin(), r.left.begin() + 480);
-            r.right.erase(r.right.begin(), r.right.begin() + 480);
-            return cents(r.pitch(0.05), 33);
+            const auto c = cycles(r, 0.0, 0.06, 150);
+            return c.empty() ? 0.0 : 1200 * std::log2(c.front().second / hzOf(45));
         };
-        const double flat = early(0.0f), deep = early(1.0f);
-        QVERIFY2(deep < flat - 200, qPrintable(QStringLiteral("%1 %2 cents").arg(flat).arg(deep)));
+        const double usual = start(0.3f), deep = start(1.0f);
+        QVERIFY2(usual < -150 && usual > -450 && deep < usual - 150,
+                 qPrintable(QStringLiteral("%1 %2 cents").arg(usual).arg(deep)));
     }
 
-    // TUBA is brass: louder is brighter. Played hard, more of it lies
-    // between 1 and 4 kHz (relative to its own level) than played softly.
-    void tubaIsBrighterPlayedHarder() {
-        double bright[2];
-        const float vels[2] = {0.35f, 1.0f};
+    // Pressed lightly the bayan is the closed "ke": the palm's slap and no
+    // ring. A tenth of a second in it has fallen 20 dB from its strike
+    // where the open "ghe" has fallen less than 12, and the slap (400 to
+    // 900 Hz) is most of it.
+    void tablaLightPressIsTheClosedKe() {
+        double fall[2], slap[2];
+        const float vels[2] = {0.38f, 0.8f};
         for (int k = 0; k < 2; ++k) {
             Rig rig;
-            rig.send(noteOn(1, 0, bass::Tuba, 0, vels[k], 0.5f));
-            rig.run(0.6);
-            bright[k] = rig.band(0.15, 0.55, 1000, 4000);
+            rig.send(noteOn(1, 0, bass::Tabla, 0, vels[k], 0.45f));
+            rig.run(0.3);
+            const Rig strike = slice(rig, 0.0, 0.03), later = slice(rig, 0.1, 0.13);
+            fall[k] = bandPower(strike, 20, 4000) - bandPower(later, 20, 4000);
+            slap[k] = bandPower(strike, 400, 900) - bandPower(strike, 20, 400);
         }
-        QVERIFY2(bright[1] > bright[0] + 4, qPrintable(QStringLiteral("%1 %2 dB").arg(bright[0]).arg(bright[1])));
+        const QString what = QStringLiteral("ke falls %1 dB, slap %2; ghe falls %3, slap %4")
+                                 .arg(fall[0]).arg(slap[0]).arg(fall[1]).arg(slap[1]);
+        QVERIFY2(fall[0] > 20 && fall[1] < 12 && slap[0] > slap[1] + 6, qPrintable(what));
+    }
+
+    // TUBA is brass: louder is brighter, and not evenly. Played hard, more
+    // of it lies between 1 and 4 kHz (relative to its own level) than
+    // played softly, and most of that comes past mezzo-forte: from 0.7 to
+    // 1 it brightens more than twice as much as from 0.5 to 0.7, and 6 dB
+    // more.
+    void tubaIsBrighterPlayedHarder() {
+        auto bright = [](float vel) {
+            Rig rig;
+            rig.send(noteOn(1, 0, bass::Tuba, 0, vel, 0.5f));
+            rig.run(0.6);
+            return rig.band(0.02, 0.1, 1000, 4000);
+        };
+        const double p = bright(0.5f), mp = bright(0.7f), ff = bright(1.0f);
+        const QString what = QStringLiteral("%1 %2 %3 dB").arg(p).arg(mp).arg(ff);
+        QVERIFY2(ff - mp > 2 * (mp - p) + 6, qPrintable(what));
+    }
+
+    // TUBA's harmonics are brass's, not a reed's: held hard, its second and
+    // fourth are no weaker than 3 dB under its third (a square's odd
+    // harmonics would put the third far over them).
+    void tubaHasBrassHarmonics() {
+        Rig rig;
+        rig.send(noteOn(1, 0, bass::Tuba, 0, 0.95f, 0.5f));
+        rig.run(0.8);
+        const double f0 = hzOf(33);
+        const double h2 = powerAt(rig, 0.3, 0.8, 2 * f0), h3 = powerAt(rig, 0.3, 0.8, 3 * f0),
+                     h4 = powerAt(rig, 0.3, 0.8, 4 * f0);
+        QVERIFY2(h2 > h3 - 3 && h4 > h3 - 3, qPrintable(QStringLiteral("h2 %1, h3 %2, h4 %3 dB").arg(h2).arg(h3).arg(h4)));
+    }
+
+    // A staccato oompah, the roots hard: each hard note's lips blat, its
+    // first 40 ms more than 6 dB brighter above 1 kHz than its body; and
+    // at full blare it scoops up into pitch from over two semitones under
+    // (still 35 cents flat in the cycle about 30 ms in, as a scoop from
+    // two semitones settling over 50 ms is), landing within 15 cents in
+    // 60 ms.
+    void tubaOompahBlatsAndScoops() {
+        Rig rig;
+        const double beat = 60.0 / 132.0;
+        for (int b = 0; b < 8; ++b) {
+            const bool hard = b % 2 == 0;
+            Command on = noteOn(1, hard ? 0 : 4, bass::Tuba, 0, hard ? 0.97f : 0.6f, 0.5f);
+            on.f[2] = 1.0f;
+            rig.send(on);
+            rig.run(0.2);
+            rig.send(noteOff(1));
+            rig.run(beat - 0.2);
+        }
+        double scoop = 0;
+        for (int b = 0; b < 8; b += 2) {
+            const double t = b * beat;
+            const double attack = bandPower(slice(rig, t + 0.005, t + 0.045), 1000, 8000),
+                         body = bandPower(slice(rig, t + 0.1, t + 0.18), 1000, 8000);
+            QVERIFY2(attack > body + 6, qPrintable(QStringLiteral("note %1: %2 against %3 dB").arg(b).arg(attack).arg(body)));
+            const auto c = cycles(rig, t, t + 0.12, 200);
+            QVERIFY(c.size() > 4);
+            // The first whole cycle the low-pass finds, about 30 ms in; the
+            // lips' wander moves each note's a little, so the four are
+            // averaged.
+            scoop += 1200 * std::log2(c.front().second / hzOf(33)) / 4;
+            double landed = 1;
+            for (const auto &cy : c)
+                if (std::fabs(1200 * std::log2(cy.second / hzOf(33))) >= 15)
+                    landed = 1;
+                else if (landed == 1)
+                    landed = cy.first - t;
+            QVERIFY2(landed < 0.06, qPrintable(QStringLiteral("note %1: in at %2 s").arg(b).arg(landed)));
+        }
+        QVERIFY2(scoop < -35, qPrintable(QStringLiteral("from %1 cents").arg(scoop)));
     }
 
     // CHIP's four-bit steps and its pulse are band-limited: an octave up,
-    // bright and with the widest pulse, what folds back between the
+    // bright, the pulse at its 50 % duty, what folds back between the
     // harmonics stays 45 dB under them. (Every sample goes into the DFT:
     // with no filter, its harmonics reach past 12 kHz, and every other
-    // sample would fold them into the band measured.)
+    // sample would fold them into the band measured.) Its pitch is the
+    // period table's, so the harmonics are of that.
     void chipStepsStayClean() {
         Rig rig;
         Command on = noteOn(1, 0, bass::Chip, 0, 0.8f, 1.0f);
         on.i[1] = 1; // A2
-        on.f[2] = 1.0f;
         rig.send(on);
         rig.run(1.0);
+        const double f0 = 1789773.0 / (32.0 * (std::round(1789773.0 / (32.0 * 110.0) - 1.0) + 1.0));
         const size_t n = 24000, from = rig.left.size() - n;
         double harmonic = 0, other = 0;
         for (double f = 1500; f < 12000; f += 4) {
@@ -1389,59 +1578,175 @@ private slots:
                 re += v * std::cos(w * double(i));
                 im += v * std::sin(w * double(i));
             }
-            const double h = f / 110.0;
-            (std::fabs(h - std::round(h)) * 110.0 < 8 ? harmonic : other) += re * re + im * im;
+            const double h = f / f0;
+            (std::fabs(h - std::round(h)) * f0 < 8 ? harmonic : other) += re * re + im * im;
         }
         const double db = 10 * std::log10(other / harmonic);
         QVERIFY2(db < -45, qPrintable(QStringLiteral("%1 dB").arg(db)));
     }
 
-    // DIDGE's mouth moves on the beat by itself: its top's level swings at
-    // the note's wobble rate (eighths), and with the twist turned up the
-    // mouth moves further, so its second formant's band (900 Hz to 2.5 kHz)
-    // swings wider.
-    void didgeMouthMovesOnTheBeat() {
-        double range[2];
+    // CHIP moves as the NES did, once a frame. Its pitch comes from the
+    // triangle's period table, so G4 sits 3.7 cents flat; the pulse starts
+    // every note thin (12.5 %, rich in its second harmonic) and is a
+    // hollow 50 % from the fifth frame (none); the twist plays the chord's
+    // notes in turn, a frame each; and an accent's first frame is two
+    // octaves up, the kick blip.
+    void chipMovesOnFrames() {
+        {
+            Rig rig;
+            Command on = noteOn(1, 6, bass::Chip, 0, 0.6f, 0.2f);
+            on.i[1] = 2; // G4
+            rig.send(on);
+            rig.run(0.6);
+            const double table = 1789773.0 / (32.0 * (std::round(1789773.0 / (32.0 * hzOf(67)) - 1.0) + 1.0));
+            const double hz = rig.pitch(0.4);
+            QVERIFY2(std::fabs(1200 * std::log2(hz / table)) < 1.2 && cents(hz, 67) < -2.5,
+                     qPrintable(QStringLiteral("%1 Hz, the table's %2").arg(hz).arg(table)));
+        }
+        {
+            Rig rig;
+            Command on = noteOn(1, 0, bass::Chip, 0, 0.8f, 1.0f);
+            on.i[1] = 1; // A2: two frames are three cycles of it
+            rig.send(on);
+            rig.run(0.5);
+            const double f0 = 110.09;
+            const double thin = powerAt(rig, 0.0, 2.0 / 60.0, 2 * f0) - powerAt(rig, 0.0, 2.0 / 60.0, 3 * f0),
+                         hollow = powerAt(rig, 0.2, 0.4, 2 * f0) - powerAt(rig, 0.2, 0.4, 3 * f0);
+            QVERIFY2(thin > hollow + 10, qPrintable(QStringLiteral("second against third: %1, then %2 dB").arg(thin).arg(hollow)));
+        }
+        {
+            // Cycle by cycle, how many land on each of the chord's notes.
+            auto chord = [](float morph) {
+                Rig rig;
+                Command on = noteOn(1, 0, bass::Chip, 0, 0.7f, 0.2f);
+                on.i[1] = 1; // A2, then C3, E3 and A3
+                on.f[2] = morph;
+                rig.send(on);
+                rig.run(0.6);
+                std::array<int, 4> count = {};
+                const double notes[4] = {45, 48, 52, 57};
+                const auto c = cycles(rig, 0.1, 0.6, 400);
+                for (const auto &cy : c)
+                    for (int k = 0; k < 4; ++k)
+                        if (std::fabs(1200 * std::log2(cy.second / hzOf(notes[k]))) < 30)
+                            ++count[size_t(k)];
+                QString seen;
+                for (int k = 0; k < 4; ++k)
+                    seen += QStringLiteral(" %1").arg(double(count[size_t(k)]) / double(c.size()), 0, 'f', 2);
+                return std::make_pair(count, seen + QStringLiteral(" of %1").arg(c.size()));
+            };
+            const auto [arp, arpSeen] = chord(1.0f);
+            const auto [plain, plainSeen] = chord(0.3f);
+            const QString what = QStringLiteral("arpeggio:%1; without:%2").arg(arpSeen, plainSeen);
+            for (int k = 0; k < 4; ++k)
+                QVERIFY2(arp[size_t(k)] >= 6, qPrintable(what));
+            QVERIFY2(plain[1] + plain[2] + plain[3] == 0 && plain[0] > 40, qPrintable(what));
+        }
+        {
+            auto blip = [](int flags) {
+                Rig rig;
+                rig.send(noteOn(1, 0, bass::Chip, flags, 0.8f, 0.2f));
+                rig.run(0.1);
+                return powerAt(rig, 0.0, 1.0 / 60.0, 4 * hzOf(33)) - powerAt(rig, 0.05, 0.1, hzOf(33));
+            };
+            const double accented = blip(bass::Accent), plain = blip(0);
+            QVERIFY2(accented > plain + 10, qPrintable(QStringLiteral("%1 against %2 dB").arg(accented).arg(plain)));
+        }
+    }
+
+    // DIDGE's mouth is the finger's: from the bottom of the field to the
+    // top its one formant moves by more than a kilohertz (800 Hz to 2 kHz);
+    // held still, it stays put (no clock moves it).
+    void didgeMouthFollowsTheFinger() {
+        double at[2];
         for (int k = 0; k < 2; ++k) {
             Rig rig;
-            Command on = noteOn(1, 0, bass::Didge, 0, 0.8f, 0.5f);
-            on.f[2] = k == 0 ? 0.0f : 1.0f;
-            rig.send(on);
-            rig.run(2.5);
-            double lo = 1e9, hi = -1e9;
-            // Windows of three whole cycles of the note, so its own wave
-            // doesn't move the reading.
-            for (double t = 0.5; t + 3.0 / 55.0 < 2.5; t += 0.02) {
-                const double v = rig.band(t, t + 3.0 / 55.0, 900, 2500);
-                lo = std::min(lo, v);
-                hi = std::max(hi, v);
-            }
-            range[k] = hi - lo;
-            if (k == 0)
-                continue;
-            std::vector<double> env;
-            for (double t = 0.5; t + 0.005 < 2.5; t += 0.005)
-                env.push_back(rig.topRms(t, t + 0.005));
-            double mean = 0;
-            for (double v : env)
-                mean += v / double(env.size());
-            double bestHz = 0, best = 0;
-            for (double hz = 1; hz < 20; hz += 0.05) {
-                double re = 0, im = 0;
-                for (size_t i = 0; i < env.size(); ++i) {
-                    const double w = 2 * M_PI * hz * 0.005 * double(i);
-                    re += (env[i] - mean) * std::cos(w);
-                    im += (env[i] - mean) * std::sin(w);
-                }
-                if (re * re + im * im > best) {
-                    best = re * re + im * im;
-                    bestHz = hz;
-                }
-            }
-            const double expect = 124.0 / 60.0 / bass::kRateBeats[3];
-            QVERIFY2(std::fabs(bestHz - expect) < 0.25, qPrintable(QStringLiteral("%1 Hz, expected %2").arg(bestHz).arg(expect)));
+            rig.send(noteOn(1, 0, bass::Didge, 0, 0.5f, k == 0 ? 0.0f : 1.0f));
+            rig.run(1.6);
+            at[k] = formantAt(rig, 0.3, 0.5, 500, 3000);
+            if (k == 1)
+                for (double t = 0.5; t < 1.5; t += 0.25)
+                    QVERIFY2(std::fabs(formantAt(rig, t, t + 0.1, 500, 3000) - at[1]) < 120,
+                             qPrintable(QStringLiteral("at %1 s: %2 Hz, was %3").arg(t).arg(formantAt(rig, t, t + 0.1, 500, 3000)).arg(at[1])));
         }
-        QVERIFY2(range[1] > range[0] + 2, qPrintable(QStringLiteral("%1 %2 dB").arg(range[0]).arg(range[1])));
+        QVERIFY2(at[0] < 950 && at[1] > 1800 && at[1] - at[0] > 1000,
+                 qPrintable(QStringLiteral("%1 Hz to %2 Hz").arg(at[0]).arg(at[1])));
+    }
+
+    // DIDGE's bore is stopped at the lips: it rings on the note's odd
+    // harmonics, the third and fifth well over the second and fourth.
+    void didgeBoreRingsOddHarmonics() {
+        Rig rig;
+        rig.send(noteOn(1, 0, bass::Didge, 0, 0.6f, 0.3f));
+        rig.run(0.8);
+        const double f0 = hzOf(33);
+        double h[6];
+        for (int k = 2; k <= 5; ++k)
+            h[k] = powerAt(rig, 0.3, 0.8, k * f0);
+        QVERIFY2(h[3] > h[2] + 6 && h[5] > h[4] + 6,
+                 qPrintable(QStringLiteral("h2 %1, h3 %2, h4 %3, h5 %4 dB").arg(h[2]).arg(h[3]).arg(h[4]).arg(h[5])));
+    }
+
+    // DIDGE's twist sings a voice into the drone that growls: half-way
+    // between the note's harmonics (one and a half, two and a half times
+    // it) there is 10 dB more with the twist turned up than without.
+    void didgeVoiceGrowls() {
+        double between[2];
+        for (int k = 0; k < 2; ++k) {
+            Rig rig;
+            Command on = noteOn(1, 0, bass::Didge, 0, 0.6f, 0.4f);
+            on.f[2] = k == 0 ? 0.3f : 1.0f;
+            rig.send(on);
+            rig.run(0.8);
+            const double f0 = hzOf(33);
+            between[k] = std::max(powerAt(rig, 0.3, 0.8, 1.5 * f0), powerAt(rig, 0.3, 0.8, 2.5 * f0)) -
+                         powerAt(rig, 0.3, 0.8, 3 * f0);
+        }
+        QVERIFY2(between[1] > between[0] + 10, qPrintable(QStringLiteral("%1, then %2 dB").arg(between[0]).arg(between[1])));
+    }
+
+    // DIDGE overblown: an accent toots a tenth up (sixteen semitones) for
+    // its first moments, then drops to the drone.
+    void didgeAccentToots() {
+        Rig rig;
+        rig.send(noteOn(1, 0, bass::Didge, bass::Accent, 1.0f, 0.4f));
+        rig.run(0.6);
+        const double toot = slice(rig, 0.03, 0.13).pitch(0.1), drone = rig.pitch(0.3);
+        QVERIFY2(std::fabs(cents(toot, 49)) < 40 && std::fabs(cents(drone, 33)) < 15,
+                 qPrintable(QStringLiteral("toot %1 Hz, drone %2 Hz").arg(toot).arg(drone)));
+    }
+
+    // DIDGE rolled is not struck again: the breath pumps on the pattern's
+    // steps (its level swings by more than 4 dB, at the steps' rate), and
+    // the note never stops.
+    void didgeRollPumpsTheBreath() {
+        Rig rig;
+        rig.send(shaper(bass::ShapeRoll, 0.5f, 4)); // ROLL: DRIVE, every sixteenth
+        rig.send(noteOn(1, 0, bass::Didge, 0, 0.7f, 0.4f));
+        rig.run(2.0);
+        QVERIFY2(rig.gateOpens.size() == 1, qPrintable(QStringLiteral("%1 strikes").arg(rig.gateOpens.size())));
+        std::vector<double> env;
+        for (double t = 0.5; t + 0.01 < 2.0; t += 0.01)
+            env.push_back(rig.topRms(t, t + 0.01));
+        const auto [lo, hi] = std::minmax_element(env.begin(), env.end());
+        QVERIFY2(*hi - *lo > 4, qPrintable(QStringLiteral("%1 dB").arg(*hi - *lo)));
+        double mean = 0;
+        for (double v : env)
+            mean += v / double(env.size());
+        double bestHz = 0, best = 0;
+        for (double hz = 2; hz < 15; hz += 0.05) {
+            double re = 0, im = 0;
+            for (size_t i = 0; i < env.size(); ++i) {
+                re += (env[i] - mean) * std::cos(2 * M_PI * hz * 0.01 * double(i));
+                im += (env[i] - mean) * std::sin(2 * M_PI * hz * 0.01 * double(i));
+            }
+            if (re * re + im * im > best) {
+                best = re * re + im * im;
+                bestHz = hz;
+            }
+        }
+        const double steps = 124.0 / 60.0 * 4;
+        QVERIFY2(std::fabs(bestHz - steps) < 0.3, qPrintable(QStringLiteral("%1 Hz, the steps %2").arg(bestHz).arg(steps)));
     }
 
 private:

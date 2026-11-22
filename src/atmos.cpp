@@ -44,14 +44,17 @@
 // is an instrument with a figure of its own. Four are struck note by note
 // from a shared pool of strikes rather than read from a table: Gamelan,
 // Balinese bronze in detuned pairs on a pelog five of the key, polos and
-// sangsih interlocking, a kempli keeping the beat and a great gong; Raga, a
+// sangsih interlocking in turns into each coming tone of the pokok, the
+// kempli, kemong, kempur and great gong marking the gongan; Raga, a
 // tanpura's four strings on the key's Sa, plucked round (Karplus-Strong,
-// the string buzzing on its curved bridge) over sympathetic strings that
-// follow the chords; Mbira, a Shona thumb piano in twelve-eight, the bass
-// tines under the left thumb; City pop, a DX electric piano on rootless
-// sevenths, ninths and elevenths, with an octave bass when the hand comps.
-// The fifth is a voice: Khoomei, Tuvan throat singing, a drone on the key's
-// tonic with a whistle that picks single overtones out of it as a melody.
+// the string buzzing on its curved bridge, the buzz climbing as the swing
+// narrows) over sympathetic strings that follow the chords; Mbira, a Shona
+// thumb piano in twelve-eight round a cycle of forty-eight pulses, long
+// bass tines under the left thumb, its caps rattling; City pop, a DX
+// electric piano on rootless sevenths, ninths and elevenths, with a
+// fingered bass, a shaker and a rim when the hand comps. The fifth is a
+// voice: Khoomei, Tuvan throat singing, a drone on the key's tonic with a
+// breathing whistle that picks single overtones out of it as a melody.
 
 #include <QFontMetricsF>
 #include <QJsonArray>
@@ -98,15 +101,18 @@ constexpr int kFamilies = 5;
 // a pad that is an instrument played rather than a tone held: Gamelan (a
 // Balinese gong kebyar's bronze metallophones in pairs tuned apart, so every
 // note shimmers, on a five-note pelog of the key, struck in interlocking
-// figures over a kempli's beat, and a great gong closing every four bars),
-// Raga (a tanpura's four strings fixed on the key's Sa, plucked round and
-// round and buzzing on their bridge, sympathetic strings ringing to the
-// chords), Mbira (Shona thumb piano: bass tines under the left thumb, high
-// ones under the right, in a lilting twelve-eight, bottle caps rattling,
+// figures that anticipate the core melody, over a kempli's beat, the
+// smaller gongs through the cycle and a great gong closing every four
+// bars), Raga (a tanpura's four strings fixed on the key's Sa, plucked
+// round and round, their buzz sweeping up the harmonics as they die,
+// sympathetic strings ringing to the chords), Mbira (Shona thumb piano:
+// bass tines under the left thumb, high ones under the right, in a lilting
+// twelve-eight round a harmonic cycle of its own, bottle caps rattling,
 // inside a gourd), City pop (a DX electric piano on rootless sevenths,
 // ninths and elevenths, through a stereo tremolo and a chorus, comping over
-// an octave bass: Tokyo, 1982) and Khoomei (Tuvan throat singing: one
-// voice holding the tonic, its overtones sung one at a time as a whistle).
+// a fingered bass, a cocktail shaker and a rim: Tokyo, 1982) and Khoomei
+// (Tuvan throat singing: one voice holding the tonic, its overtones sung
+// one at a time as a breathing whistle).
 // A layer's style travels in its On, so a loop replays it as it was played.
 enum Style : int { Classic = 0, Neon, Dub, Tape, Gamelan, Raga, Mbira, CityPop, Khoomei, kStyles };
 // The styles whose pad is struck or plucked note by note, from the pool of
@@ -242,8 +248,9 @@ const TimbreDef kTimbreDef[kTimbres] = {
     {1, 4, 9.0f, 0.8f},   // PadTape: a few cents of spread, an old instrument's
     // PadThroat: a single voice, so its harmonics are lines (a cent of
     // jitter) narrow enough that a resonance can pick out one of them alone.
-    // From C2: kargyraa sings down there.
-    {0, 3, 1.0f, 1.0f},
+    // (Kargyraa is the same voice with its false folds under it, so it
+    // needs no table of its own an octave down.)
+    {1, 3, 1.0f, 1.0f},
 };
 
 // Harmonic h's amplitude, at hz.
@@ -584,9 +591,12 @@ inline float sinTurns(float x) {
 // piano, a DX electric piano instead: two detuned pairs of operators at
 // 1:1, the body of the note, and a third carrier whose modulator runs
 // fourteen times faster and dies in a twelfth of a second, the tine's
-// metallic bark. For the mbira a buzz, noise rattled by the tine's own swing
-// as bottle caps on its soundboard are; for the ceng-ceng a burst of hiss
-// through a bright band. The pool is the engine's, shared by every voice; a
+// metallic bark. For the mbira a rattle: the bottle caps (or shells) on its
+// soundboard, three small metal resonators each struck when the tine
+// swings up past the point where they lie on it, so they chatter at the
+// tine's own rate while it swings wide and fall silent as it narrows; for
+// the ceng-ceng a clash and a ring of bright hiss, choked by the player's
+// hands. The pool is the engine's, shared by every voice; a
 // strike sounds for as long as its voice's envelope lets it, and a voice's
 // next strike from the same hand damps its last, as a gangsa player's hand
 // does.
@@ -603,10 +613,16 @@ struct Strike {
     float phA = 0, phB = 0, ph = 0, incA = 0, incB = 0, inc = 0;
     float index = 0, indexDec = 1, indexFloor = 0, bark = 0, barkDec = 1, barkAmp = 0, barkAmpDec = 1;
     float fmAmp = 0, fmDec = 1;
-    float buzz = 0;
-    Svf buzzF;
-    float hiss = 0, hissDec = 1;
-    Svf hissF;
+    // The rattle: how hard the caps are struck, how far up the tine's swing
+    // they lie (on its fundamental's scale) and where the swing was a
+    // sample ago, and the caps.
+    float buzz = 0, capAt = 0, capWas = 0;
+    Svf cap[3];
+    // The ceng-ceng: the clash (a millisecond of it), the ring after it, its
+    // two bands, and the samples left until the hands choke it.
+    float clash = 0, clashDec = 1, hiss = 0, hissDec = 1;
+    Svf hissF, hissF2;
+    int choke = -1;
     float att = 0, attInc = 1, damp = 1, gain = 0, gl = 0.7f, gr = 0.7f;
     float x = 0, y = 0, shown = 0; // where it shows on the page, and how bright
     // Adds partial ratio × hz, amplitude a, an e-fold time of tau seconds.
@@ -632,11 +648,21 @@ struct Strike {
 // the string's displacement is pushed back (softly, over a little knee),
 // and only one way, never the other. It only ever takes energy away, so
 // the loop stays stable, but it takes it from the fundamental's peaks and
-// gives it to the overtones, every period, for as long as the string swings
-// wide enough to reach the bridge: the buzz blooms with the pluck and thins
-// as the string dies away under the bridge's height, the way the real one
-// does. Toward the jawari end of the column the bridge is set higher (the
-// cotton thread under the string, moved), so it touches for longer.
+// gives it to the overtones, every period. Because the bridge is curved,
+// where the string lies on it depends on how wide it swings: a fresh
+// pluck wraps a long stretch of the curve for a long part of each period,
+// and as the swing narrows it only grazes it, for a shorter and shorter
+// moment. The bridge's height follows the string's swing (its spread about
+// its own middle, over a few periods), set so the string is on the curve
+// for the share of the period the swing calls for. What the bridge gives
+// back each time the string lies on it is a pulse as long as the contact:
+// a pulse a seventh of a period long carries the harmonics up to about the
+// seventh, one a twentieth long up to the twentieth. So the buzz, that
+// pulse heard through a band around the harmonics it carries, climbs as
+// the string dies away, from about the fifth harmonic to past the
+// twentieth: the tanpura's sweep, the thing that makes it sound alive.
+// Toward the jawari end of the column it pushes back harder and its buzz
+// is louder (the cotton thread under the string, moved).
 struct TanString {
     float *buf = nullptr;
     uint32_t mask = 0, w = 0;
@@ -647,11 +673,23 @@ struct TanString {
     Svf exF; // the pluck's low-pass
     float level = 0; // a slow follower of what it sounds, for the page
     float bridge = 1, jaw = 0; // where the string meets the jawari, and how hard it pushes back
+    // The swing (the string's spread about its middle, followed over a few
+    // periods: the middle, the mean square, how fast), the widest it has
+    // been since the pluck, how long the contact is when it is widest (a
+    // share of the period) and how long now, and how loud its buzz is.
+    float mid = 0, spread = 0, follow = 0.01f, swing = 0, peak = 0, contact = 0.13f, share = 0.13f, buzz = 0;
+    Svf buzzF, buzzLp, buzzLp2; // the band the contact's pulse is heard through, round the harmonics it carries, and its top dulled
+    Svf dc;    // under the string's fundamental: what the one-sided bridge leaves there, out
     bool stilled = false;      // damped, its note gone, until its next pluck retunes it
     void clear() {
         if (buf)
             std::fill(buf, buf + mask + 1, 0.0f);
         z = 0;
+        mid = spread = swing = peak = 0;
+        buzzF.reset();
+        buzzLp.reset();
+        buzzLp2.reset();
+        dc.reset();
     }
 };
 
@@ -840,14 +878,29 @@ struct Voice {
     bool hit = false;
     int64_t figStep = INT64_MIN, cycleFrom = 0;
     int lastStrike[4] = {-1, -1, -1, -1};
+    // A City pop pad's bass player's ear: the roots it has heard in order,
+    // how many, the sixteenth of the last change and how long the one
+    // before took, whether the next root is to be slid into, and the root
+    // its last approach aimed at.
+    int bassRoots[8] = {};
+    int bassN = 0, bassPeriod = 0, bassAimed = -999;
+    int64_t bassLast = INT64_MIN;
+    bool bassSlide = false;
+    // A Gamelan pad's angsel: armed, and the sixteenth its break began.
+    bool angselArmed = true;
+    int64_t angselFrom = INT64_MIN;
     float trem = 0, tremDepth = 0;
     TanString str[4];
     // A Khoomei pad's singer: the voice's phase in its table and its pitch
     // (MIDI, gliding), the overtone the whistle sits on (a harmonic number,
     // gliding) and the one it is going to, the step of the melody it last
-    // sang, and how loud the whistle is now, for the page.
-    uint32_t thPhase = 0, thPhase2 = 0;
+    // sang, and how loud the whistle is now, for the page; the breath's
+    // wavering (two slow phases and a wander), and the scoops still to
+    // come up out of (the voice's, in semitones, the whistle's, in
+    // overtones).
+    uint32_t thPhase = 0;
     float thMidi = 0, whistle = 8, whistleTo = 8, whistleShown = 0, thSub = 0, thFlick = 0, thFlickLeft = 0;
+    float thBreath = 0, thBreath2 = 0, thWander = 0, thScoop = 0, thWhistleScoop = 0;
     int64_t thStep = INT64_MIN;
     Slot notes[kSlots];
     Svf lpL, lpR, fL[3], fR[3], bodyL, bodyR, rainL, rainR, crackle;
@@ -1335,7 +1388,12 @@ public:
         m_taraf.init(rate);
         m_gourd.init(rate);
         m_valley.init(rate);
-        m_buzz.set(3300.0f, 0.9f, rate);
+        // (The caps: inharmonic to one another and to any tine, rung briefly.)
+        m_caps[0].set(2350.0f, 14.0f, rate);
+        m_caps[1].set(3650.0f, 16.0f, rate);
+        m_caps[2].set(5150.0f, 18.0f, rate);
+        m_bassHp1.set(38.0f, 0.54f, rate);
+        m_bassHp2.set(38.0f, 1.31f, rate);
         m_pluckLp.set(5000.0f, 0.7f, rate);
         // Every voice's four tanpura strings, room enough for the lowest a
         // tanpura is tuned to here (an octave under the pad's floor).
@@ -1887,6 +1945,12 @@ private:
         v.hit = v.family == Pad && struckPad(v.style);
         v.figStep = INT64_MIN;
         v.cycleFrom = INT64_MIN;
+        v.angselArmed = false; // (a pad laid down already twisted plays on; the break is for the twist)
+        v.angselFrom = INT64_MIN;
+        v.bassN = v.bassPeriod = 0;
+        v.bassAimed = -999;
+        v.bassLast = INT64_MIN;
+        v.bassSlide = false;
         for (int &k : v.lastStrike)
             k = -1;
         v.trem = 0;
@@ -1903,11 +1967,13 @@ private:
         // (Not draws of their own: the classic layers' random sequence
         // stays as it was.)
         v.thPhase = 0;
-        v.thPhase2 = 0x5A5A5A5Au;
         v.thMidi = 0;
         v.whistle = v.whistleTo = 8;
         v.whistleShown = v.thSub = v.thFlick = v.thFlickLeft = 0;
         v.thStep = INT64_MIN;
+        // The singer comes up into the first note from under it.
+        v.thBreath = 0, v.thBreath2 = 0.37f, v.thWander = 0;
+        v.thScoop = 1, v.thWhistleScoop = 0;
         setTargets(v, c);
         for (int j = 0; j < 5; ++j)
             v.cur[j] = v.tgt[j];
@@ -2580,7 +2646,8 @@ private:
         st->ownerId = v.id;
         st->style = v.style;
         st->delay = delay;
-        copyCoefficients(st->buzzF, m_buzz);
+        for (int k = 0; k < 3; ++k)
+            copyCoefficients(st->cap[k], m_caps[k]);
         return *st;
     }
     // Stops a strike within about tau seconds: every partial decays at
@@ -2591,6 +2658,7 @@ private:
             st.dec[k] = std::min(st.dec[k], d);
         st.fmDec = std::min(st.fmDec, d);
         st.hissDec = std::min(st.hissDec, d);
+        st.clashDec = std::min(st.clashDec, d);
     }
     // Damps every strike of voice v, or with hand >= 0 only that hand's.
     void dampVoice(const Voice &v, float tau, int hand = -2) {
@@ -2745,15 +2813,25 @@ private:
         case Gamelan: {
             // The bronze plays the key's pelog five, not the chord: the
             // chord only moves the pokok, the core melody, to the five's
-            // tone nearest its root. Pokok, a note a beat; norot, each note
-            // of it alternated with the one above, in eighths, the sangsih
-            // doubling it a step higher on the beat; kotekan, sixteenths in
-            // two composed parts, the polos on the pokok and the tone above
-            // it and the sangsih mostly on the two above that, each with rests the
-            // other fills and a few notes where both sound, so neither plays
-            // a whole line alone. Twisted anticlockwise, a level busier, and
-            // at kotekan the ceng-ceng's cymbals join. A kempli marks every
-            // beat; every four bars the great gong.
+            // tone nearest its root. The pokok walks a sixteen-beat
+            // contour, one gongan: home on the gong, out and back by the
+            // half (the kempur) and home again. Everything above it
+            // elaborates where it is going, not where it is, the way
+            // Balinese figuration anticipates: norot alternates the coming
+            // pokok tone with the key above it in eighths, the sangsih
+            // doubling the beat; kotekan, sixteenths in two parts, is a
+            // turn into the coming tone (from under it as the pokok
+            // rises, from over it as it falls, round it as it stays),
+            // split by register as kotekan is: the polos takes the notes
+            // on and under the coming tone, the sangsih those over it,
+            // and both strike the beat (the sangsih three keys up), so
+            // neither plays a whole line alone and together they never
+            // stop. Twisted anticlockwise, a level busier, and at kotekan
+            // the ceng-ceng join; twisted past three quarters, the
+            // ensemble plays an angsel once: a break, three accents
+            // together and a beat of silence. The colotomy: the kempli on
+            // every beat, the kemong at the quarters, the kempur at the
+            // half, the great gong at the end of every gongan.
             int per = colour < 0.33f ? 1 : colour < 0.66f ? 2 : 4;
             const bool ceng = per == 4 && pulse > 0.3f;
             if (pulse > 0.3f)
@@ -2770,13 +2848,13 @@ private:
                         bronze[nb++] = m;
                 }
             // The pokok's home: the lowest bronze whose tone is nearest the
-            // chord's root, low enough that the kotekan's three tones above
-            // it are there.
+            // chord's root, low enough that the kotekan's keys round it
+            // are there.
             int home = 0;
             {
                 const float rootPc = float(h.midi(m_bed.root, 0));
                 float best = 99;
-                for (int i = 0; i < std::max(1, nb - 3); ++i) {
+                for (int i = 1; i < std::max(2, nb - 4); ++i) {
                     float d = std::fmod(std::fabs(bronze[i] - rootPc), 12.0f);
                     d = std::min(d, 12.0f - d);
                     if (d < best - 0.01f)
@@ -2784,39 +2862,87 @@ private:
                 }
             }
             auto bar = [&](int i) { return bronze[std::clamp(home + i, 0, nb - 1)]; };
-            if (nb > 0 && playing && stepIn(per, step, at)) {
-                constexpr int R = -9; // a rest
-                static const int kPokok[8] = {0, 1, 2, 1, 0, 1, -1, 0};
-                // Polos and sangsih, two eight-step halves each.
-                static const int kPolos[16] = {1, 0, R, 0, 1, R, 1, 0, 1, R, 0, 1, R, 0, 1, R};
-                static const int kSangsih[16] = {3, R, 2, 3, R, 2, R, 3, 2, 3, R, 2, 1, R, 3, 2};
-                const float accent = step % per == 0 ? 1.0f : 0.8f;
+            // The pokok, a tone a beat over the gongan, as keys from home.
+            static const int kPokok[16] = {0, 1, 2, 1, 2, 3, 2, 1, 0, 1, 0, -1, 0, 2, 1, 0};
+            auto pokok = [&](int64_t beat) { return kPokok[((beat % 16) + 16) % 16]; };
+            // The angsel: armed while the twist is under two thirds, set off
+            // once as it passes three quarters, from the next beat: accents
+            // on the first, fourth and seventh sixteenths, then silence to
+            // the third beat.
+            if (pulse < 0.66f)
+                v.angselArmed = true;
+            int64_t sixteenth = 0;
+            int atSixteenth = 0;
+            const bool onSixteenth = stepIn(4, sixteenth, atSixteenth);
+            if (v.angselArmed && pulse > 0.75f && onSixteenth && nb > 0 && playing) {
+                v.angselArmed = false;
+                v.angselFrom = (sixteenth / 4 + 1) * 4;
+            }
+            const int64_t inAngsel = onSixteenth && v.angselFrom != INT64_MIN ? sixteenth - v.angselFrom : -1;
+            if (inAngsel >= 0 && inAngsel < 12) {
+                if (playing && nb > 0) {
+                    const int T = pokok(v.angselFrom / 4 + 1);
+                    if (inAngsel == 0 || inAngsel == 3 || inAngsel == 6) {
+                        if (inAngsel == 0)
+                            dampVoice(v, 0.03f, 0), dampVoice(v, 0.03f, 1);
+                        const float vel = (1.1f + 0.3f * press) * level;
+                        strikeBronze(v, bar(T), vel, 0, atSixteenth, 1.0f, -0.45f);
+                        strikeBronze(v, bar(T + 3), 0.92f * vel, 1, atSixteenth, 1.0f, 0.45f);
+                        strikeCeng(v, level, atSixteenth);
+                    } else if (inAngsel == 8) {
+                        // (The hands stop the bronze: the silence is the break.)
+                        dampVoice(v, 0.04f, 0), dampVoice(v, 0.04f, 1);
+                    }
+                }
+            } else if (nb > 0 && playing && stepIn(per, step, at)) {
+                const int64_t beat = step / per;
+                const int k = int(step % per);
+                const int C = pokok(beat), T = pokok(beat + 1);
+                const float accent = k == 0 ? 1.0f : 0.8f;
                 const float vel = accent * (0.8f + 0.4f * press) * level;
                 if (per == 1) {
-                    strikeBronze(v, bar(kPokok[step & 7]), vel, 2, at, 2.6f, 0.0f);
+                    strikeBronze(v, bar(C), vel, 2, at, 2.6f, 0.0f);
                 } else if (per == 2) {
-                    strikeBronze(v, bar(int(step & 1) ? 0 : 1), vel, 0, at, 1.6f, -0.45f);
-                    if ((step & 1) == 0)
-                        strikeBronze(v, bar((step & 2) ? 1 : 2), 0.7f * vel, 1, at, 1.6f, 0.45f);
+                    if (k == 0) {
+                        strikeBronze(v, bar(C), vel, 0, at, 1.6f, -0.45f);
+                        strikeBronze(v, bar(C + 1), 0.7f * vel, 1, at, 1.6f, 0.45f);
+                    } else {
+                        strikeBronze(v, bar(T + 1), vel, 0, at, 1.6f, -0.45f);
+                    }
                 } else {
-                    const int k = int(step & 15);
-                    if (kPolos[k] != R)
-                        strikeBronze(v, bar(kPolos[k]), vel, 0, at, 1.3f, -0.45f);
-                    if (kSangsih[k] != R)
-                        strikeBronze(v, bar(kSangsih[k]), 0.92f * vel, 1, at, 1.3f, 0.45f);
+                    // The turn into T over the beat's last three sixteenths.
+                    static const int kUp[3] = {-1, 0, 1}, kDown[3] = {1, 2, 1}, kSame[3] = {1, 0, -1};
+                    if (k == 0) {
+                        strikeBronze(v, bar(C), vel, 0, at, 1.3f, -0.45f);
+                        strikeBronze(v, bar(C + 3), 0.85f * vel, 1, at, 1.3f, 0.45f);
+                    } else {
+                        const int *turn = T > C ? kUp : T < C ? kDown : kSame;
+                        const int off = turn[k - 1];
+                        if (off <= 0)
+                            strikeBronze(v, bar(T + off), vel, 0, at, 1.3f, -0.45f);
+                        else
+                            strikeBronze(v, bar(T + off), 0.92f * vel, 1, at, 1.3f, 0.45f);
+                    }
                     // The ceng-ceng: a pair of small cymbal sets crashed in an
                     // off-beat ostinato, the busiest the ensemble gets.
-                    if (ceng && ((0xEAEAu >> uint32_t(k)) & 1u))
+                    if (ceng && ((0xEAEAu >> uint32_t(step & 15)) & 1u))
                         strikeCeng(v, (k & 1 ? 0.8f : 1.0f) * level, at);
                 }
             }
             // The kempli on every beat: a small damped gong, the one that
-            // keeps the ensemble together.
+            // keeps the ensemble together; the kemong at the gongan's
+            // quarters, the kempur at its half.
             {
                 const double b0 = tr.beat, b1 = tr.beatAt(n);
-                if (nb > 0 && playing && std::floor(b1) > std::floor(b0))
-                    strikeKempli(v, h, deg, nd, (per == 1 ? 0.6f : 1.0f) * level,
-                                 std::clamp(tr.offsetOf(std::floor(b1), n), 0, n - 1));
+                if (nb > 0 && playing && std::floor(b1) > std::floor(b0)) {
+                    const int bat = std::clamp(tr.offsetOf(std::floor(b1), n), 0, n - 1);
+                    strikeKempli(v, h, deg, nd, (per == 1 ? 0.6f : 1.0f) * level, bat);
+                    const int64_t beat = int64_t(std::floor(b1)) % 16;
+                    if (beat == 8)
+                        strikeKempur(v, h, level, bat);
+                    else if (beat == 4 || beat == 12)
+                        strikeKemong(v, h, deg, nd, level, bat);
+                }
             }
             // The gong opens the piece as the layer lands, unless it has
             // just sounded, and closes every four bars. A chord change never
@@ -2834,54 +2960,70 @@ private:
             break;
         }
         case Mbira: {
-            // Twelve-eight: three pulses a beat. The kushaura, the lead
-            // part: the left thumb on the beat, on the bass tines (the
-            // chord's root, fifth and third from G2 up), the right thumb
-            // the pulse after, high; the third pulse rests, the lilt.
-            // Twisted anticlockwise the kutsinhira joins, a second mbira
-            // with a part of its own, one pulse later throughout: its bass
-            // on the second pulse and its treble on the third, so the two
-            // interlock into an unbroken stream, the bass line between them.
+            // Twelve-eight: three pulses a beat, and a cycle of forty-eight
+            // (four phrases of twelve), with its own harmony as an mbira
+            // piece has: twelve chords of four pulses each, so the bass's
+            // changes fall across the beat (four against three, the
+            // music's drive). They move by the key's steps round the
+            // app's chord, Nhemamusasa's way: home twice and a third up,
+            // home twice and a fifth up, the sixth twice and a third up,
+            // the sixth twice and a fifth up. The kushaura, the lead part:
+            // the left thumb on the beat, on the bass tines (the chord's
+            // root, fifth and third from G2 up), the right thumb the pulse
+            // after, high; the third pulse rests, the lilt. Twisted
+            // anticlockwise the kutsinhira joins, a second mbira with a
+            // part of its own, one pulse later throughout: its bass on the
+            // second pulse and its treble on the third, so the two
+            // interlock into an unbroken stream, the bass line between
+            // them, and the long bass tines overlap into one cloud.
             if (nn > 0 && playing && stepIn(3, step, at)) {
-                float bass[3];
-                {
-                    float r = float(h.midi(m_bed.root, 0));
-                    while (r >= 55.0f)
-                        r -= 12.0f;
-                    while (r < 43.0f)
-                        r += 12.0f;
-                    float fifth = r + 7.0f, third = r + 4.0f;
-                    for (int i = 0; i < m_bed.count; ++i) {
-                        float m = float(h.midi(m_bed.tones[i], 0));
-                        while (m < r + 0.5f)
-                            m += 12.0f;
-                        while (m >= r + 12.0f)
+                static const int kChord[12] = {0, 0, 2, 0, 0, 4, 5, 5, 2, 5, 5, 4};
+                const int per = h.tuning.degreesPerOctave();
+                // A chord of the cycle at pulse p: its root, fifth and third
+                // on the bass tines, and its tones up in the treble.
+                auto chordAt = [&](int64_t p, float *bass, float *treble, int &nt) {
+                    const int root = m_bed.root + kChord[((p % 48) + 48) % 48 / 4];
+                    const int tones[3] = {root, root + 4, root + 2};
+                    for (int k = 0; k < 3; ++k) {
+                        float m = float(h.midi(tones[k], 0));
+                        while (m >= 55.0f)
                             m -= 12.0f;
-                        if (m_bed.fifth && m_bed.tones[i] == m_bed.fifthDegree)
-                            fifth = m;
-                        else if (m_bed.tones[i] != m_bed.root)
-                            third = m;
+                        while (m < 43.0f)
+                            m += 12.0f;
+                        bass[k] = m;
                     }
-                    bass[0] = r, bass[1] = m_bed.fifth ? fifth : third, bass[2] = third;
-                }
-                static const int kBassA[8] = {0, 1, 0, 2, 0, 1, 2, 0};
-                static const int kHighA[8] = {3, 2, 4, 3, 2, 3, 4, 2};
-                static const int kBassB[8] = {2, 0, 1, 0, 2, 0, 1, 1};
-                static const int kHighB[8] = {1, 3, 2, 4, 1, 2, 3, 4};
-                const int pos = int(step % 3), beat = int((step / 3) & 7);
+                    nt = 0;
+                    for (int o = -1; o <= 6 && nt < 8; ++o)
+                        for (int k : {0, 2, 4}) {
+                            const float m = float(h.midi(root + k + per * o, 0));
+                            if (m >= P - 0.01f && m <= P + fs.span && nt < 8)
+                                treble[nt++] = m; // (low to high: octave by octave, the triad up each)
+                        }
+                };
+                static const int kBassA[16] = {0, 1, 0, 2, 0, 1, 2, 0, 0, 1, 0, 2, 0, 2, 1, 0};
+                static const int kHighA[16] = {3, 2, 4, 3, 2, 3, 4, 2, 3, 4, 2, 3, 4, 3, 2, 1};
+                static const int kBassB[16] = {2, 0, 1, 0, 2, 0, 1, 1, 2, 0, 1, 0, 1, 0, 2, 0};
+                static const int kHighB[16] = {1, 3, 2, 4, 1, 2, 3, 4, 2, 1, 3, 2, 4, 2, 3, 1};
+                const int pos = int(step % 3), beat = int((step / 3) & 15);
+                float bass[3], treble[8];
+                int nt = 0;
+                chordAt(step, bass, treble, nt);
+                auto high = [&](int i) { return treble[std::clamp(i, 0, std::max(0, nt - 1))]; };
                 const float pv = (0.8f + 0.4f * press) * level;
                 auto jitter = [&] { return 0.9f + 0.2f * v.rng.unit(); };
-                if (pos == 0)
-                    strikeTine(v, bass[kBassA[beat]], jitter() * pv, colour, at, -0.3f, 0.0f);
-                else if (pos == 1)
-                    strikeTine(v, note(kHighA[beat]), 0.72f * jitter() * pv, colour, at, -0.1f, 0.0f);
-                if (pulse > 0.3f) {
-                    // (The second instrument is never quite in tune with the
-                    // first: four cents apart, and further right.)
-                    if (pos == 1)
-                        strikeTine(v, bass[kBassB[beat]], 0.75f * jitter() * pv, colour, at, 0.45f, 0.04f);
-                    else if (pos == 2)
-                        strikeTine(v, note(kHighB[beat]), 0.6f * jitter() * pv, colour, at, 0.55f, 0.04f);
+                if (nt > 0) {
+                    if (pos == 0)
+                        strikeTine(v, bass[kBassA[beat]], jitter() * pv, colour, at, -0.3f, 0.0f);
+                    else if (pos == 1)
+                        strikeTine(v, high(kHighA[beat]), 0.72f * jitter() * pv, colour, at, -0.1f, 0.0f);
+                    if (pulse > 0.3f) {
+                        // (The second instrument is never quite in tune with the
+                        // first: four cents apart, and further right.)
+                        if (pos == 1)
+                            strikeTine(v, bass[kBassB[beat]], 0.75f * jitter() * pv, colour, at, 0.45f, 0.04f);
+                        else if (pos == 2)
+                            strikeTine(v, high(kHighB[beat]), 0.6f * jitter() * pv, colour, at, 0.55f, 0.04f);
+                    }
                 }
             }
             break;
@@ -2893,13 +3035,33 @@ private:
             // and of three, then the bar after on its "a" of one, the "and"
             // of two and a push on the "and" of four that ties over the bar
             // line), the hand lifting a sixteenth before each hit so the
-            // chords are short; and under it the bass the voicing leaves
-            // out, the root in muted octaves, bouncing on the sixteenths.
+            // chords are short. Under it a fingered bass on the root the
+            // voicing leaves out: a two-bar line of sixteenths with ghost
+            // notes between the notes, the fifth and the seventh, the
+            // octave popped now and then, and a chromatic approach into
+            // every bar line, into the coming chord when the player can
+            // tell what it will be (it has heard the progression go round
+            // once, and the changes come as often as they did) and into the
+            // root again when not; a change it did not see coming it
+            // slides into from a half step under. And the pocket: a
+            // cocktail shaker on swung sixteenths, a rim on two and four.
             float voicing[5];
             const int nv = epVoicing(h, P, voicing);
             bool strike = (v.hit || newChord) && nv > 0 && playing;
             v.hit = false;
             const bool band = pulse > 0.3f;
+            if (newChord) {
+                // What the bass player hears: the roots in order, and how
+                // long each change came after the last, in sixteenths.
+                const int64_t now16 = int64_t(std::floor(tr.beat * 4.0));
+                if (v.bassLast != INT64_MIN)
+                    v.bassPeriod = int(std::clamp<int64_t>(now16 - v.bassLast, 0, 64));
+                v.bassLast = now16;
+                v.bassSlide = band && v.bassAimed != m_bed.root;
+                v.bassAimed = -999;
+                if (v.bassN == 0 || v.bassRoots[(v.bassN - 1) & 7] != m_bed.root)
+                    v.bassRoots[v.bassN++ & 7] = m_bed.root;
+            }
             if (band && nv > 0 && playing && stepIn(4, step, at)) {
                 constexpr uint32_t kComp = (1u << 0) | (1u << 6) | (1u << 10) | (1u << 19) | (1u << 22) | (1u << 30);
                 const int k = int(step & 31);
@@ -2908,28 +3070,88 @@ private:
                 if ((kComp >> uint32_t((k + 1) & 31)) & 1u)
                     dampVoice(v, 0.04f, 0);
                 v.figStep = step;
-                // The bass: 0 the root low, 1 its octave, 2 the fifth, -1 rest.
-                static const int kBass[32] = {0, -1, 1, 0, -1, -1, 1, -1, 0, -1, 1, 0, -1, -1, 1, -1,
-                                              0, -1, 1, 0, -1, -1, 1, -1, 0, -1, 2, 1, -1, -1, 1, -1};
-                if (kBass[k] >= 0) {
-                    float r = float(h.midi(m_bed.root, 0));
+                // The bass, two bars of sixteenths: R the root, O its octave
+                // popped, F the fifth, S the seventh (or the third), G a
+                // ghost, A the approach, M a mute (the hand stops the
+                // string), and rests.
+                enum { R, O, F, S, G, A, M, _ };
+                static const int kBass[32] = {R, _, G, R, _, R, O, G, R, _, F, G, S, G, F, A,
+                                              R, G, _, R, M, F, O, G, R, _, S, G, F, M, O, A};
+                const int code = kBass[k];
+                auto bassOf = [&](int degree) {
+                    float r = float(h.midi(degree, 0));
                     while (r >= 52.0f)
                         r -= 12.0f;
                     while (r < 40.0f)
                         r += 12.0f;
-                    float m = kBass[k] == 1 ? r + 12.0f : r;
-                    if (kBass[k] == 2)
-                        for (int i = 0; i < m_bed.count; ++i)
-                            if (m_bed.fifth && m_bed.tones[i] == m_bed.fifthDegree) {
-                                m = float(h.midi(m_bed.tones[i], 0));
-                                while (m < r)
-                                    m += 12.0f;
-                                while (m >= r + 12.0f)
-                                    m -= 12.0f;
+                    return r;
+                };
+                const float r = bassOf(m_bed.root);
+                auto above = [&](float m) {
+                    while (m < r + 0.5f)
+                        m += 12.0f;
+                    while (m >= r + 12.0f)
+                        m -= 12.0f;
+                    return m;
+                };
+                const float drive = (0.85f + 0.3f * press) * level;
+                const float accent = k % 4 == 0 ? 1.0f : 0.8f;
+                // (The sixteenths between the eighths come late: the swing
+                // the bass and the shaker share.)
+                const int when = at + ((k & 1) ? int(0.12 * tr.samplesPerBeat() / 4.0) : 0);
+                if (code == M) {
+                    dampVoice(v, 0.02f, 3);
+                } else if (code == A) {
+                    // The coming root, if the change is due on the next
+                    // sixteenth and the progression has been heard before.
+                    int target = m_bed.root;
+                    const int64_t next16 = step + 1;
+                    if (v.bassPeriod > 0 && v.bassLast != INT64_MIN && next16 - v.bassLast == v.bassPeriod && v.bassN >= 2) {
+                        for (int back = 2; back <= std::min(8, v.bassN); ++back)
+                            if (v.bassRoots[(v.bassN - back) & 7] == m_bed.root) {
+                                target = v.bassRoots[(v.bassN - back + 1) & 7];
+                                break;
                             }
-                    const float accent = k % 4 == 0 ? 1.0f : kBass[k] == 1 ? 0.8f : 0.7f;
-                    strikeBass(v, m, accent * (0.85f + 0.3f * press) * level, at);
+                    }
+                    v.bassAimed = target;
+                    const float t = bassOf(target);
+                    strikeBass(v, (k == 15 ? t - 1.0f : t + 1.0f), 0.75f * drive, when, 0);
+                } else if (code != _) {
+                    float m = r;
+                    int kind = 0;
+                    if (code == O)
+                        m = r + 12.0f, kind = 2;
+                    else if (code == G)
+                        kind = 1;
+                    else if (code == F) {
+                        m = r + 7.0f;
+                        if (m_bed.fifth)
+                            m = above(float(h.midi(m_bed.fifthDegree, 0)));
+                    } else if (code == S) {
+                        m = r + 10.0f;
+                        bool found = false;
+                        for (int i = 0; i < m_bed.count && !found; ++i) {
+                            const float iv = above(float(h.midi(m_bed.tones[i], 0))) - r;
+                            if (iv > 9.5f && iv < 11.5f)
+                                m = r + iv, found = true;
+                        }
+                        if (!found)
+                            for (int i = 0; i < m_bed.count; ++i) {
+                                const float iv = above(float(h.midi(m_bed.tones[i], 0))) - r;
+                                if (iv > 2.5f && iv < 4.5f)
+                                    m = r + iv;
+                            }
+                    }
+                    const float vel = kind == 1 ? 0.45f : kind == 2 ? 0.95f : accent;
+                    strikeBass(v, m, vel * drive, when, kind, v.bassSlide && code == R);
+                    if (code == R)
+                        v.bassSlide = false;
                 }
+                // The pocket: the shaker on every sixteenth, the ones between
+                // the eighths late (swung) and soft; the rim on two and four.
+                strikeShaker(v, ((k & 1) ? 0.55f : (k & 2) ? 0.8f : 1.0f) * level, when);
+                if ((k & 7) == 4)
+                    strikeRim(v, (0.9f + 0.2f * press) * level, at);
             } else if (strike) {
                 at = 0;
             }
@@ -2938,11 +3160,14 @@ private:
             if (strike) {
                 dampVoice(v, 0.08f, 0);
                 const float hard = 0.35f + 0.65f * press;
+                // (With the band the hand comps lighter: the chords come
+                // often, and the bass and the pocket fill the rest.)
+                const float comp = band ? 0.6f : 1.0f;
                 for (int k = 0; k < nv; ++k) {
                     // A hand rolls a chord a little, low to high (and the
                     // barks don't all land on one sample).
                     const int roll = at + k * int(0.006f * m_rate);
-                    strikeEP(v, voicing[k], hard, (0.85f + 0.3f * press) * level / std::sqrt(float(nv)) * 1.6f, colour, roll,
+                    strikeEP(v, voicing[k], hard, comp * (0.85f + 0.3f * press) * level / std::sqrt(float(nv)) * 1.6f, colour, roll,
                              0.5f * (float(k) / std::max(1, nv - 1) - 0.5f));
                 }
             }
@@ -2992,28 +3217,72 @@ private:
     }
     // The gong ageng, on the key's tonic in the lowest octave there is
     // (about 40 to 70 Hz): a padded beater, so the hum blooms rather than
-    // starts, a second of the fundamental beating slowly against it, the
-    // hum's octave and an inharmonic shell mode, and the pitch sagging
-    // about sixty cents back down to the note over the first seconds, as a
-    // great gong's does when the hammered bronze is set swinging hard.
+    // starts; the hum's octave, where the gong's slow beating lives (two
+    // modes eight tenths of a hertz apart: heard, but up where it is a
+    // shimmer in the bronze's low end rather than a throb in the floor);
+    // an inharmonic shell mode, and the pitch sagging about sixty cents
+    // back down to the note over the first seconds, as a great gong's does
+    // when the hammered bronze is set swinging hard. It sits under the
+    // bronze, the ground of the piece, not over it.
     void strikeGong(Voice &v, const Harmony &h, float level, int at) {
         float m = float(h.midi(0, 0));
         m = 27.0f + std::fmod(std::fmod(m - 27.0f, 12.0f) + 12.0f, 12.0f);
         const float hz = midiToHz(m);
         Strike &st = newStrike(v, -1, at);
-        st.partial(hz, 0.75f, 7.0f, m_rate);
+        st.partial(hz, 0.75f, 5.0f, m_rate);
         st.partial(hz, -0.75f, 0.45f, m_rate);
-        st.partial(hz + 0.8f, 0.5f, 6.0f, m_rate);
-        st.partial(hz + 0.8f, -0.5f, 0.7f, m_rate);
-        st.partial(2.02f * hz, 0.28f, 2.8f, m_rate);
-        st.partial(2.93f * hz, 0.12f, 1.2f, m_rate);
+        st.partial(2.02f * hz, 0.4f, 3.2f, m_rate);
+        st.partial(2.02f * hz + 0.8f, 0.3f, 2.6f, m_rate);
+        st.partial(2.93f * hz, 0.14f, 1.2f, m_rate);
         st.partial(4.6f * hz, 0.08f, 0.12f, m_rate);
         st.bend = 0.035f;
         st.bendDec = std::exp(-1.0f / (1.1f * m_rate));
         st.attInc = 1.0f / (0.01f * m_rate);
-        st.gain = level * kStruckGain[Gamelan] * 1.6f;
+        st.gain = level * kStruckGain[Gamelan] * 1.3f;
         pan(st, 0);
         place(st, v, kShape[Pad].low + 0.5f, v.rng);
+    }
+    // The kempur: the middle gong, an octave over the great one, its hum
+    // blooming a little and sagging a little, ringing a couple of seconds.
+    void strikeKempur(Voice &v, const Harmony &h, float level, int at) {
+        float m = float(h.midi(0, 0));
+        m = 39.0f + std::fmod(std::fmod(m - 39.0f, 12.0f) + 12.0f, 12.0f);
+        const float hz = midiToHz(m);
+        Strike &st = newStrike(v, -1, at);
+        st.partial(hz, 0.6f, 2.4f, m_rate);
+        st.partial(hz, -0.6f, 0.15f, m_rate);
+        st.partial(2.0f * hz + 0.6f, 0.3f, 1.6f, m_rate);
+        st.partial(2.76f * hz, 0.12f, 0.6f, m_rate);
+        st.partial(5.1f * hz, 0.05f, 0.08f, m_rate);
+        st.bend = 0.02f;
+        st.bendDec = std::exp(-1.0f / (0.6f * m_rate));
+        st.attInc = 1.0f / (0.006f * m_rate);
+        st.gain = level * kStruckGain[Gamelan] * 0.55f;
+        pan(st, -0.1f);
+        place(st, v, kShape[Pad].low + 2.0f, v.rng);
+    }
+    // The kemong: a small hanging gong on the five's tone nearest E4, the
+    // pair beating fast as the bronze does, gone in about a second.
+    void strikeKemong(Voice &v, const Harmony &h, const int *deg, int nd, float level, int at) {
+        float m = 64.0f, best = 99.0f;
+        const int perOct = h.tuning.degreesPerOctave();
+        for (int k = 0; k <= 4; ++k)
+            for (int i = 0; i < nd; ++i) {
+                const float c = float(h.midi(deg[i] + perOct * k, 0));
+                if (std::fabs(c - 64.0f) < best)
+                    best = std::fabs(c - 64.0f), m = c;
+            }
+        const float hz = midiToHz(m);
+        Strike &st = newStrike(v, -1, at);
+        st.partial(hz, 0.4f, 0.9f, m_rate);
+        st.partial(hz + 3.5f, 0.3f, 0.8f, m_rate);
+        st.partial(hz, -0.7f, 0.03f, m_rate);
+        st.partial(2.32f * hz, 0.12f, 0.35f, m_rate);
+        st.partial(4.1f * hz, 0.05f, 0.08f, m_rate);
+        st.attInc = 1.0f / (0.003f * m_rate);
+        st.gain = level * kStruckGain[Gamelan] * 0.5f;
+        pan(st, 0.2f);
+        place(st, v, kShape[Pad].low + 6.0f, v.rng);
     }
     // The kempli: a small kettle gong held damped, a short tuk on the
     // five's tone nearest the top of the treble staff.
@@ -3036,18 +3305,23 @@ private:
         pan(st, 0.15f);
         place(st, v, kShape[Pad].high - 1.0f, v.rng);
     }
-    // The ceng-ceng: small cymbals clashed together, a hiss through a
-    // bright band and a few high inharmonic modes, gone in a tenth of a
-    // second.
+    // The ceng-ceng: small cymbals clashed together. A clash (a millisecond
+    // and a half of noise through a broad band round 6 kHz), then the ring:
+    // the cymbals' own modes, between 4 and 9 kHz, and a narrower hiss in the
+    // same place, until the player's hands choke it a tenth of a second on.
     void strikeCeng(Voice &v, float level, int at) {
         Strike &st = newStrike(v, -1, at);
-        static const float kModes[4][3] = {{3170, 0.05f, 0.07f}, {4730, 0.05f, 0.05f}, {6310, 0.04f, 0.04f}, {8890, 0.03f, 0.03f}};
+        static const float kModes[4][3] = {{4210, 0.05f, 0.09f}, {5370, 0.05f, 0.07f}, {6830, 0.04f, 0.06f}, {8090, 0.03f, 0.05f}};
         const float spread = 1.0f + 0.02f * v.rng.bipolar();
         for (const auto &md : kModes)
             st.partial(md[0] * spread, md[1], md[2], m_rate);
-        st.hiss = 0.45f;
-        st.hissDec = std::exp(-1.0f / (0.05f * m_rate));
-        st.hissF.set(7000.0f, 0.8f, m_rate);
+        st.clash = 0.9f;
+        st.clashDec = std::exp(-1.0f / (0.0015f * m_rate));
+        st.hiss = 0.5f;
+        st.hissDec = std::exp(-1.0f / (0.06f * m_rate));
+        st.hissF.set(6000.0f, 0.9f, m_rate);
+        st.hissF2.set(6200.0f * spread, 1.6f, m_rate);
+        st.choke = int((0.09f + 0.03f * v.rng.unit()) * m_rate);
         st.attInc = 1.0f / (0.0005f * m_rate);
         st.gain = level * kStruckGain[Gamelan] * 0.8f;
         pan(st, 0.3f * v.rng.bipolar());
@@ -3055,17 +3329,22 @@ private:
     }
     // An mbira's tine, plucked by a thumb: its fundamental, the clamped
     // bar's second mode six and a quarter times above it and a third
-    // fleeting one, and the buzz. A tine speaks and is gone: from under two
-    // seconds to silence at the bass to about half a second at the top.
+    // fleeting one, and the rattle. The wide bass tines bloom and sing on,
+    // four and a half seconds to silence at G2, so the notes of both parts
+    // overlap into a cloud; the narrow top ones are gone in about one.
+    // Toward the rattling end of the column the caps lie closer to the
+    // tine, so they chatter for more of its swing.
     // detune: cents the second mbira sits from the first.
     void strikeTine(Voice &v, float midi, float vel, float colour, int at, float p, float detune) {
         const float hz = midiToHz(midi + detune);
         Strike &st = newStrike(v, -1, at);
-        const float t60 = clampf(1.8f * std::pow(110.0f / hz, 0.55f), 0.6f, 1.8f);
+        const float t60 = clampf(4.6f * std::pow(98.0f / hz, 0.75f), 0.9f, 5.0f);
         st.partial(hz, 1.0f, t60 / 6.9f, m_rate);
         st.partial(hz * 6.27f, 0.24f + 0.14f * colour, 0.05f, m_rate);
         st.partial(hz * 17.55f, 0.07f, 0.01f, m_rate);
-        st.buzz = 1.6f * smoothstep(0.2f, 1.0f, colour);
+        const float rattle = smoothstep(0.2f, 1.0f, colour);
+        st.buzz = 1.3f * rattle;
+        st.capAt = 0.6f - 0.4f * rattle;
         st.attInc = 1.0f / (0.001f * m_rate);
         // A high tine dies sooner; it is played a little harder, so the
         // instrument is as loud at the top as at the bottom.
@@ -3102,7 +3381,9 @@ private:
         // note: high keys bark less, so nothing folds over.)
         st.bark = (1.5f + 3.5f * hard) * (0.7f + 0.5f * colour) * clampf(650.0f / hz, 0.25f, 1.0f);
         st.barkDec = std::exp(-1.0f / (0.08f * m_rate));
-        st.barkAmp = 0.38f;
+        // (Toward the bell its index is high enough that it needs less
+        // level to be heard, and a chord of five would spike.)
+        st.barkAmp = 0.38f * (1.0f - 0.4f * colour);
         st.barkAmpDec = std::exp(-1.0f / (0.5f * m_rate));
         st.fmAmp = 1.0f;
         // (A high key dies a little sooner, and is voiced a little louder
@@ -3114,20 +3395,65 @@ private:
         place(st, v, midi, v.rng);
         v.hammer = 1;
     }
-    // City pop's bass: a fingered electric bass, muted with the palm, so
-    // each note is round and short; the next note stops the last.
-    void strikeBass(Voice &v, float midi, float vel, int at) {
+    // City pop's bass: a fingered electric bass. The string's first six
+    // harmonics, the higher ones dying sooner, how many of them there are
+    // following how hard it is played (a body low-pass that opens with the
+    // velocity); the finger's snap off the string, a few milliseconds of
+    // it through the pickup's band; and the pitch a fifth of a semitone
+    // sharp at the attack, settling, as a plucked string's does. A ghost
+    // note is the finger landing on a muted string: mostly the snap, a
+    // breath of the note, gone at once. A popped octave is plucked hard
+    // and bright. slide: come into it from a half step under. The next note
+    // stops the last; all of it goes through the bass's high-pass, so the
+    // attack never thumps under 35 Hz.
+    void strikeBass(Voice &v, float midi, float vel, int at, int kind, bool slide = false) {
         const float hz = midiToHz(midi);
         Strike &st = newStrike(v, 3, at);
-        st.partial(hz, 1.0f, 0.13f, m_rate);
-        st.partial(2.0f * hz, 0.45f, 0.08f, m_rate);
-        st.partial(3.0f * hz, 0.2f, 0.05f, m_rate);
-        st.partial(4.0f * hz, 0.1f, 0.03f, m_rate);
-        st.partial(6.0f * hz, 0.05f, 0.015f, m_rate);
-        st.attInc = 1.0f / (0.002f * m_rate);
-        st.gain = vel * kStruckGain[CityPop] * 0.6f;
+        const float hard = clampf(vel / std::max(1e-4f, kShape[Pad].level), 0.0f, 1.3f);
+        const float open = kind == 2 ? 6.0f : 1.6f + 3.0f * hard; // harmonics the body passes
+        const float tau = kind == 1 ? 0.035f : kind == 2 ? 0.45f : 0.9f;
+        for (int k = 1; k <= 6; ++k) {
+            const float a = (k == 1 ? 1.0f : 0.7f / float(k)) * std::exp(-float(k - 1) / open);
+            st.partial(float(k) * hz, (kind == 1 ? 0.25f : 1.0f) * a, tau / (1.0f + 0.7f * float(k - 1)), m_rate);
+        }
+        st.hiss = kind == 1 ? 0.5f : kind == 2 ? 0.45f : 0.22f;
+        st.hissDec = std::exp(-1.0f / (0.004f * m_rate));
+        st.hissF.set(kind == 2 ? 3200.0f : 1800.0f, 1.2f, m_rate);
+        st.hissF2.set(kind == 2 ? 3200.0f : 1800.0f, 0.8f, m_rate);
+        st.bend = slide ? std::exp2(-1.0f / 12.0f) - 1.0f : kind == 1 ? 0.0f : 0.012f;
+        st.bendDec = std::exp(-1.0f / ((slide ? 0.035f : 0.03f) * m_rate));
+        st.attInc = 1.0f / (0.003f * m_rate);
+        st.gain = vel * kStruckGain[CityPop] * 0.42f;
         pan(st, 0);
         place(st, v, kShape[Pad].low + 0.5f, v.rng);
+    }
+    // The cocktail shaker: a short swish of bright noise, rising in over a
+    // few milliseconds (the beads thrown, not struck), a little right.
+    void strikeShaker(Voice &v, float level, int at) {
+        Strike &st = newStrike(v, -1, at);
+        st.hiss = 0.5f;
+        st.hissDec = std::exp(-1.0f / (0.03f * m_rate));
+        st.hissF.set(6500.0f, 0.7f, m_rate);
+        st.hissF2.set(8000.0f, 0.9f, m_rate);
+        st.attInc = 1.0f / (0.006f * m_rate);
+        st.gain = level * kStruckGain[CityPop] * 0.2f;
+        pan(st, 0.35f);
+        place(st, v, kShape[Pad].high - 1.0f, v.rng);
+    }
+    // The rim: a stick laid across the snare and clicked on its rim, the
+    // woody knock of the shell and a millisecond's click, a little left.
+    void strikeRim(Voice &v, float level, int at) {
+        Strike &st = newStrike(v, -1, at);
+        st.partial(520.0f, 0.5f, 0.035f, m_rate);
+        st.partial(1630.0f, 0.3f, 0.018f, m_rate);
+        st.partial(3310.0f, 0.12f, 0.008f, m_rate);
+        st.clash = 0.8f;
+        st.clashDec = std::exp(-1.0f / (0.001f * m_rate));
+        st.hissF.set(2600.0f, 0.7f, m_rate);
+        st.attInc = 1.0f / (0.0005f * m_rate);
+        st.gain = level * kStruckGain[CityPop] * 0.25f;
+        pan(st, -0.25f);
+        place(st, v, kShape[Pad].low + 8.0f, v.rng);
     }
 
     // Raga's tanpura: four strings, the first on Pa (the fifth under Sa),
@@ -3192,13 +3518,14 @@ private:
                 pluck(v.str[k / gap], want[k / gap], colour, 0.85f + 0.3f * v.rng.unit());
         }
         // The strings.
-        // (The bridge takes energy as it buzzes, more at the jawari end,
+        // (The buzz adds more toward the jawari end than the bridge takes,
         // the top octave's strings ring shorter, and the bottom octave's
-        // find fewer sympathetic strings to ring: all made up, so the
-        // colour and the height change the sound and not the level.)
+        // buzz is heard more of: all made up, so the colour and the height
+        // change the sound and not the level; and a round in one bar plucks
+        // each string again while it still rings, so it is played softer.)
         const float g = kShape[Pad].level * (0.35f + 0.85f * v.cur[2]) * kStruckGain[Raga] *
-                        (1.0f + 0.45f * smoothstep(0.05f, 1.0f, colour)) * (1.0f + 0.5f * smoothstep(0.65f, 1.0f, v.cur[0])) *
-                        (1.0f + 0.2f * smoothstep(64.0f, 58.0f, sa));
+                        (1.0f - 0.18f * smoothstep(0.05f, 1.0f, colour)) * (1.0f + 0.5f * smoothstep(0.65f, 1.0f, v.cur[0])) *
+                        (1.0f - 0.15f * smoothstep(60.0f, 54.0f, sa)) * (1.0f - 0.5f * smoothstep(0.2f, 0.4f, pulse));
         static const float kPan[4] = {-0.35f, 0.1f, -0.1f, 0.35f};
         const float dt = float(n) / m_rate;
         float sL[kBlock] = {}, sR[kBlock] = {};
@@ -3208,17 +3535,47 @@ private:
                 continue;
             t.since += dt;
             const float gl = std::sqrt(0.5f * (1.0f - kPan[k])), gr = std::sqrt(0.5f * (1.0f + kPan[k]));
+            // The curve: as the swing narrows (against the widest it was)
+            // the string lies on the bridge for a shorter share of each
+            // period, down to a twenty-sixth; the bridge's height is where a
+            // swing that wide is on it for that share. While it lies on the
+            // bridge the string is shortened (it leaves the curve further
+            // along): the loop's delay is shortened with how far past the
+            // bridge's height it is, which moves the energy up into the
+            // overtones without taking it away, so the string still rings
+            // as long; and a little is pushed back as well, the bridge
+            // giving nothing.
+            const float rel = t.peak > 1e-6f ? clampf(t.swing / t.peak, 0.0f, 1.0f) : 1.0f;
+            t.share = std::max(1.0f / 26.0f, t.contact * std::pow(rel, 1.4f));
+            const float sag = 1.0f - std::cos(kPi * t.share);
+            t.bridge = t.mid + std::max(1e-5f, t.swing * (1.0f - sag));
+            const float knee = 0.08f * t.swing + 1e-5f;
+            // (The pulse is as tall as the swing, however short, and never
+            // taller: a string's swing is not always a sine's.)
+            const float toPulse = 1.0f / std::max(1e-5f, sag);
+            // (The band never above 4.5 kHz, and the buzz dulled steeply over
+            // 5.5 kHz: it is the string's, not a hiss.)
+            t.buzzF.set(std::min(4500.0f, midiToHz(t.midi) * 0.6f / t.share), 1.2f, m_rate);
             const int i0 = int(t.readAt);
             const float fr = t.readAt - float(i0);
+            const float cap = 2.5f * t.swing + 1e-6f, invCap = 1.0f / cap;
+            // (A shorter contact is a sharper one, the string snapping off
+            // the curve: its pulse carries a little more than a long one did.)
+            const float sharp = t.buzz * std::pow(t.contact / t.share, 0.8f);
             float sq = 0;
             for (int i = 0; i < n; ++i) {
                 const float a = t.buf[(t.w - uint32_t(i0)) & t.mask], b = t.buf[(t.w - uint32_t(i0) - 1u) & t.mask];
                 const float y = a + fr * (b - a);
                 t.z += t.b * (y - t.z);
-                // The jawari: past the bridge, pushed back.
+                // The jawari: past the bridge, pushed back, and its pulse.
                 float zc = t.z;
-                if (const float over = zc - t.bridge; over > 0)
-                    zc -= t.jaw * over * over / (over + 0.02f);
+                t.mid += t.follow * (zc - t.mid);
+                t.spread += t.follow * ((zc - t.mid) * (zc - t.mid) - t.spread);
+                float pulse = 0;
+                if (const float over = zc - t.bridge; over > 0) {
+                    pulse = std::min(over * toPulse, t.swing);
+                    zc -= t.jaw * over * over / (over + knee);
+                }
                 float x = zc * t.loss;
                 if (t.exciteLeft > 0) {
                     // A pluck: a triangle less its own mean, so it starts and
@@ -3236,10 +3593,18 @@ private:
                 }
                 t.buf[t.w] = x;
                 t.w = (t.w + 1) & t.mask;
-                sq += y * y;
-                sL[i] += y * gl;
-                sR[i] += y * gr;
+                // (The buzz never stands much taller than the string's own
+                // swing: past it, it rounds off, as a buzz does, rather than
+                // spiking.)
+                const float bz = sharp * t.buzzF.k * t.buzzF.step(pulse).band * invCap;
+                const float o = t.dc.step(y + t.buzzLp2.step(t.buzzLp.step(cap * bz / std::sqrt(1.0f + bz * bz)).low).low).high;
+                sq += o * o;
+                sL[i] += o * gl;
+                sR[i] += o * gr;
             }
+            t.swing = std::sqrt(2.0f * t.spread);
+            if (t.exciteLeft <= 0)
+                t.peak = std::max(t.peak, t.swing);
             t.level += (std::sqrt(sq / float(n)) - t.level) * 0.1f;
         }
         const float a0 = v.envPrev, a1 = v.env;
@@ -3270,6 +3635,12 @@ private:
             const float w = kTwoPi * hz / m_rate, q = 1.0f - t.b;
             const float lag = std::atan2(q * std::sin(w), 1.0f - q * std::cos(w)) / w;
             t.readAt = std::max(1.0f, t.period - lag);
+            // (Over four periods: steady through one, quick to follow the string.)
+            t.follow = 1.0f - std::exp(-1.0f / (4.0f * t.period));
+            t.dc.set(0.6f * hz, 0.7f, m_rate);
+            t.buzzLp.set(5500.0f, 0.54f, m_rate);
+            t.buzzLp2.set(5500.0f, 1.31f, m_rate);
+            t.dc.reset();
         }
         t.stilled = false;
         const float hz = midiToHz(midi);
@@ -3282,12 +3653,15 @@ private:
         t.exAmp = 0.5f * vel;
         copyCoefficients(t.exF, m_pluckLp);
         t.exF.reset();
-        // The bridge: at the soft end it meets only the top of a fresh
-        // pluck's swing (which reaches about 0.25), at the bright end it
-        // meets nearly all of it, and pushes back harder.
+        // The bridge: at the soft end the string lies on it for a longer
+        // share of a fresh pluck's period (its band low, the buzz soft), at
+        // the bright end for a shorter one, pushed back harder and buzzing
+        // louder. The swing is measured afresh from this pluck.
         const float j = smoothstep(0.05f, 1.0f, colour);
-        t.bridge = (0.16f - 0.12f * j) * vel;
-        t.jaw = 0.35f + 0.6f * j;
+        t.contact = 0.16f - 0.02f * j;
+        t.jaw = 0.25f + 0.3f * j;
+        t.buzz = 0.8f + 7.2f * j;
+        t.peak = 0;
     }
 
     // Khoomei: one throat singer. The voice is a pressed drone on the key's
@@ -3304,12 +3678,16 @@ private:
     // drone stays. Across the column the three ways of singing: khoomei, the
     // soft one, the whistle broad and the drone full; sygyt, the whistle
     // narrow and loud over a pressed, thinner drone; and kargyraa, the
-    // drone an octave down and doubled under by the false folds (every
-    // other pulse of the voice weaker: a subharmonic, the growl), its
-    // melody the vowels on its low overtones. Height is how high the
-    // melody sings. Twisted anticlockwise, the ezengileer, the stirrup: the
-    // melody on triplets and the voice pulsing in a gallop; clockwise, the
-    // vowel opens and closes with the bars.
+    // same voice on the tonic with the false folds closing under it at half
+    // its rate (every other pulse of the voice weaker: a subharmonic, the
+    // growl, heard an octave under the tonic and never two), its melody the
+    // vowels on the low overtones of that octave down. The whistle breathes:
+    // its level wavers with the singer's breath pressure, a quick tremble
+    // and a slow wander, and the singer scoops up into the voice as it
+    // starts and into the whistle at the top of every phrase. Height is how
+    // high the melody sings. Twisted anticlockwise, the ezengileer, the
+    // stirrup: the melody on triplets and the voice pulsing in a gallop;
+    // clockwise, the vowel opens and closes with the bars.
     void renderThroat(Voice &v, float colour, float *outL, float *outR, float *busL, float *busR, int n,
                       const Harmony &h, const Transport &tr) {
         const float dt = float(n) / m_rate;
@@ -3319,15 +3697,17 @@ private:
         const float growl = smoothstep(0.62f, 0.85f, colour);
         v.envPrev = v.env;
 
-        // The singer's pitch: the tonic from F#2 up (92 to 185 Hz); for
-        // kargyraa a second read an octave down, crossfaded in.
+        // The singer's pitch: the tonic from F#2 up (92 to 185 Hz), come up
+        // to from a semitone and a half under as the voice starts (the
+        // scoop, gone in about a fifth of a second).
         float tonic = float(h.midi(0, 0));
         while (tonic >= 54.0f)
             tonic -= 12.0f;
         while (tonic < 42.0f)
             tonic += 12.0f;
-        v.thMidi = tonic;
-        const float hzUp = midiToHz(tonic), hzDown = 0.5f * hzUp;
+        v.thScoop *= std::exp(-dt / 0.06f);
+        v.thMidi = tonic - 1.5f * v.thScoop;
+        const float hzUp = midiToHz(v.thMidi);
         const float f0 = hzUp * std::exp2(-growl); // the pitch the whistle counts its overtones from
 
         // The overtones the melody may sing.
@@ -3383,13 +3763,36 @@ private:
                     // whistle aims one beyond.
                     v.thFlick = sygyt > 0.4f && to != v.whistleTo ? (to > v.whistleTo ? 1.0f : -1.0f) : 0.0f;
                     v.thFlickLeft = 0.05f;
+                    // At the top of each phrase (and on a note sung again)
+                    // the whistle is come up to from under, as the singer
+                    // takes a breath and finds the note again.
+                    if ((step % (8 * stepsPerBeat)) == 0 || to == v.whistleTo)
+                        v.thWhistleScoop = -0.45f;
                     v.whistleTo = to;
                 }
             }
         }
         v.thFlickLeft -= dt;
-        const float aim = v.whistleTo + (v.thFlickLeft > 0 ? v.thFlick : 0.0f);
+        v.thWhistleScoop *= std::exp(-dt / 0.05f);
+        const float aim = v.whistleTo + (v.thFlickLeft > 0 ? v.thFlick : 0.0f) + v.thWhistleScoop;
         v.whistle += (aim - v.whistle) * (1.0f - std::exp(-dt / 0.022f));
+
+        // The breath: a tremble at about five a second (two rates, so it
+        // never settles into a beat) and a slow wander, the pressure behind
+        // the whistle never quite steady. The whistle's level follows it
+        // most, the drone's a little, the whistle's resonance a hair (more
+        // pressure, a slightly higher tongue).
+        auto breathAt = [&] { return 0.6f * sinTurns(v.thBreath) + 0.4f * sinTurns(v.thBreath2) + v.thWander; };
+        const float breath0 = breathAt();
+        v.thBreath += 5.3f * dt;
+        v.thBreath -= std::floor(v.thBreath);
+        v.thBreath2 += 3.7f * dt;
+        v.thBreath2 -= std::floor(v.thBreath2);
+        // (A random walk pulled back to nothing over half a second: it
+        // strays about a third as far as the tremble swings.)
+        v.thWander += 1.0f * v.rng.bipolar() * std::sqrt(dt) - v.thWander * dt / 0.5f;
+        const float breath1 = breathAt();
+        const float breathDepth = lerpf(lerpf(0.16f, 0.24f, sygyt), 0.12f, growl);
 
         // The mouth. The vowel's formant (an "o" opening toward "a" in
         // kargyraa, swept with the bars when twisted clockwise), the body
@@ -3403,7 +3806,7 @@ private:
         const float f1 = lerpf(lerpf(480.0f, 360.0f, sygyt), 330.0f, growl) * std::exp2(sweep);
         v.fL[0].set(f1, 2.5f, m_rate);
         v.bodyL.set(lerpf(lerpf(900.0f, 650.0f, sygyt), 700.0f, growl), 0.7f, m_rate);
-        const float fw = std::min(0.4f * m_rate, v.whistle * f0);
+        const float fw = std::min(0.4f * m_rate, v.whistle * f0 * (1.0f + 0.004f * breath1));
         const float qw = lerpf(lerpf(9.0f, 34.0f, sygyt), 5.0f, growl);
         v.fL[1].set(fw, qw, m_rate);
         v.fL[2].set(fw, qw, m_rate);
@@ -3415,26 +3818,30 @@ private:
         const float dGain = lerpf(lerpf(1.0f, 0.5f, sygyt), 1.0f, growl);
 
         const float *U = m_bank->table[PadThroat][1].data();
-        const float *D = m_bank->table[PadThroat][0].data();
         const auto speed = [&](float hz, int oct) {
             const double sp = double(hz) / double(midiToHz(Bank::baseMidi(oct))) * double(kTableRate) / double(m_rate);
             return uint32_t(std::llround(sp * double(1u << kFracBits)));
         };
-        const uint32_t incU = speed(hzUp, 1), incD = speed(hzDown, 0);
+        const uint32_t incU = speed(hzUp, 1);
         constexpr uint32_t fm = (1u << kFracBits) - 1;
-        const float subInc = 0.5f * hzDown / m_rate;
+        // The false folds close at half the voice's rate.
+        const float subInc = 0.5f * hzUp / m_rate;
 
         // The gallop: on the first and third triplet of every beat, the
-        // voice pushed (the long and short of a horse's stride).
+        // voice pushed (the long and short of a horse's stride). Each push
+        // swells in over a few milliseconds and dies away, as a singer's
+        // diaphragm does: a step would click on every hoofbeat.
         const float gallop = smoothstep(0.3f, 0.7f, pulse) * 0.75f;
         const float gallopFall = std::exp(-1.0f / (0.09f * m_rate));
+        const float gallopRise = 1.0f - std::exp(-1.0f / (0.0015f * m_rate));
         const float attInc = 1.0f / (v.attack * m_rate);
         const float pressGain = 0.35f + 0.85f * press;
         const float level = kShape[Pad].level * pressGain;
         const float agc0 = v.agc;
         float sq = 0, wsq = 0;
         float y[kBlock];
-        uint32_t pu = v.thPhase, pd = v.thPhase2;
+        uint32_t pu = v.thPhase;
+        const float inv = 1.0f / float(n);
         for (int i = 0; i < n; ++i) {
             if (v.holdEnv) {
             } else if (!v.releasing || v.ramp < 1.0f) {
@@ -3443,17 +3850,15 @@ private:
             } else {
                 v.env *= v.relCoef;
             }
-            const uint32_t iu = pu >> kFracBits, id = pd >> kFracBits;
-            const float fu = float(pu & fm) * kFracScale, fd = float(pd & fm) * kFracScale;
+            const uint32_t iu = pu >> kFracBits;
+            const float fu = float(pu & fm) * kFracScale;
             const float up = U[iu] + fu * (U[iu + 1] - U[iu]);
-            float down = D[id] + fd * (D[id + 1] - D[id]);
             pu += incU;
-            pd += incD;
-            // The false folds: every other pulse of the low voice weaker.
+            // The false folds: every other pulse of the voice weaker, so it
+            // repeats only every second period, an octave down.
             v.thSub += subInc;
             v.thSub -= std::floor(v.thSub);
-            down *= 1.0f + 0.7f * sinTurns(v.thSub);
-            const float x = (1.0f - growl) * up + growl * down + 0.004f * v.rng.bipolar();
+            const float x = up * (1.0f + 0.85f * growl * sinTurns(v.thSub)) + 0.004f * v.rng.bipolar();
             const float drone = 0.6f * v.bodyL.step(x).low + v.fL[0].k * v.fL[0].step(x).band;
             const float w = v.fL[2].k * v.fL[2].step(v.fL[1].k * v.fL[1].step(x).band).band;
             float g = 1.0f;
@@ -3463,18 +3868,25 @@ private:
                 if (s != v.stabStep) {
                     v.stabStep = s;
                     if (((s % 3) + 3) % 3 != 1)
-                        v.stab = 1.0f;
+                        v.stabRising = true;
                 }
-                v.stab *= gallopFall;
+                if (v.stabRising) {
+                    v.stab += (1.02f - v.stab) * gallopRise;
+                    if (v.stab >= 1.0f)
+                        v.stab = 1.0f, v.stabRising = false;
+                } else {
+                    v.stab *= gallopFall;
+                }
                 g = 1.0f - gallop + gallop * v.stab;
             }
-            const float o = dGain * drone * (1.0f - 0.4f * gallop + 0.4f * gallop * g) + wGain * w * g;
+            const float br = lerpf(breath0, breath1, float(i + 1) * inv);
+            const float o = dGain * drone * (1.0f - 0.4f * gallop + 0.4f * gallop * g) * (1.0f + 0.25f * breathDepth * br) +
+                            wGain * w * g * (1.0f + breathDepth * br);
             sq += o * o;
             wsq += wGain * w * wGain * w;
             y[i] = o * v.env;
         }
         v.thPhase = pu;
-        v.thPhase2 = pd;
         // Held to one level, slowly, as every layer is: the way of singing
         // changes the colour, the pressure the loudness.
         const float rms = std::sqrt(sq / float(n));
@@ -3484,9 +3896,11 @@ private:
         // One singer, near the middle, a little wider for a flat finger.
         const float p = 0.15f * v.side * width;
         const float gl = std::sqrt(0.5f * (1.0f - p)), gr = std::sqrt(0.5f * (1.0f + p));
-        // (Kargyraa's low voice comes through the room fuller than its rms
-        // says, sygyt's thin one less: by ear and the tests, a dB or two.)
-        const float a = level * agc0 * 1.3f * (1.0f + 0.12f * sygyt - 0.22f * growl);
+        // (Sygyt's thin voice comes through the room less than its rms says,
+        // kargyraa's growl, its pressed harmonics in the ear's most
+        // sensitive octaves, more: by ear, the tests and the meter, a dB or
+        // so each.)
+        const float a = level * agc0 * 1.2f * (1.0f + 0.12f * sygyt - 0.1f * growl);
         static const float kSend = 0.6f;
         for (int i = 0; i < n; ++i) {
             const float l = y[i] * a * gl, r = y[i] * a * gr;
@@ -3509,6 +3923,10 @@ private:
         static const float kDry[kStyles] = {1, 1, 1, 1, 1.0f, 1.0f, 1.0f, 0.9f, 1.0f};
         static const float kSend[kStyles] = {0, 0, 0, 0, 0.0f, 0.8f, 1.0f, 0.85f, 0.0f};
         const float inv = 1.0f / float(n);
+        // City pop's bass, gathered (it is in the middle) to go through its
+        // high-pass together.
+        float bass[kBlock] = {};
+        bool anyBass = false;
         for (Strike &st : m_strikes) {
             if (!st.on)
                 continue;
@@ -3530,19 +3948,21 @@ private:
             }
             const float dry = kDry[st.style], send = kSend[st.style];
             float *bl = busL[st.style], *br = busR[st.style];
+            const bool isBass = st.style == CityPop && st.hand == 3;
+            anyBass |= isBass;
             const int from = std::min(st.delay, n);
             st.delay = std::max(0, st.delay - n);
             if (from >= n)
                 continue;
             // A bent strike (the gong) falls back toward its pitch, a block
             // at a time.
-            if (st.bend > 1e-5f) {
+            if (std::fabs(st.bend) > 1e-5f) {
                 for (int k = 0; k < st.np; ++k) {
                     const float w = st.w[k] * (1.0f + st.bend);
                     st.cw[k] = std::cos(w), st.sw[k] = std::sin(w);
                 }
                 st.bend *= std::pow(st.bendDec, float(n - from));
-                if (st.bend <= 1e-5f)
+                if (std::fabs(st.bend) <= 1e-5f)
                     for (int k = 0; k < st.np; ++k)
                         st.cw[k] = std::cos(st.w[k]), st.sw[k] = std::sin(st.w[k]);
             }
@@ -3573,19 +3993,33 @@ private:
                     st.ph += st.inc;
                     st.ph -= float(st.ph >= 1.0f);
                 }
-                // (The caps rattle only on the tine's swing one way, and only
-                // while it swings: the buzz goes twice as fast as the tone
-                // it rides on.)
-                if (st.buzz > 0)
-                    y += st.buzz * st.buzzF.k *
-                         st.buzzF.step(m_strikeRng.bipolar() * std::max(0.0f, st.s[0]) * 2.0f * std::fabs(st.amp[0])).band;
-                if (st.hiss > 1e-4f) {
-                    y += st.hiss * st.hissF.k * st.hissF.step(m_strikeRng.bipolar()).band;
-                    st.hiss *= st.hissDec;
+                // The caps: struck as the tine swings up past them (not
+                // every time: a cap sits loose, and sometimes misses), as
+                // hard as the swing goes past, ringing a couple of
+                // milliseconds.
+                if (st.buzz > 0) {
+                    const float d = st.s[0] * st.amp[0];
+                    float hit = 0;
+                    if (d > st.capAt && st.capWas <= st.capAt && m_strikeRng.unit() < 0.8f)
+                        hit = st.buzz * (std::fabs(st.amp[0]) - st.capAt) * (0.6f + 0.4f * m_strikeRng.unit());
+                    st.capWas = d;
+                    y += st.cap[0].step(hit).band + 0.8f * st.cap[1].step(hit).band + 0.6f * st.cap[2].step(hit).band;
                 }
+                if (st.hiss + st.clash > 1e-4f) {
+                    const float wide = st.hissF.k * st.hissF.step(m_strikeRng.bipolar()).band;
+                    y += st.clash * wide + st.hiss * st.hissF2.k * st.hissF2.step(wide).band;
+                    st.hiss *= st.hissDec;
+                    st.clash *= st.clashDec;
+                }
+                if (st.choke > 0 && --st.choke == 0)
+                    damp(st, 0.012f);
                 st.att = std::min(1.0f, st.att + st.attInc);
                 const float u = float(i + 1) * inv;
                 const float a = y * st.att * st.gain * lerpf(e0, e1, u);
+                if (isBass) {
+                    bass[i] += a;
+                    continue;
+                }
                 const float l = a * lerpf(gl0, gl1, u), r = a * lerpf(gr0, gr1, u);
                 dryL[i] += l * dry;
                 dryR[i] += r * dry;
@@ -3600,16 +4034,28 @@ private:
             float left = st.fm ? st.fmAmp : 0.0f;
             for (int k = 0; k < st.np; ++k)
                 left = std::max(left, std::fabs(st.amp[k]));
-            left = std::max(left, st.hiss);
+            left = std::max(left, st.hiss + st.clash);
             st.shown = std::min(1.0f, 1.5f * left * st.att);
             if (left < 2e-4f)
                 st.on = false;
+        }
+        // (Run on a while after the last note, so its tail is filtered too.)
+        m_bassHold = anyBass ? 4800 : std::max(0, m_bassHold - n);
+        if (m_bassHold > 0) {
+            const float g = 0.7071f;
+            for (int i = 0; i < n; ++i) {
+                const float x = m_bassHp2.step(m_bassHp1.step(bass[i]).high).high * g;
+                dryL[i] += x * kDry[CityPop];
+                dryR[i] += x * kDry[CityPop];
+                busL[CityPop][i] += x * kSend[CityPop];
+                busR[CityPop][i] += x * kSend[CityPop];
+            }
         }
     }
 
     // What a struck pad's notes are scaled by, so each style's pad sits as
     // loud as the classic one: worked out by ear and checked by the tests.
-    static constexpr float kStruckGain[kStyles] = {1, 1, 1, 1, 2.0f, 12.0f, 2.7f, 1.6f, 1};
+    static constexpr float kStruckGain[kStyles] = {1, 1, 1, 1, 2.0f, 18.7f, 1.9f, 1.6f, 1};
 
     float m_rate = 48000;
     const Bank *m_bank = nullptr;
@@ -3626,7 +4072,9 @@ private:
     Valley m_valley;
     std::array<Strike, 64> m_strikes;
     std::vector<float> m_stringMem;
-    Svf m_buzz; // the buzz filter every strike copies
+    Svf m_caps[3]; // the mbira's caps, every strike's copy
+    Svf m_bassHp1, m_bassHp2; // City pop's bass's high-pass, 24 dB an octave under 35 Hz
+    int m_bassHold = 0;
     Svf m_pluckLp;                // the tanpura's pluck's low-pass, every string's copy
     static constexpr int kPluckTail = 32; // samples its filters run on after it
     Rng m_strikeRng{0x5B1Eu};
@@ -4763,9 +5211,11 @@ QString AtmosControl::help() const {
         "press\tswells the layer; a firm landing sounds at once, a light one fades in (struck pads strike at once, harder "
         "the firmer)\n"
         "twist\tclockwise, a slow filter sweep with the bars; anticlockwise, a gate in eighths, then sixteenths (a dub "
-        "chord's stabs roll 3-3-2 instead; tape keys comp; the city-pop piano comps a two-bar push over an octave bass; the "
-        "gamelan plays a level busier, and at kotekan the ceng-ceng crash in; the mbira's second part joins a pulse behind; "
-        "the tanpura goes round in one bar; the throat singer gallops, the ezengileer)\n"
+        "chord's stabs roll 3-3-2 instead; tape keys comp; the city-pop band comes in, the piano comping a two-bar push "
+        "over a fingered bass with ghost notes and approach notes, a swung shaker and a rim on two and four; the gamelan "
+        "plays a level busier, at kotekan the ceng-ceng crash in, and twisted past three quarters it plays one angsel, a "
+        "break; the mbira's second part joins a pulse behind; the tanpura goes round in one bar; the throat singer "
+        "gallops, the ezengileer)\n"
         "flat finger\twider\n"
         "tap\ta whole breath: the swell finishes, then fades\n"
         "click\tlatch every layer held, a new one too: it stays when lifted\n"
@@ -4777,12 +5227,14 @@ QString AtmosControl::help() const {
         "neon (synthwave: a string machine and a poly through an ensemble chorus), dub (dub techno: chord stabs on the "
         "offbeats into a tape echo, hiss and crackle); the same key again fades it\n"
         "Shift+Q W E R T\tfive more scenes: gamelan (Balinese bronze in pairs tuned to shimmer on a pelog five of the key, "
-        "polos and sangsih interlocking over the pokok, the kempli on the beat, a great gong every four bars), raga (a "
-        "tanpura's round on the key's Sa, buzzing on its bridge, a bowed drone, a hum of voices and sympathetic strings "
-        "following the chords), mbira (two Shona thumb pianos interlocking in twelve-eight, bass tines under the left thumb, "
-        "the caps rattling, in a gourd), city pop (a DX electric piano on rootless elevenths comping a push over a muted "
-        "octave bass, tremolo and chorus), khoomei (two Tuvan throat singers, a sygyt whistle singing the key's overtones "
-        "over a kargyraa growl, an echo off the valley); the same keys again fade them\n"
+        "polos and sangsih interlocking in turns into each coming pokok tone, the kempli on the beat, the kemong and the "
+        "kempur through the gongan, a great gong every four bars), raga (a tanpura's round on the key's Sa, its buzz "
+        "climbing through the harmonics as each string dies on its curved bridge, a bowed drone, a hum of voices and "
+        "sympathetic strings following the chords), mbira (two Shona thumb pianos interlocking in twelve-eight round a "
+        "forty-eight-pulse cycle of their own, long bass tines under the left thumb, bottle caps chattering, in a gourd), "
+        "city pop (a DX electric piano on rootless elevenths comping a push over a fingered bass, a shaker and a rim, "
+        "tremolo and chorus), khoomei (two Tuvan throat singers, a breathing sygyt whistle singing the key's overtones "
+        "over a kargyraa growl an octave down, an echo off the valley); the same keys again fade them\n"
         "Z X C V B N M\tthe bed's own chord on degrees I to VII (Atmos only); Space loops a progression with the bed, and a key pressed over the loop takes over until §\n"
         "F\tfreeze: every layer sounding holds, lifted or not, and follows the chords; again to thaw\n"
         "G\tgrain cloud of the bed, in octaves\n"

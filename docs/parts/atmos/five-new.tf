@@ -3,21 +3,28 @@
 # bars a chord. 124 BPM, A minor. Each is a style whose pad is an instrument
 # with a figure of its own:
 #   Gamelan   Balinese bronze in pairs tuned 6.5 Hz apart on the key's pelog
-#             five (A B C E F), polos and sangsih interlocking over the
-#             pokok, the kempli on every beat and the great gong blooming on
-#             A at 55 Hz; a hand joins at the kotekan end, twisted
-#             anticlockwise, and the ceng-ceng crash in
+#             five (A B C E F), polos and sangsih interlocking in turns into
+#             each coming tone of the pokok, the kempli on every beat, the
+#             kemong and kempur through the gongan and the great gong
+#             blooming on A at 55 Hz; a hand joins at the kotekan end,
+#             twisted anticlockwise: the ceng-ceng crash in, and as the twist
+#             passes three quarters the ensemble plays an angsel, a break
 #   Raga      a tanpura's four strings (Pa Sa Sa Sa) on the key's A whatever
-#             the chord, buzzing on their bridge, sympathetic strings ringing
-#             to each chord
-#   Mbira     two thumb pianos in twelve-eight, the bass tines under the
-#             left thumb, the second player a pulse behind, caps rattling
+#             the chord, each string's buzz climbing through the harmonics as
+#             it dies on its curved bridge, sympathetic strings ringing to
+#             each chord
+#   Mbira     two thumb pianos in twelve-eight round a forty-eight-pulse
+#             cycle of their own, long bass tines under the left thumb, the
+#             second player a pulse behind, bottle caps chattering
 #   City pop  a DX electric piano on rootless elevenths comping a two-bar
-#             push over a muted octave bass, tremolo and chorus, off a record
-#   Khoomei   two throat singers on the tonic, a sygyt whistle singing the
-#             overtones over a kargyraa growl; a third hand sings higher,
-#             then gallops (twisted anticlockwise: the ezengileer); Shift+T
-#             fades it at the end and the valley rings out
+#             push over a fingered bass (ghost notes, approach notes, the
+#             octave popped), a swung shaker and a rim on two and four,
+#             tremolo and chorus, off a record
+#   Khoomei   two throat singers on the tonic, a breathing sygyt whistle
+#             singing the overtones over a kargyraa growl an octave down; a
+#             third hand sings higher, then gallops (twisted anticlockwise:
+#             the ezengileer); Shift+T fades it at the end and the valley
+#             rings out
 # (Twist in a script is anticlockwise when positive.)
 page 0.05 6
 key 0.100 Z

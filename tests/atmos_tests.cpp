@@ -202,8 +202,10 @@ enum { Classic, Neon, Dub, Tape, Gamelan, Raga, Mbira, CityPop, Khoomei, kStyles
 // The styles whose pad is an instrument struck note by note.
 inline bool struck(int style) { return style == Gamelan || style == Raga || style == Mbira || style == CityPop; }
 // The styles whose pad plays the key rather than the chord: the gamelan's
-// pelog five, the tanpura's Sa, the throat singer's tonic and its overtones.
-inline bool keyed(int style) { return style == Gamelan || style == Raga || style == Khoomei; }
+// pelog five, the tanpura's Sa, the mbira's cycle (its harmony its own,
+// moving round the chord's root by the key's steps), the throat singer's
+// tonic and its overtones.
+inline bool keyed(int style) { return style == Gamelan || style == Raga || style == Mbira || style == Khoomei; }
 constexpr int kScenes = 15;
 const char *const kSceneKeys[kScenes] = {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P",
                                          "Shift+Q", "Shift+W", "Shift+E", "Shift+R", "Shift+T"};
@@ -225,14 +227,16 @@ constexpr int A = 9, C = 0, D = 2, E = 4, F = 5, G = 7, B = 11;
 
 // The share of a pad's energy on what it plays in A minor over the tonic
 // chord: the gamelan its pelog five, A B C E F; the tanpura Sa and Pa; the
-// throat singer the key (its drone's own harmonics aside, the whistle only
-// sings the overtones that are in it); City pop's piano its rootless
+// throat singer and the mbira the key (the drone's own harmonics aside,
+// the whistle only sings the overtones that are in it; the mbira's cycle
+// moves through the key's chords); City pop's piano its rootless
 // eleventh, C E G B D; the others the chord.
 double padShare(const Bench &b, double from, double to, int style) {
     switch (style) {
     case Gamelan: return b.share(from, to, {A, B, C, E, F});
     case Raga: return b.share(from, to, {A, E});
-    case Khoomei: return b.share(from, to, {A, B, C, D, E, F, G});
+    case Khoomei:
+    case Mbira: return b.share(from, to, {A, B, C, D, E, F, G});
     case CityPop: return b.share(from, to, {C, E, G, B, D});
     case Dub: return b.share(from, to, {A, C, E, G, B});
     default: return b.share(from, to, {A, C, E});
@@ -777,7 +781,8 @@ private slots:
             {Gamelan, 0.9f, 0.0f, 0.25, 0.0, 1.3, "kotekan in sixteenths"},
             {Gamelan, 0.1f, 0.0f, 1.0, 0.0, 1.15, "the pokok on the beat", true},
             {Mbira, 0.5f, 0.0f, 1.0, 0.0, 1.3, "the left thumb on the beat"},
-            {Mbira, 0.5f, -1.0f, 1.0, 2.0 / 3.0, 1.2, "the kutsinhira's treble on the third pulse"},
+            // (The bass tines' cloud rings on under the kutsinhira's treble.)
+            {Mbira, 0.5f, -1.0f, 1.0, 2.0 / 3.0, 1.1, "the kutsinhira's treble on the third pulse"},
             {CityPop, 0.4f, -1.0f, 4.0, 1.5, 1.3, "the piano comping on the and of two"},
             {Raga, 0.5f, 0.0f, 8.0, 1.5, 1.3, "the tanpura's second string"},
         };
@@ -839,20 +844,27 @@ private slots:
         QVERIFY2(hum > 30 * beside, qPrintable(QStringLiteral("%1 against %2").arg(hum).arg(beside)));
         const double gong = b.energyAt(55.0, cycle + 0.5, cycle + 1.5), before = b.energyAt(55.0, cycle - 1.0, cycle - 0.05);
         QVERIFY2(gong > 1.5 * before, qPrintable(QStringLiteral("%1 against %2").arg(gong).arg(before)));
+        // The kempur at the half gongan, an octave over the gong (110 Hz):
+        // there after the eighth beat, not before it.
+        {
+            const double half = 8 * beat;
+            const double after = b.energyAt(110.0, half + 0.05, half + 0.6), before = b.energyAt(110.0, half - 0.6, half - 0.05);
+            QVERIFY2(after > 2 * before, qPrintable(QStringLiteral("%1 against %2").arg(after).arg(before)));
+        }
         // It blooms: a padded beater, so its hum grows for a while after
         // the stroke rather than starting at its loudest.
         const double early = b.energyAt(55.0, 0.0, 0.25, false), later = b.energyAt(55.0, 0.5, 0.75, false);
         QVERIFY2(later > 2 * early, qPrintable(QStringLiteral("%1 against %2").arg(later).arg(early)));
 
         // The kotekan is on the key's pelog five, A B C E F: over the tonic
-        // its four lowest, the half step B to C among them (B, not in the
-        // chord, really sounds).
+        // its turns round the pokok, the half step B to C among them (B, not
+        // in the chord, really sounds).
         Bench k;
         k.param(PSpace, 0);
         k.on(1, Pad, 0.4f, 0.9f, 0.6f, 0, 0.02f, Gamelan);
         k.run(6);
         QVERIFY2(k.share(1, 6, {A, B, C, E, F}) > 0.7, qPrintable(QString::number(k.share(1, 6, {A, B, C, E, F}))));
-        QVERIFY2(k.share(1, 6, {B}) > 0.06, qPrintable(QStringLiteral("B %1").arg(k.share(1, 6, {B}))));
+        QVERIFY2(k.share(1, 6, {B}) > 0.04, qPrintable(QStringLiteral("B %1").arg(k.share(1, 6, {B}))));
         // A chord change moves the pokok, never the gong: it rings on
         // through VI as it would have without it.
         Bench g;
@@ -938,6 +950,33 @@ private slots:
         QVERIFY2(ring(Raga) > ring(Classic) + 1.5, qPrintable(QStringLiteral("%1 against %2 dB").arg(ring(Raga)).arg(ring(Classic))));
     }
 
+    void theJawariSweepsUpThroughTheHarmonics() {
+        // A tanpura's buzz moves: as the string's swing narrows it lies on
+        // the curved bridge for a shorter moment of each period, and the
+        // band of harmonics it lifts climbs. The first string (Pa, E3) is
+        // heard on its own odd harmonics (none of them a harmonic of A): its
+        // centroid, in harmonics, rises by more than 30% from just after its
+        // pluck to three seconds on, before it is plucked again.
+        for (float colour : {0.5f, 0.95f}) {
+            Bench b;
+            b.param(PSpace, 0);
+            b.on(1, Pad, 0.4f, colour, 0.6f, 0, 0.02f, Raga);
+            b.run(3.2);
+            const double e4 = 440.0 * std::exp2(-5.0 / 12.0);
+            auto centroid = [&](double from, double to) {
+                double num = 0, den = 0;
+                for (int k = 1; k * e4 < 12000; k += 2) {
+                    const double e = b.energyAt(k * e4, from, to);
+                    num += e * k;
+                    den += e;
+                }
+                return num / den;
+            };
+            const double early = centroid(0.1, 0.4), late = centroid(2.7, 3.0);
+            QVERIFY2(late > 1.3 * early, qPrintable(QStringLiteral("colour %1: %2 then %3").arg(colour).arg(early).arg(late)));
+        }
+    }
+
     void theMbiraHasBassTinesThatSpeakAndDie() {
         // The left thumb's bass tines: the root, A2, as strong as the
         // treble's strongest note, within 12 dB.
@@ -956,6 +995,35 @@ private slots:
         b.off(1);
         b.run(2.5);
         QVERIFY2(b.rms(10.0, 10.5) < 0.02 * b.rms(6, 8), qPrintable(QString::number(b.rms(10.0, 10.5) / b.rms(6, 8))));
+    }
+
+    void theMbiraRattlesAndGoesRoundItsOwnCycle() {
+        // At the rattling end the caps chatter on their own notes (2.35 kHz
+        // the lowest), far more than at the soft end, and they are metal
+        // resonators struck now and then, not a hiss: above 6.4 kHz stays
+        // more than 20 dB under everything.
+        auto take = [](float colour) {
+            Bench b;
+            b.param(PSpace, 0);
+            b.on(1, Pad, 0.4f, colour, 0.8f, 0, 0.02f, Mbira);
+            b.run(8);
+            return b;
+        };
+        const Bench rattling = take(0.95f), soft = take(0.1f);
+        QVERIFY2(rattling.energyAt(2350, 2, 8) > 10 * soft.energyAt(2350, 2, 8),
+                 qPrintable(QStringLiteral("%1 against %2").arg(rattling.energyAt(2350, 2, 8)).arg(soft.energyAt(2350, 2, 8))));
+        {
+            const auto t = thirds(rattling.left, rattling.right, 2, 8);
+            double hi = 0;
+            for (size_t k = 18; k < kThirds; ++k)
+                hi += std::pow(10.0, t[k] / 10);
+            QVERIFY2(10 * std::log10(hi) < -20, qPrintable(QString::number(10 * std::log10(hi))));
+        }
+        // Over the tonic held, the bass goes round the mbira's own cycle:
+        // F, the sixth's root, is on the bass tines too (it is no tone of A
+        // minor's chord), within 20 dB of A.
+        const double f = soft.energyAt(87.31, 1, 8) + soft.energyAt(174.61, 1, 8), a = soft.energyAt(110.0, 1, 8);
+        QVERIFY2(f > 0.01 * a, qPrintable(QStringLiteral("%1 against %2").arg(f).arg(a)));
     }
 
     void cityPopBarksAndTheBandComesIn() {
@@ -987,6 +1055,45 @@ private slots:
             return x.energyAt(110.0, 2, 8) + x.energyAt(220.0, 2, 8);
         };
         QVERIFY2(bassOf(-1.0f) > 30 * bassOf(0.0f), qPrintable(QStringLiteral("%1 against %2").arg(bassOf(-1.0f)).arg(bassOf(0.0f))));
+        // The bass is fingered, with approach notes: G sharp 2 and B flat 2,
+        // a half step either side of the root, are heard. And nothing of it
+        // thumps under 35 Hz: below that it is more than 40 dB under the
+        // root.
+        {
+            Bench x;
+            x.param(PSpace, 0);
+            x.on(1, Pad, 0.45f, 0.4f, 0.8f, -1.0f, 0.02f, CityPop);
+            x.run(8);
+            const double root = x.energyAt(110.0, 2, 8);
+            const double approach = x.energyAt(103.83, 2, 8) + x.energyAt(116.54, 2, 8);
+            QVERIFY2(approach > 0.005 * root, qPrintable(QStringLiteral("%1 against %2").arg(approach).arg(root)));
+            double sub = 0;
+            for (double hz = 15; hz < 35; hz += 2.5)
+                sub += x.energyAt(hz, 2, 8);
+            QVERIFY2(10 * std::log10(sub / root) < -40, qPrintable(QString::number(10 * std::log10(sub / root))));
+            // The pocket: a rim on two and four, louder just after than just
+            // before (its knock at 520 Hz).
+            const double beat = 60.0 / 124.0;
+            double ratio = 0;
+            int n = 0;
+            for (double t = 5 * beat; t + 0.1 < 8; t += 2 * beat, ++n)
+                ratio += x.energyAt(520, t + 0.002, t + 0.03, false) / std::max(1e-12, x.energyAt(520, t - 0.03, t - 0.002, false));
+            QVERIFY2(ratio / n > 2, qPrintable(QString::number(ratio / n)));
+        }
+    }
+
+    void theGallopSwellsWithoutAClick() {
+        // The ezengileer's gallop pushes the voice on every hoofbeat, each
+        // push swelling in over a few milliseconds: over 10 kHz the
+        // galloping singer is within 6 dB of the one standing still.
+        auto top = [](float motion) {
+            Bench b;
+            b.param(PSpace, 0);
+            b.on(1, Pad, 0.5f, 0.4f, 0.6f, motion, 0.02f, Khoomei);
+            b.run(8);
+            return thirds(b.left, b.right, 2, 8)[kThirds - 1];
+        };
+        QVERIFY2(top(-1.0f) < top(0.0f) + 6, qPrintable(QStringLiteral("%1 against %2").arg(top(-1.0f)).arg(top(0.0f))));
     }
 
     void theThroatSingerWhistlesItsOvertones() {
@@ -1028,10 +1135,25 @@ private slots:
         QVERIFY2(distinct.size() >= 3, qPrintable(QString::number(distinct.size())));
         for (int k : distinct)
             QVERIFY2(k == 6 || k == 7 || k == 8 || k == 9 || k == 12 || k == 14 || k == 16 || k == 18, qPrintable(QString::number(k)));
-        // Kargyraa: an octave down, and the false folds' subharmonic between
-        // the voice's harmonics (2.5 times 55 Hz), where sygyt has none.
-        auto sub = [](const Bench &b) { return b.energyAt(137.5, 2, 10) / b.energyAt(110.0, 2, 10); };
+        // Kargyraa: the false folds' subharmonic between the voice's
+        // harmonics (165 Hz, three times 55 Hz, half way from 110 to 220),
+        // where sygyt has none.
+        auto sub = [](const Bench &b) { return b.energyAt(165.0, 2, 10) / b.energyAt(110.0, 2, 10); };
         QVERIFY2(sub(growl) > 20 * sub(sygyt), qPrintable(QStringLiteral("%1 against %2").arg(sub(growl)).arg(sub(sygyt))));
+        // And only an octave down, never two: the growl's own fundamental,
+        // 55 Hz, is there, and nothing under it (under 40 Hz the voice is
+        // more than 30 dB under everything else).
+        QVERIFY2(growl.energyAt(55.0, 2, 10) > 0.05 * growl.energyAt(110.0, 2, 10),
+                 qPrintable(QStringLiteral("%1 against %2").arg(growl.energyAt(55.0, 2, 10)).arg(growl.energyAt(110.0, 2, 10))));
+        {
+            double under = 0;
+            for (double hz = 20; hz < 40.5; hz += 2.5)
+                under += growl.energyAt(hz, 2, 10);
+            double all = 0;
+            for (double hz = 20; hz < 4000; hz += 2.5)
+                all += growl.energyAt(hz, 2, 10);
+            QVERIFY2(10 * std::log10(under / all) < -30, qPrintable(QString::number(10 * std::log10(under / all))));
+        }
         // The drone never leaves the tonic: through VI it is still on A.
         Bench c;
         c.param(PSpace, 0);
@@ -1530,7 +1652,7 @@ private slots:
             // (In the key, for the pads that play it; City pop's band adds
             // the root under the piano's rootless eleventh.)
             const double in = styles[k] == CityPop                          ? b.share(3, 9, {A, C, E, G, B, D})
-                              : styles[k] == Gamelan || styles[k] == Khoomei ? b.share(3, 9, {A, B, C, D, E, F, G})
+                              : keyed(styles[k]) && styles[k] != Raga ? b.share(3, 9, {A, B, C, D, E, F, G})
                                                                              : b.share(3, 9, {A, C, E});
             QVERIFY2(in > 0.8, qPrintable(QStringLiteral("%1: %2").arg(kSceneNames[sc]).arg(in)));
             testkit::play("page 0 6\nkey 0.2 " + key + "\nkey 0.5 " + key + "\nend 1\n", [&](Session &s) {

@@ -81,11 +81,15 @@ const char *setBlurb(int s) {
         "gated snare and crash, chorused brass, laser toms, a tape stop",
         "ring-modulated metal, an acid line, offbeat chords, gated swells, a clang",
         "grains, soft pads, a shaker, a bloom instead of a crash",
-        "a log drum to play lines on (tap across it, slide to glide), jazz keys, a whistle, the drop's ONE left to the drum",
-        "in slendro: saron bars beating in pairs, a gangsa kotekan, a suling, bonang, a gong ageng on the drop",
-        "an arpeggio stepping by frames, pulse stabs with a tracker's echo, the triangle bass (tap across it), a blip",
-        "an 808 cowbell (hold it: higher plays a busier figure, twist bends it), a Memphis vocal, a sliding clipped 808",
-        "fuzz guitars on a restless whammy bar, feedback singing out of the hiss, a reversed reverb, a wall, a dive-bomb",
+        "a log drum to play lines on (tap across it, slide to glide) and to roll a build on, jazz keys, a whistle's "
+        "call and answer, a cabasa, a sung ayy, the drop's ONE left to the drum",
+        "in slendro: saron bars beating in pairs, a gangsa's norot and telu, ceng-ceng, a suling, bonang, a gong ageng",
+        "an arpeggio stepping by frames, a tracker's pattern with its volume column and a slide, the triangle bass "
+        "(tap across it), a blip",
+        "an 808 cowbell (hold it: higher plays a busier figure, twist bends it) and its 3-3-2 rolled, a Memphis vocal "
+        "off a slowing tape, a horror chord spinning up, hiss and crackle, a sliding clipped 808",
+        "fuzz guitars strummed into a wall on a restless whammy bar, feedback singing out of the hiss and the wall, a "
+        "reversed reverb, a dive-bomb",
     };
     static_assert(std::size(blurbs) == SetCount, "a blurb for every set");
     return blurbs[std::clamp(s, 0, int(SetCount) - 1)];
@@ -305,13 +309,14 @@ public:
     QString help() const override {
         return QStringLiteral(
             "Left / Right\tthe set, the sound of every riser and hit: EDM, analog, dub, lo-fi, trap, drum and bass, "
-            "cinema, synthwave (80S), techno, ambient, amapiano (PIANO), gamelan, chiptune (8BIT), phonk, "
+            "cinema, synthwave (80S), techno, ambient, amapiano, gamelan, chiptune (8BIT), phonk, "
             "shoegaze (FUZZ). The row of sets scrolls to follow the one lit; click it or step with the arrows. "
             "What is already playing keeps its own, and loops keep theirs. "
             "Some cells take the set's own name and instrument: a dub SIREN (twist it for a swept siren), trap HATS, "
-            "a cinema BRAAM; amapiano's WHISTLE, KEYS, SHAKERS and LOG DRUM; gamelan's SULING, SARON, GANGSA, GONG "
-            "and BONANG, all in slendro; chiptune's ARP, PULSE, TRIANGLE and BLIP; phonk's VOX and COWBELL; "
-            "shoegaze's FEEDBACK, GLIDE, FUZZ, REVERSE, WALL, DIVE and HARMONIC\n"
+            "a cinema BRAAM; amapiano's LOG ROLL, WHISTLE, KEYS, SHAKERS, CABASA, LOG DRUM and AYY; gamelan's "
+            "CENG-CENG, SULING, SARON, GANGSA, GONG and BONANG, all in slendro; chiptune's ARP, PULSE (a tracker's "
+            "pattern), TRIANGLE and BLIP; phonk's HISS, HORROR, BELL ROLL, VOX and COWBELL; shoegaze's FEEDBACK, "
+            "GLIDE, FUZZ, REVERSE, WALL, DIVE and HARMONIC\n"
             "Shift+Left / Right (or [ ])\tdrop style: clean; gap, a half-beat breath before the ONE with only the "
             "risers' room ringing; or strip, the risers alone for the build's last bar, then the breath\n"
             "Up / Down\tlonger or shorter risers from the keys (1, 2, 4, 8, 16 bars)\n"
@@ -338,7 +343,8 @@ public:
             "sideways (or twist) to glide to another. Amapiano's drop leaves its ONE to the log drum: the drums and "
             "bass come back on beat two\n"
             "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger; "
-            "phonk's COWBELL plays a figure (higher, busier; twist bends its notes down), its VOX chops in eighths\n"
+            "phonk's COWBELL plays a figure (higher, busier; twist bends its notes down), its VOX says the next word "
+            "each beat; amapiano's AYY chops in eighths\n"
             "hold the sweep\tslide left to close a low-pass on the whole mix, up to open a high-pass; press for drive\n"
             "record a build and its drop\tbuild, let it drop, press Space in the bar after: the loop runs from the bar "
             "the build began in to the bar after the drop, and drops on the same bar every pass\n"
@@ -972,20 +978,23 @@ enum Icon {
     IconSuling, IconSaron, IconGangsa, IconGong, IconBonang,
     IconArp, IconPulse, IconTriangle, IconBlip, IconSteps, IconStepFall,
     IconCowbell, IconVox, IconSlide,
+    IconLogRoll, IconCabasa, IconCeng, IconTracker, IconHiss, IconHorror,
     IconFeedback, IconGlide, IconFuzz, IconReverse, IconWall, IconDive, IconHarmonic,
 };
 Icon iconOf(int set, int kind) {
     switch (set) {
     case SetAmapiano:
-        return kind == Pitch ? IconWhistle : kind == Saw ? IconKeys : kind == Roll ? IconShaker : kind == Sub ? IconLogDrum : IconStock;
+        return kind == Noise ? IconLogRoll : kind == Pitch ? IconWhistle : kind == Saw ? IconKeys : kind == Roll ? IconShaker
+               : kind == Swell ? IconCabasa : kind == Sub ? IconLogDrum : kind == Zap ? IconVox : IconStock;
     case SetGamelan:
-        return kind == Pitch ? IconSuling : kind == Saw ? IconSaron : kind == Roll ? IconGangsa : kind == Impact ? IconGong
-               : kind == Zap ? IconBonang : IconStock;
+        return kind == Noise ? IconCeng : kind == Pitch ? IconSuling : kind == Saw ? IconSaron : kind == Roll ? IconGangsa
+               : kind == Impact ? IconGong : kind == Zap ? IconBonang : IconStock;
     case SetChiptune:
-        return kind == Pitch ? IconArp : kind == Saw ? IconPulse : kind == Sub ? IconTriangle : kind == Zap ? IconBlip
+        return kind == Pitch ? IconArp : kind == Saw ? IconTracker : kind == Sub ? IconTriangle : kind == Zap ? IconBlip
                : kind == Swell ? IconSteps : kind == Down ? IconStepFall : IconStock;
     case SetPhonk:
-        return kind == Zap ? IconCowbell : kind == Down ? IconVox : kind == Sub ? IconSlide : IconStock;
+        return kind == Noise ? IconHiss : kind == Pitch ? IconHorror : kind == Saw ? IconCowbell : kind == Zap ? IconCowbell
+               : kind == Down ? IconVox : kind == Sub ? IconSlide : IconStock;
     case SetShoegaze:
         return kind == Noise ? IconFeedback : kind == Pitch ? IconGlide : kind == Saw ? IconFuzz : kind == Swell ? IconReverse
                : kind == Impact ? IconWall : kind == Down ? IconDive : kind == Zap ? IconHarmonic : IconStock;
@@ -1184,6 +1193,50 @@ bool drawIcon(QPainter &p, const QRectF &r, Icon icon, QColor col) {
     }
     case IconDive: // a chord pushed down, shaking at the bottom
         curve(60, [&](double u) { return 0.9 - 0.75 * std::pow(u, 0.7) + (u > 0.6 ? 0.07 * std::sin(u * 60.0) : 0.0); });
+        return true;
+    case IconLogRoll: // plucks closer and closer together, each a step higher
+        for (int k = 0; k < 9; ++k) {
+            const double u0 = 1.0 - std::pow(1.0 - k / 9.0, 0.6), base = 0.1 + 0.08 * k;
+            curve(8, [&](double u) { return base + 0.18 * std::exp(-(u - u0) * 60.0); }, u0, std::min(1.0, u0 + 0.08));
+        }
+        return true;
+    case IconCabasa: // beads round a gourd, the strokes running together
+        p.drawEllipse(at(0.2, 0.5), unit * 0.7, unit * 0.7);
+        p.drawLine(at(0.2 + unit * 0.7 / r.width(), 0.5), at(0.45, 0.5));
+        for (int k = 0; k < 14; ++k) {
+            const double u = 0.48 + k * 0.037, h = 0.1 + 0.8 * k / 13.0;
+            p.drawLine(at(u, 0.5 - h / 2), at(u, 0.5 + h / 2));
+        }
+        return true;
+    case IconCeng: { // two small cymbals clashed, and their rattle
+        for (int side = 0; side < 2; ++side) {
+            const QPointF c = at(0.22 + side * 0.16, 0.5);
+            const qreal rad = std::min(r.height() * 0.42, r.width() * 0.12);
+            p.drawEllipse(c, rad * 0.45, rad);
+        }
+        for (int k = 0; k < 9; ++k) {
+            const double u = 0.55 + k * 0.05, h = 0.25 + 0.5 * std::fabs(std::sin(k * 1.7));
+            p.drawLine(at(u, 0.5 - h / 2), at(u, 0.5 + h / 2));
+        }
+        return true;
+    }
+    case IconTracker: // a pattern's rows: notes, their volume column fading, a slide at the end
+        for (int k = 0; k < 6; ++k) {
+            const double u = 0.04 + k * 0.12;
+            stairs({0.85, 0.7, 0.55, 0.4, 0.25}, u, u + 0.1);
+        }
+        curve(20, [&](double u) { return 0.3 + 0.6 * (u - 0.76) / 0.24; }, 0.76, 1.0);
+        return true;
+    case IconHiss: // hiss thickening, and crackle's ticks in it
+        for (int k = 0; k < 24; ++k) {
+            const double u = 0.02 + k * 0.04, h = 0.1 + 0.6 * u * (0.6 + 0.4 * std::fabs(std::sin(k * 2.7)));
+            p.drawLine(at(u, 0.4 - h / 2), at(u, 0.4 + h / 2));
+            if (k % 5 == 2)
+                p.drawLine(at(u, 0.75), at(u, 0.98));
+        }
+        return true;
+    case IconHorror: // a tape spinning up: a line climbing, wobbling less as it arrives
+        curve(80, [&](double u) { return 0.1 + 0.75 * (1.0 - (1.0 - u) * (1.0 - u)) + 0.1 * (1.0 - u) * std::sin(u * 40.0); });
         return true;
     case IconHarmonic: { // a diamond note-head ringing on
         QPainterPath d;

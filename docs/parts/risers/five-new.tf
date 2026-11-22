@@ -4,10 +4,11 @@
 # them reach amapiano, and Right steps on from there. The risers land on
 # bar 1 of each four and Return rushes them into a drop on the next bar
 # line. Then: amapiano's log drum alone on the ONE (the drums and bass wait
-# a beat) and a log drum line tapped across its cell, with a slide;
-# gamelan's gong and a bonang held; chiptune's triangle bass line and
-# blips; phonk's cowbell figures, its Memphis vocal and a sliding 808;
-# shoegaze's wall, a dive-bomb and harmonics. 128 BPM, A minor.
+# a beat), a log drum line tapped across its cell, with a slide, and an
+# "ayy" held into chops; gamelan's gong and a bonang held; chiptune's
+# triangle bass line and blips; phonk's cowbell figures, its Memphis vocal
+# off a slowing tape and a sliding 808; shoegaze's wall, its feedback
+# swelling back, a dive-bomb and harmonics. 128 BPM, A minor.
 #
 # The groove, made the way the studio makes loops: play, then Space.
 # Drums (page 1, the 4x4 pads; the near row is kick, snare, clap, hat): kick on
@@ -43,7 +44,7 @@ tap 12.688 0.433 0.5 len=0.2
 key 13.719 Space
 # FX (page 7).
 page 13.906 7
-# AMAPIANO: a whistle tongued up the scale, deep-house keys, swung shakers and woodblock; the log drum alone on the drop, then a log drum line with a slide.
+# AMAPIANO: the log drum rolled into the drop, a whistle calling and answering, deep-house keys, swung shakers and woodblock, a cabasa; the log drum alone on the drop, then a log drum line with a slide, and an ayy held.
 key 14.620 Left
 key 14.670 Left
 key 14.720 Left
@@ -67,7 +68,9 @@ tap 20.891 0.1875 0.12 len=0.06
 down 19.953 41 0.1875 0.12 p=0.6
 glide 20.070 20.246 41 0.2470 0.12
 up 20.422 41
-# GAMELAN, in slendro: a suling, saron bars beating in pairs, a gangsa's kotekan; a gong ageng on the drop, then a bonang held.
+down 20.656 48 0.4375 0.12 p=0.6
+up 21.594 48
+# GAMELAN, in slendro: ceng-ceng rattling in the bars' tones, a suling's ornaments, saron bars beating in pairs, a gangsa's norot then telu; a gong ageng on the drop, then a bonang held.
 key 22.520 Right
 tap 22.734 0.10 0.44 p=0.6 len=0.2
 tap 22.852 0.30 0.44 p=0.6 len=0.2
@@ -77,7 +80,7 @@ tap 23.204 0.90 0.44 p=0.6 len=0.2
 key 24.516 Return
 down 26.750 42 0.4375 0.14 p=0.6
 up 28.625 42
-# CHIPTUNE: the noise channel's sweep, an arpeggio stepping by frames, pulse stabs with a tracker's echo, the noise channel's stepped swell; the triangle's kick on the drop and a triangle bass line, blips, a stepped fall.
+# CHIPTUNE: the noise channel's sweep, an arpeggio stepping by frames, a tracker's pattern (volume column, duty sweep, vibrato, a slide up) with its echo, the noise channel's stepped swell; the triangle's kick on the drop and a triangle bass line, blips, a stepped fall.
 key 30.020 Right
 tap 30.234 0.10 0.44 p=0.6 len=0.2
 tap 30.352 0.30 0.44 p=0.6 len=0.2
@@ -100,7 +103,7 @@ tap 34.953 0.2470 0.10 len=0.06
 down 35.188 43 0.4375 0.12 p=0.6
 up 35.656 43
 tap 35.773 0.3125 0.12 len=0.1
-# PHONK: blown-out saws, triplet hats, a horror chord on the drop; the cowbell's busy figure, then its falling one twisted; the Memphis vocal, tapped and held; an 808 line sliding.
+# PHONK: hiss and crackle, a horror chord on a tape spinning up, the cowbell's 3-3-2 rolled, triplet hats, a horror chord on the drop; the cowbell's busy figure, then its falling one twisted; the Memphis vocal off a slowing tape, tapped and held; an 808 line sliding.
 key 37.520 Right
 tap 37.734 0.10 0.44 p=0.6 len=0.2
 tap 37.852 0.30 0.44 p=0.6 len=0.2
@@ -121,7 +124,7 @@ tap 40.578 0.2470 0.14 len=0.06
 tap 41.047 0.1478 0.14 len=0.06
 tap 41.750 0.1875 0.14 len=0.06
 tap 42.453 0.2669 0.14 len=0.06
-# SHOEGAZE: amp feedback singing, a glide guitar, fuzz chords, a reversed reverb; a wall on the drop, a dive-bomb, harmonics held.
+# SHOEGAZE: amp feedback singing, a glide guitar, fuzz chords strummed into a wall and tremolo-picked, a reversed reverb; the wall on the drop with its feedback swelling back, a dive-bomb, harmonics held.
 key 45.020 Right
 tap 45.234 0.10 0.44 p=0.6 len=0.2
 tap 45.352 0.30 0.44 p=0.6 len=0.2

@@ -1222,16 +1222,18 @@ private slots:
             QCOMPARE(second.parts[p].channel.value[Mute], 0.0f);
     }
 
-    // Gamelan is in slendro, not the key: its saron, gangsa, suling and
-    // bonang all play slendro's tones, some of them well off any note of
-    // the key. The gangsa's kotekan is two parts in one line: in the first
-    // half of a long build, two notes to each beat, one part to each side.
-    // And the gong leaves the kick's band alone: below 120 Hz it hums by
-    // under 6 dB through its first bar, and is 30 dB down by its third.
+    // Gamelan is in slendro, not the key: its saron, gangsa, suling,
+    // bonang and ceng-ceng all play slendro's tones, some of them well off
+    // any note of the key. The gangsa's kotekan is two parts locked into
+    // one line: in both its figures every stroke is someone's, each part
+    // rests, they share tones, and neither simply takes every other stroke.
+    // Played, polos is on the left and sangsih on the right. And the gong
+    // leaves the kick's band alone: below 120 Hz it hums by under 6 dB
+    // through its first bar, and is 30 dB down by its third.
     void gamelanIsInSlendro() {
         Harmony h;
         bool offKey = false;
-        for (int kind : {int(risers::Saw), int(risers::Roll), int(risers::Pitch), int(risers::Zap)}) {
+        for (int kind : {int(risers::Saw), int(risers::Roll), int(risers::Pitch), int(risers::Zap), int(risers::Noise)}) {
             Rig rig;
             rig.on(5, kind, risers::SetGamelan, 0.3f);
             const std::vector<float> notes = notesOf(rig, kind, kind == risers::Zap ? 0.3 : 1.9);
@@ -1255,18 +1257,38 @@ private slots:
             c.f[5] = 16.0f;
             rig.send(c);
             const std::vector<float> notes = notesOf(rig, risers::Roll, timeOf(7.9));
-            QVERIFY2(notes.size() >= 14 && notes.size() <= 17, qPrintable(QString::number(notes.size())));
-            // Each eighth's strike on its own side: the left half-beats louder
-            // on the left, the right ones on the right.
-            double onL = 0, onR = 0, offL = 0, offR = 0;
-            for (int e = 2; e < 14; ++e) {
+            QVERIFY2(notes.size() >= 10, qPrintable(QString::number(notes.size())));
+            // In the first half (norot, in eighths), a stroke polos plays
+            // alone is louder on the left, one sangsih plays alone on the
+            // right.
+            double polosL = 0, polosR = 0, sangsihL = 0, sangsihR = 0;
+            for (int e = 2; e < 15; ++e) {
+                int strike[2];
+                risers::kotekanStroke(false, e % 8, strike);
+                if ((strike[0] >= 0) == (strike[1] >= 0))
+                    continue;
                 const size_t i0 = size_t(timeOf(0.5 * e) * 48000), i1 = size_t(timeOf(0.5 * e + 0.25) * 48000);
                 for (size_t i = i0; i < i1; ++i) {
-                    (e % 2 ? offL : onL) += double(rig.l[i]) * rig.l[i];
-                    (e % 2 ? offR : onR) += double(rig.r[i]) * rig.r[i];
+                    (strike[0] >= 0 ? polosL : sangsihL) += double(rig.l[i]) * rig.l[i];
+                    (strike[0] >= 0 ? polosR : sangsihR) += double(rig.r[i]) * rig.r[i];
                 }
             }
-            QVERIFY2(onL > 1.5 * onR && offR > 1.5 * offL, qPrintable(QStringLiteral("%1 %2 %3 %4").arg(onL).arg(onR).arg(offL).arg(offR)));
+            QVERIFY2(polosL > 1.5 * polosR && sangsihR > 1.5 * sangsihL,
+                     qPrintable(QStringLiteral("%1 %2 %3 %4").arg(polosL).arg(polosR).arg(sangsihL).arg(sangsihR)));
+        }
+        for (bool telu : {false, true}) {
+            int rests[2] = {}, shared = 0, alternate = 0;
+            for (int j = 0; j < 8; ++j) {
+                int strike[2];
+                risers::kotekanStroke(telu, j, strike);
+                QVERIFY(strike[0] >= 0 || strike[1] >= 0);
+                rests[0] += strike[0] < 0;
+                rests[1] += strike[1] < 0;
+                shared += strike[0] >= 0 && strike[0] == strike[1];
+                alternate += (strike[0] >= 0) == (j % 2 == 0) && (strike[1] >= 0) == (j % 2 == 1);
+            }
+            QVERIFY2(rests[0] >= 2 && rests[1] >= 2 && shared >= 1 && alternate < 8,
+                     qPrintable(QStringLiteral("%1 %2 %3 %4").arg(rests[0]).arg(rests[1]).arg(shared).arg(alternate)));
         }
         Rig gong;
         gong.on(5, risers::Impact, risers::SetGamelan);

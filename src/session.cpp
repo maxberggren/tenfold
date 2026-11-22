@@ -915,7 +915,7 @@ Cycle findCycle(const std::vector<Hit> &hits) {
     return found.front();
 }
 
-double settledLoop(const std::vector<Hit> &hits, double end, double earliest, const std::vector<double> &periods,
+[[maybe_unused]] double settledLoop(const std::vector<Hit> &hits, double end, double earliest, const std::vector<double> &periods,
                    double longest, double tol, double minScore, double edge) {
     for (double p : periods) {
         if (end - 2 * p < earliest - tol)
@@ -1262,7 +1262,7 @@ bars:
     ctx.post(m);
     m_view.parts[part].recording = slot;
     handOver();
-    m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now(), m_view.parts[part].takes};
+    m_lastTake = {part, slot, layer && into >= 0 ? into : -1, end, length, m.d2, now(), m_view.parts[part].takes, false, 0, 0, {}, 0};
     m_lastTake.base = m_lastTake.into >= 0 ? layerBase : 0;
     QString what = bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(bars);
     if (settled)

@@ -16,6 +16,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 atmos;  // level, swell, halo, tone
     vec4 drums2; // sub, snares counted, kicks counted, master
     vec4 morph2; // distance flown, warp, hue turn, chaos
+    vec4 speed;  // x: how much the frame streaks with the flight speed
     vec4 roll;   // roll speed, trails, markers, crt (0 flat .. 1 a full CRT)
 } ubuf;
 layout(binding = 1) uniform sampler2D image;
@@ -89,7 +90,14 @@ void main() {
     // A drop: two frames of white, then the picture cut to near black and
     // climbing back, the new world's lights first.
     float drop = ubuf.fx.y;
-    col *= 1.0 - 0.85 * smoothstep(0.3, 0.85, drop);
+    col *= 1.0 - 0.85 * smoothstep(0.6, 0.85, drop);
+
+    // Speed: the frame streaks out from the centre as fast as it flies.
+    vec2 toC = (uv - 0.5) * ubuf.speed.x;
+    col += 0.25 * (texture(image, uv - toC * 0.01).rgb + texture(image, uv - toC * 0.02).rgb) +
+           0.1 * texture(image, uv - toC * 0.035).rgb - 0.6 * texture(image, uv).rgb;
+    // No hard-clipped walls: highlights roll off.
+    col = col / (1.0 + max(dot(col, vec3(0.33)) - 3.0, 0.0) * 0.3);
 
     // Filmic: a black level (the echoes and the glow lift it), half a stop
     // up, a soft shoulder, a touch more colour.
@@ -109,7 +117,10 @@ void main() {
     // whitens as it climbs, and near the top the end of every sixteenth cuts to
     // black.
     float build = ubuf.fx.x;
-    col = mix(col, vec3(1.0), 0.55 * build * build);
+    // Tense, not faded: contrast and colour up, the corners closing in.
+    col = clamp((col - 0.5) * (1.0 + 0.9 * build) + 0.5, 0.0, 1.0);
+    col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.0 + 0.8 * build);
+    col *= 1.0 - build * 1.4 * dot(d, d);
     col *= 1.0 - 0.92 * step(0.75, fract(ubuf.res.w * 4.0)) * smoothstep(0.6, 0.9, build);
 
     // Dither, so dark gradients don't band (in a video least of all).

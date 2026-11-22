@@ -870,6 +870,7 @@ std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand 
         {"morph2", {float(d.travel), std::max({l.warp, 0.85f * h.extreme, 0.9f * s.drop}), l.hue, h.chaos}},
         {"morph3", {float(marchSteps(set.quality)), clamp01(h.pressure * float(h.count > 0)), d.pace, float(h.count)}},
         {"roll", {d.roll, l.trails, set.markers ? 1.0f : 0.0f, crt}},
+        {"speed", {std::clamp((d.pace - 1.5f) / 4.0f, 0.0f, 1.5f), 0, 0, 0}},
     };
     static const char *const fingers[] = {"f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"};
     for (int i = 0; i < 10; ++i) {

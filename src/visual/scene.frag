@@ -363,6 +363,13 @@ void main() {
     vec3 o0 = orb(ubuf.n0, ro.z), o1 = orb(ubuf.n1, ro.z), o2 = orb(ubuf.n2, ro.z), o3 = orb(ubuf.n3, ro.z);
     float e0 = orbOn(ubuf.n0), e1 = orbOn(ubuf.n1), e2 = orbOn(ubuf.n2), e3 = orbOn(ubuf.n3);
 
+    // With the lead silent the next instrument is the frame's hot light.
+    float focus = 1.0 + 3.0 * (1.0 - ubuf.lead.x);
+    float bubble = smoothstep(0.3, 1.0, ubuf.morph2.y);
+    vec3 bubbleC = vec3(0.0, 0.0, ro.z + 3.5 * exp2(ubuf.morph1.w));
+    vec3 hue = palette(0.17 * ubuf.morph0.x);
+    vec3 complement = mix(palette(0.17 * ubuf.morph0.x + 0.42), vec3(0.75), 0.45);
+
     float t = 0.05;
     float glow = 0.0;
     vec3 emit = vec3(0.0);
@@ -376,19 +383,15 @@ void main() {
         float d = map(p, trap);
         // Neon: how close the ray grazed an edge.
         glow += exp(-max(d, 0.0) * 70.0) * 0.006;
-        // The lead's ribbon of light through the world.
-        float lr = length(p.xy - ribbon(p.z, time)) - 0.015 - 0.04 * ubuf.lead.x;
-        // Its colour by pitch: deep amber low, white-gold high.
-        vec3 leadC = mix(vec3(1.0, 0.4, 0.05), vec3(1.0, 0.9, 0.6), ubuf.lead.y);
-        emit += leadC * ubuf.lead.x * (1.0 + 2.0 * ubuf.lead.z) * exp(-max(lr, 0.0) * 25.0) * 0.35 *
-                smoothstep(0.5, 2.0, p.z - ro.z);
         // The voice: a filament down the flight path, wavering with its pitch.
         vec2 wob = 0.18 * vec2(sin(p.z * (2.0 + 6.0 * ubuf.vocal.y) + time * 3.0), cos(p.z * 1.7 + time * 2.1));
         float fil = length(p.xy - wob) - 0.01 - 0.05 * ubuf.vocal.x;
-        emit += C_VOCAL * ubuf.vocal.x * exp(-max(fil, 0.0) * 30.0) * 0.2;
+        emit += C_VOCAL * ubuf.vocal.x * exp(-max(fil, 0.0) * 30.0) * 0.2 * focus;
         // The arp's orbs.
         emit += C_ARP * (e0 * exp(-length(p - o0) * 22.0) + e1 * exp(-length(p - o1) * 22.0) +
-                         e2 * exp(-length(p - o2) * 22.0) + e3 * exp(-length(p - o3) * 22.0)) * 2.0;
+                         e2 * exp(-length(p - o2) * 22.0) + e3 * exp(-length(p - o3) * 22.0)) * 2.0 * focus;
+        // The inverted bubble's heart, lit from within.
+        emit += complement * bubble * exp(-length(p - bubbleC) * 3.0) * 0.05;
         iters += 1.0;
         if (d < 0.0018 * t) {
             hit = true;
@@ -403,10 +406,8 @@ void main() {
     float harmony = clamp(ubuf.levels0.y + ubuf.levels0.z + ubuf.levels1.y + 0.6 * ubuf.levels0.w + 0.5 * ubuf.levels1.x +
                           ubuf.levels1.w, 0.0, 1.0);
     float ambient = 0.2 + 0.8 * harmony;
-    // Each world its own base hue, turned by the chord; the second tone a
-    // split complement, lighter and paler, for the rims and cavities.
-    vec3 hue = palette(0.17 * ubuf.morph0.x);
-    vec3 complement = mix(palette(0.17 * ubuf.morph0.x + 0.42), vec3(0.75), 0.45);
+    // (Each world has its own base hue, turned by the chord, and a split
+    // complement, lighter and paler, for the rims and cavities: above.)
 
     vec3 col = vec3(0.0);
     // Fog to black, with a faint band of the complement in the distance:
@@ -478,11 +479,37 @@ void main() {
         col = fogCol;
     }
     // Edges: the chord's neon at rest, the drums' orange flaring on a kick.
-    col += glow * (hue * (0.4 + 2.0 * ubuf.chord.y) * ambient + C_DRUMS * 40.0 * kick * kick * exp(-t * 0.06) + vec3(0.6) * ubuf.morph3.y);
+    col += glow * (hue * (0.4 + 2.0 * ubuf.chord.y) * ambient + C_DRUMS * 18.0 * kick * kick * exp(-t * 0.06) + vec3(0.6) * ubuf.morph3.y);
+    // The lead's ribbon: a smooth curve of light, found exactly. The ray is
+    // tested against 32 segments of the curve ahead, closest approach
+    // each, for a hot white core and a coloured halo (sampling it along the
+    // march left it a string of beads).
+    if (ubuf.lead.x > 0.01) {
+        float tEnd = hit ? t : 40.0;
+        float best = 1e9;
+        vec3 a = vec3(ribbon(ro.z + 0.8, time), ro.z + 0.8);
+        for (int k = 1; k <= 32; k++) {
+            float z = ro.z + 0.8 + float(k) * 0.45;
+            vec3 b = vec3(ribbon(z, time), z);
+            // The closest points of the ray and the segment a..b.
+            vec3 ab = b - a, ao2 = ro - a;
+            float dd = dot(ab, ab), e = dot(ab, rd), f = dot(ab, ao2), g = dot(rd, ao2);
+            float den = dd - e * e;
+            float sv = den > 1e-6 ? clamp((f - e * g) / den, 0.0, 1.0) : 0.0;
+            float tv = clamp(dot(a + ab * sv - ro, rd), 0.0, tEnd);
+            sv = clamp(dot(ro + rd * tv - a, ab) / dd, 0.0, 1.0);
+            best = min(best, length(ro + rd * tv - (a + ab * sv)));
+            a = b;
+        }
+        float w = 0.012 + 0.025 * ubuf.lead.x;
+        vec3 leadC = mix(vec3(1.0, 0.4, 0.05), vec3(1.0, 0.9, 0.6), ubuf.lead.y);
+        vec3 ribbonL = (vec3(1.0) * 6.0 * exp(-best * best / (w * w * 0.25)) +
+                        leadC * 2.0 * exp(-best * best / (w * w * 9.0))) * ubuf.lead.x * (1.0 + ubuf.lead.z);
+        col += ribbonL;
+        emit += ribbonL;
+    }
     col += emit;
-    // A build climbs: its edges burn white, the frame whitens, and near the
-    // top every other sixteenth cuts to black.
-    // A build burns its edges white (the glass whitens it, post.frag).
+    // A build: rims burn white and the glass tightens (post.frag).
     col += glow * vec3(1.0) * 12.0 * build * build;
     // Alpha marks what is lit by itself (the lead, the voice, the orbs): the
     // echoes leave it out, so it never ghosts into stripes.

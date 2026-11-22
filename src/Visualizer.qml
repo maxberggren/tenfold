@@ -189,6 +189,7 @@ Item {
         readonly property vector4d drums2: root.u.drums2
         readonly property vector4d morph2: root.u.morph2
         readonly property vector4d roll: root.roll
+        readonly property vector4d speed: root.u.speed
         fragmentShader: "qrc:/visual/post.frag.qsb"
     }
 }

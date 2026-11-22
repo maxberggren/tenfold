@@ -1,4 +1,5 @@
-# Accordion: a cumbia musette riff, a tango in the clarinet stop, the bandoneon stop.
+# Accordion: a cumbia musette riff, a tango in the clarinet stop, the bandoneon stop. Where the
+# bellows turn, the pull is heard biting harder than the push.
 # Render: build/tenfold render docs/parts/lead/accordion-cumbia.tf accordion-cumbia.wav
 page 0.000 4
 tempo 0.010 96

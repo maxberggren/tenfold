@@ -1,4 +1,5 @@
-# Sync: an Italo disco arpeggio, a held hook that keeps tearing, the FM snarl under pressure.
+# Sync: an Italo disco arpeggio, a held hook that keeps tearing, the FM snarl under pressure,
+# and a held note sung from "ow" to "ee" as the finger rises.
 # Render: build/tenfold render docs/parts/lead/sync-italo.tf sync-italo.wav
 page 0.000 4
 tempo 0.010 118
@@ -86,9 +87,15 @@ up 5.431 35
 up 5.685 34
 down 5.685 36 0.7140 0.45 p=0.60
 up 7.210 36
-# Held, pressed harder: the FM crossfade's snarl; then the finger rises and the sweep goes with it.
+# Held, pressed harder: the FM crossfade's snarl; then the finger rises and the sweep goes with it,
+# the vowel moving from "ow" to "ee".
 down 7.464 37 0.6100 0.30 p=0.50
 glide 7.973 8.990 37 0.6100 0.30 p=1.00
 glide 9.244 10.261 37 0.6100 0.95 p=0.60
 up 10.515 37
-end 12.269
+# Sung: low on the pad "ow", rising slowly to "ee" and back down.
+down 10.769 38 0.5580 0.15 p=0.55
+glide 11.278 12.803 38 0.5580 0.85 p=0.55
+glide 13.311 14.329 38 0.5580 0.20 p=0.55
+up 14.837 38
+end 16.000

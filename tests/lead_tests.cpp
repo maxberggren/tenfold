@@ -1029,6 +1029,11 @@ private slots:
             was = h;
         }
         QVERIFY2(loudest(0.32) >= 10 && loudest(1.3) <= 4, qPrintable(path));
+        // And it slides as a stripe through the harmonics over the first
+        // half second or so, the "ji" of the stroke, not at once: a fifth of
+        // a second in, it is still well up and on its way down, lower
+        // again two fifths in.
+        QVERIFY2(loudest(0.5) >= 5 && loudest(0.5) < loudest(0.32) && loudest(0.7) < loudest(0.5), qPrintable(path));
         // A buzz that keeps its partials: well into the note, the ninth to
         // the sixteenth stand far closer to the fundamental than a Pluck's.
         auto upper = [](const testkit::Take &t) {
@@ -1084,6 +1089,12 @@ private slots:
         const double in = tail(0, &side), off = tail(0.5f, nullptr);
         QVERIFY2(in > 3.0 * off, qPrintable(QStringLiteral("%1 %2").arg(in).arg(off)));
         QVERIFY2(side > 0.15, qPrintable(QString::number(side)));
+        // And it blooms after the note: the played string, let go, hands
+        // what it still swings to the taraf, which rings on, a third of a
+        // second after the release within 13 dB of the note just before it.
+        const auto rung = testkit::play(onSound(10, fmt("down 0.3 1 %.4f 0.7 p=0.7\nup 1.3 1\nend 2.0\n", cellX(7))));
+        const double before = levelOf(rung, 1.2, 1.3), after = levelOf(rung, 1.6, 1.8);
+        QVERIFY2(after > before - 13.0, qPrintable(QStringLiteral("%1 %2").arg(before).arg(after)));
         // The chikari: a second finger tapped high on the pad, while A4
         // rings, is no hammer-on (the line stays on A4) but strikes the high
         // drone strings, the E a fifth over it among them.
@@ -1170,6 +1181,33 @@ private slots:
             const Swing r = swingOf(rolled(bpm), 1.0, 2.3, 0.01);
             QVERIFY2(std::fabs(r.rate - want) < 1.0, qPrintable(QStringLiteral("%1 BPM: %2 a second").arg(bpm).arg(r.rate)));
         }
+        // A player swells into a roll and leans on the beat. At 120 BPM,
+        // a note struck on the beat: the roll's first stroke lands well
+        // under the strokes a second later, and the strokes on the studio's
+        // beats stand over the ones between them (16th triplets, twelve a
+        // second; the middle three of each beat's six, away from the
+        // accent's own ring).
+        const auto swung = testkit::play(onSound(11, fmt("tempo 0.01 120\ndown 0.5 1 %.4f 0.6 p=0.7\nup 3.2 1\nend 3.4\n", cellX(7))));
+        auto strokeAt = [&](double at) {
+            double top = 0;
+            for (double x = at - 0.03; x < at + 0.03; x += 0.0025)
+                top = std::max(top, swung.rms(x, x + 0.005));
+            return 20 * std::log10(top);
+        };
+        double onBeat = 0, between = 0;
+        for (double beat : {1.5, 2.0, 2.5, 3.0}) {
+            onBeat += strokeAt(beat) / 4.0;
+            for (int j = 2; j <= 4; ++j)
+                between += strokeAt(beat - 0.5 + j / 12.0) / 12.0;
+        }
+        QVERIFY2(onBeat > between + 1.0, qPrintable(QStringLiteral("%1 %2").arg(onBeat).arg(between)));
+        QVERIFY2(strokeAt(0.84) < between - 2.0, qPrintable(QStringLiteral("%1 %2").arg(strokeAt(0.84)).arg(between)));
+        // And its neighbours ring with it: a single stroke on A4 sets the
+        // pan's E5 ringing, the fifth over it a few cents flat, between 6
+        // and 24 dB under the note.
+        const auto single = testkit::play(onSound(11, fmt("down 0.3 1 %.4f 0.6 p=0.3\nup 0.42 1\nend 1.2\n", cellX(7))));
+        const double a4 = levelAt(single, 0.4, 0.9, 440.0), e5 = levelAt(single, 0.4, 0.9, 440.0 * 1.4958);
+        QVERIFY2(e5 > a4 - 24.0 && e5 < a4 - 6.0, qPrintable(QStringLiteral("%1 %2").arg(a4).arg(e5)));
         // A firm stroke high on the note pings: the stick's first few
         // milliseconds stand 10 dB brighter from 3 to 6 kHz, against the
         // fundamental, than a soft low one's, and splash nothing above
@@ -1263,6 +1301,25 @@ private slots:
                                                 .arg(note - levelAt(t, from, from + 0.1, f))));
             }
         }
+        // A hard-pressed glide up to the top of the neck: the ladder's soft
+        // clip runs at twice the rate and what the return to the page's
+        // rate would mirror is rolled off, so from 21.5 to 23.5 kHz there
+        // is nothing within 80 dB of the note (at the page's rate the clip
+        // left mirrored lines there some 65 dB under it).
+        const auto glide = testkit::play(onSound(
+            12, fmt("down 0.3 1 %.4f 0.8 p=0.95\nglide 0.8 1.6 1 %.4f 0.8 p=0.95\nup 2.0 1\nend 2.2\n", cellX(7), cellX(14))));
+        const double whole = bandDb(glide, 0.8, 1.9, 100, 19500), mirrored = bandDb(glide, 0.8, 1.9, 21500, 23500);
+        QVERIFY2(mirrored < whole - 80.0, qPrintable(QStringLiteral("%1 under").arg(whole - mirrored)));
+    }
+
+    void theSyncLeadSingsAVowel() {
+        // A second formant over the tear: low on the pad the vowel is "ow",
+        // its second harmonic far over its sixth; high on the pad it is
+        // "ee", the sixth (2.6 kHz) lifted over the second.
+        const auto ow = testkit::play(hold(12, 7, 0.15)), ee = testkit::play(hold(12, 7, 0.85));
+        auto vowel = [](const testkit::Take &t) { return levelAt(t, 0.7, 1.4, 2640.0) - levelAt(t, 0.7, 1.4, 880.0); };
+        QVERIFY2(vowel(ow) < -10.0, qPrintable(QString::number(vowel(ow))));
+        QVERIFY2(vowel(ee) > 2.0, qPrintable(QString::number(vowel(ee))));
     }
 
     void theErhuIsABowedString() {
@@ -1270,16 +1327,6 @@ private slots:
         // It slides up into the note.
         const double start = midiOf(pitchHz(e, 0.31, 0.35));
         QVERIFY2(start < 68.8, qPrintable(QString::number(start)));
-        // Its vibrato, once grown, is deep: a held note's pitch swings
-        // through more than half a semitone.
-        double lo = 1e9, hi = -1e9;
-        for (double t = 1.0; t < 1.45; t += 0.03) {
-            const double p = midiOf(pitchHz(e, t, t + 0.045));
-            lo = std::min(lo, p);
-            hi = std::max(hi, p);
-        }
-        QVERIFY2(hi - lo > 0.5, qPrintable(QStringLiteral("%1 %2").arg(lo).arg(hi)));
-        QVERIFY2(hi - lo < 1.2, qPrintable(QStringLiteral("%1 %2").arg(lo).arg(hi)));
         // The bow decides the tone. At a normal press the string swings in
         // its Helmholtz motion, the fundamental on top; a light one can't
         // hold it, and it whistles on its second partial, the fundamental
@@ -1341,6 +1388,144 @@ private slots:
         QVERIFY2(middle > early + 1.5 && middle > late + 2.0, qPrintable(arc));
         // Past the bow's length, the next stroke sings on.
         QVERIFY2(levelOf(bow, 3.9, 4.1) > middle - 4.0, qPrintable(arc + QStringLiteral(" then %1").arg(levelOf(bow, 3.9, 4.1))));
+    }
+
+    void theErhusVibratoIsAPlayers() {
+        // On a held note the vibrato comes late and narrow, then widens
+        // and quickens into the bow's arc: deep once grown (near half a
+        // semitone through a 45 ms window that rounds its peaks, under one
+        // and a quarter), its cycles quicker in the middle of the stroke
+        // than as it starts, and never one sine repeated (the cycles'
+        // lengths and widths differ).
+        const auto bow = testkit::play(onSound(13, fmt("down 0.3 1 %.4f 0.6 p=0.55\nup 3.3 1\nend 3.5\n", cellX(7))));
+        std::vector<double> t, p;
+        for (double x = 0.5; x < 3.2; x += 0.01) {
+            t.push_back(x + 0.0225);
+            p.push_back(midiOf(pitchHz(bow, x, x + 0.045)));
+        }
+        // Each cycle, from one upward crossing of the note to the next.
+        struct Cycle {
+            double at, len, width;
+        };
+        std::vector<Cycle> cycles;
+        double last = -1;
+        for (size_t i = 1; i < p.size(); ++i)
+            if (p[i - 1] < 69.0 && p[i] >= 69.0) {
+                if (last > 0) {
+                    double lo = 1e9, hi = -1e9;
+                    for (size_t j = 0; j < p.size(); ++j)
+                        if (t[j] >= last && t[j] < t[i]) {
+                            lo = std::min(lo, p[j]);
+                            hi = std::max(hi, p[j]);
+                        }
+                    cycles.push_back({last, t[i] - last, hi - lo});
+                }
+                last = t[i];
+            }
+        QVERIFY2(cycles.size() > 8, qPrintable(QString::number(cycles.size())));
+        auto over = [&](double from, double to, auto field) {
+            double sum = 0;
+            int count = 0;
+            for (const auto &c : cycles)
+                if (c.at >= from && c.at < to) {
+                    sum += field(c);
+                    ++count;
+                }
+            return count ? sum / count : 0.0;
+        };
+        auto width = [](const Cycle &c) { return c.width; };
+        auto len = [](const Cycle &c) { return c.len; };
+        const double early = over(0.6, 1.25, width), grown = over(1.4, 2.4, width);
+        const QString w = QStringLiteral("%1 %2").arg(early).arg(grown);
+        QVERIFY2(grown > 0.45 && grown < 1.25, qPrintable(w));
+        QVERIFY2(early < 0.6 * grown, qPrintable(w));
+        const double slow = over(0.6, 1.25, len), quick = over(1.4, 2.4, len);
+        QVERIFY2(quick < 0.92 * slow, qPrintable(QStringLiteral("%1 %2").arg(slow).arg(quick)));
+        QVERIFY2(1.0 / quick > 5.6 && 1.0 / quick < 7.2, qPrintable(QString::number(1.0 / quick)));
+        double lmin = 1e9, lmax = 0, wmin = 1e9, wmax = 0;
+        for (const auto &c : cycles)
+            if (c.at >= 1.4 && c.at < 3.0) {
+                lmin = std::min(lmin, c.len);
+                lmax = std::max(lmax, c.len);
+                wmin = std::min(wmin, c.width);
+                wmax = std::max(wmax, c.width);
+            }
+        QVERIFY2(lmax > lmin + 0.008 && wmax > 1.1 * wmin,
+                 qPrintable(QStringLiteral("%1-%2 s, %3-%4 st").arg(lmin).arg(lmax).arg(wmin).arg(wmax)));
+    }
+
+    void theErhuSlidesAcrossALeap() {
+        // A legato leap of a fifth, D4 up to A4: the finger travels the
+        // string, a huayin, landing a little past the A (more than a tenth
+        // of a semitone) and settling back onto it, while the line
+        // lightens as it slides. A step of a tone glides on without one.
+        const auto leap = testkit::play(onSound(
+            13, fmt("down 0.3 1 %.4f 0.6 p=0.55\ndown 0.9 2 %.4f 0.6 p=0.55\nup 0.9 1\nup 1.8 2\nend 2.0\n", cellX(3), cellX(7))));
+        double top = 0;
+        for (double x = 0.92; x < 1.2; x += 0.01)
+            top = std::max(top, midiOf(pitchHz(leap, x, x + 0.03)));
+        const double landed = midiOf(pitchHz(leap, 1.45, 1.5));
+        QVERIFY2(top > 69.12 && top < 69.8, qPrintable(QStringLiteral("%1 then %2").arg(top).arg(landed)));
+        QVERIFY2(std::fabs(landed - 69.0) < 0.35, qPrintable(QString::number(landed)));
+        const double before = levelOf(leap, 0.7, 0.85), sliding = levelOf(leap, 0.93, 1.0);
+        QVERIFY2(sliding < before - 0.8, qPrintable(QStringLiteral("%1 %2").arg(before).arg(sliding)));
+        const auto step = testkit::play(onSound(
+            13, fmt("down 0.3 1 %.4f 0.6 p=0.55\ndown 0.9 2 %.4f 0.6 p=0.55\nup 0.9 1\nup 1.8 2\nend 2.0\n", cellX(6), cellX(7))));
+        double stepTop = 0;
+        for (double x = 0.92; x < 1.2; x += 0.01)
+            stepTop = std::max(stepTop, midiOf(pitchHz(step, x, x + 0.03)));
+        QVERIFY2(stepTop < 69.1, qPrintable(QString::number(stepTop)));
+    }
+
+    void theErhusNotesStartWithoutATick() {
+        // A legato line bowed note by note, each starting 20 ms after the
+        // last let go (so the bow changes on a string still ringing), some
+        // bowed nearer the bridge and some leaping into a slide: over
+        // 12 kHz, where the small body leaves almost nothing, the first few
+        // milliseconds of each note are no more than 6 dB over the local
+        // level, the note's own steady state or the last one's just before
+        // it let go, whichever is the louder. A bow change that stepped the
+        // arc's weight, the vibrato's width, or the friction would tick
+        // there by 20 to 50.
+        auto line = [](const std::vector<std::tuple<int, double, double>> &notes) {
+            std::string s;
+            double at = 0.3;
+            for (size_t k = 0; k < notes.size(); ++k) {
+                const auto &[cell, y, press] = notes[k];
+                s += fmt("down %.3f %.0f %.4f %.2f", at, double(k + 1), cellX(cell), y) + fmt(" p=%.2f\n", press);
+                s += fmt("up %.3f %.0f\n", at + 0.28, double(k + 1));
+                at += 0.3;
+            }
+            return testkit::play(onSound(13, s + fmt("end %.3f\n", at + 0.3)));
+        };
+        auto hf = [](const testkit::Take &t, double from) { return bandDb(t, from, from + 0.005, 12000, 23000); };
+        auto tick = [&](const testkit::Take &t, double on) {
+            double top = -1e9;
+            for (double x = on - 0.005; x < on + 0.012; x += 0.0025)
+                top = std::max(top, hf(t, x));
+            return top;
+        };
+        const auto even = line({{11, 0.5, 0.6}, {10, 0.5, 0.6}, {9, 0.5, 0.6}, {8, 0.3, 0.6}, {7, 0.5, 0.65},
+                                {9, 0.5, 0.6}, {11, 0.7, 0.6}, {7, 0.5, 0.6}});
+        for (int k = 1; k < 8; ++k) {
+            const double on = 0.3 + 0.3 * k;
+            double steady = 0;
+            for (double x = on + 0.1; x < on + 0.2; x += 0.005)
+                steady += std::pow(10.0, hf(even, x) / 10.0);
+            steady = std::max(10 * std::log10(steady / 20.0), hf(even, on - 0.03));
+            const double over = tick(even, on) - steady;
+            QVERIFY2(over < 6.0, qPrintable(QStringLiteral("note %1: %2 over").arg(k + 1).arg(over)));
+        }
+        // Into a light bow and out of it again the string itself breaks
+        // from its Helmholtz motion into the whistle and catches again, a
+        // real event of the string's own; over a steady state some 130 dB
+        // under full scale it shows, but it stays 75 dB under the note.
+        const auto light = line({{9, 0.5, 0.6}, {8, 0.5, 0.2}, {7, 0.4, 0.65}});
+        for (int k = 1; k < 3; ++k) {
+            const double on = 0.3 + 0.3 * k, note = bandDb(light, on + 0.1, on + 0.105, 100, 12000);
+            QVERIFY2(tick(light, on) < note - 75.0,
+                     qPrintable(QStringLiteral("note %1: %2 under").arg(k + 1).arg(note - tick(light, on))));
+        }
     }
 
     void theAccordionsRegistersAndBellows() {
@@ -1407,6 +1592,26 @@ private slots:
         const auto fresh = testkit::play(onSound(14, second));
         const double swell = 20 * std::log10(turned.rms(3.33, 3.38) / fresh.rms(3.33, 3.38));
         QVERIFY2(swell > 1.5, qPrintable(QString::number(swell)));
+        // And the pull is voiced apart from the push, not only tuned a
+        // hair sharp: the same note in the same stop, drawn on the pull
+        // just after the bellows turned, bites harder from 2 to 5 kHz
+        // against its fundamental, and its chamber rings higher (2.2 to
+        // 2.7 kHz against 1.3 to 1.7), than one drawn on the push just
+        // after a shorter note that left them as they were. (Tuned apart
+        // alone, the two differ by some 6 and 3 dB.)
+        const auto pushed = testkit::play(onSound(
+            14, fmt("down 0.3 1 %.4f 0.15 p=0.6\nup 1.5 1\ndown 1.6 2 %.4f 0.15 p=0.6\nup 2.2 2\nend 2.4\n", cellX(4), cellX(4))));
+        const double root = pitchHz(fresh, 3.5, 3.8);
+        auto bite = [&](const testkit::Take &t, double from) {
+            return bandDb(t, from, from + 0.35, 2000, 5000) - levelAt(t, from, from + 0.35, root);
+        };
+        auto chamber = [&](const testkit::Take &t, double from) {
+            return bandDb(t, from, from + 0.35, 2200, 2700) - bandDb(t, from, from + 0.35, 1300, 1700);
+        };
+        QVERIFY2(bite(turned, 3.5) > bite(pushed, 1.8) + 8.0,
+                 qPrintable(QStringLiteral("%1 %2").arg(bite(turned, 3.5)).arg(bite(pushed, 1.8))));
+        QVERIFY2(chamber(turned, 3.5) > chamber(pushed, 1.8) + 5.5,
+                 qPrintable(QStringLiteral("%1 %2").arg(chamber(turned, 3.5)).arg(chamber(pushed, 1.8))));
         // A staccato run never turns them note by note: eight eighths at
         // 96 BPM in the musette, the same A, each speak as the first does,
         // with none of the low gust of the bellows turning (at 160 Hz,

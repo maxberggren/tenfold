@@ -1,4 +1,5 @@
-# Steel pan: a calypso line in single strokes, a rolled sustain, and the cello pan's low notes.
+# Steel pan: a calypso line in single strokes, a rolled sustain (swelling into the roll, the
+# strokes on the beat leaning), and the cello pan's low notes; each note's octave and fifth ring with it.
 # Render: build/tenfold render docs/parts/lead/steel-pan-calypso.tf steel-pan-calypso.wav
 page 0.000 4
 tempo 0.010 112

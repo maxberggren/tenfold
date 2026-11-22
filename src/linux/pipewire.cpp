@@ -1,9 +1,8 @@
-#include "audio.h"
+#include "pipewire.h"
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/props.h>
-#include <time.h>
 
 #include <cstdlib>
 #include <mutex>
@@ -13,8 +12,8 @@
 
 namespace tf {
 
-struct AudioOut::Impl {
-    AudioOut *owner = nullptr;
+struct PipeWireAudio::Impl {
+    PipeWireAudio *owner = nullptr;
     Studio *studio = nullptr;
     float rate = 48000;
     pw_thread_loop *loop = nullptr;
@@ -48,8 +47,8 @@ static float streamMs(pw_stream *stream, float rate) {
 }
 
 void onProcess(void *data) {
-    auto *d = static_cast<AudioOut::Impl *>(data);
-    AudioOut *self = d->owner;
+    auto *d = static_cast<PipeWireAudio::Impl *>(data);
+    PipeWireAudio *self = d->owner;
     if (!d->flushed) {
         flushDenormals();
         d->flushed = true;
@@ -70,9 +69,7 @@ void onProcess(void *data) {
     if (!d->clockSet) {
         // The engine's clock starts now on the monotonic clock, the one the
         // helper stamps every touch with.
-        timespec ts{};
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        self->m_engine->setTimeOrigin(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
+        self->m_engine->setTimeOrigin(monotonicSeconds());
         d->clockSet = true;
     }
     // The microphone is live while it keeps delivering: a second without a
@@ -102,7 +99,7 @@ void onProcess(void *data) {
 }
 
 static void onCapture(void *data) {
-    auto *d = static_cast<AudioOut::Impl *>(data);
+    auto *d = static_cast<PipeWireAudio::Impl *>(data);
     pw_buffer *b = pw_stream_dequeue_buffer(d->capture);
     if (!b)
         return;
@@ -122,7 +119,7 @@ static void onCapture(void *data) {
 }
 
 static void onCaptureState(void *data, pw_stream_state, pw_stream_state state, const char *error) {
-    auto *d = static_cast<AudioOut::Impl *>(data);
+    auto *d = static_cast<PipeWireAudio::Impl *>(data);
     d->captureState.store(int(state), std::memory_order_relaxed);
     if (state == PW_STREAM_STATE_ERROR) {
         std::lock_guard lock(d->errorLock);
@@ -145,18 +142,18 @@ static const pw_stream_events captureEvents = [] {
     return e;
 }();
 
-AudioOut::AudioOut(Studio *studio) : m_engine(studio) {}
+PipeWireAudio::PipeWireAudio(Studio *studio) : m_engine(studio) {}
 
-AudioOut::~AudioOut() { stop(); }
+PipeWireAudio::~PipeWireAudio() { stop(); }
 
-std::string AudioOut::inputError() const {
+std::string PipeWireAudio::inputError() const {
     if (!d)
         return {};
     std::lock_guard lock(d->errorLock);
     return d->inputError;
 }
 
-bool AudioOut::start() {
+bool PipeWireAudio::start() {
     if (d)
         return true;
     pw_init(nullptr, nullptr);
@@ -248,7 +245,7 @@ bool AudioOut::start() {
     return true;
 }
 
-void AudioOut::stop() {
+void PipeWireAudio::stop() {
     if (!d)
         return;
     if (d->loop)
@@ -372,15 +369,11 @@ bool openProbe(Probe &p, pw_thread_loop *loop, const char *name, bool source, in
                              pw_stream_flags(PW_STREAM_FLAG_MAP_BUFFERS | PW_STREAM_FLAG_RT_PROCESS), params, 1) >= 0;
 }
 
-double monoNow() {
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
-}
+double monoNow() { return monotonicSeconds(); }
 
 // The studio, live, for `seconds`, on the Vocal page or not; idles the
 // session as the window would.
-void runStudio(Studio &studio, Session &session, AudioOut &out, double seconds, const std::function<void(double)> &tick) {
+void runStudio(Studio &studio, Session &session, PipeWireAudio &out, double seconds, const std::function<void(double)> &tick) {
     (void)studio;
     const double t0 = monoNow();
     while (monoNow() - t0 < seconds) {
@@ -395,7 +388,7 @@ void runStudio(Studio &studio, Session &session, AudioOut &out, double seconds, 
 
 } // namespace
 
-int measureLatency(bool json) {
+int measurePipeWireLatency(bool json) {
     pw_init(nullptr, nullptr);
     const int rate = 48000;
     int vocalPage = -1;
@@ -437,7 +430,7 @@ int measureLatency(bool json) {
                 vocalPage = pg;
         session.setPage(vocalPage);
         session.setClock(&monoNow);
-        AudioOut out(&studio);
+        PipeWireAudio out(&studio);
         if (!out.start()) {
             why = out.error();
         } else {
@@ -495,7 +488,7 @@ int measureLatency(bool json) {
         Studio studio{float(rate)};
         Session session(&studio);
         session.setClock(&monoNow);
-        AudioOut out(&studio);
+        PipeWireAudio out(&studio);
         if (out.start()) {
             runStudio(studio, session, out, 1.5, {});
             session.refresh();

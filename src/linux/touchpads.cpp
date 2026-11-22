@@ -1,4 +1,4 @@
-#include "device.h"
+#include "touchpads.h"
 
 #include <QDir>
 #include <QFile>

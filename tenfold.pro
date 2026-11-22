@@ -1,31 +1,34 @@
-QT += core gui qml quick quickcontrols2 dbus
+QT += core gui qml quick quickcontrols2
 
-CONFIG += c++20 release link_pkgconfig
-PKGCONFIG += libpipewire-0.3
+CONFIG += c++20 release
 TARGET = tenfold
 TEMPLATE = app
 
-# The engine is the hot path: full optimisation, fast float maths (but NaN
-# and infinity checks still mean something), tuned for the machine it's
-# built on, which is the machine it plays on.
+# The engine is the hot path: full optimisation and fast float maths (but
+# NaN and infinity checks still mean something). Built here to play here, it
+# is tuned for this machine's processor; `CONFIG+=portable` (what the
+# released packages are built with, TENFOLD_PORTABLE=1 for bin/build) tunes
+# it for any processor of the architecture instead, since a binary tuned for
+# the build machine can die on an older one with an illegal instruction.
 QMAKE_CXXFLAGS_RELEASE -= -O2
 QMAKE_CXXFLAGS_RELEASE += -O3 -ffast-math -fno-finite-math-only
-contains(QT_ARCH, arm64): QMAKE_CXXFLAGS_RELEASE += -mcpu=native
-contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=native
+portable {
+    contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=x86-64-v2 -mtune=generic
+} else {
+    contains(QT_ARCH, arm64): QMAKE_CXXFLAGS_RELEASE += -mcpu=native
+    contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=native
+}
 
 HEADERS += \
-    src/audio.h \
     src/backend.h \
     src/console.h \
-    src/device.h \
     src/dsp.h \
     src/electro.h \
     src/fx.h \
-    src/helper.h \
     src/offline.h \
     src/part.h \
+    src/platform.h \
     src/parts.h \
-    src/portalfilepicker.h \
     src/phrase.h \
     src/session.h \
     src/songfile.h \
@@ -33,7 +36,6 @@ HEADERS += \
     src/surface.h \
     src/theme.h \
     src/touch.h \
-    src/touchsource.h \
     src/vocal.h \
     src/translator.h \
     src/tuning.h \
@@ -54,20 +56,15 @@ PARTS = \
 
 SOURCES += \
     src/main.cpp \
-    src/audio.cpp \
     src/backend.cpp \
     src/console.cpp \
-    src/device.cpp \
-    src/helper.cpp \
     src/offline.cpp \
     src/parts.cpp \
-    src/portalfilepicker.cpp \
     src/session.cpp \
     src/songfile.cpp \
     src/studio.cpp \
     src/surface.cpp \
     src/theme.cpp \
-    src/touchsource.cpp \
     src/translator.cpp \
     src/tuning.cpp \
     src/tutorial.cpp \
@@ -78,3 +75,27 @@ INCLUDEPATH += src
 DEPENDPATH += src
 
 RESOURCES += src/resources.qrc
+
+# What the system provides (platform.h): one folder per system. A port adds
+# its folder and a scope here; the rest of tenfold doesn't change.
+linux {
+    QT += dbus
+    CONFIG += link_pkgconfig
+    PKGCONFIG += libpipewire-0.3
+    INCLUDEPATH += src/linux
+    HEADERS += \
+        src/linux/helper.h \
+        src/linux/pipewire.h \
+        src/linux/portalfilepicker.h \
+        src/linux/touchpads.h \
+        src/linux/touchsource.h
+    SOURCES += \
+        src/linux/helper.cpp \
+        src/linux/pipewire.cpp \
+        src/linux/platform.cpp \
+        src/linux/portalfilepicker.cpp \
+        src/linux/touchpads.cpp \
+        src/linux/touchsource.cpp
+} else {
+    error("tenfold runs on Linux so far. A port implements src/platform.h in a folder of its own (see the README).")
+}

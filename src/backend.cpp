@@ -10,21 +10,18 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
-#include <unistd.h>
 
 #include "console.h"
-#include "device.h"
 #include "offline.h"
 
 using namespace tf;
 
 Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!live) {
     m_studio = std::make_unique<Studio>(48000.0f);
-    m_audio = std::make_unique<AudioOut>(m_studio.get());
+    m_audio = platform::openAudio(m_studio.get());
     m_session = std::make_unique<Session>(m_studio.get());
-    m_touch = std::make_unique<TouchSource>(m_session.get());
-    m_picker = std::make_unique<PortalFilePicker>();
-    m_picker->onError = [this](const QString &why) { m_session->say(why); };
+    m_touch = platform::openPad(m_session.get());
+    m_picker = platform::filePicker([this](const QString &why) { m_session->say(why); });
     m_songs = std::make_unique<SongFiles>(m_session.get(), m_picker.get());
     if (!live) {
         m_session->setClock(&scriptClock);
@@ -42,18 +39,13 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         // not a dialog, since most starts are for something new.
         if (m_songs->hasAutosave())
             m_session->say(QStringLiteral("Ctrl+Shift+O picks up where you left off"));
-        const auto pads = Device::findTouchpads();
-        if (!pads.isEmpty())
-            m_device = pads.first().path;
     }
 
     if (live) {
         m_tickerRun = true;
         m_ticker = std::thread([this] {
             while (m_tickerRun.load()) {
-                timespec ts{};
-                clock_gettime(CLOCK_MONOTONIC, &ts);
-                m_session->idle(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
+                m_session->idle(monotonicSeconds());
                 std::this_thread::sleep_for(std::chrono::milliseconds(4));
             }
         });
@@ -87,28 +79,28 @@ void Backend::shutdown() {
 int Backend::padState() const {
     if (m_simulated)
         return Playing;
-    if (m_device.isEmpty())
+    if (!m_touch->found())
         return Failed;
     switch (m_touch->status()) {
-    case TouchSource::Idle: return Idle;
-    case TouchSource::Starting: return Starting;
-    case TouchSource::Ready: return m_wantPlay ? Starting : Ready;
-    case TouchSource::Grabbed: return Playing;
-    case TouchSource::Failed: return Failed;
+    case Pad::Idle: return Idle;
+    case Pad::Starting: return Starting;
+    case Pad::Ready: return m_wantPlay ? Starting : Ready;
+    case Pad::Grabbed: return Playing;
+    case Pad::Failed: return Failed;
     }
     return Idle;
 }
 
 QString Backend::error() const {
-    if (m_device.isEmpty())
+    if (!m_touch->found())
         return tr("No trackpad found.");
     return QString::fromStdString(m_touch->error());
 }
 
-QString Backend::padName() const { return QString::fromStdString(m_touch->padName()); }
+QString Backend::padName() const { return QString::fromStdString(m_touch->name()); }
 
 bool Backend::padNeedsPassword() const {
-    return !m_simulated && !m_device.isEmpty() && access(m_device.toLocal8Bit().constData(), R_OK) != 0;
+    return !m_simulated && m_touch->needsPermission();
 }
 
 void Backend::setPage(int page) {
@@ -270,13 +262,13 @@ double Backend::latencyMs() const {
 double Backend::recordSeconds() const { return m_recording ? m_recordClock.elapsed() / 1000.0 : 0; }
 
 void Backend::play() {
-    if (m_device.isEmpty())
+    if (!m_touch->found())
         return;
     m_wantPlay = true;
     m_pausedByFocus = false;
-    if (m_touch->status() == TouchSource::Idle || m_touch->status() == TouchSource::Failed) {
+    if (m_touch->status() == Pad::Idle || m_touch->status() == Pad::Failed) {
         m_touch->stop();
-        m_touch->start(m_device.toStdString());
+        m_touch->start();
     }
     m_touch->grab(true);
     emit changed();
@@ -293,7 +285,7 @@ bool Backend::closeMenu() {
 }
 
 void Backend::togglePlay() {
-    if (m_touch->status() == TouchSource::Grabbed || m_wantPlay)
+    if (m_touch->status() == Pad::Grabbed || m_wantPlay)
         giveBack();
     else
         play();
@@ -303,7 +295,7 @@ void Backend::windowActive(bool active) {
     // Never keep the pad from the rest of the desktop when tenfold isn't in
     // front: a grabbed pad with no window to answer to would leave the user
     // without a pointer.
-    if (!active && (m_wantPlay || m_touch->status() == TouchSource::Grabbed)) {
+    if (!active && (m_wantPlay || m_touch->status() == Pad::Grabbed)) {
         giveBack();
         m_pausedByFocus = true;
     } else if (active && m_pausedByFocus) {
@@ -371,9 +363,7 @@ void Backend::stopRecording() {
 void Backend::tick() {
     if (!m_simulated) {
         // Let held-back lifts through even when the pad has gone quiet.
-        timespec ts{};
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        m_session->idle(double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9);
+        m_session->idle(monotonicSeconds());
     }
     m_session->refresh();
     uint32_t seq = 0;

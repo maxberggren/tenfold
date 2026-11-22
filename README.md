@@ -174,8 +174,16 @@ for every page.
 and eight clip slots per part, and the contract a page implements. Each page
 is one file in `src/`.
 
+Everything tenfold needs from the system is in `src/platform.h`: the
+trackpad read raw, the sound card, the file dialogs and the clock. The
+studio, the pages and the window only see that header. Linux implements it
+in `src/linux/` (evdev and a pkexec helper for the pad, PipeWire for sound,
+xdg-desktop-portal for dialogs), and a macOS or Windows port is a folder
+beside it plus a scope in `tenfold.pro`. The tests never touch the platform,
+so they run unchanged on a port.
+
 ```bash
-bin/build      # qmake6 + make into build/tenfold
+bin/build      # qmake6 + make into build/tenfold (TENFOLD_PORTABLE=1: for any CPU)
 bin/test       # every page's tests and the studio's
 bin/install    # package and install, so it shows up in the launcher
 ```

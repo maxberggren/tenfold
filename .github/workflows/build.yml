@@ -31,6 +31,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     timeout-minutes: 45
+    # Built for any processor of the architecture, not the runner's own.
+    env:
+      TENFOLD_PORTABLE: 1
     steps:
       # pacman's download sandbox (Landlock) can't be set up inside some
       # containers (the ARM runner's), so it is turned off: the packages
@@ -59,7 +62,7 @@ jobs:
           esac
           useradd -m builder
           chown -R builder .
-          su builder -c 'cd pkgbuild && PKGEXT=.pkg.tar.zst makepkg -f --nodeps'
+          su builder -c 'cd pkgbuild && TENFOLD_PORTABLE=1 PKGEXT=.pkg.tar.zst makepkg -f --nodeps'
           ls -l pkgbuild/*.pkg.tar.zst
 
       - uses: actions/upload-artifact@v4

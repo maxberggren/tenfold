@@ -4,7 +4,9 @@
 #include <QPainter>
 
 #include "testkit.h"
+#ifdef __linux__
 #include "touchsource.h"
+#endif
 
 using namespace tf;
 
@@ -704,6 +706,7 @@ private slots:
         });
     }
 
+#ifdef __linux__
     // A pad this user can't read is read through pkexec, which asks for the
     // password. Without pkexec, taking the pad says what's missing instead of
     // failing with a bare "not allowed".
@@ -711,13 +714,15 @@ private slots:
         const QByteArray path = qgetenv("PATH");
         qputenv("PATH", "/nonexistent");
         NoFrames sink;
-        TouchSource source(&sink);
-        source.start("/dev/input/event999");
+        TouchSource source(&sink, "/dev/input/event999");
+        QVERIFY(source.needsPermission());
+        source.start();
         qputenv("PATH", path);
-        QCOMPARE(int(source.status()), int(TouchSource::Failed));
+        QCOMPARE(int(source.status()), int(Pad::Failed));
         QVERIFY(source.viaPassword());
         QVERIFY2(source.error().find("pkexec") != std::string::npos, source.error().c_str());
     }
+#endif
 
     void theBenchRunsWellInsideRealTime() {
         const RenderStats st = runBench(4.0);

@@ -12,12 +12,10 @@
 #include <memory>
 #include <thread>
 
-#include "audio.h"
-#include "portalfilepicker.h"
+#include "platform.h"
 #include "session.h"
 #include "songfile.h"
 #include "studio.h"
-#include "touchsource.h"
 #include "wav.h"
 
 // The app's state for QML: owns the studio, the session (the pages), the
@@ -205,13 +203,12 @@ private:
 
     std::unique_ptr<tf::Studio> m_studio;
     std::unique_ptr<tf::Session> m_session;
-    std::unique_ptr<tf::TouchSource> m_touch;
-    std::unique_ptr<tf::AudioOut> m_audio;
-    std::unique_ptr<PortalFilePicker> m_picker;
+    std::unique_ptr<tf::Pad> m_touch;
+    std::unique_ptr<tf::Audio> m_audio;
+    std::unique_ptr<tf::FilePicker> m_picker;
     std::unique_ptr<tf::SongFiles> m_songs;
     bool m_shutDown = false;
     QTimer m_timer;
-    QString m_device;
     bool m_wantPlay = false;
     bool m_pausedByFocus = false;
     bool m_simulated = false;

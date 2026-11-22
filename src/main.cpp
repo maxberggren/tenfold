@@ -17,9 +17,8 @@
 #include <sstream>
 #include <string>
 
-#include "audio.h"
 #include "backend.h"
-#include "helper.h"
+#include "platform.h"
 #include "offline.h"
 #include "session.h"
 #include "songfile.h"
@@ -158,9 +157,10 @@ static int check(int argc, char **argv) {
 }
 
 int main(int argc, char *argv[]) {
-    // Runs as root under pkexec: no GUI, no Qt, no environment.
-    if (argc == 3 && std::strcmp(argv[1], "helper") == 0)
-        return runHelper(argv[2]);
+    // The system's own commands (the Linux trackpad helper, run as root)
+    // come first: they must not start any of Qt.
+    if (const int code = tf::platform::runSystemCommand(argc, argv); code >= 0)
+        return code;
 
     const bool json = hasFlag(argc, argv, "--json");
     if (argc >= 2 && std::strcmp(argv[1], "render") == 0) {
@@ -185,7 +185,7 @@ int main(int argc, char *argv[]) {
         return check(argc, argv);
     if (argc >= 2 && std::strcmp(argv[1], "latency") == 0) {
         QCoreApplication app(argc, argv);
-        return tf::measureLatency(json);
+        return tf::platform::measureLatency(json);
     }
     if (argc >= 2 && (std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0)) {
         usage(stdout);

@@ -8,7 +8,6 @@
 #include <unistd.h>
 
 #include <cmath>
-#include <ctime>
 #include <string>
 #include <cstdio>
 #include <cstdlib>
@@ -34,7 +33,9 @@ bool onPath(const char *program) {
 
 }
 
-TouchSource::TouchSource(FrameSink *sink) : m_gesture(sink) {}
+TouchSource::TouchSource(FrameSink *sink, std::string devicePath) : m_gesture(sink), m_path(std::move(devicePath)) {}
+
+bool TouchSource::needsPermission() const { return found() && access(m_path.c_str(), R_OK) != 0; }
 
 TouchSource::~TouchSource() { stop(); }
 
@@ -43,14 +44,21 @@ std::string TouchSource::error() const {
     return m_error;
 }
 
-std::string TouchSource::padName() const {
+std::string TouchSource::name() const {
     std::lock_guard lock(m_lock);
     return m_name;
 }
 
-void TouchSource::start(const std::string &devicePath) {
+void TouchSource::start() {
     if (m_thread.joinable())
         return;
+    if (!found()) {
+        std::lock_guard lock(m_lock);
+        m_error = "No trackpad found.";
+        m_status = Failed;
+        return;
+    }
+    const std::string &devicePath = m_path;
     char self[4096] = {};
     const ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
     if (len <= 0) {
@@ -179,10 +187,7 @@ void TouchSource::run() {
     }
     // Lift every finger that was down, so no voice hangs.
     Frame empty;
-    empty.t = 0;
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    empty.t = double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+    empty.t = monotonicSeconds();
     m_gesture->frame(empty);
 }
 
@@ -299,9 +304,7 @@ void TouchSource::handle(char *line) {
         m_status = Ready;
         // Lift every finger that was down when the pad was given back.
         Frame empty;
-        timespec ts{};
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        empty.t = double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+        empty.t = monotonicSeconds();
         m_gesture->frame(empty);
         return;
     }

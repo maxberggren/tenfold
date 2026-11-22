@@ -5,7 +5,13 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 mkdir -p "$ROOT/build"
 cd "$ROOT/build"
 
-qmake6 "$ROOT/tenfold.pro"
+# TENFOLD_PORTABLE=1 builds for any processor of this architecture, as the
+# released packages are; QMAKE names another qmake (another Qt).
+if [ -n "${TENFOLD_PORTABLE:-}" ]; then
+    "${QMAKE:-qmake6}" "$ROOT/tenfold.pro" CONFIG+=portable
+else
+    "${QMAKE:-qmake6}" "$ROOT/tenfold.pro"
+fi
 make -j"$(nproc)"
 
 echo "Built $ROOT/build/tenfold"

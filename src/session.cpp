@@ -1,5 +1,7 @@
 #include "session.h"
 
+#include "platform.h"
+
 #include <QJsonArray>
 #include <QPainter>
 #include <Qt>
@@ -327,9 +329,7 @@ void Session::drainDebug() {
 double Session::now() const {
     if (m_clock)
         return m_clock();
-    timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return double(ts.tv_sec) + double(ts.tv_nsec) * 1e-9;
+    return monotonicSeconds();
 }
 
 Session::Context &Session::context(int page) { return *m_pages[size_t(page)]->ctx; }

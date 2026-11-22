@@ -5,31 +5,34 @@
 #include <string>
 #include <thread>
 
+#include "platform.h"
 #include "touch.h"
 
 namespace tf {
 
-// Runs the helper (through pkexec unless the pad is already readable), reads
-// its frames on a thread of its own and feeds them to the gesture layer
+// The Linux trackpad: the kernel's evdev device, read by `tenfold helper`
+// (helper.h), which runs through pkexec unless the pad is already readable.
+// Its frames are read on a thread of its own and fed to the gesture layer
 // directly: the touch path never waits on the screen.
-class TouchSource {
+class TouchSource : public Pad {
 public:
-    enum Status { Idle, Starting, Ready, Grabbed, Failed };
+    // devicePath is /dev/input/eventN, or "" when there is no trackpad.
+    TouchSource(FrameSink *sink, std::string devicePath);
+    ~TouchSource() override;
 
-    explicit TouchSource(FrameSink *sink);
-    ~TouchSource();
+    bool found() const override { return !m_path.empty(); }
+    bool needsPermission() const override;
+    void start() override;
+    void stop() override;
+    void grab(bool on) override;
 
-    void start(const std::string &devicePath);
-    void stop();
-    void grab(bool on);
+    Status status() const override { return m_status.load(); }
+    std::string error() const override;
+    std::string name() const override;
+    float aspect() const override { return m_aspect.load(); }
 
-    Status status() const { return m_status.load(); }
-    std::string error() const;
-    std::string padName() const;
-    // Started through pkexec because the pad isn't readable as is: while
-    // Starting, the system is asking for a password.
+    // Started through pkexec because the pad isn't readable as is.
     bool viaPassword() const { return m_viaPassword.load(); }
-    float aspect() const { return m_aspect.load(); }
     int framesSeen() const { return m_frames.load(); }
 
 private:
@@ -38,6 +41,7 @@ private:
     void send(const char *line);
 
     FrameSink *m_gesture;
+    std::string m_path;
     std::thread m_thread;
     int m_in = -1, m_out = -1;
     int m_pid = -1;

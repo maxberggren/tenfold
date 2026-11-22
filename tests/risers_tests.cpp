@@ -143,6 +143,39 @@ Heard playSolo(int set, int kind) {
     return out;
 }
 
+// A hit held for a while in a set, with the notes it played on the way,
+// one per block where it changed.
+std::vector<float> notesHeld(int set, int kind, double seconds) {
+    PartSpec spec = makeRisers();
+    auto &e = *spec.engine;
+    FxAudio ctx;
+    ctx.tr.rate = 48000;
+    ctx.tr.bpm = 124;
+    ctx.tr.beatsPerSample = 124 / 60.0 / 48000.0;
+    e.init(48000);
+    Command c;
+    c.type = Command::On;
+    c.id = 5;
+    c.i[0] = kind;
+    c.i[3] = set;
+    c.f[0] = 0.6f;
+    c.f[2] = 0.7f;
+    e.command(c, ctx);
+    std::vector<float> notes;
+    float data[kPartData];
+    for (int b = 0; b < int(seconds * 48000 / kBlock); ++b) {
+        ctx.tr.beat = double(ctx.tr.sample) * ctx.tr.beatsPerSample;
+        float l[kBlock] = {}, r[kBlock] = {};
+        e.render(l, r, kBlock, ctx);
+        ctx.tr.sample += kBlock;
+        e.publish(data);
+        const float note = data[risers::pub::Voices + risers::pub::VNote];
+        if (data[risers::pub::Voices + risers::pub::VKind] == float(kind) && (notes.empty() || notes.back() != note))
+            notes.push_back(note);
+    }
+    return notes;
+}
+
 // What a sound is like: its level; its colour, as the energy in eight
 // octave bands (63 Hz to 8 kHz) against its whole, so a sound only louder
 // or softer has the same colour; and its envelope in quarters, against its
@@ -579,7 +612,8 @@ private slots:
 
     // The band under the pad does what the keys do. On the scripts' window
     // row 0 is 0.048 of the pad under it, row 1 0.119. Row 0: the clips to
-    // 0.26, then the ten sets from 0.31; row 1: the three drop styles from
+    // 0.26, then the sets from 0.31, more than fit, so a window onto the
+    // first eleven while EDM is lit; row 1: the three drop styles from
     // 0.07 to 0.33, then shorter, the length and longer to 0.58, then DROP,
     // FALL AWAY and MOVE MIX.
     void theBandUnderThePadIsClickable() {
@@ -588,7 +622,7 @@ private slots:
             QVERIFY2(s.pageStatus().contains(QStringLiteral("gap")), qPrintable(s.pageStatus()));
         });
         // DUB, the third set.
-        testkit::play("page 0 7\nbutton 0.2 0.4825 -0.048\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 7\nbutton 0.2 0.452 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("dub")), qPrintable(s.pageStatus()));
         });
         // DROP with nothing building: the next bar line.
@@ -876,9 +910,89 @@ private slots:
                           QVERIFY2(s.pageStatus().contains(QStringLiteral("lo-fi")), qPrintable(s.pageStatus()));
                       });
         testkit::play("page 0 7\nkey 0.1 Left\nkey 0.2 ]\nkey 0.3 ]\nend 0.6\n", [](Session &s) {
-            QCOMPARE(s.probe(kFx, QStringLiteral("set")), 9.0f);
+            QCOMPARE(s.probe(kFx, QStringLiteral("set")), float(risers::SetCount - 1));
             QVERIFY2(s.pageStatus().contains(QStringLiteral("strip")), qPrintable(s.pageStatus()));
         });
+    }
+
+    // The five sets added after the first ten: every sound they make is in
+    // the key wherever it has a pitch, under 0 dBFS, and each is reached
+    // from the keys (Left from EDM wraps to the last) and the row of chips,
+    // named in the page's status line, and saved and reopened by name.
+    void theNewSetsPlayInKeyAndComeBackByName() {
+        Harmony h;
+        auto inKey = [&](float note) {
+            for (int d = -21; d < 42; ++d)
+                if (std::fabs(note - float(h.midi(d, 0))) < 0.5f)
+                    return true;
+            return false;
+        };
+        for (int set = risers::SetAmapiano; set < risers::SetCount; ++set) {
+            const QString name = QString::fromUtf8(risers::palette(set).name);
+            for (int kind : kSounding) {
+                const Heard solo = playSolo(set, kind);
+                double peak = 0, power = 0;
+                for (size_t i = 0; i < solo.l.size(); ++i) {
+                    peak = std::max({peak, double(std::fabs(solo.l[i])), double(std::fabs(solo.r[i]))});
+                    power += double(solo.l[i]) * solo.l[i];
+                }
+                const QString what = QStringLiteral("%1 %2").arg(name, risers::kindName(kind));
+                QVERIFY2(power > 1e-3, qPrintable(what + QStringLiteral(": silent")));
+                QVERIFY2(20 * std::log10(peak) < -1.0, qPrintable(QStringLiteral("%1: peak %2").arg(what).arg(peak)));
+                // Noise sweeps whistle onto the tonic and rolls climb the
+                // scale; the rest are struck or slid onto scale notes. A
+                // power-down's note is a slide, a brake's a turntable's, and
+                // the stabs' last beat is an octave's glide onto the chord.
+                if (kind != risers::Stop && kind != risers::Down && kind != risers::Swell && kind != risers::Impact &&
+                    kind != risers::Saw)
+                    QVERIFY2(inKey(solo.note), qPrintable(QStringLiteral("%1: note %2").arg(what).arg(solo.note)));
+            }
+            // Its chip on the row under the pad and its name in the status.
+            const int steps = int(risers::SetCount) - set;
+            std::string keys = "page 0 7\n";
+            for (int k = 0; k < steps; ++k)
+                keys += fmt("key %.2f Left\n", 0.1 + 0.05 * k);
+            testkit::play(keys + "end 1.2\n", [&](Session &s) {
+                QCOMPARE(s.probe(kFx, QStringLiteral("set")), float(set));
+                QVERIFY2(s.pageStatus().contains(name), qPrintable(s.pageStatus()));
+            });
+            bool checked = false;
+            testkit::reopen(keys + fmt("tap 1.0 %.3f 0.1\nend 1.6\n", hitX(0)), 1.3,
+                            [&](Session &, Session &opened, const QJsonObject &doc) {
+                                const QJsonObject fx = doc[QStringLiteral("parts")].toArray()[kFx].toObject();
+                                QCOMPARE(fx[QStringLiteral("settings")].toObject()[QStringLiteral("set")].toString(), name);
+                                QCOMPARE(opened.probe(kFx, QStringLiteral("set")), float(set));
+                                checked = true;
+                            });
+            QVERIFY(checked);
+        }
+    }
+
+    // What makes the new sets theirs. A phonk cowbell held plays its
+    // melody: a note a sixteenth, at least three different chord tones, all
+    // in the key. And the log drum is a bass with a body, its weight in the
+    // octaves at 125 and 250 Hz, over the sub's and the treble's.
+    void theNewSetsHaveTheirOwnInstruments() {
+        Harmony h;
+        const std::vector<float> bell = notesHeld(risers::SetPhonk, risers::Zap, 1.5);
+        std::vector<float> distinct;
+        for (float n : bell) {
+            bool inKey = false;
+            for (int d = -21; d < 42; ++d)
+                inKey |= std::fabs(n - float(h.midi(d, 0))) < 0.5f;
+            QVERIFY2(inKey, qPrintable(QString::number(n)));
+            if (std::find(distinct.begin(), distinct.end(), n) == distinct.end())
+                distinct.push_back(n);
+        }
+        QVERIFY2(bell.size() >= 8, qPrintable(QString::number(bell.size())));
+        QVERIFY2(distinct.size() >= 3, qPrintable(QString::number(distinct.size())));
+        const Heard log = playSolo(risers::SetAmapiano, risers::Sub);
+        double bands[8];
+        bandsOf(log, bands);
+        // Bands at 62.5 Hz and up: the log drum's are 125 and 250 Hz.
+        const double body = std::max(bands[1], bands[2]);
+        QVERIFY2(body > bands[0] + 3 && body > bands[5] + 6,
+                 qPrintable(QStringLiteral("%1 %2 %3 %4").arg(bands[0]).arg(bands[1]).arg(bands[2]).arg(bands[5])));
     }
 
     // A loop keeps the set it was played in: zaps looped in the trap set

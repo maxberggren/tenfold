@@ -14,9 +14,9 @@
 // the drop back from what the engine publishes and moves the mix around it,
 // so a build replayed from a clip moves the mix exactly as the live one did.
 //
-// All of it comes in ten sets, one sound per genre (see SetId below): EDM,
-// analog, dub, lo-fi, trap, drum and bass, cinema, synthwave, techno and
-// ambient.
+// All of it comes in fifteen sets, one sound per genre (see SetId below):
+// EDM, analog, dub, lo-fi, trap, drum and bass, cinema, synthwave, techno,
+// ambient, amapiano, gamelan, chiptune, phonk and shoegaze.
 
 #include <algorithm>
 #include <cmath>
@@ -78,6 +78,12 @@ enum SetId : int {
     SetSynthwave, // gated-reverb snare, laser toms, chorused brass
     SetTechno,    // ring-modulated metal, acid riser, dub-techno chord, gated swell, clang
     SetAmbient,   // granular shimmer, soft swells, a bloom instead of an impact
+    // Appended: a song saves its set by name, but the order is the arrows'.
+    SetAmapiano,  // log drum, swung shakers and woodblock, deep-house keys, a flute
+    SetGamelan,   // bronze bars that beat in pairs (ombak), a suling, a gong ageng on the drop
+    SetChiptune,  // pulse waves, frame-rate arpeggios, the noise channel's shift register
+    SetPhonk,     // an 808 cowbell melody, triplet hats, a distorted 808 that slides, tape
+    SetShoegaze,  // fuzz guitars bent on the whammy bar, amp feedback, a wall of sound
     SetCount
 };
 
@@ -90,17 +96,21 @@ struct NoiseLook {
     float gate = 0;        // a stutter on the riser's grid, 0..1
     float gain = 1;
     float ring = 0;        // ring-modulated by two squares at an unrelated ratio: metal, 0..1
+    float chip = 0;        // the hiss from a game console's shift register instead, 0..1
 };
 struct PitchLook {
-    int shape = 0;         // 0 saw, 1 square, 2 sine
+    int shape = 0;         // 0 saw, 1 square, 2 sine, 3 a pulse arpeggio, 4 fuzz guitar
     float oct = 0, glide = 24, detune = 1, fifth = 1, vib = 1;
     float siren = 0;       // a square LFO between the note and its fifth, 0..1
     float sirenRate = 2;   // its cycles per beat at the start (it quickens)
     float cut = 1, res = 0, gain = 1;
     float acid = 0;        // its filter struck again on every sixteenth, 0..1
+    float breath = 0;      // a flute's breath: noise in a narrow band on the note
 };
 struct StabLook {
-    int shape = 0;         // 0 saw, 1 square, 2 electric piano, 3 bell (FM at 1:3.5)
+    // 0 saw, 1 square, 2 electric piano, 3 bell (FM at 1:3.5), 4 bronze bars
+    // struck one chord tone at a time, 5 pulse waves, 6 fuzz guitar
+    int shape = 0;
     float oct = 0, detune = 1, cut = 1, res = 0;
     float decay = 1, depth = 1, sub = 1;
     float offbeat = 0;     // 1: the stabs fall between the grid's steps
@@ -115,7 +125,10 @@ struct RollLook {
     float room = 1;        // its send to the room, against the set's
     float climb = 1;       // how far up the scale the body climbs as it speeds up
     float hp = 1, hpRise = 1; // the high-pass under it, and how far it climbs
-    int pattern = 0;       // 0 a roll; 1 a chopped break, then a fill; 2 hi-hats changing rate every beat
+    int pattern = 0;       // 0 a roll; 1 a chopped break, then a fill; 2 hi-hats changing rate every beat;
+                           // 3 swung shakers with a woodblock on the 3-3-2, then a roll
+    float partial = 1.52f; // the body's second partial, against its first (2.76: a struck bar)
+    float chip = 0;        // its noise from the shift register, 0..1
 };
 struct SwellLook {
     float cym = 1, pad = 1, oct = 0, metal = 1, cut = 1, gain = 1;
@@ -134,17 +147,20 @@ struct ImpactLook {
     float gain = 1;
     float padDrive = 1.8f;
     float padBlare = 0;    // a band around 1.4 kHz pushed into the drive as it swells: the brass edge
+    float gong = 0;        // a gong ageng on the key's root, its humming pair of modes beating
+    float chip = 0;        // the crash's noise from the shift register, its clock falling: an 8-bit explosion
 };
 struct SubLook {
     float dive = 12, diveTime = 1, drive = 0, decay = 1, reese = 0, gain = 1;
     float swell = 0;       // seconds it takes to swell in (0: struck)
     float body = 0;        // a tom's skin an octave up, struck and gone in a quarter second
+    float log = 0;         // amapiano's log drum instead: hollow, plucked, a wooden knock
 };
 struct DownLook {
     float noise = 1, tone = 0.25f, detune = 0.1f, q = 1.6f, range = 36, len = 1, gain = 1;
 };
 struct ZapLook {
-    int mode = 0;          // 0 a laser (or tom), 1 a reversed vocal chop
+    int mode = 0;          // 0 a laser (or tom), 1 a reversed vocal chop, 2 an 808 cowbell
     float fall = 40, fallTime = 1, decay = 1, fm = 1, square = 0.25f, oct = 0, click = 0, gain = 1;
 };
 struct StopLook {
@@ -318,6 +334,90 @@ inline const Palette kPalettes[SetCount] = {
      .zap = {.fall = 7, .fallTime = 2, .decay = 2, .fm = 0.1f, .square = 0},
      .stop = {.cut = 0.3f, .gain = 1.2f, .brake = 3.0f},
      .moves = {.shimmer = 0.5f}},
+    // Amapiano: the log drum is the sub, plucked and hollow; the roll is
+    // swung shakers with a woodblock on the 3-3-2 until it rolls; the stabs
+    // are deep-house keys off the beat, the pitch riser a breathy flute.
+    {.name = "amapiano", .label = "AMAP",
+     .names = {nullptr, "FLUTE", "KEYS", "SHAKERS", nullptr, nullptr, "LOG DRUM"},
+     .drive = 0.08f, .chorus = 0.25f, .room = 0.9f, .echo = 0.22f, .echoFb = 0.35f,
+     .noise = {.lp = 0.75f, .hp = 1.3f, .q = 0.8f, .comb = 0.35f, .air = 0.9f, .gate = 0.35f, .gain = 1.05f},
+     .pitch = {.shape = 2, .oct = 1, .glide = 7, .detune = 0.1f, .fifth = 0, .vib = 1.3f, .cut = 2.5f, .gain = 0.75f,
+               .breath = 0.5f},
+     .stab = {.shape = 2, .detune = 0, .cut = 0.8f, .decay = 1.3f, .depth = 0.9f, .sub = 0, .offbeat = 1, .gain = 0.95f},
+     .roll = {.body = 0.9f, .oct = 1, .drop = 0.05f, .ring = 0.35f, .wires = 1.3f, .wireHz = 2.3f, .decay = 0.55f, .clap = 0,
+              .ghost = 0.3f, .gain = 1.1f, .room = 0.7f, .climb = 0.6f, .pattern = 3, .partial = 2.62f},
+     .swell = {.cym = 0.5f, .pad = 1.2f, .cut = 0.7f, .gain = 1.1f},
+     .impact = {.boom = 1.1f, .body = 0.9f, .snap = 0.5f, .crash = 0.45f, .crashDecay = 0.6f, .tail = 0.2f},
+     .sub = {.dive = 3, .diveTime = 0.5f, .decay = 1.3f, .log = 1},
+     .down = {.noise = 0.4f, .tone = 0.7f, .q = 3.0f, .len = 1.2f},
+     .zap = {.fall = 5, .fallTime = 1, .decay = 1.5f, .fm = 0.2f, .square = 0, .oct = -1, .gain = 1.3f},
+     .stop = {.cut = 0.7f, .sub = 0.9f, .gain = 1.9f, .brake = 0.5f}},
+    // Gamelan: the stabs are bronze bars struck one chord tone at a time,
+    // each pair beating; the roll a gangsa's accelerating run up the key on
+    // struck bars; a suling flute rising; and a gong ageng on the drop.
+    {.name = "gamelan", .label = "GAMEL",
+     .names = {nullptr, "SULING", "SARON", "GANGSA", nullptr, "GONG"},
+     .room = 1.4f, .echo = 0.12f, .echoFb = 0.35f,
+     .noise = {.lp = 0.6f, .q = 0.5f, .comb = 1.0f, .air = 0.4f, .grain = 0.3f, .gain = 1.3f},
+     .pitch = {.shape = 2, .glide = 5, .detune = 0.15f, .fifth = 0, .vib = 0.8f, .cut = 1.5f, .gain = 0.85f, .breath = 1.0f},
+     .stab = {.shape = 4, .oct = 1, .cut = 12, .decay = 1.0f, .depth = 0, .sub = 0, .gain = 1.0f},
+     .roll = {.body = 1.6f, .oct = 1, .drop = 0, .ring = 6, .wires = 0.08f, .decay = 0.6f, .clap = 0, .gain = 0.6f,
+              .room = 1.2f, .climb = 1.6f, .hp = 1.5f, .hpRise = 0.3f, .partial = 2.756f},
+     .swell = {.cym = 0.4f, .pad = 1.2f, .metal = 0.6f, .cut = 1.2f},
+     .impact = {.boom = 0, .body = 0.5f, .bodyHz = 0.5f, .snap = 0, .crash = 0, .tail = 0, .gong = 0.4f},
+     .sub = {.dive = 2, .decay = 1.6f, .swell = 0.1f},
+     .down = {.noise = 0.6f, .tone = 0.4f, .q = 2.0f},
+     .zap = {.fall = 3, .fallTime = 1, .decay = 3, .fm = 1.4f, .square = 0, .gain = 1.1f},
+     .stop = {.cut = 0.5f, .brake = 2.0f},
+     .moves = {.shimmer = 0.3f}},
+    // Chiptune: a console's channels and nothing else. Pulse waves in
+    // their duties, an arpeggio ticking at the frame rate, the noise
+    // channel's shift register for the sweep and the drums, a square zap.
+    {.name = "chiptune", .label = "8BIT",
+     .names = {nullptr, "ARP", "PULSE", nullptr, nullptr, nullptr, nullptr, nullptr, "BLIP"},
+     .room = 0.35f, .echo = 0.3f, .echoFb = 0.4f,
+     .noise = {.q = 0.5f, .comb = 0.2f, .air = 0.6f, .gate = 0.5f, .chip = 1},
+     .pitch = {.shape = 3, .detune = 0, .fifth = 0, .vib = 0.5f, .cut = 3, .gain = 0.8f},
+     .stab = {.shape = 5, .detune = 0, .cut = 3, .decay = 1.2f, .depth = 0.9f, .sub = 0, .gain = 0.85f},
+     .roll = {.body = 0.8f, .drop = 1.2f, .wires = 1.2f, .wireHz = 0.8f, .decay = 0.5f, .clap = 0, .gain = 0.75f, .room = 0.4f, .chip = 1},
+     .swell = {.cym = 0.9f, .pad = 0.9f, .metal = 1.3f, .gate = 0.7f},
+     .impact = {.body = 1.1f, .crash = 0.8f, .crashDecay = 0.9f, .metal = 1.4f, .noise = 1.4f, .tail = 0, .chip = 1},
+     .sub = {.dive = 12, .diveTime = 0.4f, .decay = 0.8f},
+     .zap = {.fall = 24, .fallTime = 0.7f, .decay = 0.8f, .fm = 0, .square = 1, .gain = 0.9f},
+     .stop = {.cut = 2.0f, .gain = 1.8f, .brake = 0.4f, .square = 1, .res = 1.0f}},
+    // Phonk: the 808 cowbell, which held plays phonk's melody round the
+    // chord; triplet hats, an 808 distorted and sliding, all of it a
+    // little worn, as if dubbed off a Memphis tape.
+    {.name = "phonk", .label = "PHONK",
+     .names = {nullptr, nullptr, nullptr, "TRIPLETS", nullptr, nullptr, "808", nullptr, "COWBELL"},
+     .drive = 0.3f, .lowpass = 9000, .wow = 0.08f, .crackle = 0.15f, .room = 0.6f,
+     .noise = {.lp = 0.7f, .hp = 1.2f, .comb = 0.6f, .gate = 0.6f, .gain = 1.1f},
+     .pitch = {.oct = -1, .glide = 12, .detune = 1.8f, .fifth = 0, .vib = 0.3f, .cut = 0.6f, .res = 0.5f},
+     .stab = {.oct = -1, .detune = 0.8f, .cut = 0.4f, .res = 0.5f, .decay = 0.7f, .sub = 0.8f, .gain = 0.9f},
+     .roll = {.body = 0, .wires = 0, .decay = 0.35f, .clap = 0, .hat = 1, .triplet = 1, .gain = 4.2f},
+     .swell = {.cym = 1.2f, .pad = 0.8f, .oct = -1, .cut = 0.5f, .gate = 0.3f},
+     .impact = {.boom = 1.5f, .boomDecay = 2.5f, .snap = 1.4f, .crash = 0.35f, .tail = 0.1f},
+     .sub = {.dive = 12, .diveTime = 2.5f, .drive = 0.95f, .decay = 2.2f, .gain = 0.65f},
+     .zap = {.mode = 2},
+     .stop = {.sub = 1.1f, .gain = 1.8f, .brake = 0.5f}},
+    // Shoegaze: fuzz guitars, a riser bent on the whammy bar and chords
+    // that scoop up to pitch, amp feedback singing for the sweep, a reverse
+    // reverb, and on the drop a wall of fuzz and cymbal.
+    {.name = "shoegaze", .label = "GAZE",
+     .names = {"FEEDBACK", "GLIDE", "FUZZ", nullptr, "REVERSE", "WALL"},
+     .drive = 0.15f, .chorus = 0.7f, .room = 2.0f, .echo = 0.2f, .echoFb = 0.45f,
+     .noise = {.lp = 0.5f, .q = 3.0f, .comb = 1.8f, .combFb = 1.15f, .combOct = -1, .air = 0.3f, .gain = 1.1f},
+     .pitch = {.shape = 4, .oct = -1, .glide = 7, .detune = 1.2f, .fifth = 1.0f, .vib = 2.5f, .cut = 1.5f},
+     .stab = {.shape = 6, .oct = -1, .detune = 1.0f, .cut = 2.0f, .res = 0.1f, .decay = 2.5f, .depth = 0.4f, .sub = 0, .gain = 0.9f},
+     .roll = {.body = 1.2f, .oct = -1, .wires = 0.9f, .decay = 1.1f, .clap = 0.5f},
+     .swell = {.cym = 0.8f, .pad = 1.6f, .cut = 0.9f, .gain = 1.2f},
+     .impact = {.crash = 1.2f, .crashDecay = 1.6f, .tail = 0.4f,
+                .pad = 0.6f, .padChord = 1, .padAttack = 0.05f, .padDecay = 3.0f, .padOpen = 3500, .gain = 0.65f, .padDrive = 5.0f},
+     .sub = {.dive = 2, .decay = 1.2f, .swell = 0.2f},
+     .down = {.noise = 0.6f, .tone = 1.0f, .detune = 0.4f, .q = 2.0f, .len = 1.5f, .gain = 0.6f},
+     .zap = {.fall = 2, .fallTime = 3, .decay = 2.5f, .fm = 0.5f, .square = 0.6f, .oct = -1},
+     .stop = {.cut = 0.6f, .brake = 2.5f},
+     .moves = {.throwFb = 0.2f, .shimmer = 0.4f}},
 };
 // clang-format on
 #pragma GCC diagnostic pop
@@ -395,6 +495,44 @@ inline float sin01(float ph) {
     return -y;
 }
 
+// A pulse wave of duty w (0..1), its two edges smoothed as the saw's are
+// so its harmonics stop where the sample rate does, and centred: a game
+// console's 12.5% pulse is mostly offset otherwise.
+inline float pulseWave(float ph, float inc, float w) {
+    float v = ph < w ? 1.0f : -1.0f;
+    v += polyBlep(ph, inc);
+    float t = ph - w;
+    if (t < 0.0f)
+        t += 1.0f;
+    v -= polyBlep(t, inc);
+    return v - (2.0f * w - 1.0f);
+}
+
+// A game console's noise channel: a 15-bit shift register clocked at a rate
+// of its own, its output bit held between clocks. Short, it taps bit 6
+// instead of bit 1 and repeats every 93 clocks, a metallic buzz pitched at
+// clock / 93.
+struct ChipNoise {
+    uint32_t reg = 1;
+    float ph = 0, out = 1;
+    inline float step(float clockInc, bool shortMode) {
+        ph += clockInc;
+        while (ph >= 1.0f) {
+            ph -= 1.0f;
+            const uint32_t fb = (reg ^ (reg >> (shortMode ? 6 : 1))) & 1u;
+            reg = (reg >> 1) | (fb << 14);
+            out = (reg & 1u) ? 1.0f : -1.0f;
+        }
+        return out;
+    }
+};
+
+// Two squares a fifth-and-a-bit apart (the TR-808's 540 and 800 Hz, scaled
+// to the note), what a cowbell is made of before its band-pass.
+inline float cowbellPair(SquareOsc &a, SquareOsc &b, float inc) {
+    return a.step(inc) + 0.8f * b.step(std::min(inc * 1.4815f, 0.45f));
+}
+
 inline float smoothstep(float u) {
     u = clampf(u, 0.0f, 1.0f);
     return u * u * (3.0f - 2.0f * u);
@@ -464,6 +602,14 @@ struct Voice {
     Svf postL, postR, post2L, post2R; // the set's low-pass, the last thing it goes through
     DcBlock dcL, dcR;
     float crushPh = 0, holdL = 0, holdR = 0, crack = 0;
+
+    // The sets added after the first ten: a console's noise register, a
+    // gong's and the bronze bars' modes, each bar's own ring, and the
+    // amp's filters in front of a fuzz.
+    ChipNoise chip;
+    float modal[6] = {}, modalEnv[6] = {};
+    float bar[18] = {}, barEnv[3] = {};
+    Svf fuzzL, fuzzR;
 };
 
 // A spring tank, roughly: two springs, delays of 33 and 41 ms, each in a
@@ -1029,6 +1175,19 @@ private:
         v.post2L.reset();
         v.post2R.reset();
         v.dcL = v.dcR = DcBlock{};
+        // None of this draws on the voice's noise, which the first ten sets
+        // hear exactly as they always have. The register starts anywhere
+        // but zero, where it would stay; the bars' phases are spread by the
+        // golden ratio, so no two modes start together.
+        v.chip = ChipNoise{};
+        v.chip.reg = 0x4A3Bu;
+        std::fill(std::begin(v.modal), std::end(v.modal), 0.0f);
+        std::fill(std::begin(v.modalEnv), std::end(v.modalEnv), 0.0f);
+        std::fill(std::begin(v.barEnv), std::end(v.barEnv), 0.0f);
+        for (int k = 0; k < 18; ++k)
+            v.bar[k] = 0.618034f * float(k + 1) - std::floor(0.618034f * float(k + 1));
+        v.fuzzL.reset();
+        v.fuzzR.reset();
         const Palette &s = palette(v.set);
         if (s.lowpass > 0) {
             v.postL.set(s.lowpass, 0.7f, m_rate);
@@ -1397,6 +1556,13 @@ private:
         const uint32_t grainChance = uint32_t(30.0 / double(m_rate) * 4294967295.0);
         const float width = 0.2f + 0.8f * c;
         const float wa = std::sqrt(1.0f - 0.5f * width), wb = std::sqrt(0.5f * width);
+        // A console's noise channel: its clock climbs with the build, and in
+        // the last stretch the register turns short and buzzes on the
+        // whistle's note two octaves down, so even the hiss lands in key.
+        const bool chipShort = k.chip > 0 && c > 0.62f;
+        const float chipHz =
+            chipShort ? 93.0f * midiToHz(midi - 24.0f) : 900.0f * std::exp2(c * 4.8f + 0.5f * v.sTone);
+        const float chipInc = std::min(chipHz / m_rate, 1.0f);
         // Twist: an autopan that speeds up with the build, on the grid.
         const double rate = std::exp2(std::floor(c * 3.99f)) * 0.5;
         const float g0 = v.gain;
@@ -1419,7 +1585,11 @@ private:
                 v.env3 *= grainFall;
                 g *= 1.0f - k.grain + k.grain * 1.8f * v.env2;
             }
-            const float nc = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            float nc = v.rng.bipolar();
+            const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            // The register's bit is all power: 0.6 of it is as loud as the hiss.
+            if (k.chip > 0)
+                nc += k.chip * (0.6f * v.chip.step(chipInc, chipShort) - nc);
             float L = nc * wa + n1 * wb, R = nc * wa + n2 * wb;
             const float airL = v.cL.step(L).high * air, airR = v.cR.step(R).high * air;
             L = v.bL.step(v.aL.step(L).low).high + airL;
@@ -1511,6 +1681,25 @@ private:
         // Acid: the filter struck on every sixteenth and closing again, an
         // accent on each beat, over a darker resting cutoff.
         const float acidDecay = std::exp(-1.0f / (0.07f * m_rate));
+        // A console's arpeggio: the note, its third and its fifth in the
+        // key, a note per tick, the ticks quickening from 12 to 48 a second
+        // as it builds; its pulse narrows from 12.5% to a square on the way.
+        // Under it, the second pulse channel holds the note an octave down.
+        const float third = float(h.tuning.degreeSemis(degree + 2) - h.tuning.degreeSemis(degree));
+        const float arpRatio[3] = {1.0f, std::exp2(third / 12.0f), std::exp2(fifth / 12.0f)};
+        const float arpInc = (12.0f + 36.0f * c) / m_rate;
+        const float duty = c < 0.34f ? 0.125f : c < 0.67f ? 0.25f : 0.5f;
+        // A flute's breath: noise in a band on the note, under the tone.
+        if (k.breath > 0) {
+            v.bL.set(hz, 6.0f, m_rate);
+            v.bR.set(hz * 1.003f, 6.0f, m_rate);
+        }
+        // In front of the fuzz, the guitar's own top rolled off, so the
+        // clipping has fewer harmonics to fold back.
+        if (k.shape == 4) {
+            v.fuzzL.set(2400.0f, 0.7f, m_rate);
+            v.fuzzR.set(2500.0f, 0.7f, m_rate);
+        }
         float peak = 0;
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
@@ -1535,6 +1724,21 @@ private:
             } else if (k.shape == 1) {
                 for (int j = 0; j < 5; ++j)
                     o[j] = 0.8f * v.sq[j].step(inc[j]);
+            } else if (k.shape == 3) {
+                v.since += arpInc;
+                if (v.since >= 3.0f)
+                    v.since -= 3.0f;
+                const float a = std::min(inc[0] * arpRatio[std::min(int(v.since), 2)], 0.45f), lo = 0.5f * inc[0];
+                v.ph[0] += a;
+                v.ph[0] -= std::floor(v.ph[0]);
+                v.ph[1] += lo;
+                v.ph[1] -= std::floor(v.ph[1]);
+                o[0] = 0.9f * pulseWave(v.ph[0], a, duty);
+                o[1] = o[2] = 0.45f * pulseWave(v.ph[1], lo, 0.25f);
+                o[3] = o[4] = 0.0f;
+            } else if (k.shape == 4) {
+                for (int j = 0; j < 5; ++j)
+                    o[j] = v.saw[j].step(inc[j]);
             } else {
                 // Sines, with a touch of their octave so they speak.
                 for (int j = 0; j < 5; ++j) {
@@ -1547,6 +1751,18 @@ private:
             }
             float L = o[0] + 1.2f * o[1] + f3 * o[3] + f4 * o[4];
             float R = o[0] + 1.2f * o[2] + f4 * o[3] + f3 * o[4];
+            if (k.shape == 4) {
+                // A fuzz pedal: hard into a tanh, pushed off centre so it
+                // clips one side first and grows even harmonics as well,
+                // then the amp's resonant low-pass below, the cabinet.
+                L = 1.5f * (fastTanh(2.2f * v.fuzzL.step(L).low + 0.35f) - 0.3364f);
+                R = 1.5f * (fastTanh(2.2f * v.fuzzR.step(R).low + 0.35f) - 0.3364f);
+            }
+            if (k.breath > 0) {
+                const float nb = v.rng.bipolar();
+                L += k.breath * 0.6f * v.bL.step(nb).band;
+                R += k.breath * 0.6f * v.bR.step(nb).band;
+            }
             L = drive(v.aL.step(L).low * g, v.sGrit);
             R = drive(v.aR.step(R).low * g, v.sGrit);
             l[i] += L;
@@ -1580,7 +1796,8 @@ private:
         // The last beat rises an octave, landing on the chord again.
         const double riseBeats = v.bars >= 2 ? 1.0 : 0.5;
         const float u = v.state == Running ? clampf(float(1.0 - (v.end - bm) / riseBeats), 0, 1) : 0.0f;
-        const float lift = 12.0f * u * u;
+        // Bronze bars can't bend: theirs are struck faster instead.
+        const float lift = k.shape == 4 ? 0.0f : 12.0f * u * u;
         v.note = midis[0] + lift;
         const float cents = (6.0f + 22.0f * c) * k.detune;
         static const float spread[3] = {0.0f, -1.0f, 1.0f};
@@ -1603,12 +1820,41 @@ private:
         v.gain = g1;
         float peak = 0;
         const float panW = 0.3f + 0.6f * c;
+        // Bronze bars: each a free bar's first three modes (1, 2.76, 5.40),
+        // the higher ones dying faster, and each struck on a pair of
+        // instruments tuned 6 Hz apart, one to each side, so the pair beats
+        // (the ombak) wherever it is played. A stab strikes one chord tone,
+        // turning over the chord as the build goes, and lets every bar ring.
+        static const float barModes[3] = {1.0f, 2.756f, 5.404f};
+        float barInc[3][3][2] = {};
+        if (k.shape == 4)
+            for (int t = 0; t < count; ++t)
+                for (int m = 0; m < 3; ++m) {
+                    const float hz = inc[3 * t] * m_rate * barModes[m];
+                    barInc[t][m][0] = std::min(hz / m_rate, 0.45f);
+                    barInc[t][m][1] = std::min((hz + 6.0f * barModes[m]) / m_rate, 0.45f);
+                }
+        const float barDecay = std::exp(-1.0f / (0.9f * k.decay * m_rate));
+        const float malletDecay = std::exp(-1.0f / (0.0015f * m_rate));
+        // A fuzz guitar's chord: in front of the pedal the strings' top
+        // rolled off; each strum starts flat and comes up to pitch, a
+        // whammy bar let go (a twist bends it further).
+        if (k.shape == 6) {
+            v.fuzzL.set(2200.0f, 0.7f, m_rate);
+            v.fuzzR.set(2300.0f, 0.7f, m_rate);
+        }
+        const float whammy = 0.0577f * (0.5f + 1.5f * v.sMotion);
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
             const double step = std::floor(b / grid - shift);
             if (step != v.lastStep && v.state == Running && b < v.end) {
                 v.lastStep = step;
                 v.env = 1.0f;
+                if (k.shape == 4) {
+                    v.barEnv[v.stepCount % count] = 1.0f;
+                    v.env2 = 1.0f;
+                }
+                ++v.stepCount;
             }
             v.env *= stabDecay;
             if ((i & 7) == 0) {
@@ -1618,7 +1864,57 @@ private:
             }
             const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b) * (1.0f - depth + depth * v.env);
             float L = 0, R = 0;
-            if (k.shape == 3) {
+            if (k.shape == 4) {
+                for (int t = 0; t < count; ++t) {
+                    const float e = v.barEnv[t];
+                    if (e < 1e-4f)
+                        continue;
+                    const float e2 = e * e;
+                    const float amp[3] = {e, 0.4f * e2, 0.16f * e2 * e2};
+                    float sl = 0, sr = 0;
+                    for (int m = 0; m < 3; ++m) {
+                        float &pl = v.bar[6 * t + 2 * m], &pr = v.bar[6 * t + 2 * m + 1];
+                        pl += barInc[t][m][0];
+                        pl -= std::floor(pl);
+                        pr += barInc[t][m][1];
+                        pr -= std::floor(pr);
+                        sl += amp[m] * sin01(pl);
+                        sr += amp[m] * sin01(pr);
+                    }
+                    L += 1.8f * sl;
+                    R += 1.8f * sr;
+                    v.barEnv[t] *= barDecay;
+                }
+                // The mallet: a millisecond and a half of knock.
+                const float knock = v.rng.bipolar() * v.env2 * 0.6f;
+                v.env2 *= malletDecay;
+                L += knock;
+                R += knock;
+            } else if (k.shape == 5) {
+                // Pulse waves, one to a note, the duty turning between 25%
+                // and 12.5% stab by stab, as a tracker's instrument does.
+                const float w = (v.stepCount & 1) ? 0.25f : 0.125f;
+                static const float pan[3] = {0.0f, -0.4f, 0.4f};
+                for (int t = 0; t < count; ++t) {
+                    float &ph = v.ph[t];
+                    ph += inc[3 * t];
+                    ph -= std::floor(ph);
+                    const float o = 1.1f * pulseWave(ph, inc[3 * t], w);
+                    L += o * (1.0f - pan[t]);
+                    R += o * (1.0f + pan[t]);
+                }
+            } else if (k.shape == 6) {
+                const float bend = 1.0f - whammy * v.env * v.env;
+                for (int t = 0; t < count; ++t) {
+                    const float a = v.saw[3 * t].step(inc[3 * t] * bend);
+                    const float bL = v.saw[3 * t + 1].step(inc[3 * t + 1] * bend);
+                    const float bR = v.saw[3 * t + 2].step(inc[3 * t + 2] * bend);
+                    L += a + bL * (1.0f + panW) + bR * (1.0f - panW);
+                    R += a + bR * (1.0f + panW) + bL * (1.0f - panW);
+                }
+                L = 1.4f * (fastTanh(1.6f * v.fuzzL.step(L).low + 0.35f) - 0.3364f);
+                R = 1.4f * (fastTanh(1.6f * v.fuzzR.step(R).low + 0.35f) - 0.3364f);
+            } else if (k.shape == 3) {
                 // A bell: each note's sine bent by another at three and a
                 // half times its pitch, harder while the stab is fresh, so
                 // its partials are not harmonics.
@@ -1725,6 +2021,16 @@ private:
         // Hats that change rate on every beat: sixteenths, triplets, thirty-
         // seconds, and in the build's second half sixty-fourth stutters.
         static const double slow[4] = {0.25, 0.25, 1.0 / 6.0, 0.125}, fast[4] = {0.125, 1.0 / 12.0, 0.0625, 1.0 / 6.0};
+        // Amapiano's shakers: sixteenths, every second one late by a sixth
+        // of its length (a lazy 58% swing), the late ones leaning forward;
+        // the woodblock only on the 3-3-2 of each half bar. A shaker is a
+        // swish, not a hit: its noise comes in over 4 ms.
+        constexpr double swing = 0.16;
+        static const bool tresillo[8] = {true, false, false, true, false, false, true, false};
+        constexpr float shake = 1.0f / 0.004f;
+        // The console's noise channel for a drum: its clock high on the
+        // strike and falling with the hit, as a tracker's snare sweeps.
+        const float chipBase = 4000.0f / m_rate;
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
             double step;
@@ -1732,6 +2038,10 @@ private:
             if (k.pattern == 1 && p < 0.75f) {
                 step = std::floor(b * 4.0 + 1e-7);
                 hit = amen[int(step - 16.0 * std::floor(step / 16.0))];
+            } else if (k.pattern == 3 && p < 0.75f) {
+                const double pos = b * 4.0 + 1e-7, eighth = std::floor(pos * 0.5);
+                step = 2.0 * eighth + (pos - 2.0 * eighth >= 1.0 + swing ? 1.0 : 0.0);
+                hit = tresillo[int(step - 8.0 * std::floor(step / 8.0))] ? 4 : 3;
             } else if (k.pattern == 2) {
                 const double beatNo = std::floor(b + 1e-7);
                 const int pick = int(beatNo * 3.0 + std::floor(beatNo / 4.0)) & 3;
@@ -1755,8 +2065,10 @@ private:
                     vel *= 1.0f - k.ghost;
                 if (hit == 2)
                     vel *= 0.35f;
+                if (hit >= 3 && std::fmod(step, 2.0) < 0.5)
+                    vel *= 0.6f;
                 v.env = hit == 0 ? 0.0f : vel;
-                v.env2 = hit == 0 ? 1.4f * vel : vel;
+                v.env2 = hit == 0 ? 1.4f * vel : hit == 3 ? 0.0f : vel;
                 v.glideNote = hit == 0 ? 0.45f : 1.0f; // a kick is the body, lower and falling further
                 v.pitchEnv = 1.0f;
                 v.since = 0;
@@ -1770,10 +2082,12 @@ private:
             v.pitchEnv *= pitchDecay;
             v.ph[0] += bodyInc * v.glideNote * (1.0f + (v.glideNote < 1.0f ? 1.5f : k.drop) * v.pitchEnv);
             v.ph[0] -= std::floor(v.ph[0]);
-            v.ph[1] += bodyInc * 1.52f;
+            v.ph[1] += std::min(bodyInc * k.partial, 0.45f);
             v.ph[1] -= std::floor(v.ph[1]);
             const float tone = (sin01(v.ph[0]) + 0.45f * sin01(v.ph[1])) * v.env2 * k.body;
-            const float nz = v.rng.bipolar();
+            float nz = v.rng.bipolar();
+            if (k.chip > 0)
+                nz += k.chip * (0.6f * v.chip.step(std::min(chipBase * (1.0f + 4.0f * v.env), 1.0f), false) - nz);
             float wires = (v.aL.step(nz).band * 1.3f + v.bL.step(nz).high * 0.5f) * v.env * k.wires;
             if (k.hat > 0) {
                 float m = 0;
@@ -1786,9 +2100,11 @@ private:
                 const float x = 0.12f * m + 0.5f * nz;
                 wires += (x - v.oL.step(x)) * 1.6f * v.env * k.hat;
             }
+            if (k.pattern == 3)
+                wires *= 1.0f - std::exp(-v.since * shake);
             const float clap = v.bR.step(nz).band * 2.2f * v.env3;
+            v.since += 1.0f / m_rate;
             if (k.gate > 0) {
-                v.since += 1.0f / m_rate;
                 if (v.since > k.gate)
                     v.env *= gateCut;
             } else {
@@ -1969,6 +2285,13 @@ private:
             v.blareR.reset();
             v.blareL.set(1400.0f, 1.1f, m_rate);
             v.blareR.set(1500.0f, 1.1f, m_rate);
+            if (k.gong > 0) {
+                static const float amp[6] = {0.55f, 0.45f, 0.5f, 0.3f, 0.18f, 0.1f};
+                for (int m = 0; m < 6; ++m) {
+                    v.modal[m] = 0;
+                    v.modalEnv[m] = amp[m];
+                }
+            }
         }
         constexpr float kickWindow = 0.04f, fadeIn = 0.03f, kHitDelay = 0.02f;
         const float dt = 1.0f / m_rate;
@@ -2015,6 +2338,24 @@ private:
             padRise = 1.0f - std::exp(-dt / std::max(0.002f, k.padAttack));
             padFall = std::exp(-dt / k.padDecay);
         }
+        // A gong ageng: its fundamental on the key's root and a second mode
+        // 2.2 Hz above it, the pair humming slowly against each other (the
+        // ombak a gong is tuned for); above them its octave and three
+        // inharmonic modes, each dying sooner than the one below. Struck
+        // with a padded beater, the low modes bloom over 60 ms and every
+        // mode settles a fifth of a semitone from sharp as the metal relaxes.
+        float gongInc[6] = {}, gongDecay[6] = {};
+        float gongBloom = 0;
+        if (k.gong > 0) {
+            const float ratio[6] = {1.0f, 1.0f + 2.2f / boomHz, 2.004f, 2.93f, 4.16f, 5.47f};
+            static const float tau[6] = {5.5f, 5.5f, 3.5f, 2.0f, 1.2f, 0.7f};
+            const float glide = 1.0f + 0.012f * std::exp(-v.t / 0.15f);
+            for (int m = 0; m < 6; ++m) {
+                gongInc[m] = std::min(boomHz * ratio[m] * glide / m_rate, 0.45f);
+                gongDecay[m] = std::exp(-dt / (tau[m] * (0.8f + 0.4f * I)));
+            }
+            gongBloom = 1.0f / 0.06f;
+        }
         // A layer under the kick, not over it: the drop's weight is the
         // kick's, the impact is its size.
         const float vel = v.vel * (0.75f + 0.35f * I) * pressGain(v) * 0.42f * k.gain;
@@ -2031,7 +2372,15 @@ private:
             v.glideNote *= bodyPitchDecay;
             v.ph[1] += bodyHz * (1.0f + 1.2f * v.glideNote) / m_rate;
             v.ph[1] -= std::floor(v.ph[1]);
-            const float n0 = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            const float n0 = v.rng.bipolar();
+            float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            // A console's explosion: one register for both sides, its clock
+            // falling from 24 kHz to under 1 as the crash decays.
+            if (k.chip > 0) {
+                const float x = 0.6f * v.chip.step(std::min((800.0f + 23000.0f * v.env3 * v.env3) / m_rate, 1.0f), false);
+                n1 += k.chip * (x - n1);
+                n2 += k.chip * (x - n2);
+            }
             const float knock = v.aL.step(n0).band * 2.5f + v.cR.step(n0).band * 2.6f;
             const float body = v.aR.step((sin01(v.ph[1]) + knock) * v.env2).high * k.body;
             v.env2 *= bodyDecay;
@@ -2095,17 +2444,40 @@ private:
                 pl = fastTanh(k.padDrive * xl) * g;
                 pr = fastTanh(k.padDrive * xr) * g;
             }
+            // The gong: its humming pair dry and mono with the boom, under
+            // the kick; the modes above it spread either side.
+            float gongLow = 0, gl = 0, gr = 0;
+            if (k.gong > 0) {
+                const float bloom = clampf((v.t - kHitDelay) * gongBloom, 0, 1);
+                for (int m = 0; m < 6; ++m) {
+                    v.modal[m] += gongInc[m];
+                    v.modal[m] -= std::floor(v.modal[m]);
+                    const float x = sin01(v.modal[m]) * v.modalEnv[m];
+                    v.modalEnv[m] *= gongDecay[m];
+                    if (m < 2)
+                        gongLow += x * bloom * bloom;
+                    else if (m & 1)
+                        gr += x * (m == 3 ? bloom : 1.0f);
+                    else
+                        gl += x * (m == 2 ? bloom : 1.0f);
+                }
+                const float g = 0.5f * k.gong;
+                gongLow *= g * (v.quiet ? 0.0f : 1.0f - 0.85f * duck[i]);
+                const float mid = 0.35f * (gl + gr);
+                gl = g * (gl + mid);
+                gr = g * (gr + mid);
+            }
             const float attack = clampf((v.t - kHitDelay) * 1000.0f, 0, 1);
-            const float L = (0.55f * body + 0.2f * snap + 0.3f * cl + 0.12f * tl + pl) * vel * attack;
-            const float R = (0.55f * body - 0.2f * snap + 0.3f * cr + 0.12f * tr + pr) * vel * attack;
+            const float L = (0.55f * body + 0.2f * snap + 0.3f * cl + 0.12f * tl + pl + gl) * vel * attack;
+            const float R = (0.55f * body - 0.2f * snap + 0.3f * cr + 0.12f * tr + pr + gr) * vel * attack;
             l[i] += L;
             r[i] += R;
-            low[i] += 0.22f * boom * vel;
+            low[i] += 0.22f * boom * vel + gongLow * vel;
             peak = std::max(peak, std::fabs(L) + std::fabs(R) + std::fabs(boom));
             v.t += 1.0f / m_rate;
         }
         v.level = v.level * 0.8f + 0.2f * peak;
-        if (v.t > 0.2f && v.env < 1e-4f && v.env3 < 1e-4f && v.env4 < 1e-4f && v.padEnv <= 0)
+        if (v.t > 0.2f && v.env < 1e-4f && v.env3 < 1e-4f && v.env4 < 1e-4f && v.padEnv <= 0 && v.modalEnv[0] < 1e-4f)
             v.active = false;
     }
 
@@ -2130,7 +2502,8 @@ private:
         const SubLook &k = palette(v.set).sub;
         const int degree = int(std::lround(v.sTone * 4.0f));
         float endHz = midiToHz(h.midi(degree, -1));
-        while (endHz < 36.0f)
+        // A log drum sits an octave up, where its hollow middle is heard.
+        while (endHz < (k.log > 0 ? 70.0f : 36.0f))
             endHz *= 2.0f;
         const float spb = float(60.0 / m_bpm);
         const float diveSec = (0.35f + 0.3f * I) * spb * k.diveTime;
@@ -2143,8 +2516,11 @@ private:
             std::exp(-1.0f / ((sustaining ? 4.0f : (0.18f + 0.25f * I) * spb / 0.47f * k.decay) * m_rate));
         if (v.t == 0) {
             v.env = 1.0f;
-            v.env2 = 1.0f; // the tom's skin
+            v.env2 = 1.0f; // the tom's skin, or the log drum's bite
             v.env3 = 1.0f; // its stick
+            v.pitchEnv = 1.0f;
+            if (k.log > 0)
+                v.aL.set(std::min(hz * 3.7f, 2000.0f), 5.0f, m_rate);
         }
         const float vel = v.vel * pressGain(v) * 0.3f * k.gain;
         const float skinDecay = std::exp(-1.0f / (0.25f * m_rate)), stickDecay = std::exp(-1.0f / (0.004f * m_rate));
@@ -2157,11 +2533,22 @@ private:
         const float rInc1 = std::min(hz * 2.0f * 1.004f / m_rate, 0.45f), rInc2 = std::min(hz * 2.0f / 1.004f / m_rate, 0.45f);
         if (k.reese > 0)
             v.aL.set(380.0f + 500.0f * v.env, 0.9f, m_rate);
+        // The log drum: a sine plucked nine semitones sharp and falling into
+        // its note in a few tens of milliseconds, driven into a tanh that
+        // relaxes as it rings, so it starts square and hollow and ends
+        // round; and a wooden knock, a resonance near its fourth harmonic
+        // rung by the stick.
+        const float pluckDecay = std::exp(-1.0f / (0.018f * m_rate));
         float peak = 0;
         for (int i = from; i < n; ++i) {
             const float attack = clampf((v.t - window) * (v.quiet ? 40.0f : 400.0f), 0, 1);
             if (attack > 0) {
-                v.ph[0] += hz / m_rate;
+                float f = hz;
+                if (k.log > 0) {
+                    f *= 1.0f + 0.68f * v.pitchEnv;
+                    v.pitchEnv *= pluckDecay;
+                }
+                v.ph[0] += f / m_rate;
                 v.ph[0] -= std::floor(v.ph[0]);
             }
             const float s = sin01(v.ph[0]);
@@ -2171,7 +2558,18 @@ private:
             // A slow swell: the sub breathes in rather than being struck.
             if (k.swell > 0)
                 gain *= smoothstep(v.t / k.swell);
-            const float o = fastTanh(push * s + 0.25f * (s * s - 0.5f)) * norm * gain;
+            float o;
+            if (k.log > 0) {
+                const float bite = 1.0f + 3.5f * v.env2;
+                o = fastTanh(bite * s) / fastTanh(bite) * gain * 0.8f * k.log;
+                const float knock = v.aL.step(v.rng.bipolar() * v.env3).band * 0.35f * k.log * gain;
+                v.env2 *= skinDecay;
+                v.env3 *= stickDecay;
+                l[i] += knock;
+                r[i] += knock;
+            } else {
+                o = fastTanh(push * s + 0.25f * (s * s - 0.5f)) * norm * gain;
+            }
             if (k.body > 0 && attack > 0) {
                 v.ph[1] += skinInc;
                 v.ph[1] -= std::floor(v.ph[1]);
@@ -2249,6 +2647,10 @@ private:
         const ZapLook &k = palette(v.set).zap;
         if (k.mode == 1) {
             renderChop(v, l, r, from, n, b0, bps, h);
+            return;
+        }
+        if (k.mode == 2) {
+            renderCowbell(v, l, r, from, n, b0, bps, h);
             return;
         }
         const float I = v.sInt;
@@ -2351,6 +2753,55 @@ private:
         }
         v.level = v.level * 0.8f + 0.2f * peak;
         if (!v.held && v.since > len && v.env < 1e-4f)
+            v.active = false;
+    }
+
+    // An 808 cowbell, phonk's lead: two squares a fifth-and-a-bit apart
+    // through a band an octave over the note, a click of a decay and a
+    // short ring after it. Tapped, one note on a chord tone; held, it plays
+    // the melody phonk plays with it, a sixteenth at a time round the chord
+    // (root, fifth, third, fifth, root, the octave, fifth, third).
+    void renderCowbell(Voice &v, float *l, float *r, int from, int n, double b0, double bps, const Harmony &h) {
+        const float I = v.sInt;
+        const ZapLook &k = palette(v.set).zap;
+        const int count = std::clamp(h.chordCount, 1, 4);
+        const int base = int(std::lround(v.sTone * 7.0f));
+        static const int8_t motif[8] = {0, 2, 1, 2, 0, 3, 2, 1};
+        const float ring = std::exp(-1.0f / ((0.16f + 0.2f * I) * k.decay * m_rate));
+        const float click = std::exp(-1.0f / (0.012f * m_rate));
+        auto incOf = [&] { return std::min(midiToHz(v.glideNote + v.bend) / m_rate, 0.3f); };
+        float inc = incOf();
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b * 4.0 + 1e-9);
+            if (v.t == 0 || (v.held && step != v.lastStep && v.t > 0.2f)) {
+                v.lastStep = step;
+                const int j = v.stepCount++;
+                const int idx = motif[j % 8];
+                const int tone = h.chordTones[(idx == 3 ? 0 : idx) % count] + base;
+                v.glideNote = float(h.midi(tone, 2 + (idx == 3 ? 1 : 0))) + 12.0f * k.oct;
+                v.note = v.glideNote;
+                inc = incOf();
+                v.aL.set(inc * m_rate * 2.0f, 1.3f, m_rate);
+                v.env = 1.0f;
+                v.env2 = 1.0f;
+                v.env4 = (j & 1) ? 0.3f : -0.3f;
+            }
+            const float x = cowbellPair(v.sq[0], v.sq[1], inc);
+            const float y = v.aL.step(x).band + 0.15f * x;
+            const float e = 0.6f * v.env2 + 0.4f * v.env;
+            v.env *= ring;
+            v.env2 *= click;
+            const float attack = std::min(1.0f, v.t * 2000.0f);
+            const float o = y * e * v.vel * 0.22f * (0.8f + 0.4f * I) * attack * k.gain;
+            l[i] += o * (1.0f - v.env4);
+            r[i] += o * (1.0f + v.env4);
+            peak = std::max(peak, 2.0f * std::fabs(o));
+            v.t += 1.0f / m_rate;
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+        if (!v.held && v.env < 1e-4f)
             v.active = false;
     }
 

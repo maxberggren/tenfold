@@ -77,7 +77,13 @@ const char *setBlurb(int s) {
         "gated snare and crash, chorused brass, laser toms, a tape stop",
         "ring-modulated metal, an acid line, offbeat chords, gated swells, a clang",
         "grains, soft pads, a shaker, a bloom instead of a crash",
+        "a log drum for the sub, swung shakers and woodblock, keys off the beat, a breathy flute",
+        "bronze bars beating in pairs, a gangsa run, a suling, a gong on the drop",
+        "pulse waves, a frame-rate arpeggio, the noise channel's buzz, a square blip",
+        "an 808 cowbell (hold it for the melody), triplet hats, a distorted sliding 808",
+        "fuzz guitars on the whammy bar, amp feedback, a reverse reverb, a wall on the drop",
     };
+    static_assert(std::size(blurbs) == SetCount, "a blurb for every set");
     return blurbs[std::clamp(s, 0, int(SetCount) - 1)];
 }
 
@@ -295,8 +301,11 @@ public:
     QString help() const override {
         return QStringLiteral(
             "Left / Right\tthe set, the sound of every riser and hit: EDM, analog, dub, lo-fi, trap, drum and bass, "
-            "cinema, synthwave (80S), techno, ambient. What is already playing keeps its own, and loops keep theirs. "
-            "Some cells take the set's own name: a dub SIREN (twist it for a swept siren), trap HATS, a cinema BRAAM\n"
+            "cinema, synthwave (80S), techno, ambient, amapiano (AMAP), gamelan (GAMEL), chiptune (8BIT), phonk, "
+            "shoegaze (GAZE). The row of sets scrolls to follow the one lit; click it or step with the arrows. "
+            "What is already playing keeps its own, and loops keep theirs. "
+            "Some cells take the set's own name: a dub SIREN (twist it for a swept siren), trap HATS, a cinema BRAAM, "
+            "amapiano's LOG DRUM, a gamelan GONG, phonk's COWBELL (hold it: it plays the melody round the chord)\n"
             "Shift+Left / Right (or [ ])\tdrop style: clean; gap, a half-beat breath before the ONE with only the "
             "risers' room ringing; or strip, the risers alone for the build's last bar, then the breath\n"
             "Up / Down\tlonger or shorter risers from the keys (1, 2, 4, 8, 16 bars)\n"
@@ -1275,8 +1284,9 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     }
     c::beats(p, pc, col);
 
-    // Below the pad, every one clickable. Row 0: the clips and the ten sets
-    // (the page's sound, as on every page). Row 1: the drop styles, the
+    // Below the pad, every one clickable. Row 0: the clips and the sets
+    // (the page's sound, as on every page; more than fit become a window
+    // that follows the lit one, its ends faded). Row 1: the drop styles, the
     // keys' riser length, the drop, the build falling away and whether
     // builds move the mix. Each group shows its keys; short labels, so it
     // all reads on a small window too.

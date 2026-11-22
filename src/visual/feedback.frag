@@ -42,7 +42,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 n1;
     vec4 n2;
     vec4 n3;
-    vec4 debug;  // x: 3 leaves the echoes out, 4 draws them alone (TENFOLD_VISUAL_STAGE)
+    vec4 debug;  // x: 3 leaves the echoes out, 4 draws them alone (TENFOLD_VISUAL_STAGE); y: the fingers drawn
 } ubuf;
 layout(binding = 1) uniform sampler2D scene;
 layout(binding = 2) uniform sampler2D prev;
@@ -145,7 +145,7 @@ void main() {
                fingerGlow(p, ubuf.f3, aspect) + fingerGlow(p, ubuf.f4, aspect) + fingerGlow(p, ubuf.f5, aspect) +
                fingerGlow(p, ubuf.f6, aspect) + fingerGlow(p, ubuf.f7, aspect) + fingerGlow(p, ubuf.f8, aspect) +
                fingerGlow(p, ubuf.f9, aspect);
-    col += palette(0.6) * fg * ubuf.roll.z;
+    col += palette(0.6) * fg * ubuf.roll.z * ubuf.debug.y;
 
     now += col;
     // The echoes only where this frame is dark: they fill the black between

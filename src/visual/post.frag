@@ -65,7 +65,6 @@ void main() {
     col.b = texture(image, uv - off).b;
     vec3 b = texture(bloom, uv).rgb;
     col += b * (0.45 + 1.2 * ubuf.drums.x + 0.8 * ubuf.fx.x);
-    col += vec3(1.0, 0.54, 0.12) * exp(-abs(r - front) * 160.0) * kick * kick * 1.5;
 
     // The atmosphere: thin filaments of plasma drifting through the dark
     // (here on the glass, not in the echoes, which would smear them).
@@ -87,15 +86,17 @@ void main() {
     col += palette(0.0) * ubuf.chord.y * 0.12;
 
     // A drop: white, then for a moment the negative.
+    // A drop: two frames of white, then the picture cut to near black and
+    // climbing back, the new world's lights first.
     float drop = ubuf.fx.y;
-    col = mix(col, vec3(1.6), drop * 0.55);
+    col *= 1.0 - 0.85 * smoothstep(0.3, 0.85, drop);
 
     // Filmic: a black level (the echoes and the glow lift it), a soft
     // shoulder, a touch more colour.
     col = max(col - 0.025, 0.0) * 1.03;
     col = col * (2.51 * col + 0.03) / (col * (2.43 * col + 0.59) + 0.14);
     col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.25);
-    col = mix(col, 1.0 - col, step(0.93, drop) * 0.85);
+    col = mix(col, vec3(1.0), step(0.85, drop));
 
     // Scanlines every three pixels (the window's own), a vignette, grain that
     // the hats stir.
@@ -104,5 +105,7 @@ void main() {
     col *= 1.0 - (0.25 + 0.3 * crt) * dot(d, d) * 1.6;
     col += (hash2(qt_TexCoord0 * ubuf.res.xy + fract(time * 7.13) * 91.0) - 0.5) * (0.01 + 0.02 * crt + 0.04 * ubuf.drums.z);
     col *= inside;
+    // Dither, so dark gradients don't band (in a video least of all).
+    col += (hash2(qt_TexCoord0 * ubuf.res.xy + 17.0) - 0.5) / 128.0;
     fragColor = vec4(clamp(col, 0.0, 1.0), 1.0) * ubuf.qt_Opacity;
 }

@@ -225,6 +225,7 @@ ApplicationWindow {
                         height: surface.pad.height
                         visible: visual.showing
                         crt: visual.crt ? 0.45 : 0
+                        fingers: true
                     }
                 }
 

@@ -250,7 +250,8 @@ jobs:
         run: |
           python3 -m venv /tmp/aqt
           /tmp/aqt/bin/pip install -q aqtinstall
-          /tmp/aqt/bin/aqt install-qt -O "$HOME/qt" mac desktop $QT_VERSION clang_64
+          # qtshadertools: qsb, to bake the visualizer's shaders for Metal.
+          /tmp/aqt/bin/aqt install-qt -O "$HOME/qt" mac desktop $QT_VERSION clang_64 -m qtshadertools
           qmake=$(find "$HOME/qt/$QT_VERSION" -path '*/bin/qmake' | head -n 1)
           echo "QMAKE=$qmake" >>"$GITHUB_ENV"
 

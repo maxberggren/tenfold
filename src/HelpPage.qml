@@ -12,8 +12,9 @@ Rectangle {
 
     readonly property var pageLines: pageHelp.split("\n").filter(l => l.length > 0)
     readonly property var globalLines: [
-        "1 – 7\t" + qsTr("the parts: drums, bass, chords, lead, arp, atmosphere, effects"),
+        "1 – 8\t" + qsTr("the parts: drums, bass, chords, lead, arp, atmosphere, effects, vocal"),
         "0\t" + qsTr("the Song page: your loops become a track (sections, builds and drops)"),
+        "9\t" + qsTr("the Visual page: everything playing as a picture, which your fingers reshape; Return there opens it in a window of its own, for a second screen"),
         "Tab\t" + qsTr("next page (Shift: previous)"),
         "Space\t" + qsTr("loop what you just played. With nothing else playing, press it where your phrase would start again: that sets the tempo. Over a playing loop, the bars you just played loop from the bar line. Over this page's own loop it layers on top, as one loop"),
         "Take pad / Esc\t" + qsTr("take the trackpad (the button) / give it back"),
@@ -32,6 +33,7 @@ Rectangle {
         "Ctrl O\t" + qsTr("open a saved song in place of what plays now"),
         "Ctrl Shift O\t" + qsTr("pick up the song as it was when tenfold last quit"),
         "Ctrl R\t" + qsTr("record to ~/Music/tenfold"),
+        "Ctrl Shift R\t" + qsTr("record the Visual page's picture with the sound, to an .mp4 beside the recording (needs ffmpeg; Shift+click Record does the same)"),
         "Ctrl T\t" + qsTr("the tutorial: a whole track, step by step, from a cleared studio (with loops made, press it twice; Ctrl Return next, Ctrl Shift Return back, Esc leaves)"),
         "Ctrl Q\t" + qsTr("quit")
     ]

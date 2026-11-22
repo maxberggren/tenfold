@@ -407,17 +407,23 @@ private slots:
         QCOMPARE(find(u, "roll").v[3], 0.5f);
     }
 
-    // A drop throws the world on to the next; a chord change turns the
-    // crystals a little; the camera flies faster with the tempo.
+    // A drop throws the world on to the next, with the autopilot on; a
+    // chord change turns the crystals a little; the camera flies faster
+    // with the tempo.
     void theMusicMovesTheWorldOnItsOwn() {
-        Drive d;
+        Drive d, held;
         Signals s;
         Look l;
-        d.step(s, l, 0.1);
+        QVERIFY(!d.step(s, l, 0.1));
+        held.step(s, l, 0.1, false);
         s.drops = 1;
-        for (int i = 0; i < 40; ++i)
-            d.step(s, l, 0.05);
-        QVERIFY2(std::fabs(d.worldShift - 1.0f) < 0.01f, qPrintable(QString::number(d.worldShift)));
+        QVERIFY(d.step(s, l, 0.05));
+        QVERIFY(!d.step(s, l, 0.05));
+        QVERIFY(!held.step(s, l, 0.05, false));
+        VisualPage page;
+        page.moveOn();
+        QCOMPARE(page.state().settings.look.world, 1.0f);
+        QVERIFY(std::fabs(page.state().settings.look.hue - 0.33f) < 1e-5f);
         s.chordChanges = 1;
         for (int i = 0; i < 60; ++i)
             d.step(s, l, 0.05);

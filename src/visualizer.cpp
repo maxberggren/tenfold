@@ -59,6 +59,9 @@ void Visualizer::step(double dt) {
         m_showing = m_session->page() == m_session->visualPage();
         const StudioView &v = m_session->view();
         m_tracker.update(v, dt);
+        if (m_drive.step(m_tracker.now(), page->state().settings.look, dt, page->state().settings.autopilot))
+            page->moveOn();
+        state = page->state();
 
         // The waveform the voice's ring is drawn from: the microphone's
         // while it sings, else the mix's, each against its own recent peak.
@@ -82,7 +85,6 @@ void Visualizer::step(double dt) {
         }
         ++m_dataSerial;
     }
-    m_drive.step(m_tracker.now(), state.settings.look, dt, state.settings.autopilot);
     if (state.settings.crt != m_crt) {
         m_crt = state.settings.crt;
         emit crtChanged();

@@ -6,6 +6,7 @@
 #   bin/shaders           bake every shader
 #   bin/shaders --check   bake into a scratch folder and say if the committed
 #                         ones are out of date
+#   bin/shaders --metal   bake with Qt's qsb or fail: what a macOS build needs
 #
 # With Qt's qsb (qt6-shadertools; QSB names another) every backend is
 # baked: OpenGL, Vulkan, Metal. Without it, tools/qsbmini stands in, which
@@ -31,6 +32,11 @@ if [ -z "$qsb" ]; then
             break
         fi
     done
+fi
+
+if [ -z "$qsb" ] && [ "${1:-}" = "--metal" ]; then
+    echo "bin/shaders: the Mac's Metal needs Qt's qsb (the qtshadertools module), and there is none" >&2
+    exit 1
 fi
 
 if [ -n "$qsb" ]; then

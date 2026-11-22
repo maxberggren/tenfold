@@ -22,6 +22,9 @@ Item {
     // For looking at one pass alone (TENFOLD_VISUAL_STAGE: 1 the world,
     // 2 the feedback without bloom); 0 the whole picture.
     property int stage: 0
+    // The fingers' rings in the flow: for the player, on the main window;
+    // the audience's window and the video leave them out.
+    property bool fingers: false
     readonly property var u: visual.u
     readonly property vector4d res: Qt.vector4d(width, height, u.res.z, u.res.w)
     readonly property vector4d roll: Qt.vector4d(u.roll.x, u.roll.y, u.roll.z, crt)
@@ -113,7 +116,7 @@ Item {
         readonly property vector4d n1: root.u.n1
         readonly property vector4d n2: root.u.n2
         readonly property vector4d n3: root.u.n3
-        readonly property vector4d debug: Qt.vector4d(root.stage, 0, 0, 0)
+        readonly property vector4d debug: Qt.vector4d(root.stage, root.fingers ? 1 : 0, 0, 0)
         fragmentShader: "qrc:/visual/feedback.frag.qsb"
     }
     ShaderEffectSource {

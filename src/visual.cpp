@@ -555,6 +555,14 @@ void VisualPage::frame(const Frame &f, ControlContext &ctx) {
     m_state.hand = m_morph.hand();
 }
 
+void VisualPage::moveOn() {
+    Look &l = m_morph.look;
+    l.world = std::floor(l.world + 0.5f) + 1.0f;
+    l.hue += 0.33f;
+    l = tidy(l);
+    m_state.settings.look = l;
+}
+
 void VisualPage::tick(double dt) {
     m_morph.tick(dt, m_state.settings.autopilot);
     m_state.settings.look = m_morph.look;
@@ -791,7 +799,7 @@ PartSpec makeVisual() {
 
 namespace tf::visual {
 
-void Drive::step(const Signals &s, const Look &l, double dt, bool follow) {
+bool Drive::step(const Signals &s, const Look &l, double dt, bool follow) {
     dt = std::clamp(dt, 0.0, 0.25);
     // Faster with the tempo, the hand's speed, a build; the kick shoves.
     const double pace = (0.5 + 2.8 * double(l.speed)) * std::clamp(double(s.bpm) / 124.0, 0.5, 2.0) *
@@ -803,28 +811,18 @@ void Drive::step(const Signals &s, const Look &l, double dt, bool follow) {
     const float twistSpeed = dt > 0 ? float((l.twist - lastTwist) / dt) : 0.0f;
     lastTwist = l.twist;
     roll = 0.004f * std::sin(l.twist) + std::clamp(twistSpeed * 0.01f, -0.04f, 0.04f);
-    if (follow && drops >= 0 && s.drops > drops) {
-        worldShiftTo += 1.0f;
-        hueShiftTo += 0.33f;
-    }
+    const bool moveOn = follow && drops >= 0 && s.drops > drops;
     drops = s.drops;
     if (chordChanges >= 0 && s.chordChanges > chordChanges)
         seedShiftTo += 0.35f;
     chordChanges = s.chordChanges;
-    worldShift += (worldShiftTo - worldShift) * float(1.0 - std::exp(-dt / 0.35));
     seedShift += (seedShiftTo - seedShift) * float(1.0 - std::exp(-dt / 0.6));
-    // The drop's new palette cuts in at once.
-    hueShift = hueShiftTo = std::fmod(hueShiftTo, 1.0f);
-    // Kept small: only where it is between two worlds matters.
-    if (worldShiftTo > kWorlds * 4) {
-        worldShiftTo -= kWorlds * 4;
-        worldShift -= kWorlds * 4;
-    }
     // A float in the shader keeps a millimetre's precision only so far out:
     // back by a multiple of the sponge's, crystals' and city's repeats
     // (the tunnel's twist and the lattice may jump once, every half hour).
     if (travel > 6300)
         travel -= 6300;
+    return moveOn;
 }
 
 int marchSteps(int quality) {
@@ -840,9 +838,7 @@ float sceneScale(int quality) {
 std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand &h, const Drive &d, float width,
                               float height, float crt) {
     const Look &l = set.look;
-    float world = std::fmod(l.world + d.worldShift, kWorlds);
-    if (world < 0)
-        world += kWorlds;
+    const float world = l.world;
     // Seconds, kept short enough for a float to stay precise.
     const float time = float(std::fmod(s.time, 3600.0));
     std::vector<Uniform> u = {
@@ -860,7 +856,7 @@ std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand 
         {"levels1", {s.level[Arp], s.level[Atmos], s.level[Fx], s.level[Vocal]}},
         {"morph0", {world, l.fold, l.symmetry, l.seed + d.seedShift}},
         {"morph1", {l.yaw, l.pitch, l.twist, l.zoom}},
-        {"morph2", {float(d.travel), l.warp, std::fmod(l.hue + d.hueShift, 1.0f), h.chaos}},
+        {"morph2", {float(d.travel), l.warp, l.hue, h.chaos}},
         {"morph3", {float(marchSteps(set.quality)), clamp01(h.pressure * float(h.count > 0)), d.pace, float(h.count)}},
         {"roll", {d.roll, l.trails, set.markers ? 1.0f : 0.0f, crt}},
     };

@@ -24,6 +24,9 @@ qmake="${QMAKE:-qmake6}"
 identity="${MACOS_SIGN_IDENTITY:-}"
 entitlements="$ROOT/src/macos/tenfold.entitlements"
 
+# The visualizer's shaders with Metal in them: the committed ones may have
+# been baked without (bin/shaders).
+QMAKE="$qmake" "$ROOT/bin/shaders" --metal
 TENFOLD_PORTABLE=1 QMAKE="$qmake" "$ROOT/bin/build"
 
 out="$ROOT/build/macos"

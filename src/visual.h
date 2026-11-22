@@ -203,21 +203,19 @@ struct Settings {
 };
 
 // What the picture integrates between frames, so it moves smoothly: how far
-// the camera has flown, the roll of the echoes, and the shifts the music
-// makes on its own (a drop throws the world on to the next one; a chord
-// change turns the crystals).
+// the camera has flown, the roll of the echoes, and the turn a chord change
+// gives the crystals.
 struct Drive {
     double travel = 0;
     float roll = 0;          // radians a frame the feedback turns
-    float worldShift = 0, worldShiftTo = 0;
     float seedShift = 0, seedShiftTo = 0;
-    float hueShift = 0, hueShiftTo = 0;
     float pace = 0;          // how fast the camera flies, units a second
     int drops = -1, chordChanges = -1;
     float lastTwist = 0;
-    // follow: the music may move the world on (a drop to the next world and
-    // a new palette); off, only the hand moves it. The page's autopilot.
-    void step(const Signals &s, const Look &l, double dt, bool follow = true);
+    // True when the music has just asked to move the world on (a drop),
+    // and follow lets it: the page's autopilot. The app then calls
+    // VisualPage::moveOn().
+    bool step(const Signals &s, const Look &l, double dt, bool follow = true);
 };
 
 // The march steps and the world's share of the picture's resolution, per
@@ -263,6 +261,9 @@ public:
     const State &state() const { return m_state; }
     // The app steps the hand's easing at its own frame rate (also offline).
     void tick(double dt);
+    // A drop with the autopilot on: a hard cut to the next world, in new
+    // colours.
+    void moveOn();
 
     // Keys that set a world directly: A S D F G.
     static int worldKey(int key);

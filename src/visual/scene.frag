@@ -252,10 +252,11 @@ vec3 kaleido(vec3 p) {
 float bend(inout vec3 q) {
     float stretch = 1.0;
     // The roll twists space along the path, not just the camera.
-    q.xy = rot(q.z * 0.05 * clamp(ubuf.morph1.z, -6.0, 6.0)) * q.xy;
+    q.xy = rot(q.z * 0.05 * clamp(ubuf.morph1.z, -3.0, 3.0)) * q.xy;
+    stretch *= 1.0 / (1.0 + 0.1 * abs(clamp(ubuf.morph1.z, -3.0, 3.0)));
     // The kick shoves the walls in; the snare breaks the world into slabs
     // that jump sideways.
-    q.xy *= 1.0 + 0.12 * ubuf.drums.x;
+    q.xy *= 1.0 + 0.3 * ubuf.drums.x * ubuf.drums.x;
     float slab = floor(q.z * 1.3);
     float jump = step(0.55, hash1(slab + ubuf.drums2.y * 7.31));
     q.xy += jump * ubuf.drums.y * 0.5 * (vec2(hash1(slab * 3.1), hash1(slab * 5.7)) - 0.5);
@@ -263,17 +264,18 @@ float bend(inout vec3 q) {
     float s = exp2(-ubuf.morph1.w);
     q *= s;
     stretch /= s;
-    // Four fingers' warp: the circle round the path inverted, the far walls
-    // brought to the middle and the middle thrown out to the walls.
-    // (A little warp, the default, only stirs the echoes: the inversion
-    // starts past a third.)
+    // Four fingers' warp: space inverted in a sphere a few steps ahead, so
+    // the world ahead folds into a bubble around it and the far turns near.
+    // Inside the sphere the inversion stretches space by R²/r², so the
+    // march steps that much shorter there, or surfaces smear.
     float w = smoothstep(0.3, 1.0, ubuf.morph2.y);
     if (w > 0.002) {
-        float r2 = max(dot(q.xy, q.xy), 0.05);
-        float R2 = 2.6;
-        vec2 inv = q.xy * (R2 / r2);
-        q.xy = mix(q.xy, inv, w);
-        stretch *= mix(1.0, min(r2 / R2, 1.0), w) * 0.85;
+        vec3 c = vec3(0.0, 0.0, ubuf.morph2.x * s + 3.5);
+        vec3 dq = q - c;
+        float r2 = max(dot(dq, dq), 0.05);
+        float R2 = 6.0;
+        q = mix(q, c + dq * (R2 / r2), w);
+        stretch *= mix(1.0, min(r2 / R2, R2 / r2), w) * 0.75;
     }
     // The bass swells space: a slow sine field as deep as it is loud, as
     // fine as it is high.
@@ -348,7 +350,7 @@ void main() {
     float build = ubuf.fx.x;
     vec3 ro = vec3(0.0, 0.0, ubuf.morph2.x);
     vec2 shake = build * build * 0.04 * vec2(hash1(time * 61.0) - 0.5, hash1(time * 47.0) - 0.5);
-    float fov = 1.15 - 0.28 * kick + 0.4 * build;
+    float fov = 1.15 - 0.45 * kick + 0.4 * build;
     vec3 rd = normalize(vec3(sp + shake, fov));
     rd.xy = rot(ubuf.morph1.z) * rd.xy;
     rd.yz = rot(ubuf.morph1.y * 0.6) * rd.yz;
@@ -372,16 +374,16 @@ void main() {
         // Neon: how close the ray grazed an edge.
         glow += exp(-max(d, 0.0) * 70.0) * 0.006;
         // The lead's ribbon of light through the world.
-        float lr = length(p.xy - ribbon(p.z, time)) - 0.012;
-        emit += C_LEAD * ubuf.lead.x * (1.0 + 2.0 * ubuf.lead.z) * exp(-max(lr, 0.0) * 40.0) * 0.06 *
+        float lr = length(p.xy - ribbon(p.z, time)) - 0.03;
+        emit += C_LEAD * ubuf.lead.x * (1.0 + 2.0 * ubuf.lead.z) * exp(-max(lr, 0.0) * 25.0) * 0.35 *
                 smoothstep(0.5, 2.0, p.z - ro.z);
         // The voice: a filament down the flight path, wavering with its pitch.
         vec2 wob = 0.18 * vec2(sin(p.z * (2.0 + 6.0 * ubuf.vocal.y) + time * 3.0), cos(p.z * 1.7 + time * 2.1));
         float fil = length(p.xy - wob) - 0.01 - 0.05 * ubuf.vocal.x;
-        emit += C_VOCAL * ubuf.vocal.x * exp(-max(fil, 0.0) * 30.0) * 0.05;
+        emit += C_VOCAL * ubuf.vocal.x * exp(-max(fil, 0.0) * 30.0) * 0.2;
         // The arp's orbs.
         emit += C_ARP * (e0 * exp(-length(p - o0) * 9.0) + e1 * exp(-length(p - o1) * 9.0) +
-                         e2 * exp(-length(p - o2) * 9.0) + e3 * exp(-length(p - o3) * 9.0)) * 0.12;
+                         e2 * exp(-length(p - o2) * 9.0) + e3 * exp(-length(p - o3) * 9.0)) * 0.6;
         iters += 1.0;
         if (d < 0.0018 * t) {
             hit = true;
@@ -420,20 +422,26 @@ void main() {
         float dif3 = max(dot(n, l3), 0.0);
         float spec = pow(max(dot(refl, l1), 0.0), 32.0);
         float fres = pow(1.0 - max(dot(n, -rd), 0.0), 4.0);
-        col = base * (0.05 + 0.85 * dif + 0.35 * dif3) * ambient * ao;
+        // Value, not just hue: buried and far is near black.
+        float shade = ao * ao * exp(-t * 0.06);
+        vec3 key = mix(vec3(1.0), C_LEAD * 1.3, 0.6 * ubuf.lead.x);
+        col = base * (0.02 + 0.9 * dif + 0.35 * dif3 * key) * ambient * shade;
         // The crystals are glass: hard highlights and a bright rim.
         float crystalW = 1.0 - clamp(abs(ubuf.morph0.x - 2.0), 0.0, 1.0);
-        col += hue * spec * (0.5 + 2.5 * crystalW) * ambient * ao;
+        col += hue * spec * (0.8 + 2.5 * crystalW) * ambient * ao;
         col += complement * fres * crystalW * 0.8 * ambient;
-        col += complement * fres * (0.12 * ambient + 0.8 * ubuf.chord.y) * ao;
+        col += complement * fres * (0.25 * ambient + 1.2 * ubuf.chord.y) * ao;
+        // The sponge's cavities in the complement.
+        float spongeW = 1.0 - clamp(abs(ubuf.morph0.x - 3.0), 0.0, 1.0);
+        col = mix(col, complement * complement * 0.3 * ambient * ao, spongeW * step(0.6, trap));
         vec3 ld = leadPos - p;
-        col += C_LEAD * max(dot(n, normalize(ld)), 0.0) / (1.0 + 1.5 * dot(ld, ld)) * ubuf.lead.x *
-               (1.5 + 2.0 * ubuf.lead.z);
+        col += C_LEAD * max(dot(n, normalize(ld)), 0.0) / (1.0 + 0.8 * dot(ld, ld)) * ubuf.lead.x *
+               (3.0 + 4.0 * ubuf.lead.z);
         vec3 a0 = o0 - p, a1 = o1 - p, a2 = o2 - p, a3 = o3 - p;
         col += C_ARP * (e0 * max(dot(n, normalize(a0)), 0.0) / (1.0 + 4.0 * dot(a0, a0)) +
                         e1 * max(dot(n, normalize(a1)), 0.0) / (1.0 + 4.0 * dot(a1, a1)) +
                         e2 * max(dot(n, normalize(a2)), 0.0) / (1.0 + 4.0 * dot(a2, a2)) +
-                        e3 * max(dot(n, normalize(a3)), 0.0) / (1.0 + 4.0 * dot(a3, a3))) * 2.5;
+                        e3 * max(dot(n, normalize(a3)), 0.0) / (1.0 + 2.0 * dot(a3, a3))) * 6.0;
         // The city: each lane's windows lit by its part, the road's lines and
         // the hats' traffic streaking down it.
         vec2 win = fract(vec2(p.z * 6.0 + p.x * 6.0, p.y * 5.0));
@@ -453,9 +461,12 @@ void main() {
         col = fogCol;
     }
     // Edges: the chord's neon at rest, the drums' orange flaring on a kick.
-    col += glow * (hue * (0.4 + 2.0 * ubuf.chord.y) * ambient + C_DRUMS * 5.0 * kick * kick * exp(-t * 0.08) + vec3(0.6) * ubuf.morph3.y);
+    col += glow * (hue * (0.4 + 2.0 * ubuf.chord.y) * ambient + C_DRUMS * 14.0 * kick * kick * exp(-t * 0.06) + vec3(0.6) * ubuf.morph3.y);
     col += emit;
     // A build whitens everything toward the drop.
-    col = mix(col, vec3(dot(col, vec3(0.33))) * 1.4 + build * 0.15, build * 0.6);
+    // A build climbs: brighter and whiter, strobing on the sixteenths as
+    // it nears the top.
+    float strobe = step(0.5, fract(ubuf.res.w * 4.0)) * smoothstep(0.5, 1.0, build);
+    col = mix(col, vec3(dot(col, vec3(0.33))), build * 0.4) * (1.0 + 2.0 * build + 1.5 * strobe) + build * build * 0.08;
     fragColor = vec4(col, 1.0) * ubuf.qt_Opacity;
 }

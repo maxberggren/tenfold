@@ -166,6 +166,25 @@ private slots:
         QVERIFY2(corr > 0.6, qPrintable(QString("correlation %1").arg(corr)));
     }
 
+    // A soft voice is lifted: sung 26 dB quieter than a full one, it comes
+    // out of the monitor within 8 dB of it once the lift has caught up.
+    void aSoftVoiceIsLifted() {
+        auto level = [](const char *amp) {
+            const auto take = testkit::play(std::string(kPage) + "voice 0.3 4.5 hz=220 vowel=a level=" + amp +
+                                            "\nend 4.9\n");
+            double sum = 0;
+            size_t n = 0;
+            for (size_t i = size_t(48000 * 3.5); i < size_t(48000 * 4.5) && i < take.left.size(); ++i, ++n)
+                sum += double(take.left[i]) * take.left[i];
+            return n ? 10.0 * std::log10(sum / double(n) + 1e-20) : -200.0;
+        };
+        const double full = level("0.2"), soft = level("0.01");
+        qInfo("a full voice comes out at %.1f dB, a soft one (−26 dB) at %.1f dB", full, soft);
+        QVERIFY2(full - soft < 8.0, qPrintable(QString("soft %1 dB under full").arg(full - soft)));
+        // And a full voice isn't pushed into the ceiling.
+        QVERIFY2(full < -3.0, qPrintable(QString("full at %1 dB").arg(full)));
+    }
+
     void noMicrophoneIsSaid() {
         uint32_t seq = 0;
         QString notice;

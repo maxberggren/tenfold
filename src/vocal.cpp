@@ -150,6 +150,7 @@ enum {
     Lag,
     HasInput,
     Stutter,
+    Lift, // the lift on a soft voice, in dB
     Voices = 16, // kMaxVoices × (active, midi, level)
     Scope = 64,  // 64 × (min, max) of the microphone, the last 43 ms
     ScopeN = 64,
@@ -511,6 +512,20 @@ public:
             const bool open = m_gateEnv > m_noise * 3.2f || m_gateEnv > 0.02f;
             m_gate += ((open ? 1.0f : 0.05f) - m_gate) * (open ? 0.02f : 0.0004f);
             float y = x * m_gate;
+            // The lift: a soft voice (sung quietly, or a weak microphone)
+            // brought up to where a full one sits, by up to 30 dB. It
+            // listens only while the gate is open, rises over a second
+            // and falls back within a few milliseconds when the voice gets
+            // louder, and lifts only what the gate lets through, so the
+            // room's hiss between phrases stays where it was.
+            {
+                const float ay0 = std::fabs(y);
+                if (m_gate > 0.5f)
+                    m_liftEnv += (ay0 - m_liftEnv) * (ay0 > m_liftEnv ? 0.002f : 0.00005f);
+                const float want = clampf(kLiftTarget / std::max(m_liftEnv, 1e-5f), 1.0f, kLiftMax);
+                m_lift += (want - m_lift) * (want > m_lift ? 2e-5f : 4e-3f);
+                y *= 1.0f + (m_lift - 1.0f) * m_gate * m_gate; // shut (0.05), it adds under 1 dB
+            }
             // A compressor, 3:1 from −20 dBFS, quick: an even voice.
             const float ay = std::fabs(y);
             m_compEnv += (ay - m_compEnv) * (ay > m_compEnv ? 0.01f : 0.0003f);
@@ -1006,6 +1021,7 @@ public:
         d[pub::Hz] = m_gate > 0.3f ? m_pitch.hz() : 0;
         d[pub::Clarity] = m_pitch.clarity();
         d[pub::Gate] = m_gate;
+        d[pub::Lift] = 20.0f * std::log10(std::max(1.0f, m_lift));
         d[pub::Feedback] = m_feedback > 0 ? 1 : 0;
         d[pub::Monitor] = m_monitor ? 1 : 0;
         d[pub::LivePeak] = m_livePeak;
@@ -1211,6 +1227,9 @@ private:
     // The input.
     Svf m_hp;
     float m_micGain = 1, m_gateEnv = 0, m_noise = 0.001f, m_gate = 0, m_compEnv = 0;
+    // The lift's ear (the voice's level while the gate is open) and gain.
+    static constexpr float kLiftTarget = 0.1f, kLiftMax = 31.6f; // −20 dBFS, +30 dB
+    float m_liftEnv = kLiftTarget, m_lift = 1;
     double m_envAcc = 0;
     float m_inPeak = 0, m_inPeakHeld = 0, m_inSq = 0, m_livePeak = 0;
     int m_inCount = 0;
@@ -1670,6 +1689,8 @@ public:
             "M\tmonitor: on this page, always, or off (the loops still record what you sing)\n"
             ", and .\tthe microphone's level down, up (3 dB)\n"
             "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · empty it · stop the vocal loop at the bar\n"
+            "a soft voice\tis lifted by itself while you sing, up to 30 dB (LIFT by the meter says how much), so "
+            "you can sing quietly; . and , set the microphone's own gain, Z sets it from three seconds of singing\n"
             "headphones\tthe voice comes back at once: on speakers it would feed back (the page ducks the voice if "
             "it hears that happen)");
     }
@@ -3124,11 +3145,17 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             m_meterHold = db;
             m_meterHoldAt = pc.time;
         }
+        const QString mic = m_micDb > 0 ? QStringLiteral("+%1").arg(double(m_micDb), 0, 'f', 0)
+                                         : QString::number(double(m_micDb), 'f', 0);
+        // A soft voice: how much the lift is adding, in place of the peak
+        // (the gauge below still shows that).
+        const float lift = d[pub::Lift];
         c::text(p, QRectF(m.left(), m.top(), m.width(), 12),
-                QStringLiteral("MIC %1 dB · PEAK %2")
-                    .arg(m_micDb > 0 ? QStringLiteral("+%1").arg(double(m_micDb), 0, 'f', 0)
-                                     : QString::number(double(m_micDb), 'f', 0))
-                    .arg(m_meterHold > -60 ? QString::number(double(m_meterHold), 'f', 0) : QStringLiteral("—")),
+                lift >= 1.0f ? QStringLiteral("MIC %1 dB · LIFT +%2").arg(mic).arg(int(std::lround(lift)))
+                             : QStringLiteral("MIC %1 dB · PEAK %2")
+                                   .arg(mic)
+                                   .arg(m_meterHold > -60 ? QString::number(double(m_meterHold), 'f', 0)
+                                                          : QStringLiteral("—")),
                 m_meterHold > -1 ? c::red() : c::alpha(col, 0.8f), 9, true);
         c::gauge(p, QRectF(m.left(), m.bottom() - 12, m.width(), 9), clampf((db + 48.0f) / 48.0f, 0, 1),
                  db > -1 ? c::red() : db > -9 ? c::amber() : col, 16);

@@ -1239,23 +1239,19 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     m_spots.clear();
     const qreal gap = 4, between = 12;
     QStringList sounds;
-    QList<bool> soundLit;
-    QList<int> soundIds;
-    for (int s = 0; s < StyleCount; ++s) {
+    for (int s = 0; s < StyleCount; ++s)
         sounds << QString::fromUtf8(styleDef(s).name);
-        soundLit << (s == m_style);
-        soundIds << SpotStyle + s;
-    }
     const QRectF top = c::bandRow(pc, 0);
-    // Ten sounds need most of the row: the keyboard gives up a little, and
-    // the sounds take what their words need and a few pixels each to
-    // breathe, the clips the rest.
+    // The sounds take half the row, the keyboard a little and the clips the
+    // rest. There are more sounds than fit on most windows: the row is then
+    // a window onto them that follows the sound chosen, faded at each end
+    // where more wait beyond it (console::chips).
     const qreal keysW = top.width() * 0.16;
-    const qreal soundsW = std::max(chipsWidth(sounds, gap) + 3.0 * qreal(sounds.size()), top.width() * 0.41);
+    const qreal soundsW = top.width() * 0.5;
     const qreal clipsW = top.width() - keysW - soundsW - 2 * between;
     c::clips(p, QRectF(top.left(), top.top(), clipsW, top.height()), *pc.view, col, pc.time, &m_spots);
-    fitChips(p, pc, QRectF(top.left() + clipsW + between, top.top(), soundsW, top.height()), sounds, soundLit,
-             soundIds, gap, &m_spots);
+    c::chips(p, pc, QRectF(top.left() + clipsW + between, top.top(), soundsW, top.height()), sounds, m_style, &m_spots,
+             SpotStyle, gap);
     paintKeys(p, QRectF(top.right() - keysW, top.top(), keysW, top.height()), pc, d);
 
     struct Setting {
@@ -1389,7 +1385,9 @@ QString Control::help() const {
     // The keys every part page shares come first, then this page's own.
     return QStringLiteral(
         "← →\tthe sound: pad, trance, organ, piano, pluck, pump, keys (electric piano), strings (string machine), "
-        "dub (stab into echo), guitar (funk, strummed)\n"
+        "dub (stab into echo), guitar (funk, strummed), accordion (musette reeds; press harder for more bellows), "
+        "kalimba (thumb piano; press harder, more buzz), gamelan (Balinese bronze, shimmering), brass (horn section "
+        "on the offbeats), sitar (jawari buzz, sympathetic strings); round from the last to the first\n"
         "↑ ↓\tthe voicing higher or lower\n"
         "Shift+← →  (or [ ])\tthe gate pattern for this sound\n"
         "- +  (or =)\tthe filter darker or brighter\n"
@@ -1398,7 +1396,8 @@ QString Control::help() const {
         "Shift+Return\toverdub on or off: what you play joins the loop\n"
         "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot at the next bar · clear it · stop the loop\n"
         "play, then Space\tloops what you just played at once: played twice, one cycle of it\n"
-        "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds, and a chip for every key "
+        "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds (more than fit: the row "
+        "follows the one chosen, a faded chip at either end steps on to the ones beyond), and a chip for every key "
         "above: hold, let go, gate, voicing, darker, brighter, overdub\n"
         "touch a column\ta chord of the key, I to VII, voiced to flow from the last one\n"
         "the five rows\tits colour, bottom to top: power 5, sus, triad, add9, seventh\n"

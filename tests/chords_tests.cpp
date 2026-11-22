@@ -203,7 +203,7 @@ double choppiness(const testkit::Take &take, double from, double to, double bpm)
 const std::set<int> kAMinor = {9, 11, 0, 2, 4, 5, 7};
 
 // The sounds, in the order → steps through them.
-enum { Pad = 0, Trance, Organ, Piano, Pluck, Pump, Keys, Strings, Dub, Guitar, kSounds };
+enum { Pad = 0, Trance, Organ, Piano, Pluck, Pump, Keys, Strings, Dub, Guitar, Accordion, Kalimba, Gamelan, Brass, Sitar, kSounds };
 
 // The keys that choose sound s from the first (→ s times).
 std::string soundKeys(int s) {
@@ -911,16 +911,25 @@ private slots:
 
     // The band under the pad does what the keys do. On the scripts' window
     // the pad is 900 × 562.5 px: row 0 is 0.048 of it under the pad, row 1
-    // 0.119. Row 0 holds the clips, then the ten sounds from about 0.28 to
-    // 0.83 of the width; row 1 starts with HOLD.
+    // 0.119. Row 0 holds the clips, then the sounds from about 0.33 to 0.83
+    // of the width: five chips a tenth wide, a window onto the fifteen that
+    // follows the one chosen; row 1 starts with HOLD.
     void theBandUnderThePadIsClickable() {
         QString status;
-        testkit::play("page 0 3\nbutton 0.2 0.35 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        testkit::play("page 0 3\nbutton 0.2 0.476 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains("trance", Qt::CaseInsensitive), qPrintable(status));
-        testkit::play("page 0 3\nbutton 0.2 0.576 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains("pump", Qt::CaseInsensitive), qPrintable(status));
-        testkit::play("page 0 3\nbutton 0.2 0.795 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains("guitar", Qt::CaseInsensitive), qPrintable(status));
+        testkit::play("page 0 3\nbutton 0.2 0.677 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("piano", Qt::CaseInsensitive), qPrintable(status));
+        // The faded chip at the right end chooses the sound beyond the
+        // window, and the window moves on: six of them reach the last
+        // sound; then the faded chip at the left end steps back.
+        std::string along = "page 0 3\n";
+        for (int k = 0; k < 6; ++k)
+            along += "button " + num(0.2 + 0.1 * k) + " 0.777 -0.048\n";
+        testkit::play(along + "end 1.0\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("sitar", Qt::CaseInsensitive), qPrintable(status));
+        testkit::play(along + "button 0.9 0.376 -0.048\nend 1.2\n", [&](Session &s) { status = s.pageStatus(); });
+        QVERIFY2(status.contains("accordion", Qt::CaseInsensitive), qPrintable(status));
         // HOLD, then a chord that keeps ringing after the finger lifts.
         const auto held = testkit::play("page 0 3\nbutton 0.1 0.03 -0.119\ndown 0.2 1 " + cell(0, Triad) +
                                             "\nup 0.6 1\nend 2.5\n",
@@ -1099,7 +1108,8 @@ private slots:
     // a quarter to two thirds of a semitone off, measured ungated).
     void everySoundIsCleanAndInTune_data() {
         QTest::addColumn<int>("sound");
-        const char *names[] = {"pad", "trance", "organ", "piano", "pluck", "pump", "keys", "strings", "dub", "guitar"};
+        const char *names[] = {"pad",    "trance", "organ",     "piano",   "pluck",   "pump",  "keys", "strings",
+                               "dub",    "guitar", "accordion", "kalimba", "gamelan", "brass", "sitar"};
         for (int s = 0; s < kSounds; ++s)
             QTest::newRow(names[s]) << s;
     }
@@ -1131,7 +1141,7 @@ private slots:
         QVERIFY2(on > 3.0 * off, qPrintable(QString("on the notes %1, beside them %2").arg(on).arg(off)));
     }
 
-    // The four sounds beyond EDM each differ from every other sound, by a
+    // The sounds beyond EDM (from KEYS on) each differ from every other sound, by a
     // margin, in something an ear would name: brightness, chop, how the
     // chord holds, width, or what rings on after it.
     void theNewSoundsAreDistinct() {
@@ -1256,6 +1266,141 @@ private slots:
         };
         const double early = lean(0.0, 0.003), late = lean(0.02, 0.05);
         QVERIFY2(early > 1.3 * late, qPrintable(QString("left/right %1 early, %2 once strummed").arg(early).arg(late)));
+    }
+
+    // The five sounds from beyond the dance floor are saved by name and
+    // open again as themselves: the file names the sound, the opened page
+    // names it in its status, and a chord played after opening sounds,
+    // clean and under the ceiling.
+    void theWorldSoundsReopenByName_data() {
+        QTest::addColumn<int>("sound");
+        QTest::addColumn<QString>("name");
+        QTest::newRow("accordion") << int(Accordion) << QStringLiteral("ACCORDION");
+        QTest::newRow("kalimba") << int(Kalimba) << QStringLiteral("KALIMBA");
+        QTest::newRow("gamelan") << int(Gamelan) << QStringLiteral("GAMELAN");
+        QTest::newRow("brass") << int(Brass) << QStringLiteral("BRASS");
+        QTest::newRow("sitar") << int(Sitar) << QStringLiteral("SITAR");
+    }
+    void theWorldSoundsReopenByName() {
+        QFETCH(int, sound);
+        QFETCH(QString, name);
+        testkit::reopen("page 0 3\n" + soundKeys(sound) + "end 0.5\n", 0.4,
+                        [&](Session &, Session &opened, const QJsonObject &doc) {
+                            const QJsonObject saved = doc[QStringLiteral("parts")]
+                                                          .toArray()[kChords]
+                                                          .toObject()[QStringLiteral("settings")]
+                                                          .toObject();
+                            QCOMPARE(saved[QStringLiteral("sound")].toString(), name);
+                            QVERIFY(saved[QStringLiteral("sounds")].toObject().contains(name));
+                            const QString status = opened.pageStatus();
+                            QVERIFY2(status.contains(name), qPrintable(status));
+                        });
+        // Opened from a file that names only the sound, it is the sound the
+        // page plays.
+        QJsonObject doc;
+        testkit::play("page 0 3\nend 0.1\n", [&](Session &s) { doc = s.saveSong(); });
+        QJsonArray parts = doc[QStringLiteral("parts")].toArray();
+        QJsonObject part = parts[kChords].toObject();
+        part[QStringLiteral("settings")] = QJsonObject{{"sound", name}};
+        parts[kChords] = part;
+        doc[QStringLiteral("parts")] = parts;
+        Studio studio(48000.0f);
+        studio.setTimeOrigin(0);
+        setScriptClock(0);
+        Session session(&studio);
+        session.setClock(&scriptClock);
+        QString error;
+        QVERIFY2(session.openSong(doc, &error) && error.isEmpty(), qPrintable(error));
+        session.refresh();
+        QCOMPARE(session.saveSong()[QStringLiteral("parts")]
+                     .toArray()[kChords]
+                     .toObject()[QStringLiteral("settings")]
+                     .toObject()[QStringLiteral("sound")]
+                     .toString(),
+                 name);
+    }
+
+    // The accordion breathes with the bellows: pressing harder pushes more
+    // air through the reeds, louder and brighter.
+    void theAccordionFollowsTheBellows() {
+        const auto soft = heldChord(Accordion, nullptr, false, 0.1), hard = heldChord(Accordion, nullptr, false, 0.95);
+        const double ls = soft.rms(0.8, 2.6), lh = hard.rms(0.8, 2.6);
+        const double cs = centroid(soft, 1.0), ch = centroid(hard, 1.0);
+        QVERIFY2(lh > 1.25 * ls && ch > 1.15 * cs,
+                 qPrintable(QString("level %1 then %2, centroid %3 then %4").arg(ls).arg(lh).arg(cs).arg(ch)));
+    }
+
+    // The accordion's musette: three reeds a note, the outer two a few
+    // hertz either side of the middle one. A single held note (a power
+    // chord's root, alone in a narrow band) carries energy a few hertz
+    // either side of its pitch, where a pad's seven saws, spread wider,
+    // and the organ's one wave do not put it in that proportion.
+    void theAccordionBeatsAsAMusette() {
+        std::vector<float> notes;
+        const auto take = heldChord(Accordion, &notes, true);
+        QVERIFY(!notes.empty());
+        const double hz = 440.0 * std::exp2((notes[0] - 69.0) / 12.0);
+        const double c = std::min(0.0075, 3.0 / hz);
+        // The sharp and the flat reed, each within a bin or two of where it
+        // should be, against the bins between them and the middle reed.
+        const double reeds = bandShare(take, 0.6, hz * (1 + c) - 1.0, hz * (1 + c) + 1.0) +
+                             bandShare(take, 0.6, hz * (1 - c) - 1.0, hz * (1 - c) + 1.0);
+        const double mid = bandShare(take, 0.6, hz - 1.0, hz + 1.0);
+        QVERIFY2(reeds > 0.5 * mid, qPrintable(QString("reeds %1 middle %2").arg(reeds).arg(mid)));
+    }
+
+    // The kalimba's bottle caps rattle harder the harder it is pressed: more
+    // of its energy is high hiss, while the tines themselves are the same.
+    void theKalimbaBuzzesWhenPressed() {
+        const auto soft = heldChord(Kalimba, nullptr, false, 0.1), hard = heldChord(Kalimba, nullptr, false, 1.0);
+        // Above the tines' second modes, where only the caps and the third
+        // modes sound.
+        const double s = bandShare(soft, 0.6, 13000, 20000), h = bandShare(hard, 0.6, 13000, 20000);
+        QVERIFY2(h > 1.5 * s, qPrintable(QString("soft %1 hard %2").arg(s).arg(h)));
+        QVERIFY(hard.peak() < 1.0);
+    }
+
+    // The gamelan's bars are bars, not strings: the root's first overtone
+    // sits at 2.76 times it, not at the harmonic 3; and each note is a pair
+    // of bars a few hertz apart (the ombak, the beating that makes it
+    // shimmer): the root's energy sits either side of its pitch, at the two
+    // bars, with next to none at the pitch itself.
+    void theGamelanIsBronzeAndShimmers() {
+        std::vector<float> notes;
+        const auto take = heldChord(Gamelan, &notes, true);
+        QVERIFY(!notes.empty());
+        const double root = 440.0 * std::exp2((notes[0] - 69.0) / 12.0);
+        const double bar = bandShare(take, 0.35, root * 2.72, root * 2.8);
+        const double harmonic = bandShare(take, 0.35, root * 2.96, root * 3.04);
+        QVERIFY2(bar > 4 * harmonic, qPrintable(QString("2.76: %1, 3: %2").arg(bar).arg(harmonic)));
+        const double half = std::min(3.1, root * 0.0064);
+        const double pair = bandShare(take, 0.35, root - half - 0.8, root - half + 0.8) +
+                            bandShare(take, 0.35, root + half - 0.8, root + half + 0.8);
+        const double middle = bandShare(take, 0.35, root - 0.5, root + 0.5);
+        QVERIFY2(pair > 4 * middle, qPrintable(QString("the pair %1, between them %2").arg(pair).arg(middle)));
+    }
+
+    // Brass grows brighter as it is blown harder: a chord struck hard is
+    // far brighter than one struck softly, where a pad barely changes.
+    void theBrassBrightensWhenBlownHard() {
+        auto played = [](int s, double pressure) {
+            return testkit::play("page 0 3\n" + soundKeys(s) + "down 0.2 9 " + rail(0) + "\ndown 0.3 1 " +
+                                 cell(0, Triad) + " p=" + num(pressure) + "\nup 2.8 1\nup 2.9 9\nend 3.0\n");
+        };
+        const double soft = centroid(played(Brass, 0.05), 0.8), hard = centroid(played(Brass, 0.95), 0.8);
+        QVERIFY2(hard > 1.4 * soft, qPrintable(QString("soft %1 Hz hard %2 Hz").arg(soft).arg(hard)));
+    }
+
+    // The sitar buzzes and rings in sympathy: well into the note, it is
+    // still bright (the jawari keeps the overtones up where a plucked
+    // string's fall away), and after the chord is let go the sympathetic
+    // strings ring on, far longer than the guitar's cut-off strum.
+    void theSitarBuzzesAndRingsInSympathy() {
+        const auto sitar = heldChord(Sitar), guitar = heldChord(Guitar);
+        const double bright = bandShare(sitar, 1.4, 1500, 20000);
+        QVERIFY2(bright > 0.05, qPrintable(QString::number(bright)));
+        const double s = sitar.rms(3.0, 3.5) / sitar.rms(0.5, 2.7), g = guitar.rms(3.0, 3.5) / guitar.rms(0.5, 2.7);
+        QVERIFY2(s > 0.02 && s > 4 * g, qPrintable(QString("sitar %1 guitar %2").arg(s).arg(g)));
     }
 };
 

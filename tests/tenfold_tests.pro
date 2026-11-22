@@ -2,6 +2,8 @@ QT += core gui testlib
 CONFIG += c++20 console testcase release link_pkgconfig
 TARGET = tenfold_tests
 TEMPLATE = app
+# A plain binary on macOS too, not an app bundle.
+CONFIG -= app_bundle
 
 QMAKE_CXXFLAGS_RELEASE -= -O2
 QMAKE_CXXFLAGS_RELEASE += -O3 -ffast-math -fno-finite-math-only

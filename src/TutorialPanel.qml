@@ -317,7 +317,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: panel.height < 380 ? 34 : 44
                 label: qsTr("Back")
-                key: "Ctrl ⇧ ↵"
+                key: backend.keys("Ctrl ⇧ ↵")
                 color: panel.amber
                 labelSize: 14
                 opacity: backend.tutorialStep > 0 ? 1 : 0.35
@@ -327,7 +327,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: panel.height < 380 ? 34 : 44
                 label: panel.last ? qsTr("Finish") : panel.state === 0 ? qsTr("Skip") : qsTr("Next")
-                key: "Ctrl ↵"
+                key: backend.keys("Ctrl ↵")
                 color: panel.state === 0 ? panel.amber : panel.green
                 active: panel.state === 2
                 labelSize: 14

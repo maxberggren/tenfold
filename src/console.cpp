@@ -3,11 +3,27 @@
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QPainterPath>
+#include <QRegularExpression>
 #include <QRadialGradient>
 #include <algorithm>
 #include <cmath>
 
 namespace tf::console {
+
+QString keyNames(const QString &text) {
+#ifdef Q_OS_MACOS
+    if (!text.contains(QLatin1String("Ctrl"), Qt::CaseInsensitive))
+        return text;
+    static const QRegularExpression ctrl(QStringLiteral("\\bctrl\\+"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression word(QStringLiteral("\\bctrl\\b"), QRegularExpression::CaseInsensitiveOption);
+    QString s = text;
+    s.replace(ctrl, QStringLiteral("\u2318"));
+    s.replace(word, QStringLiteral("\u2318"));
+    return s;
+#else
+    return text;
+#endif
+}
 
 void loadFonts() {
     for (const char *weight : {"Regular", "Medium", "Bold", "Black"})
@@ -133,7 +149,8 @@ void drawIcon(QPainter &p, QChar c, const QRectF &box, QColor color) {
     p.restore();
 }
 
-qreal textWidth(const QFont &f, const QString &s) {
+qreal textWidth(const QFont &f, const QString &text) {
+    const QString s = keyNames(text);
     const QFontMetricsF m(f);
     const bool mono = isConsoleFont(f);
     const qreal step = mono ? letterAdvance(f) + spacing(f) : 0;
@@ -156,7 +173,7 @@ qreal textWidth(const QFont &f, const QString &s) {
 void drawText(QPainter &p, const QRectF &r, int flags, const QString &text) {
     const QFont f = p.font();
     const QFontMetricsF m(f);
-    QString s = text;
+    QString s = keyNames(text);
     bool hasIcon = false;
     for (const QChar c : s)
         hasIcon |= isIcon(c);

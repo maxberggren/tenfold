@@ -95,7 +95,7 @@ Rectangle {
                 delegate: Entry {
                     required property string modelData
                     Layout.fillWidth: true
-                    line: modelData
+                    line: backend.keys(modelData)
                 }
             }
             Rectangle {
@@ -120,7 +120,7 @@ Rectangle {
                 delegate: Entry {
                     required property string modelData
                     Layout.fillWidth: true
-                    line: modelData
+                    line: backend.keys(modelData)
                     tint: "#FFB000"
                 }
             }

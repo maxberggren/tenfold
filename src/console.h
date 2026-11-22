@@ -37,6 +37,11 @@ inline QColor dim() { return QColor(255, 255, 255, 60); }
 // too.
 void loadFonts();
 
+// The keys as this system names them: tenfold's Ctrl shortcuts are the
+// Command key on macOS (Qt maps them), so "Ctrl M" reads "⌘ M" there.
+// Every label, help line, tutorial step and notice goes through this.
+QString keyNames(const QString &text);
+
 QFont font(int px, bool bold = false);
 
 // Arrows and key symbols (← → ↑ ↓ ⇧ ↵ ⏎ ◀ ▶ ▲ ▼ ↕ ↔) are drawn by the

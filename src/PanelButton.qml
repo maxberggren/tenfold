@@ -64,7 +64,7 @@ Item {
         anchors.margins: 6
         readonly property color ink: button.lit ? "#0a0806" : button.color
         textFormat: backend.hasIcons(button.key) ? Text.StyledText : Text.PlainText
-        text: textFormat === Text.StyledText ? backend.rich(button.key, ink, 11) : button.key
+        text: textFormat === Text.StyledText ? backend.rich(backend.keys(button.key), ink, 11) : backend.keys(button.key)
         color: ink
         opacity: 0.7
         font.family: "Noto Sans Mono"

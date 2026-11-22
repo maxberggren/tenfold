@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QPainter>
 
+#include "console.h"
 #include "testkit.h"
 #ifdef __linux__
 #include "touchsource.h"
@@ -723,6 +724,18 @@ private slots:
         QVERIFY2(source.error().find("pkexec") != std::string::npos, source.error().c_str());
     }
 #endif
+
+    // Ctrl shortcuts are the Command key on macOS, and every label says so.
+    void keysAreNamedAsTheSystemNamesThem() {
+#ifdef Q_OS_MACOS
+        QCOMPARE(console::keyNames(QStringLiteral("Ctrl M")), QStringLiteral("\u2318 M"));
+        QCOMPARE(console::keyNames(QStringLiteral("Ctrl+Z takes back, CTRL N twice")),
+                 QStringLiteral("\u2318Z takes back, \u2318 N twice"));
+        QCOMPARE(console::keyNames(QStringLiteral("Control room")), QStringLiteral("Control room"));
+#else
+        QCOMPARE(console::keyNames(QStringLiteral("Ctrl+Z, Ctrl M")), QStringLiteral("Ctrl+Z, Ctrl M"));
+#endif
+    }
 
     void theBenchRunsWellInsideRealTime() {
         TENFOLD_TIMED();

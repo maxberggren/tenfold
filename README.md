@@ -50,9 +50,24 @@ sudo install -Dm644 extras/70-tenfold.rules /etc/udev/rules.d/70-tenfold.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=input --action=change
 ```
 
-macOS and Windows need ports of their own (the trackpad and the audio are
-read in each system's own way), so they aren't there yet; see
-[How it's built](#how-its-built) for where a port goes.
+### macOS
+
+[Download tenfold-macos.dmg](https://github.com/maxberggren/tenfold/releases/latest/download/tenfold-macos.dmg),
+open it and drag tenfold onto Applications. It runs on Apple silicon and
+Intel Macs with macOS 12 or later.
+
+- Taking the pad needs no permission: the pointer stops and the trackpad's
+  clicks, scrolls and pinches go to the music until Esc gives it back.
+- The Mac's own three- and four-finger swipes still switch spaces. Turn them
+  off under System Settings › Trackpad › More Gestures while you play, or
+  allow tenfold under Privacy & Security › Accessibility and it holds them
+  back while the pad is taken.
+- The Vocal page asks once for the microphone.
+- tenfold's Ctrl shortcuts are ⌘ on the Mac, and the buttons say so.
+
+Windows needs a port of its own (the trackpad and the audio are read in its
+own way), so it isn't there yet; see [How it's built](#how-its-built) for
+where a port goes.
 
 ## Playing
 
@@ -192,9 +207,12 @@ Everything tenfold needs from the system is in `src/platform.h`: the
 trackpad read raw, the sound card, the file dialogs and the clock. The
 studio, the pages and the window only see that header. Linux implements it
 in `src/linux/` (evdev and a pkexec helper for the pad, PipeWire for sound,
-xdg-desktop-portal for dialogs), and a macOS or Windows port is a folder
-beside it plus a scope in `tenfold.pro`. The tests never touch the platform,
-so they run unchanged on a port.
+xdg-desktop-portal for dialogs), macOS in `src/macos/` (MultitouchSupport
+for the pad, CoreAudio, AppKit's panels), and a Windows port is a folder
+beside them plus a scope in `tenfold.pro`. `src/contacts.h` turns any
+pad's raw contacts into the size and pressure the pages play, learned per
+player. The tests never touch the platform, so they run unchanged on a
+port.
 
 ```bash
 bin/build      # qmake6 + make into build/tenfold (TENFOLD_PORTABLE=1: for any CPU)
@@ -219,8 +237,11 @@ Every push to master builds and tests tenfold for x86_64 and arm64
 (`.github/workflows/build.yml`): the pacman package on Arch, the bundle with
 Qt's own build on the oldest system it supports (`bin/bundle` makes it),
 which is then
-installed and run on Ubuntu, Debian, Fedora and openSUSE, and the Nix
-flake. A version tag publishes a release with the packages, the bundles and
+installed and run on Ubuntu, Debian, Fedora and openSUSE, the Nix
+flake, and on macOS the tests and `tenfold.app` in a disk image
+(`bin/bundle-macos` makes it). The Mac app is signed with a Developer ID
+and notarized when the repository has the keys; `bin/set-signing-secrets`
+hands them to GitHub. A version tag publishes a release with the packages, the bundles and
 their checksums:
 
 ```bash

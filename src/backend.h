@@ -12,6 +12,7 @@
 #include <memory>
 #include <thread>
 
+#include "console.h"
 #include "platform.h"
 #include "session.h"
 #include "songfile.h"
@@ -105,8 +106,8 @@ public:
     QStringList pageNames() const;
     QStringList pageBlurbs() const;
     QVariantList pageColors() const;
-    QString pageHelp() const { return m_session->pageHelp(m_session->page()); }
-    QString pageStatus() const { return m_session->pageStatus(); }
+    QString pageHelp() const { return tf::console::keyNames(m_session->pageHelp(m_session->page())); }
+    QString pageStatus() const { return tf::console::keyNames(m_session->pageStatus()); }
     QVariantList pagesPlaying() const;
     // Per page: "" when it can be heard, else why not ("muted", "solo
     // elsewhere"): a part silenced on the arrange page says so everywhere.
@@ -129,7 +130,7 @@ public:
     double recordSeconds() const;
     QString lastRecording() const { return m_lastRecording; }
     double level() const { return m_session->view().rms; }
-    QString notice() const { return m_notice; }
+    QString notice() const { return tf::console::keyNames(m_notice); }
 
     bool tutorialActive() const { return m_session->tutorial().active(); }
     int tutorialStep() const { return m_session->tutorial().index(); }
@@ -137,12 +138,17 @@ public:
     QStringList tutorialChapters() const { return m_session->tutorial().chapters(); }
     int tutorialChapter() const { return m_session->tutorial().chapterIndex(); }
     int tutorialPage() const { return m_session->tutorial().step().page; }
-    QString tutorialTitle() const { return m_session->tutorial().step().title; }
-    QString tutorialText() const { return m_session->tutorial().step().text; }
-    QString tutorialTip() const { return m_session->tutorial().step().tip; }
-    QString tutorialCheer() const { return m_session->tutorial().step().cheer; }
-    QString tutorialButton() const { return m_session->tutorial().step().button; }
-    QStringList tutorialKeys() const { return m_session->tutorial().step().keys; }
+    QString tutorialTitle() const { return tf::console::keyNames(m_session->tutorial().step().title); }
+    QString tutorialText() const { return tf::console::keyNames(m_session->tutorial().step().text); }
+    QString tutorialTip() const { return tf::console::keyNames(m_session->tutorial().step().tip); }
+    QString tutorialCheer() const { return tf::console::keyNames(m_session->tutorial().step().cheer); }
+    QString tutorialButton() const { return tf::console::keyNames(m_session->tutorial().step().button); }
+    QStringList tutorialKeys() const {
+        QStringList keys = m_session->tutorial().step().keys;
+        for (QString &k : keys)
+            k = tf::console::keyNames(k);
+        return keys;
+    }
     QVariantList tutorialChecks() const;
     QVariantList tutorialChapterColors() const;
     int tutorialState() const { return int(m_session->tutorial().state()); }
@@ -169,6 +175,8 @@ public:
     // elide; styled text can't).
     Q_INVOKABLE QString rich(const QString &text, const QColor &color, int px) const;
     Q_INVOKABLE bool hasIcons(const QString &text) const;
+    // A key's name as this system says it (⌘ for Ctrl on macOS).
+    Q_INVOKABLE QString keys(const QString &text) const { return tf::console::keyNames(text); }
     int loopBeats() const { return m_session->loopBeats(0); }
     int loopShorterBeats() const { return m_session->loopBeats(-1); }
     int loopLongerBeats() const { return m_session->loopBeats(1); }

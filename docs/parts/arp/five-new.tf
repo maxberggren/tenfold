@@ -1,46 +1,78 @@
 # Five new: the third row of sounds, each in its own music over one latched
-# A minor triad at 110 BPM, two bars apiece. A steel pan rolling up and down
-# in sixteenths (calypso, soca); a sitar wandering at random in sixteenth
-# triplets, its jawari buzzing (raga, psychedelia); a log drum an octave
-# down on the pedal pattern with twelve euclidean hits of sixteen
-# (amapiano); a Game Boy pulse racing up in thirty-seconds, one note at a
-# time (chiptune); and a gamelan pair converging in sixteenths over three
-# octaves, the two keys beating against each other (Balinese kotekan).
-tempo 0 110
+# A minor triad at 112 BPM, two bars apiece.
+#   A steel pan rolling up and down in sixteenths, accented in threes
+#   (calypso, soca): its stretched octaves and twelfths, its neighbours ringing.
+#   A sitar wandering at random in sixteenth triplets, accents striking the
+#   chikari; in the second bar the gate is pushed to legato, so each note is a
+#   meend pulled from the last, over sympathetic strings tuned to A.
+#   A log drum in the bass on the pedal pattern, seven euclidean hits of
+#   sixteen (amapiano), each log gliding from the last: round (Kelvin Momo)
+#   for a bar, then gritty and bending (Kabza De Small).
+#   A Game Boy pulse racing up in thirty-seconds, its accents channel 1's
+#   sweep stepping down into the note; then the chord pattern, the triad as
+#   one channel's 60 Hz arpeggio (chiptune).
+#   A gamelan converging over three octaves in sixteenths, polos and sangsih
+#   interlocking (kotekan) in selisir (Balinese gong kebyar).
+tempo 0 112
 page 0.05 5
+# Steel pan.
 key 0.100 Shift+Z
 key 0.150 Shift+Z
 key 0.200 E
+tap 0.300 0.6705 0.01
 down 0.500 1 0.0362 0.3200 p=0.55
 key 1.000 Return
 up 1.200 1
-key 4.800 Shift+X
-key 4.850 Shift+X
-key 4.900 Y
-key 4.950 ]
-key 9.150 Shift+C
-key 9.200 Shift+C
-key 9.250 I
-key 9.300 [
-key 9.350 Down
-key 9.400 O
-key 9.450 O
-key 9.500 O
-key 9.550 O
-key 13.500 Shift+V
-key 13.550 Shift+V
-key 13.600 Q
-key 13.650 Up
-key 13.700 P
-key 13.750 P
-key 13.800 P
-key 13.850 P
-key 13.900 ]
-key 13.950 ]
-key 17.850 Shift+B
-key 17.900 Shift+B
-key 17.950 R
-key 18.000 [
-key 18.050 [
-key 18.100 Shift+Up
-end 23.500
+# Sitar: random in 1/16T, accents every four; legato for the second bar.
+key 4.700 Shift+X
+key 4.750 Shift+X
+key 4.800 Y
+key 4.850 ]
+tap 4.900 0.6994 0.01
+tap 7.000 0.7850 0.8640
+# Log drum: pedal in 1/16 in the bass, seven hits of sixteen; round, then gritty.
+key 9.000 Shift+C
+key 9.050 Shift+C
+key 9.100 I
+key 9.150 [
+key 9.200 Down
+key 9.250 O
+key 9.270 O
+key 9.290 O
+key 9.310 O
+key 9.330 O
+key 9.350 O
+key 9.370 O
+key 9.390 O
+key 9.410 O
+tap 9.450 0.8320 0.4880
+tap 11.450 0.9670 0.4880
+# Chip: up in 1/32 two octaves higher, accents every four sweeping; then chord stabs in 1/8.
+key 13.300 Shift+V
+key 13.350 Shift+V
+tap 13.370 0.6760 0.9150
+key 13.400 Q
+key 13.450 Up
+key 13.500 Up
+key 13.550 P
+key 13.570 P
+key 13.590 P
+key 13.610 P
+key 13.630 P
+key 13.650 P
+key 13.670 P
+key 13.690 P
+key 13.710 P
+key 15.550 U
+key 15.600 [
+key 15.650 [
+key 15.700 [
+key 15.750 [
+# Gamelan: converge in 1/16 over three octaves, kotekan in selisir.
+key 17.700 Shift+B
+key 17.750 Shift+B
+key 17.800 R
+key 17.850 Down
+key 17.900 Shift+Up
+tap 17.950 0.6760 0.8130
+end 22.800

@@ -62,23 +62,28 @@ inline const char *soundName(int s) {
 }
 inline const char *soundShort(int s) {
     static const char *n[] = {"PLUCK", "GLASS", "SAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN",
-                              "PAN", "SITAR", "LOG", "CHIP", "GAMELAN"};
+                              "STEELPAN", "SITAR", "LOGDRUM", "CHIP", "GAMELAN"};
     return n[std::clamp(s, 0, SoundCount - 1)];
 }
 // The colour each sound starts from, the one it sounds best in.
 inline float soundColor(int s) {
     static const float c[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f, 0.4f, 0.55f, 0.4f, 0.7f, 0.45f,
-                              0.4f, 0.5f, 0.35f, 0.45f, 0.45f};
+                              0.4f, 0.5f, 0.6f, 0.45f, 0.45f};
     return c[std::clamp(s, 0, SoundCount - 1)];
 }
 
-// The sounds a press on the tone pad switches rather than bites.
-inline bool hasSwitch(int s) { return s == Juno || s == Organ; }
+// The sounds a press on the tone pad switches rather than bites. The
+// gamelan's switch is its tuning: off, the scale bent towards the selisir
+// of a Balinese gong kebyar; on, even, in the studio's own tuning, to sit
+// with the other parts.
+inline bool hasSwitch(int s) { return s == Juno || s == Organ || s == Gamelan; }
 inline const char *switchName(int s, bool alt) {
     if (s == Organ)
         return alt ? "FAST" : "SLOW";
     if (s == Juno)
         return alt ? "CH I" : "CH II";
+    if (s == Gamelan)
+        return alt ? "EVEN" : "SELISIR";
     return "";
 }
 
@@ -139,7 +144,8 @@ struct Settings {
     int rotate = 0;      // euclidean rotation, in steps
     uint32_t seed = 1;   // the dice for random and chaos
     // The sound's own switch, flipped by a press on the tone pad: the
-    // organ's Leslie fast (off: slow), the juno's chorus I (off: II).
+    // organ's Leslie fast (off: slow), the juno's chorus I (off: II), the
+    // gamelan even (off: bent to selisir).
     bool alt = false;
     float gate = 0.45f;  // a step's sounding share, 0.06..1
     float swing = 0;     // 0..1: the off steps late by up to half a step

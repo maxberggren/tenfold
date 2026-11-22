@@ -74,7 +74,7 @@ SOURCES += \
 INCLUDEPATH += src
 DEPENDPATH += src
 
-RESOURCES += src/resources.qrc
+RESOURCES += src/resources.qrc src/fonts.qrc
 
 # What the system provides (platform.h): one folder per system. A port adds
 # its folder and a scope here; the rest of tenfold doesn't change.

@@ -30,6 +30,13 @@ inline QColor violet() { return QColor("#A98BFF"); }
 inline QColor dim() { return QColor(255, 255, 255, 60); }
 
 // A condensed monospace in capitals.
+// Noto Sans Mono, the one typeface everything is drawn in, is compiled in
+// (src/fonts.qrc, under the OFL): loaded once at start, it makes the window
+// and every page's layout the same on any system, installed font or not.
+// The pages place their buttons by its measurements, so the tests load it
+// too.
+void loadFonts();
+
 QFont font(int px, bool bold = false);
 
 // Arrows and key symbols (← → ↑ ↓ ⇧ ↵ ⏎ ◀ ▶ ▲ ▼ ↕ ↔) are drawn by the

@@ -26,6 +26,9 @@ SOURCES += main.cpp framework_tests.cpp \
     ../src/tuning.cpp ../src/tutorial.cpp \
     $$PARTS
 
+# The typeface the pages lay out their buttons with, as in the app.
+RESOURCES += ../src/fonts.qrc
+
 # The one piece of the platform the tests touch: how the Linux trackpad
 # says what it's missing.
 linux {

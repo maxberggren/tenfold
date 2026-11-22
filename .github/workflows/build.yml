@@ -2,7 +2,8 @@
 #
 #   arch     the pacman package, built and tested on Arch
 #   bundle   tenfold with its own Qt for every other Linux, built and tested
-#            on Debian 12 (the oldest glibc it supports) with Qt's own build
+#            with Qt's own build on the oldest glibc it supports (Debian 12
+#            for x86_64, Ubuntu 24.04 for arm64)
 #   try      the bundle installed by site/install.sh on other distributions,
 #            then run: a render, a song check and a screenshot of the window
 #   nix      the flake, for NixOS
@@ -85,16 +86,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Built on the oldest system whose glibc Qt's own build runs on,
+          # which is the oldest the bundle runs on: 2.36 for x86_64, 2.39
+          # for arm64 (site/install.sh checks the same).
           - arch: x86_64
             runner: ubuntu-24.04
+            image: debian:12
             qt_host: linux
             qt_arch: linux_gcc_64
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            image: ubuntu:24.04
             qt_host: linux_arm64
             qt_arch: linux_gcc_arm64
     runs-on: ${{ matrix.runner }}
-    container: debian:12
+    container: ${{ matrix.image }}
     timeout-minutes: 60
     env:
       QT_VERSION: 6.8.3

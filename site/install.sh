@@ -23,8 +23,6 @@
 set -eu
 
 repo=maxberggren/tenfold
-# The bundle is built on Debian 12, so it needs a glibc at least as new.
-min_glibc=2.36
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -65,9 +63,11 @@ ask() {
 [ "$(uname -s)" = Linux ] || fail "tenfold runs on Linux for now. macOS and Windows are coming: https://github.com/$repo"
 have curl || fail "curl is needed to download tenfold"
 
+# The bundle needs a glibc at least as new as the system it was built on:
+# Debian 12 for x86_64, Ubuntu 24.04 for arm64 (where Qt's own build needs it).
 case "$(uname -m)" in
-x86_64 | amd64) arch=x86_64 ;;
-aarch64 | arm64) arch=aarch64 ;;
+x86_64 | amd64) arch=x86_64 min_glibc=2.36 oldest="Ubuntu 23.04, Debian 12, Fedora 37" ;;
+aarch64 | arm64) arch=aarch64 min_glibc=2.39 oldest="Ubuntu 24.04, Debian 13, Fedora 40" ;;
 *) fail "no tenfold for $(uname -m) yet (x86_64 and arm64 only)" ;;
 esac
 
@@ -170,12 +170,14 @@ uninstall() {
         say "Removed tenfold from $home."
         removed=1
     fi
-    if have pacman && pacman -Q tenfold >/dev/null 2>&1; then
+    # The package or the Nix profile only when that's how this system
+    # installs it (TENFOLD_METHOD=bundle leaves them alone).
+    if [ "$method" = pacman ] && pacman -Q tenfold >/dev/null 2>&1; then
         say "Removing the tenfold package (pacman asks for your password)…"
         ask $sudo pacman -R tenfold
         removed=1
     fi
-    if have nix && nix --extra-experimental-features "nix-command flakes" profile list 2>/dev/null | grep -q tenfold; then
+    if [ "$method" = nix ] && have nix && nix --extra-experimental-features "nix-command flakes" profile list 2>/dev/null | grep -q tenfold; then
         nix --extra-experimental-features "nix-command flakes" profile remove tenfold
         removed=1
     fi
@@ -233,7 +235,7 @@ install_bundle() {
     glibc=$(getconf GNU_LIBC_VERSION 2>/dev/null | sed -n 's/^glibc //p') || true
     [ -n "$glibc" ] || fail "this system's C library isn't glibc (Alpine and other musl systems aren't supported yet)"
     if [ "$(printf '%s\n%s\n' "$min_glibc" "$glibc" | sort -t. -k1,1n -k2,2n | head -n 1)" != "$min_glibc" ]; then
-        fail "$os_name has glibc $glibc; tenfold needs $min_glibc or newer (Ubuntu 23.04, Debian 12, Fedora 37 or later)"
+        fail "$os_name has glibc $glibc; tenfold needs $min_glibc or newer ($oldest or later)"
     fi
 
     pm=""

@@ -1,5 +1,6 @@
 #include "console.h"
 
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <QRadialGradient>
@@ -7,6 +8,11 @@
 #include <cmath>
 
 namespace tf::console {
+
+void loadFonts() {
+    for (const char *weight : {"Regular", "Medium", "Bold", "Black"})
+        QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/NotoSansMono-%1.ttf").arg(QLatin1String(weight)));
+}
 
 QFont font(int px, bool bold) {
     QFont f("Noto Sans Mono");

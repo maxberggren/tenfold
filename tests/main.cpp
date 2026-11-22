@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <cstring>
 
+#include "console.h"
 #include "testkit.h"
 
 int main(int argc, char **argv) {
@@ -13,6 +14,7 @@ int main(int argc, char **argv) {
     }
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
+    tf::console::loadFonts();
     int failed = 0;
     for (auto &suite : testkit::registry())
         failed += suite.run(argc, argv) != 0;

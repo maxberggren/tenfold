@@ -123,6 +123,7 @@
     align-items: stretch;
     border: 2px solid var(--c);
   }
+  .notes code { font-family: inherit; color: var(--ink); }
   .command code {
     flex: 1;
     min-width: 0;
@@ -241,9 +242,9 @@
         </button>
       </div>
       <ul class="notes">
-        <li>Paste it in a terminal. For Arch-based systems: Omarchy, Arch, and Arch Linux ARM on Asahi Macs (x86_64 and arm64).</li>
-        <li>It installs the latest release with pacman, checked against its checksum, and Qt 6 and PipeWire with it.</li>
-        <li>Nothing else on your system changes. tenfold asks for your password when it first reads the trackpad.</li>
+        <li>Paste it in a terminal. Any Linux on x86_64 or arm64 with PipeWire: Ubuntu 23.04+, Debian 12+, Fedora, openSUSE, Mint, Pop!_OS, Arch, Omarchy, Asahi, NixOS (on arm64, Ubuntu 24.04+ or Debian 13+).</li>
+        <li>It picks the way that suits your system: pacman on Arch, the flake on NixOS, and everywhere else a bundle with its own Qt in <code>~/.local</code> (your package manager adds PipeWire or polkit if they're missing). Every download is checked against its checksum.</li>
+        <li>Nothing else on your system changes. tenfold asks for your password when it first reads the trackpad. <code>sh -s -- --uninstall</code> takes it away again.</li>
         <li><a href="https://github.com/maxberggren/tenfold/blob/master/site/install.sh">Read the script</a> first, or
           <a href="https://github.com/maxberggren/tenfold/releases/latest">download the package</a> yourself.</li>
       </ul>

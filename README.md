@@ -16,15 +16,27 @@ All of it is synthesized from scratch, with no samples, at 48 kHz in
 
 ## Install
 
-On an Arch-based Linux (Omarchy, Arch, or Arch Linux ARM on an Asahi Mac),
-x86_64 or arm64:
+On any Linux with PipeWire, x86_64 or arm64:
 
 ```bash
 curl -fsSL https://maxberggren.github.io/tenfold/install.sh | sh
 ```
 
-It installs the latest release with pacman, checked against its checksum.
-[Read the script](site/install.sh) first if you like, or take the package
+The script picks the way that suits the system, and checks every download
+against its checksum:
+
+- **Arch** and its kin (Omarchy, Arch Linux ARM on an Asahi Mac): the
+  release's pacman package.
+- **NixOS**: the flake in this repository, through `nix profile`. In a
+  NixOS configuration, add `packages.${system}.default` from it instead
+  (`flake.nix` shows how).
+- **Everything else** (Ubuntu 23.04+, Debian 12+, Fedora, openSUSE, Mint,
+  Pop!_OS…; on arm64 Ubuntu 24.04+ or Debian 13+): a bundle with its own
+  Qt in `~/.local/lib/tenfold`, with a launcher entry. If PipeWire's library or polkit is missing, the system's
+  package manager adds it.
+
+`sh -s -- --uninstall` after the same command takes it away again.
+[Read the script](site/install.sh) first if you like, or take a package
 from [the releases](https://github.com/maxberggren/tenfold/releases).
 
 Reading the trackpad's raw fingers takes root, so the first time tenfold
@@ -37,8 +49,10 @@ in `extras/`:
 sudo install -Dm644 extras/70-tenfold.rules /etc/udev/rules.d/70-tenfold.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=input --action=change
 ```
+
 macOS and Windows need ports of their own (the trackpad and the audio are
-read in each system's own way), so they aren't there yet.
+read in each system's own way), so they aren't there yet; see
+[How it's built](#how-its-built) for where a port goes.
 
 ## Playing
 
@@ -198,11 +212,16 @@ bin/test DrumsTests::kicksPlayedAlongArentLayeredTwice  # one test
 bin/test -h                                             # more
 ```
 
-Needs Qt 6 (base, declarative), PipeWire and polkit.
+Needs Qt 6.8 or newer (base, declarative, wayland), PipeWire and polkit.
+Noto Sans Mono is compiled in (`src/fonts`, under the OFL).
 
-Every push to master builds and tests tenfold on Arch for x86_64 and arm64
-(`.github/workflows/build.yml`). A version tag publishes a release with both
-packages and their checksums:
+Every push to master builds and tests tenfold for x86_64 and arm64
+(`.github/workflows/build.yml`): the pacman package on Arch, the bundle with
+Qt's own build on the oldest system it supports (`bin/bundle` makes it),
+which is then
+installed and run on Ubuntu, Debian, Fedora and openSUSE, and the Nix
+flake. A version tag publishes a release with the packages, the bundles and
+their checksums:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0

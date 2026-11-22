@@ -155,20 +155,6 @@
   .copy .name { font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
   .copy .key { font-size: 10px; opacity: 0.75; letter-spacing: 0.06em; text-transform: uppercase; }
   .copy.done { background: var(--c); color: #000; }
-  a.copy { text-decoration: none; }
-  .download {
-    flex: 1;
-    min-width: 0;
-    padding: 12px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    color: var(--ink);
-    text-decoration: none;
-  }
-  .download .name { font-size: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c); }
-  .download .what { font-size: 12px; color: #cfcabd; }
-  .download:hover .name, a.copy:hover { text-decoration: underline; text-underline-offset: 3px; }
 
   .notes { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; color: #cfcabd; font-size: 14px; }
   .notes li { padding-left: 18px; position: relative; }
@@ -240,8 +226,8 @@
       <button class="platform" data-os="linux" style="--c: var(--arp)" aria-pressed="true">
         <span class="name">Linux</span><span class="key">L</span>
       </button>
-      <button class="platform" data-os="mac" style="--c: var(--atmos)" aria-pressed="false">
-        <span class="name">macOS</span><span class="key">M</span>
+      <button class="platform soon" data-os="mac" aria-pressed="false">
+        <span class="name">macOS</span><span class="key">M · coming</span>
       </button>
       <button class="platform soon" data-os="windows" aria-pressed="false">
         <span class="name">Windows</span><span class="key">W · coming</span>
@@ -261,23 +247,6 @@
         <li>Nothing else on your system changes. tenfold asks for your password when it first reads the trackpad. <code>sh -s -- --uninstall</code> takes it away again.</li>
         <li><a href="https://github.com/maxberggren/tenfold/blob/master/site/install.sh">Read the script</a> first, or
           <a href="https://github.com/maxberggren/tenfold/releases/latest">download the package</a> yourself.</li>
-      </ul>
-    </div>
-
-    <div id="macInstall" hidden style="--c: var(--atmos)">
-      <div class="command">
-        <a class="download" id="dmg" href="https://github.com/maxberggren/tenfold/releases/latest/download/tenfold-macos.dmg">
-          <span class="name">Download tenfold for Mac</span><span class="what">tenfold-macos.dmg · Apple silicon and Intel · macOS 12 or later</span>
-        </a>
-        <a class="copy" href="https://github.com/maxberggren/tenfold/releases/latest/download/tenfold-macos.dmg" aria-label="Download the disk image">
-          <span class="name">Get</span><span class="key">D</span>
-        </a>
-      </div>
-      <ul class="notes">
-        <li>Open the disk image and drag tenfold onto Applications.</li>
-        <li>Take the pad and every finger plays: the pointer stops and clicks go to the music until Esc gives the pad back. No permission is needed for that.</li>
-        <li>The Mac's own three- and four-finger swipes still switch spaces. Turn them off under System Settings › Trackpad › More Gestures while you play, or allow tenfold under Privacy & Security › Accessibility and it holds them back while the pad is taken.</li>
-        <li>The Vocal page asks once for the microphone. <a href="https://github.com/maxberggren/tenfold/releases/latest">The release</a> has the image's checksum.</li>
       </ul>
     </div>
 
@@ -325,16 +294,15 @@
   (function () {
     const buttons = document.querySelectorAll('.platform');
     const linux = document.getElementById('linuxInstall');
-    const mac = document.getElementById('macInstall');
     const soon = document.getElementById('soonInstall');
     const names = { mac: 'macOS', windows: 'Windows' };
 
     function pick(os) {
       buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.os === os)); });
-      linux.hidden = os !== 'linux';
-      mac.hidden = os !== 'mac';
-      soon.hidden = os !== 'windows';
-      if (os === 'windows') {
+      const ready = os === 'linux';
+      linux.hidden = !ready;
+      soon.hidden = ready;
+      if (!ready) {
         document.getElementById('soonName').textContent = names[os];
         document.getElementById('soonWhat').textContent = names[os];
       }
@@ -383,7 +351,6 @@
       else if (k === 'm') pick('mac');
       else if (k === 'w') pick('windows');
       else if (k === 'c' && !linux.hidden) copyCommand();
-      else if (k === 'd' && !mac.hidden) location.href = document.getElementById('dmg').href;
     });
   })();
 </script>

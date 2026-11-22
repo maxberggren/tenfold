@@ -713,20 +713,46 @@ private slots:
             QVERIFY2(take.rms(b * bar, (b + 1) * bar) > 0.01, qPrintable(QString("bar %1 is silent").arg(b)));
     }
 
-    // A different chord held over a loop: the loop steps back, so one
-    // harmony sounds; the same chord leaves it whole.
+    // A different chord held over a loop: the loop steps back, so the new
+    // harmony leads, but stays in the mix to play against; the same chord
+    // leaves it whole.
     void aDifferentLiveChordDucksTheLoop() {
         const std::string loop = recordedLoop({0, 0, 0, 0});
         const auto alone = testkit::play(loop + "end 6\n");
         const auto same = testkit::play(loop + "down 4.3 80 " + cell(0, Triad) + " p=0.01\nend 6\n");
-        const auto other = testkit::play(loop + "down 4.3 80 " + cell(5, Triad) + " p=0.01\nend 6\n");
+        const auto other = testkit::play(loop + "down 4.3 80 " + cell(6, Triad) + " p=0.01\nend 6\n");
         QVERIFY(alone.rms(5, 6) > 0.01);
         // With its own chord in the same column, everything stays.
         QVERIFY(same.rms(5, 6) > alone.rms(5, 6));
-        // Another chord: the A minor loop's E steps back under the F.
-        const double eAlone = bandShare(alone, 5.0, 325, 335), eOther = bandShare(other, 5.0, 325, 335);
-        const double fOther = bandShare(other, 5.0, 344, 354);
-        QVERIFY2(eOther < 0.1 * fOther, qPrintable(QString("E %1 F %2 (alone %3)").arg(eOther).arg(fOther).arg(eAlone)));
+        // Another chord: the A minor loop's E steps back under the G, about
+        // 9 dB (less as measured: the loop alone meets the master bus harder),
+        // still heard. No partial of G, B or D falls near E.
+        const double eAlone = bandShare(alone, 5.0, 325, 335, true), eOther = bandShare(other, 5.0, 325, 335, true);
+        QVERIFY2(eOther < 0.5 * eAlone && eOther > 0.1 * eAlone,
+                 qPrintable(QString("E %1 (alone %2)").arg(eOther).arg(eAlone)));
+    }
+
+    // Two layers of a loop holding different chords are two voices: neither
+    // steps back for the other, whichever began last.
+    void layersWithDifferentChordsBothSound() {
+        // A minor held through bar 1 is looped; F held through bar 3, over the
+        // loop, is layered on it.
+        std::string s = "page 0 3\n";
+        s += "down " + num(kBar + 0.01) + " 60 " + cell(0, Triad) + "\nup " + num(2 * kBar - 0.03) + " 60\n";
+        s += "key " + num(2 * kBar + 0.02) + " Space\n";
+        const auto alone = testkit::play(s + "end " + num(7 * kBar) + "\n");
+        s += "down " + num(3 * kBar + 0.01) + " 70 " + cell(5, Triad) + "\nup " + num(4 * kBar - 0.03) + " 70\n";
+        s += "key " + num(4 * kBar + 0.02) + " Space\nend " + num(7 * kBar) + "\n";
+        const auto both = testkit::play(s);
+        for (int bar = 5; bar < 7; ++bar) {
+            const double t = bar * kBar + 0.3;
+            // The loop's E (in A minor, not F) as loud as with no layer; the
+            // layer's F about as loud as it.
+            const double e0 = bandShare(alone, t, 325, 335, true), e = bandShare(both, t, 325, 335, true);
+            const double f = bandShare(both, t, 344, 354, true);
+            QVERIFY2(e > 0.5 * e0 && f > 0.25 * e && e > 0.25 * f,
+                     qPrintable(QString("bar %1: E %2 (alone %3) F %4").arg(bar).arg(e).arg(e0).arg(f)));
+        }
     }
 
     // The organ, the piano, the electric piano (its tremolo pans), the dub
@@ -815,7 +841,8 @@ private slots:
     }
 
     // A new chord played over a loop, landing as the loop moves on, is the
-    // newcomer: the loop steps back at once rather than rub for half a beat.
+    // newcomer: the loop steps back at once rather than rub for half a beat
+    // (by 9 dB: in power, an eighth).
     void aNewChordOnTheLoopsBeatDucksAtOnce() {
         const double t = 4 * kBar; // a loop chord lands here too
         const std::string loop = recordedLoop({0, 0, 0, 0});
@@ -823,7 +850,7 @@ private slots:
         const auto over = testkit::play(loop + "down " + num(t) + " 80 " + cell(5, Triad) + " p=0.01\nend " + num(t + 1.0) + "\n");
         // The loop's E (A minor's fifth, not in F major) from 60 ms on.
         const double e0 = bandShare(alone, t + 0.06, 325, 335, true), e1 = bandShare(over, t + 0.06, 325, 335, true);
-        QVERIFY2(e1 < 0.1 * e0, qPrintable(QString("E alone %1, under the new chord %2").arg(e0).arg(e1)));
+        QVERIFY2(e1 < 0.3 * e0, qPrintable(QString("E alone %1, under the new chord %2").arg(e0).arg(e1)));
     }
 
     // Once its finger lifts, a live chord stops being the page's chord: the

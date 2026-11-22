@@ -947,7 +947,9 @@ public:
             computePump(tr, n);
         // A different chord held live over a loop would sound two harmonies
         // at once while the studio announces one: the loop steps back
-        // (−18 dB in about 30 ms) until the finger lifts. The same chord over
+        // (−9 dB in about 30 ms) until the finger lifts, far enough for the
+        // new chord to lead, not so far that the loop drops out while a
+        // player tries out the next layer over it. The same chord over
         // the loop leaves it whole. When the live chord is the newcomer (the
         // player reharmonising the loop) the loop steps back after 30 ms,
         // long enough for a finger landing a hair before the loop reaches
@@ -969,17 +971,11 @@ public:
         const bool clash = m_differFor > wait;
         const float k = 1.0f - std::exp(-float(n) / (0.01f * m_rate));
         const float loop0 = m_loopGain;
-        m_loopGain += ((clash ? 0.125f : 1.0f) - m_loopGain) * k;
-        // Layers of the loop holding a different chord from its newest step
-        // back the same way: one harmony leads, the other stays under it.
-        float layer0[kLanes];
-        for (int i = kReplayLane; i < kLanes; ++i) {
-            const Lane &L = m_lanes[i];
-            const bool under = ll >= 0 && i != ll && current(L) && L.shape.count > 0 &&
-                               column(L.shape.tones[0]) != column(m_lanes[ll].shape.tones[0]);
-            layer0[i] = m_layerGain[i];
-            m_layerGain[i] += ((under ? 0.125f : 1.0f) - m_layerGain[i]) * k;
-        }
+        m_loopGain += ((clash ? kLiveDuck : 1.0f) - m_loopGain) * k;
+        // The loop's layers never step back for each other: each is a voice
+        // of its own, held at its own level whatever the others play, so a
+        // layer recorded over the loop adds a part instead of taking turns
+        // with it.
         // Voices of a style with an effect of its own render to that
         // effect's bus; the effect then adds its bus to the mix.
         float mixL[kBlock] = {}, mixR[kBlock] = {};
@@ -988,12 +984,10 @@ public:
         for (auto &v : m_voices)
             if (v.active) {
                 const bool loop = v.lane >= kReplayLane;
-                const int lane = std::clamp(int(v.lane), 0, kLanes - 1);
                 const StyleDef::Bus bus = styleDef(v.style).bus;
                 float *oL = bus == StyleDef::Dry ? mixL : busL[bus];
                 float *oR = bus == StyleDef::Dry ? mixR : busR[bus];
-                renderVoice(v, oL, oR, n, loop ? loop0 * layer0[lane] : 1.0f,
-                            loop ? m_loopGain * m_layerGain[lane] : 1.0f);
+                renderVoice(v, oL, oR, n, loop ? loop0 : 1.0f, loop ? m_loopGain : 1.0f);
                 if (bus == StyleDef::Echo && !v.releasing)
                     dubPressure = std::max(dubPressure, v.pressureSm);
             }
@@ -1154,6 +1148,8 @@ private:
 
     // How long a chord takes to fall away when a new one takes its place.
     static constexpr float kDamp = 0.02f;
+    // The loop's level under a different chord held live (−9 dB).
+    static constexpr float kLiveDuck = 0.355f;
 
     // Lets a voice go: its own release, or a faster one (seconds) when given.
     void release(ChordVoice &v, float fast = 0) {
@@ -1303,7 +1299,7 @@ private:
         for (auto &v : m_voices)
             if (!v.active)
                 return v;
-        // All ten busy: take the quietest one ringing out, else the oldest.
+        // All busy: take the quietest one ringing out, else the oldest.
         ChordVoice *best = nullptr;
         for (auto &v : m_voices)
             if (v.releasing && (!best || v.level < best->level))
@@ -1995,7 +1991,9 @@ private:
 
     float m_rate = 48000;
     uint64_t m_age = 0;
-    std::array<ChordVoice, 10> m_voices;
+    // Room for every layer of a loop and the live lane to hold a chord with
+    // the last ones ringing out, so a layer never takes another's voice.
+    std::array<ChordVoice, 16> m_voices;
     Lane m_lanes[kLanes];
     Rhythm m_rhythm[StyleCount];
     int m_override = -1, m_globalRate = 1;
@@ -2008,7 +2006,6 @@ private:
     double m_differFor = 0; // beats the live chord has differed from the loop's
     double m_onsetAt[kLanes] = {-1e9, -1e9, -1e9, -1e9, -1e9}; // the beat each lane's chord began
     static_assert(kLanes == 5);
-    float m_layerGain[kLanes] = {1, 1, 1, 1, 1}; // each loop layer's step back under another
     Svf m_hp1L, m_hp1R, m_hp2L, m_hp2R;
     Ensemble m_ensemble;
     DubEcho m_echo;

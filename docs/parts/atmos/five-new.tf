@@ -8,15 +8,18 @@
 #             kemong and kempur through the gongan and the great gong
 #             blooming on A at 55 Hz; a hand joins at the kotekan end,
 #             twisted anticlockwise: the ceng-ceng crash in, and as the twist
-#             passes three quarters the ensemble plays an angsel, a break
+#             passes three quarters the ensemble plays an angsel from the
+#             next beat, two accents and a beat of silence, the room's too
 #   Raga      a tanpura's four strings (Pa Sa Sa Sa) on the key's A whatever
 #             the chord, each string's buzz climbing through the harmonics as
 #             it dies on its curved bridge, sympathetic strings ringing to
-#             each chord
+#             each chord; a string moved rings on until its pluck retunes it
 #   Mbira     two thumb pianos in twelve-eight round a forty-eight-pulse
-#             cycle of their own, long bass tines under the left thumb, the
-#             second player a pulse behind, bottle caps chattering
-#   City pop  a DX electric piano on rootless elevenths comping a two-bar
+#             cycle of their own, long bass tines under the left thumb, tunes
+#             falling by step under the right, the second player a pulse
+#             behind with a tune of its own, bottle caps sizzling
+#   City pop  a DX electric piano (its bark band-limited key by key, so it
+#             glints and never spits) on rootless elevenths comping a two-bar
 #             push over a fingered bass (ghost notes, approach notes, the
 #             octave popped), a swung shaker and a rim on two and four,
 #             tremolo and chorus, off a record

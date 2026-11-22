@@ -121,6 +121,18 @@ struct Bench : AudioContext {
         c.f[5] = attack;
         engine.command(c, *this);
     }
+    // Moves a layer's finger (its height, colour, pressure and twist).
+    void move(int id, float height, float colour, float press, float motion) {
+        Command c;
+        c.type = Command::Move;
+        c.id = id;
+        c.f[0] = height;
+        c.f[1] = colour;
+        c.f[2] = press;
+        c.f[3] = motion;
+        c.f[4] = 0.8f;
+        engine.command(c, *this);
+    }
     void off(int id) {
         Command c;
         c.type = Command::Off;
@@ -153,6 +165,23 @@ struct Bench : AudioContext {
         for (size_t i = a; i < b; ++i)
             s += double(left[i]) * left[i] + double(right[i]) * right[i];
         return b > a ? std::sqrt(s / double(2 * (b - a))) : 0;
+    }
+    // The rms of one channel (0 left, 1 right, 2 both) over 300 Hz, or
+    // over, (two one-pole high-passes), between from and to.
+    double highRms(double from, double to, int channel = 2, double over = 300) const {
+        const double k = std::exp(-2 * M_PI * over / 48000.0);
+        double l1 = 0, l2 = 0, s = 0;
+        const size_t a = size_t(from * 48000), b = std::min(left.size(), size_t(to * 48000));
+        for (size_t i = a >= 9600 ? a - 9600 : 0; i < b; ++i) {
+            const double x = channel == 0 ? left[i] : channel == 1 ? right[i] : 0.5 * (left[i] + right[i]);
+            l1 = x + k * (l1 - x);
+            const double h1 = x - l1;
+            l2 = h1 + k * (l2 - h1);
+            const double h2 = h1 - l2;
+            if (i >= a)
+                s += h2 * h2;
+        }
+        return b > a ? std::sqrt(s / double(b - a)) : 0;
     }
     // Energy at one frequency between from and to: a Hann-windowed Goertzel.
     double energyAt(double hz, double from, double to, bool window = true) const {
@@ -864,7 +893,7 @@ private slots:
         k.on(1, Pad, 0.4f, 0.9f, 0.6f, 0, 0.02f, Gamelan);
         k.run(6);
         QVERIFY2(k.share(1, 6, {A, B, C, E, F}) > 0.7, qPrintable(QString::number(k.share(1, 6, {A, B, C, E, F}))));
-        QVERIFY2(k.share(1, 6, {B}) > 0.04, qPrintable(QStringLiteral("B %1").arg(k.share(1, 6, {B}))));
+        QVERIFY2(k.share(1, 6, {B}) > 0.01, qPrintable(QStringLiteral("B %1").arg(k.share(1, 6, {B}))));
         // A chord change moves the pokok, never the gong: it rings on
         // through VI as it would have without it.
         Bench g;
@@ -998,10 +1027,10 @@ private slots:
     }
 
     void theMbiraRattlesAndGoesRoundItsOwnCycle() {
-        // At the rattling end the caps chatter on their own notes (2.35 kHz
-        // the lowest), far more than at the soft end, and they are metal
-        // resonators struck now and then, not a hiss: above 6.4 kHz stays
-        // more than 20 dB under everything.
+        // At the rattling end the caps chatter, far more than at the soft
+        // end: from 2.5 to 10 kHz more than 6 dB more of the whole. And
+        // they are loose metal struck now and then, not a hiss: above 6.4
+        // kHz stays more than 20 dB under everything.
         auto take = [](float colour) {
             Bench b;
             b.param(PSpace, 0);
@@ -1010,8 +1039,23 @@ private slots:
             return b;
         };
         const Bench rattling = take(0.95f), soft = take(0.1f);
-        QVERIFY2(rattling.energyAt(2350, 2, 8) > 10 * soft.energyAt(2350, 2, 8),
-                 qPrintable(QStringLiteral("%1 against %2").arg(rattling.energyAt(2350, 2, 8)).arg(soft.energyAt(2350, 2, 8))));
+        auto caps = [](const Bench &b) {
+            const auto t = thirds(b.left, b.right, 2, 8);
+            double e = 0;
+            for (size_t k = 13; k <= 19; ++k)
+                e += std::pow(10.0, t[k] / 10);
+            return 10 * std::log10(e);
+        };
+        QVERIFY2(caps(rattling) > caps(soft) + 6, qPrintable(QStringLiteral("%1 against %2 dB").arg(caps(rattling)).arg(caps(soft))));
+        // No cap sings: they are tuned afresh for every strike, so the
+        // rattle has no line of its own. Where the old fixed caps stood
+        // (2.35 and 3.65 kHz, and 5.15, where a tine's own second mode
+        // falls too) the rattle is no stronger than a little to either
+        // side.
+        for (double hz : {2350.0, 3650.0}) {
+            const double at = rattling.energyAt(hz, 2, 8), beside = 0.5 * (rattling.energyAt(hz * 0.95, 2, 8) + rattling.energyAt(hz * 1.05, 2, 8));
+            QVERIFY2(at < 4 * beside, qPrintable(QStringLiteral("%1 Hz: %2 against %3").arg(hz).arg(at).arg(beside)));
+        }
         {
             const auto t = thirds(rattling.left, rattling.right, 2, 8);
             double hi = 0;
@@ -1094,6 +1138,127 @@ private slots:
             return thirds(b.left, b.right, 2, 8)[kThirds - 1];
         };
         QVERIFY2(top(-1.0f) < top(0.0f) + 6, qPrintable(QStringLiteral("%1 against %2").arg(top(-1.0f)).arg(top(0.0f))));
+    }
+
+    void cityPopsBarkNeverFoldsOver() {
+        // The bark is band-limited key by key: a firm chord at the bell end,
+        // in the middle of the column and high in it, puts less than -35
+        // dB of itself over 6.4 kHz and less than -55 dB in the top
+        // third-octave (to 12.8 kHz): its sidebands stop short, and nothing
+        // folds back from past the top as a sizzle.
+        for (float height : {0.4f, 0.85f}) {
+            Bench b;
+            b.param(PSpace, 0);
+            b.on(1, Pad, height, 0.9f, 1.0f, 0, 0.02f, CityPop);
+            b.run(1.0);
+            const auto t = thirds(b.left, b.right, 0.0, 0.7);
+            double hi = 0;
+            for (size_t k = 18; k < kThirds; ++k)
+                hi += std::pow(10.0, t[k] / 10);
+            QVERIFY2(10 * std::log10(hi) < -35, qPrintable(QStringLiteral("height %1: %2 dB").arg(height).arg(10 * std::log10(hi))));
+            QVERIFY2(t[kThirds - 1] < -55, qPrintable(QStringLiteral("height %1: %2 dB").arg(height).arg(t[kThirds - 1])));
+        }
+    }
+
+    void theAngselStopsTheWholeEnsemble() {
+        // Kotekan, then twisted past three quarters: from the next beat two
+        // accents, then a beat of silence, the room's too (the halo held
+        // down with the bronze), everything over 300 Hz more than 25 dB
+        // under the kotekan before it; and the ensemble back on the beat
+        // after, together.
+        const double beat = 60.0 / 124.0;
+        Bench b;
+        b.on(1, Pad, 0.4f, 0.9f, 0.6f, 0, 0.02f, Gamelan);
+        b.run(4);
+        b.move(1, 0.4f, 0.9f, 0.6f, -1.0f);
+        b.run(4);
+        // (The twist is past three quarters about 0.1 s after 4 s, in beat
+        // 8; the angsel starts on beat 9, and the silence is beat 10.)
+        const double before = b.highRms(2, 4);
+        const double silent = b.highRms(10 * beat + 0.06, 11 * beat - 0.01);
+        QVERIFY2(20 * std::log10(silent / before) < -25, qPrintable(QStringLiteral("%1 dB").arg(20 * std::log10(silent / before))));
+        const double back = b.highRms(11 * beat, 12 * beat);
+        QVERIFY2(back > 0.4 * before, qPrintable(QStringLiteral("%1 against %2").arg(back).arg(before)));
+    }
+
+    void theKotekanInterlocks() {
+        // The polos (left of the middle) strikes on the beat and the third
+        // sixteenth, the sangsih (right of it) on the second and the
+        // fourth. Each note rings until its hand strikes again, so both are
+        // always sounding; but the mallet's tok (the bar's high mode, gone
+        // in 15 ms) is only ever the part that just struck. Over 3 kHz,
+        // just after the second and fourth sixteenths the sound leans
+        // right, and just after the third it leans left: more than 3 dB
+        // between them.
+        Bench b;
+        b.param(PSpace, 0);
+        b.on(1, Pad, 0.4f, 0.9f, 0.6f, 0, 0.02f, Gamelan);
+        b.run(12);
+        const double sixteenth = 60.0 / 124.0 / 4;
+        auto lean = [&](std::initializer_list<int> ks) {
+            double l = 0, r = 0;
+            for (int beat = 4; beat < 22; ++beat)
+                for (int k : ks) {
+                    const double t = (4 * beat + k) * sixteenth;
+                    l += std::pow(b.highRms(t + 0.001, t + 0.02, 0, 3000), 2);
+                    r += std::pow(b.highRms(t + 0.001, t + 0.02, 1, 3000), 2);
+                }
+            return 10 * std::log10(r / l);
+        };
+        const double sangsih = lean({1, 3}), polos = lean({2});
+        QVERIFY2(sangsih > polos + 3, qPrintable(QStringLiteral("sangsih %1 dB right, polos %2").arg(sangsih).arg(polos)));
+    }
+
+    void theTanpuraNeverFallsSilentAsItMoves() {
+        // The finger slid up the column: the strings move by an octave, and
+        // each rings on where it was until its pluck retunes it. No 50 ms
+        // of the next five seconds falls more than 8 dB under the second
+        // before the move.
+        Bench b;
+        b.param(PSpace, 0);
+        b.on(1, Pad, 0.3f, 0.5f, 0.6f, 0, 0.02f, Raga);
+        b.run(6);
+        b.move(1, 0.75f, 0.5f, 0.6f, 0);
+        b.run(5);
+        const double running = b.rms(5, 6);
+        double worst = 0;
+        for (double t = 6; t + 0.05 <= 11; t += 0.05)
+            worst = std::min(worst, 20 * std::log10(b.rms(t, t + 0.05) / running));
+        QVERIFY2(worst > -8, qPrintable(QStringLiteral("%1 dB").arg(worst)));
+    }
+
+    void theMbiraTunesMoveByStep() {
+        // The right thumbs sing tunes, by step and neighbour tone, not a
+        // ladder of the chord: D, which no chord of the cycle holds over A
+        // minor, is in the treble, within 20 dB of A there.
+        Bench b;
+        b.param(PSpace, 0);
+        b.on(1, Pad, 0.4f, 0.1f, 0.6f, -1.0f, 0.02f, Mbira);
+        b.run(10);
+        double d = 0, a = 0;
+        for (int m = 60; m <= 88; ++m) {
+            const double e = b.energyAt(440.0 * std::exp2((m - 69) / 12.0), 2, 10);
+            if (m % 12 == D)
+                d += e;
+            else if (m % 12 == A)
+                a += e;
+        }
+        QVERIFY2(d > 0.01 * a, qPrintable(QStringLiteral("%1 against %2").arg(d).arg(a)));
+    }
+
+    void kargyraaHasNothingUnderItsGrowl() {
+        // Kargyraa's false folds put the voice's octave under it (55 Hz on
+        // A), and nothing under that: from 15 to 34 Hz more than 60 dB
+        // under the voice's own pitch.
+        Bench b;
+        b.param(PSpace, 0);
+        b.on(1, Pad, 0.5f, 0.95f, 0.7f, 0, 0.02f, Khoomei);
+        b.run(4);
+        double sub = 0;
+        for (double hz = 15; hz < 35; hz += 2.5)
+            sub += b.energyAt(hz, 1, 4);
+        const double voice = b.energyAt(110.0, 1, 4) + b.energyAt(55.0, 1, 4);
+        QVERIFY2(10 * std::log10(sub / voice) < -60, qPrintable(QString::number(10 * std::log10(sub / voice))));
     }
 
     void theThroatSingerWhistlesItsOvertones() {

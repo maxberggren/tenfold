@@ -39,10 +39,11 @@ rm -rf "$out"
 mkdir -p "$appdir"
 
 # The Qt plugin finds Qt through QMAKE and the QML the window imports
-# through its sources. Wayland comes first; X11 is there for the rest.
+# through its sources. Wayland comes first, X11 is there for the rest, and
+# offscreen runs the commands that need no display (screenshot, check).
 export QMAKE="$(command -v "$qmake")"
 export QML_SOURCES_PATHS="$ROOT/src"
-export EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so"
+export EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so;libqoffscreen.so"
 export EXTRA_QT_MODULES="waylandclient"
 export NO_STRIP=1
 linuxdeploy --appdir "$appdir" \

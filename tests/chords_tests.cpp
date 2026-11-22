@@ -8,6 +8,7 @@
 #include <functional>
 #include <set>
 
+#include "dsp.h"
 #include "testkit.h"
 
 using namespace tf;
@@ -1530,6 +1531,150 @@ private slots:
                                 .arg(band(hard, top))
                                 .arg(band(light, top))));
         QVERIFY2(band(hard, low) > 0.5 * band(light, low), qPrintable(QString::number(band(hard, low))));
+    }
+
+    // The pedal steel sustains as a steel through a sustain pedal does: a
+    // held chord loses under 3 dB a second once it has swelled in. Its
+    // volume pedal follows the touch: a light chord blooms slowly, a firm
+    // one quickly. And its pick is dark: next to nothing above 12 kHz.
+    void theSteelSustainsAndSwellsToTheTouch() {
+        const auto held = heldChord(Steel, nullptr, true, 0.5);
+        const double fall = 20 * std::log10(held.rms(2.5, 2.7) / held.rms(1.0, 1.2));
+        QVERIFY2(fall > -4.5, qPrintable(QString("%1 dB over 1.5 s").arg(fall)));
+        const double air = bandShare(held, 0.4, 12000, 24000);
+        QVERIFY2(air < 1e-6, qPrintable(QString::number(air)));
+        const auto light = heldChord(Steel, nullptr, true, 0.25), firm = heldChord(Steel, nullptr, true, 0.85);
+        auto early = [](const testkit::Take &t) { return t.rms(0.42, 0.47) / std::max(1e-9, t.rms(1.3, 1.5)); };
+        QVERIFY2(early(light) < 0.5 * early(firm),
+                 qPrintable(QString("a light touch %1 of the way in, a firm one %2").arg(early(light)).arg(early(firm))));
+    }
+
+    // The steel's knee lever: a flat finger lowers the root of the chord to
+    // the note of the key under it (A to G over the tonic of A minor), the
+    // rest of the chord staying where it is.
+    void theSteelKneeLeverLowersTheRoot() {
+        auto played = [](const char *size) {
+            return testkit::play("page 0 3\n" + soundKeys(Steel) + "down 0.2 9 " + rail(0) + "\ndown 0.3 1 " +
+                                 cell(0, Triad) + " p=0.4 size=" + size + "\nup 2.8 1\nup 2.9 9\nend 3.2\n");
+        };
+        const auto plain = played("1"), lever = played("2");
+        auto pc = [](const testkit::Take &t, int pitchClass) {
+            double e = 0;
+            for (int octave = 3; octave <= 6; ++octave) {
+                const double hz = 440.0 * std::exp2((12.0 * octave + pitchClass - 57.0) / 12.0);
+                e += bandShare(t, 1.0, hz * std::exp2(-0.25 / 12), hz * std::exp2(0.25 / 12));
+            }
+            return e;
+        };
+        QVERIFY2(pc(lever, 7) > 3 * pc(plain, 7) && pc(lever, 9) < 0.5 * pc(plain, 9),
+                 qPrintable(QString("G %1 / %2, A %3 / %4").arg(pc(lever, 7)).arg(pc(plain, 7)).arg(pc(lever, 9)).arg(pc(plain, 9))));
+    }
+
+    // The sitar keeps buzzing: two and a half seconds into a rake it is
+    // within 12 dB of its attack, so a meend pulled there is heard. And
+    // neither its jawari nor its chikari tick across the band: next to
+    // nothing above 16 kHz.
+    void theSitarRingsOnWithoutTicks() {
+        const auto take = heldChord(Sitar, nullptr, true, 0.5);
+        const double fall = 20 * std::log10(take.rms(2.5, 2.75) / take.rms(0.35, 0.6));
+        QVERIFY2(fall > -12, qPrintable(QString("%1 dB").arg(fall)));
+        const double air = bandShare(take, 0.3, 16000, 24000);
+        QVERIFY2(air < 2e-5, qPrintable(QString::number(air)));
+    }
+
+    // The kalimba's caps rattle with each pluck and fall quiet before the
+    // next: on its eighths at a medium touch, the rattle's band (3 to
+    // 4.5 kHz) is far louder just after a pluck than just before the next.
+    // Nothing of it reaches above 8 kHz.
+    void theKalimbaCapsRattleWithEachPluck() {
+        const auto take = testkit::play("page 0 3\n" + soundKeys(Kalimba) + "down 0.3 1 " + cell(0, Triad) +
+                                        " p=0.5\nup 2.8 1\nend 3.0\n");
+        const double step = 2 * 60.0 / 124 / 4;
+        auto band = [&](double from, double to) {
+            // (Fourth order each side: the tines ring 30 dB over the caps,
+            // and a gentler band would hear them.)
+            double e = 0;
+            Svf hp, hp2, lp, lp2;
+            hp.set(3000.0f, 0.54f, 48000.0f);
+            hp2.set(3000.0f, 1.31f, 48000.0f);
+            lp.set(4500.0f, 0.54f, 48000.0f);
+            lp2.set(4500.0f, 1.31f, 48000.0f);
+            for (size_t i = size_t((from - 0.05) * 48000); i < size_t(to * 48000); ++i) {
+                const float x = 0.5f * (take.left[i] + take.right[i]);
+                const float y = lp2.step(lp.step(hp2.step(hp.step(x).high).high).low).low;
+                if (double(i) >= from * 48000)
+                    e += double(y) * y;
+            }
+            return e;
+        };
+        double after = 0, before = 0;
+        for (double t = std::ceil(0.6 / step) * step; t + step < 2.7; t += step) {
+            after += band(t + 0.01, t + 0.05);
+            before += band(t + step - 0.04, t + step - 0.002);
+        }
+        QVERIFY2(after > 4 * before, qPrintable(QString("after a pluck %1, before the next %2").arg(after).arg(before)));
+        const auto hard = heldChord(Kalimba, nullptr, false, 1.0);
+        QVERIFY2(bandShare(hard, 0.6, 8000, 24000) < 2e-5, qPrintable(QString::number(bandShare(hard, 0.6, 8000, 24000))));
+    }
+
+    // The gamelan's mallet is soft and its figures are kotekan: on the
+    // sixteenths (nyog cag) the sangsih strikes the note of the key above
+    // the chord's top, and on the triplet gate (norot) the note above its
+    // root, neither of them in the chord; struck whole on HOLD, neither
+    // sounds. Nothing of the strikes reaches above 12 kHz.
+    void theGamelanPlaysKotekan() {
+        std::vector<float> notes;
+        auto played = [&](int gate, std::vector<float> *watch) {
+            return playWatching("page 0 3\n" + soundKeys(Gamelan) + "down 0.2 9 " + rail(gate) + "\ndown 0.3 1 " +
+                                    cell(0, Triad) + " p=0.6\nup 2.8 1\nup 2.9 9\nend 3.2\n",
+                                [&](double now, const StudioView &v) {
+                                    if (watch && now > 1.0 && now < 1.1)
+                                        *watch = voicing(v);
+                                });
+        };
+        const auto nyog = played(Sixteenths, &notes), norot = played(Wub, nullptr), whole = played(Hold, nullptr);
+        QVERIFY(notes.size() >= 3);
+        const float top = *std::max_element(notes.begin(), notes.end()), root = notes.front();
+        auto above = [](float m) {
+            // The note of A minor above m.
+            for (int k = 1; k <= 2; ++k)
+                if (kAMinor.count((int(std::lround(m)) + k) % 12))
+                    return m + float(k);
+            return m + 2.0f;
+        };
+        auto at = [](const testkit::Take &t, float m) {
+            const double hz = 440.0 * std::exp2((m - 69.0) / 12.0);
+            return bandShare(t, 0.4, hz * std::exp2(-0.3 / 12), hz * std::exp2(0.3 / 12));
+        };
+        QVERIFY2(at(nyog, above(top)) > 10 * at(whole, above(top)),
+                 qPrintable(QString("above the top: %1 nyog cag, %2 whole").arg(at(nyog, above(top))).arg(at(whole, above(top)))));
+        QVERIFY2(at(norot, above(root)) > 10 * at(whole, above(root)),
+                 qPrintable(QString("above the root: %1 norot, %2 whole").arg(at(norot, above(root))).arg(at(whole, above(root)))));
+        QVERIFY2(bandShare(nyog, 0.4, 12000, 24000) < 2e-6, qPrintable(QString::number(bandShare(nyog, 0.4, 12000, 24000))));
+    }
+
+    // The accordion's bellows shake swells the sound on its eighths (a few
+    // decibels, never a chop), and on the 3·3·2 its left hand plays the
+    // Stradella buttons: a bass reed under the chord, which a held chord
+    // has none of, and a rhythm with rests between the presses.
+    void theAccordionShakesAndPlaysTheBassButtons() {
+        auto played = [](int gate) {
+            return testkit::play("page 0 3\n" + soundKeys(Accordion) + "down 0.2 9 " + rail(gate) + "\ndown 0.3 1 " +
+                                 cell(0, Triad) + " p=0.6\nup 2.8 1\nup 2.9 9\nend 3.2\n");
+        };
+        const auto shaken = played(Eighths), tango = played(Tresillo), held = played(Hold);
+        // (A held musette chord moves a little by itself, its reeds beating.)
+        const double swing = 20 * std::log10(choppiness(shaken, 0.8, 2.6, 124)),
+                     still = 20 * std::log10(choppiness(held, 0.8, 2.6, 124));
+        QVERIFY2(swing - still > 2 && swing - still < 7, qPrintable(QString("%1 dB, held %2 dB").arg(swing).arg(still)));
+        QVERIFY2(choppiness(tango, 0.8, 2.6, 124) > 10, qPrintable(QString::number(choppiness(tango, 0.8, 2.6, 124))));
+        // The bass button on A2 (110 Hz, under the page's high-pass but not
+        // gone) and on the fifth, E3 (165 Hz), both under the chord's
+        // voicing, against the held chord's.
+        auto bass = [](const testkit::Take &t) {
+            return bandShare(t, 0.6, 107, 113) + bandShare(t, 0.6, 162, 168);
+        };
+        QVERIFY2(bass(tango) > 5 * bass(held), qPrintable(QString("bass %1 tango, %2 held").arg(bass(tango)).arg(bass(held))));
     }
 };
 

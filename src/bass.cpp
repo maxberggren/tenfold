@@ -113,7 +113,7 @@ QString morphName(int sound) {
     case Acid: return QStringLiteral("SQUELCH");
     case Moog: return QStringLiteral("CONTOUR");
     case Upright: return QStringLiteral("RING");
-    case Log: return QStringLiteral("DECAY");
+    case Log: return QStringLiteral("HONK");
     case Tuba: return QStringLiteral("BLARE");
     case Chip: return QStringLiteral("ARP");
     case Tabla: return QStringLiteral("SWOOP");
@@ -717,7 +717,7 @@ public:
             "touch the lower field\ta note in the key: higher is brighter (clean sub to biting), harder accents\n"
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back "
             "(UPRIGHT: another note is plucked, and lifting pulls off to the one held)\n"
-            "twist / flatten the finger\tmorph the sound (ACID squelch, MOOG contour, UPRIGHT ring, LOG decay, "
+            "twist / flatten the finger\tmorph the sound (ACID squelch, MOOG contour, UPRIGHT ring, LOG honk, "
             "TUBA blare, CHIP arpeggio, TABLA swoop, DIDGE voice) / fatten it\n"
             "OCT: +12 row / BEND row\tup an octave while held (two fingers, two): tap to pump; any finger there bends with its height\n"
             "ROLL\tland on a pattern: the held note strikes it on the bar; slide along the row, up/down the gate\n"
@@ -731,15 +731,21 @@ public:
             "UPRIGHT pressed lightly\ta ghost note: mostly the finger\n"
             "LOG, TABLA\tstruck, an octave over the pad: every finger strikes its note, sliding in from the one "
             "held (a wider slide takes longer); lift it and the held note slides back and is struck again, softly\n"
-            "TUBA played hard\tbrass flares: past mezzo-forte the attack blats brighter, the lips catch, the twist "
+            "LOG\tthe twist pushes its nasal bwomp (the honk that carries on a phone speaker) and lets it ring longer\n"
+            "TUBA played hard\tbrass flares: blown harder its wave steepens toward a shock front, and past "
+            "mezzo-forte the attack blats brighter, the lips catch, the twist "
             "scoops it up to two semitones; slurred notes flare from their own breath, and pressing a held note "
             "keeps it brassy\n"
-            "CHIP\tmoves once a frame, as the NES did: the pulse's duty steps 12.5 %, 25 %, 50 %; twist for the "
-            "chord's arpeggio over the held root (faster, then the octave on top; an octave up under A1); an "
+            "CHIP\tmoves once a frame, as the NES did: the pulse's duty steps 12.5 %, 25 %, 50 %; up to 40 % the "
+            "twist is a tracker's macros, so a held note keeps moving (the pulse swells, its duty flips, a "
+            "vibrato eases in; none at 0 %); past 40 %, the chord's arpeggio over the held root (faster, then "
+            "the octave on top; an octave up under A1); an "
             "accent is the kick blip, triangle sweep and noise burst\n"
-            "TABLA\tan octave up, where the bayan speaks; pressed lightly it is the closed ke, harder the open ghe; "
+            "TABLA\tan octave up, where the bayan speaks; tapped lightly (under about a third of full pressure, "
+            "fully closed at a fifth) it is the closed ke, a dead thud with a crack; firmer, the open ghe; "
             "pressed harder after the strike, the wrist bends it up, up to four semitones\n"
-            "DIDGE\theight is the mouth (800 Hz to 2 kHz), pressing harder opens it more; twist sings a voice into it "
+            "DIDGE\theight is the mouth (800 Hz to 2 kHz); pressing harder blows harder and opens it more, so "
+            "pressing in and easing off pumps the breath by hand; twist sings a voice into it "
             "that growls; an accent toots a tenth up; ROLL pumps the breath on its steps\n"
             "the sound chips\tthe row shows those around the one playing; the faded ends have more beyond, click to move along");
     }

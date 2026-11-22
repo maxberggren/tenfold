@@ -47,7 +47,8 @@ key 16.5571 P
 key 16.6071 Right
 # LOG: amapiano, an octave over the pad. The log drum's off-grid phrase, every finger struck. A low note is held
 # while the others land: each slides in from it (an octave slowly, a step quickly), and
-# lifting slides back and strikes the held note again, softly. Then Shift+] twice: it rings longer.
+# lifting slides back and strikes the held note again, softly. Then Shift+] twice: it honks harder
+# (the nasal bwomp) and rings longer.
 down 18.2000 1 0.2083 0.304 p=0.7
 up 18.4679 1
 down 18.6018 2 0.2083 0.304 p=0.45
@@ -140,7 +141,8 @@ key 38.3536 Right
 key 38.4036 Right
 # CHIP: an NES bass at the console's frame rate. Octaves in eighths on the bare triangle,
 # each note's pulse chirping 12.5 % to 25 % to 50 %; the downbeats pressed hard for the kick
-# blip (the triangle's sweep and the noise channel's burst). Then Shift+] four times: the twist
+# blip (the triangle's sweep and the noise channel's burst). At the usual twist each note keeps
+# moving after its chirp: the macros swell the pulse and flip its duty. Then Shift+] four times: the twist
 # arpeggiates each held note's chord a frame a note over the root the sub holds.
 down 39.6286 1 0.2083 0.114 p=0.9
 up 39.8536 1
@@ -217,39 +219,40 @@ key 49.0679 Right
 key 49.1179 Right
 key 49.1679 Right
 # TABLA: the bayan, an octave over the pad. A theka from one finger: ghe pressed firmly
-# (it swoops up into the note) and ke pressed lightly (the closed slap); then the gumki,
+# (it swoops up into the note) and ke tapped lightly, at an ordinary light touch (the closed
+# hand: a dead thud and the kat's crack); then the gumki,
 # struck and pressed harder so the pitch climbs, and eased off so it falls back.
 down 50.3429 1 0.2083 0.342 p=0.6
 up 50.5571 1
-down 50.6107 2 0.2083 0.342 p=0.05
+down 50.6107 2 0.2083 0.342 p=0.18
 up 50.7179 2
 down 50.8786 3 0.2083 0.342 p=0.6
 up 51.0929 3
 down 51.1464 1 0.2083 0.342 p=0.6
 up 51.3607 1
-down 51.4143 2 0.2083 0.342 p=0.05
+down 51.4143 2 0.2083 0.342 p=0.18
 up 51.5214 2
 down 51.6821 3 0.2083 0.342 p=0.6
 up 51.8964 3
-down 51.9500 1 0.2083 0.342 p=0.05
+down 51.9500 1 0.2083 0.342 p=0.18
 up 52.0571 1
-down 52.2179 2 0.2083 0.342 p=0.05
+down 52.2179 2 0.2083 0.342 p=0.18
 up 52.3250 2
 down 52.4857 3 0.2083 0.342 p=0.6
 up 52.7000 3
-down 52.7536 1 0.2083 0.342 p=0.05
+down 52.7536 1 0.2083 0.342 p=0.18
 up 52.8607 1
 down 53.0214 2 0.2083 0.342 p=0.6
 up 53.2357 2
 down 53.2893 3 0.2083 0.342 p=0.6
 up 53.5036 3
-down 53.5571 1 0.0417 0.342 p=0.05
+down 53.5571 1 0.0417 0.342 p=0.18
 up 53.6643 1
 down 53.8250 2 0.0417 0.342 p=0.6
 up 54.0393 2
-down 54.0929 3 0.0417 0.342 p=0.05
+down 54.0929 3 0.0417 0.342 p=0.18
 up 54.2000 3
-down 54.3607 1 0.0417 0.342 p=0.05
+down 54.3607 1 0.0417 0.342 p=0.18
 up 54.4679 1
 down 54.6286 2 0.2083 0.342 p=0.45
 move 54.7357 2 0.2083 0.342 p=0.55
@@ -272,7 +275,7 @@ move 56.5036 1 0.0417 0.342 p=0.95
 move 56.6911 1 0.0417 0.342 p=0.6
 move 56.7714 1 0.0417 0.342 p=0.45
 up 56.9321 1
-down 57.0393 2 0.2083 0.342 p=0.05
+down 57.0393 2 0.2083 0.342 p=0.18
 up 57.1732 2
 down 57.3071 3 0.2083 0.342 p=0.6
 key 58.6107 P

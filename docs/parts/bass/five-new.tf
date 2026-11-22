@@ -7,7 +7,8 @@ tempo 0.6500 112
 key 0.7000 Right
 # LOG: amapiano, an octave over the pad. The log drum's off-grid phrase, every finger struck. A low note is held
 # while the others land: each slides in from it (an octave slowly, a step quickly), and
-# lifting slides back and strikes the held note again, softly. Then Shift+] twice: it rings longer.
+# lifting slides back and strikes the held note again, softly. Then Shift+] twice: it honks harder
+# (the nasal bwomp) and rings longer.
 down 1.1000 1 0.2083 0.304 p=0.7
 up 1.3679 1
 down 1.5018 2 0.2083 0.304 p=0.45
@@ -120,7 +121,8 @@ tempo 22.1032 150
 key 22.1532 Right
 # CHIP: an NES bass at the console's frame rate. Octaves in eighths on the bare triangle,
 # each note's pulse chirping 12.5 % to 25 % to 50 %; the downbeats pressed hard for the kick
-# blip (the triangle's sweep and the noise channel's burst). Then Shift+] four times: the twist
+# blip (the triangle's sweep and the noise channel's burst). At the usual twist each note keeps
+# moving after its chirp: the macros swell the pulse and flip its duty. Then Shift+] four times: the twist
 # arpeggiates each held note's chord a frame a note over the root the sub holds.
 down 22.5532 1 0.2083 0.114 p=0.9
 up 22.7212 1
@@ -205,39 +207,40 @@ key 32.2132 Shift+[
 tempo 33.0032 90
 key 33.0532 Right
 # TABLA: the bayan, an octave over the pad. A theka from one finger: ghe pressed firmly
-# (it swoops up into the note) and ke pressed lightly (the closed slap); then the gumki,
+# (it swoops up into the note) and ke tapped lightly, at an ordinary light touch (the closed
+# hand: a dead thud and the kat's crack); then the gumki,
 # struck and pressed harder so the pitch climbs, and eased off so it falls back.
 down 33.4532 1 0.2083 0.342 p=0.6
 up 33.7199 1
-down 33.7866 2 0.2083 0.342 p=0.05
+down 33.7866 2 0.2083 0.342 p=0.18
 up 33.9199 2
 down 34.1199 3 0.2083 0.342 p=0.6
 up 34.3866 3
 down 34.4532 1 0.2083 0.342 p=0.6
 up 34.7199 1
-down 34.7866 2 0.2083 0.342 p=0.05
+down 34.7866 2 0.2083 0.342 p=0.18
 up 34.9199 2
 down 35.1199 3 0.2083 0.342 p=0.6
 up 35.3866 3
-down 35.4532 1 0.2083 0.342 p=0.05
+down 35.4532 1 0.2083 0.342 p=0.18
 up 35.5866 1
-down 35.7866 2 0.2083 0.342 p=0.05
+down 35.7866 2 0.2083 0.342 p=0.18
 up 35.9199 2
 down 36.1199 3 0.2083 0.342 p=0.6
 up 36.3866 3
-down 36.4532 1 0.2083 0.342 p=0.05
+down 36.4532 1 0.2083 0.342 p=0.18
 up 36.5866 1
 down 36.7866 2 0.2083 0.342 p=0.6
 up 37.0532 2
 down 37.1199 3 0.2083 0.342 p=0.6
 up 37.3866 3
-down 37.4532 1 0.0417 0.342 p=0.05
+down 37.4532 1 0.0417 0.342 p=0.18
 up 37.5866 1
 down 37.7866 2 0.0417 0.342 p=0.6
 up 38.0532 2
-down 38.1199 3 0.0417 0.342 p=0.05
+down 38.1199 3 0.0417 0.342 p=0.18
 up 38.2532 3
-down 38.4532 1 0.0417 0.342 p=0.05
+down 38.4532 1 0.0417 0.342 p=0.18
 up 38.5866 1
 down 38.7866 2 0.2083 0.342 p=0.45
 move 38.9199 2 0.2083 0.342 p=0.55
@@ -260,14 +263,15 @@ move 41.1199 1 0.0417 0.342 p=0.95
 move 41.3532 1 0.0417 0.342 p=0.6
 move 41.4532 1 0.0417 0.342 p=0.45
 up 41.6532 1
-down 41.7866 2 0.2083 0.342 p=0.05
+down 41.7866 2 0.2083 0.342 p=0.18
 up 41.9532 2
 down 42.1199 3 0.2083 0.342 p=0.6
 up 43.1199 3
 tempo 43.7699 100
 key 43.8199 Right
 # DIDGE: a drone; the finger is the mouth. It climbs the field and comes down (the one
-# formant sweeps 800 Hz to 2 kHz and back: wah, yoi), pressed harder on the way. Hard presses
+# formant sweeps 800 Hz to 2 kHz and back: wah, yoi), pressed harder on the way; then pumped
+# by hand, pressed in and eased off five times a second, the breath swelling and sinking. Hard presses
 # toot a tenth up. Shift+] sings a voice into it that growls (heard through the mouth); Shift+→ three times rolls it,
 # the breath pumping on a gallop; Shift+← three times lets it go.
 down 44.2199 1 0.2083 0.038 p=0.5
@@ -278,7 +282,11 @@ glide 46.9199 47.2199 1 0.2083 0.076 p=0.5
 glide 47.2199 47.3699 1 0.2083 0.532 p=0.6
 glide 47.3699 47.5199 1 0.2083 0.19 p=0.5
 glide 47.5199 47.8199 1 0.2083 0.304 p=0.5
-move 48.1199 1 0.2083 0.304 p=0.5
+move 47.9199 1 0.2083 0.304 p=0.9
+move 48.0199 1 0.2083 0.304 p=0.35
+move 48.1199 1 0.2083 0.304 p=0.9
+move 48.2199 1 0.2083 0.304 p=0.35
+move 48.3199 1 0.2083 0.304 p=0.5
 down 48.4199 2 0.2083 0.342 p=0.98
 up 48.6299 2
 down 48.8699 2 0.2083 0.342 p=0.98

@@ -88,7 +88,7 @@ up 20.183 31
 tempo 23.793 112
 # Steel pan: a calypso line in single strokes, a rolled sustain, and the cello pan's low notes.
 key 23.883 Right
-# A calypso line: single strokes, syncopated (each note a stroke, no roll under a quarter).
+# A calypso line: single strokes, syncopated (each note a stroke; the roll comes only past an eighth, in time).
 down 24.383 2 0.7140 0.70 p=0.65
 up 24.584 2
 down 24.651 3 0.6620 0.70 p=0.65
@@ -267,7 +267,7 @@ up 71.346 9
 tempo 73.456 96
 # Accordion: a cumbia musette riff, a tango in the clarinet stop, the bandoneon stop.
 key 73.546 Right
-# Cumbia, high on the pad: the musette's three reeds, a riff with repeated notes, each repeat turning the bellows.
+# Cumbia, high on the pad: the musette's three reeds, a riff with repeated notes on one pull of the bellows, turning only once it is spent.
 down 74.046 2 0.6100 0.85 p=0.65
 up 74.296 2
 down 74.358 3 0.6100 0.85 p=0.65

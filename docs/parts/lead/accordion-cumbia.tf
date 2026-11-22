@@ -16,7 +16,7 @@ key 0.300 Right
 key 0.320 Right
 key 0.340 Right
 key 0.360 Right
-# Cumbia, high on the pad: the musette's three reeds, a riff with repeated notes, each repeat turning the bellows.
+# Cumbia, high on the pad: the musette's three reeds, a riff with repeated notes on one pull of the bellows, turning only once it is spent.
 down 0.600 2 0.6100 0.85 p=0.65
 up 0.850 2
 down 0.912 3 0.6100 0.85 p=0.65

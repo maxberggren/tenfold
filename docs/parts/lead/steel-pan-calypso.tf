@@ -13,7 +13,7 @@ key 0.240 Right
 key 0.260 Right
 key 0.280 Right
 key 0.300 Right
-# A calypso line: single strokes, syncopated (each note a stroke, no roll under a quarter).
+# A calypso line: single strokes, syncopated (each note a stroke; the roll comes only past an eighth, in time).
 down 0.600 2 0.7140 0.70 p=0.65
 up 0.801 2
 down 0.868 3 0.6620 0.70 p=0.65

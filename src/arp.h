@@ -27,10 +27,15 @@ enum Rate : int { Eighth, EighthTriplet, Sixteenth, SixteenthTriplet, ThirtySeco
 // The first five are the dance floor's; the second five reach past it: a
 // marimba for ambient and afro house, a plucked harp for film and lo-fi, an
 // electric piano for neo-soul, an eighties poly through its chorus for
-// synthwave and Italo, and a drawbar organ for house and gospel. New sounds
-// go on the end, so songs and loops keep their index.
-enum Sound : int { Pluck, Glass, Saw, Pulse, Acid, Marimba, Harp, Rhodes, Juno, Organ };
-constexpr int PatternCount = 8, RateCount = 5, SoundCount = 10;
+// synthwave and Italo, and a drawbar organ for house and gospel. The third
+// five leave the studio's usual world: a Trinidad steel pan for calypso and
+// soca, a sitar with its buzzing bridge for raga and psychedelia, the log
+// drum of South African amapiano, a Game Boy's pulse channel for chiptune,
+// and a Balinese gangsa pair beating against each other for gamelan. New
+// sounds go on the end, so songs and loops keep their index.
+enum Sound : int { Pluck, Glass, Saw, Pulse, Acid, Marimba, Harp, Rhodes, Juno, Organ,
+                   Steelpan, Sitar, LogDrum, Chip, Gamelan };
+constexpr int PatternCount = 8, RateCount = 5, SoundCount = 15;
 constexpr int kEchoTimes = 5;
 constexpr int kAccentChoices = 6;
 constexpr int kStacks = 5;
@@ -51,26 +56,34 @@ inline const char *rateName(int r) {
 }
 inline const char *soundName(int s) {
     static const char *n[] = {"pluck", "glass", "supersaw", "pulse", "acid",
-                              "marimba", "harp", "rhodes", "juno", "organ"};
+                              "marimba", "harp", "rhodes", "juno", "organ",
+                              "steel pan", "sitar", "log drum", "chip", "gamelan"};
     return n[std::clamp(s, 0, SoundCount - 1)];
 }
 inline const char *soundShort(int s) {
-    static const char *n[] = {"PLUCK", "GLASS", "SAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN"};
+    static const char *n[] = {"PLUCK", "GLASS", "SAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN",
+                              "STEELPAN", "SITAR", "LOGDRUM", "CHIP", "GAMELAN"};
     return n[std::clamp(s, 0, SoundCount - 1)];
 }
 // The colour each sound starts from, the one it sounds best in.
 inline float soundColor(int s) {
-    static const float c[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f, 0.4f, 0.55f, 0.4f, 0.7f, 0.45f};
+    static const float c[] = {0.3f, 0.45f, 0.55f, 0.35f, 0.15f, 0.4f, 0.55f, 0.4f, 0.7f, 0.45f,
+                              0.4f, 0.5f, 0.6f, 0.45f, 0.45f};
     return c[std::clamp(s, 0, SoundCount - 1)];
 }
 
-// The sounds a press on the tone pad switches rather than bites.
-inline bool hasSwitch(int s) { return s == Juno || s == Organ; }
+// The sounds a press on the tone pad switches rather than bites. The
+// gamelan's switch is its scale: off, selisir, the five-tone pelog of a
+// Balinese gong kebyar, every note one of its five keys; on, even, the
+// studio's own scale and tuning, to sit with the other parts.
+inline bool hasSwitch(int s) { return s == Juno || s == Organ || s == Gamelan; }
 inline const char *switchName(int s, bool alt) {
     if (s == Organ)
         return alt ? "FAST" : "SLOW";
     if (s == Juno)
         return alt ? "CH I" : "CH II";
+    if (s == Gamelan)
+        return alt ? "EVEN" : "SELISIR";
     return "";
 }
 
@@ -131,7 +144,8 @@ struct Settings {
     int rotate = 0;      // euclidean rotation, in steps
     uint32_t seed = 1;   // the dice for random and chaos
     // The sound's own switch, flipped by a press on the tone pad: the
-    // organ's Leslie fast (off: slow), the juno's chorus I (off: II).
+    // organ's Leslie fast (off: slow), the juno's chorus I (off: II), the
+    // gamelan even (off: on selisir's five keys).
     bool alt = false;
     float gate = 0.45f;  // a step's sounding share, 0.06..1
     float swing = 0;     // 0..1: the off steps late by up to half a step

@@ -8,7 +8,6 @@ depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'polkit' 'pipewire')
 makedepends=('gcc' 'make')
 source=()
 sha256sums=()
-install=tenfold.install
 options=('!debug') # one package, not a separate one of debug symbols
 
 build() {
@@ -22,6 +21,4 @@ package() {
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "$startdir/tenfold.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/tenfold.svg"
   install -Dm644 "$startdir/tenfold.desktop" "$pkgdir/usr/share/applications/tenfold.desktop"
-  # Touchpads readable by the logged-in user, so taking the pad needs no password.
-  install -Dm644 "$startdir/70-tenfold.rules" "$pkgdir/usr/lib/udev/rules.d/70-tenfold.rules"
 }

@@ -9,12 +9,30 @@
 
 #include <cmath>
 #include <ctime>
-#include <algorithm>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 namespace tf {
+
+namespace {
+
+bool onPath(const char *program) {
+    const char *path = std::getenv("PATH");
+    std::string dirs = path ? path : "/usr/bin:/bin";
+    size_t start = 0;
+    while (start <= dirs.size()) {
+        const size_t end = std::min(dirs.find(':', start), dirs.size());
+        const std::string dir = dirs.substr(start, end - start);
+        if (!dir.empty() && access((dir + "/" + program).c_str(), X_OK) == 0)
+            return true;
+        start = end + 1;
+    }
+    return false;
+}
+
+}
 
 TouchSource::TouchSource(FrameSink *sink) : m_gesture(sink) {}
 
@@ -41,8 +59,18 @@ void TouchSource::start(const std::string &devicePath) {
         m_status = Failed;
         return;
     }
-    // Readable already (the input group, or a udev rule): no password.
+    // Readable already (the input group, or the optional udev rule): no
+    // password. Otherwise the helper runs as root through pkexec, which asks
+    // for the password once per run of the app.
     const bool direct = access(devicePath.c_str(), R_OK) == 0;
+    m_viaPassword = !direct;
+    if (!direct && !onPath("pkexec")) {
+        std::lock_guard lock(m_lock);
+        m_error = "Reading the trackpad needs your password, and pkexec (polkit) isn't installed. "
+                  "Install polkit, or let your user read touchpads (the README says how).";
+        m_status = Failed;
+        return;
+    }
 
     int toChild[2], fromChild[2];
     if (pipe2(toChild, O_CLOEXEC) != 0 || pipe2(fromChild, O_CLOEXEC) != 0) {
@@ -132,11 +160,14 @@ void TouchSource::run() {
         const int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         std::lock_guard lock(m_lock);
         if (m_status == Starting) {
-            // pkexec: 126 when the password dialog is dismissed, 127 when not allowed.
+            // pkexec: 126 when the password dialog is dismissed, 127 when not
+            // allowed, which is also what it says when no polkit agent is
+            // running to show the dialog.
             if (code == 126)
                 m_error = "The password prompt was closed.";
             else if (code == 127)
-                m_error = "Not allowed to read the trackpad.";
+                m_error = m_viaPassword ? "Not allowed to read the trackpad, or no polkit agent is running to ask for the password."
+                                        : "Not allowed to read the trackpad.";
             else if (m_error.empty())
                 m_error = "Could not read the trackpad.";
             m_status = Failed;

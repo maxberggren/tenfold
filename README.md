@@ -24,9 +24,19 @@ curl -fsSL https://maxberggren.github.io/tenfold/install.sh | sh
 ```
 
 It installs the latest release with pacman, checked against its checksum.
-The package adds a udev rule so you can read your own trackpad without a
-password. [Read the script](site/install.sh) first if you like, or take the
-package from [the releases](https://github.com/maxberggren/tenfold/releases).
+[Read the script](site/install.sh) first if you like, or take the package
+from [the releases](https://github.com/maxberggren/tenfold/releases).
+
+Reading the trackpad's raw fingers takes root, so the first time tenfold
+takes the pad in a run it asks for your password (through polkit) and reads
+the pad with a small helper. To skip the password, let the person at the
+computer read touchpads (only touchpads, not keyboards) with the udev rule
+in `extras/`:
+
+```bash
+sudo install -Dm644 extras/70-tenfold.rules /etc/udev/rules.d/70-tenfold.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=input --action=change
+```
 macOS and Windows need ports of their own (the trackpad and the audio are
 read in each system's own way), so they aren't there yet.
 

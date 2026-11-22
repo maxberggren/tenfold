@@ -4,6 +4,7 @@
 #include <QPainter>
 
 #include "testkit.h"
+#include "touchsource.h"
 
 using namespace tf;
 
@@ -11,6 +12,10 @@ namespace {
 
 // Kick, snare, kick, snare half a second apart on the drums page, then
 // Space where the next kick would land: a one-bar loop at 120 BPM.
+struct NoFrames : FrameSink {
+    void frame(const Frame &) override {}
+};
+
 const char *kBeat = "page 0 1\n"
                     "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
                     "key 2.5 Space\n";
@@ -697,6 +702,21 @@ private slots:
                 QVERIFY(!s.pageHelp(p).isEmpty());
             }
         });
+    }
+
+    // A pad this user can't read is read through pkexec, which asks for the
+    // password. Without pkexec, taking the pad says what's missing instead of
+    // failing with a bare "not allowed".
+    void anUnreadablePadWithoutPkexecSaysWhatIsMissing() {
+        const QByteArray path = qgetenv("PATH");
+        qputenv("PATH", "/nonexistent");
+        NoFrames sink;
+        TouchSource source(&sink);
+        source.start("/dev/input/event999");
+        qputenv("PATH", path);
+        QCOMPARE(int(source.status()), int(TouchSource::Failed));
+        QVERIFY(source.viaPassword());
+        QVERIFY2(source.error().find("pkexec") != std::string::npos, source.error().c_str());
     }
 
     void theBenchRunsWellInsideRealTime() {

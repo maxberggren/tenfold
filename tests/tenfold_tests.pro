@@ -14,7 +14,7 @@ DEPENDPATH += ../src
 HEADERS += testkit.h \
     ../src/console.h ../src/dsp.h ../src/electro.h ../src/fx.h ../src/offline.h ../src/part.h \
     ../src/parts.h ../src/phrase.h ../src/session.h ../src/songfile.h ../src/studio.h ../src/touch.h \
-    ../src/tuning.h ../src/tutorial.h ../src/vocal.h ../src/wav.h
+    ../src/touchsource.h ../src/tuning.h ../src/tutorial.h ../src/vocal.h ../src/wav.h
 
 PARTS = ../src/drums.cpp ../src/bass.cpp ../src/chords.cpp ../src/lead.cpp ../src/arp.cpp \
         ../src/atmos.cpp ../src/risers.cpp ../src/vocal.cpp ../src/arrange.cpp
@@ -23,5 +23,5 @@ SOURCES += main.cpp framework_tests.cpp \
     drums_tests.cpp bass_tests.cpp chords_tests.cpp lead_tests.cpp arp_tests.cpp \
     atmos_tests.cpp risers_tests.cpp vocal_tests.cpp arrange_tests.cpp tutorial_tests.cpp song_tests.cpp \
     ../src/console.cpp ../src/offline.cpp ../src/parts.cpp ../src/session.cpp ../src/songfile.cpp ../src/studio.cpp \
-    ../src/tuning.cpp ../src/tutorial.cpp \
+    ../src/touchsource.cpp ../src/tuning.cpp ../src/tutorial.cpp \
     $$PARTS

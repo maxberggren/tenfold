@@ -1,4 +1,0 @@
-# tenfold plays the trackpad: let the person logged in at the seat read
-# touchpads (and only touchpads, not keyboards) without a password. The
-# uaccess tag makes logind give the active session an ACL on the device.
-SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"

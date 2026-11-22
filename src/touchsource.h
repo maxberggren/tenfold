@@ -26,6 +26,9 @@ public:
     Status status() const { return m_status.load(); }
     std::string error() const;
     std::string padName() const;
+    // Started through pkexec because the pad isn't readable as is: while
+    // Starting, the system is asking for a password.
+    bool viaPassword() const { return m_viaPassword.load(); }
     float aspect() const { return m_aspect.load(); }
     int framesSeen() const { return m_frames.load(); }
 
@@ -39,6 +42,7 @@ private:
     int m_in = -1, m_out = -1;
     int m_pid = -1;
     std::atomic<Status> m_status{Idle};
+    std::atomic<bool> m_viaPassword{false};
     std::atomic<float> m_aspect{1.6f};
     std::atomic<int> m_frames{0};
     mutable std::mutex m_lock;

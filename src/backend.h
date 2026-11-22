@@ -37,6 +37,8 @@ class Backend : public QObject {
     Q_PROPERTY(int padState READ padState NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
     Q_PROPERTY(QString padName READ padName NOTIFY changed)
+    // The pad isn't readable as this user, so taking it asks for the password.
+    Q_PROPERTY(bool padNeedsPassword READ padNeedsPassword NOTIFY changed)
     Q_PROPERTY(int page READ page WRITE setPage NOTIFY pageChanged)
     Q_PROPERTY(int pageCount READ pageCount CONSTANT)
     Q_PROPERTY(QStringList pageNames READ pageNames CONSTANT)
@@ -98,6 +100,7 @@ public:
     int padState() const;
     QString error() const;
     QString padName() const;
+    bool padNeedsPassword() const;
     int page() const { return m_session->page(); }
     void setPage(int page);
     int pageCount() const { return m_session->pageCount(); }

@@ -1,0 +1,9 @@
+# Optional. Without it tenfold asks for your password (through polkit) each
+# time it starts, to read the trackpad. With it, the person logged in at the
+# seat can read touchpads (and only touchpads, not keyboards) without one:
+# the uaccess tag makes logind give the active session an ACL on the device.
+#
+#   sudo install -Dm644 extras/70-tenfold.rules /etc/udev/rules.d/70-tenfold.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=input --action=change
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"

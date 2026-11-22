@@ -1,9 +1,8 @@
 #!/bin/sh
 # Installs tenfold: the latest release's package for this machine (x86_64 or
 # arm64), checked against its checksum and installed with pacman, which also
-# installs what it needs (Qt 6, PipeWire, polkit). The package adds a udev
-# rule so the person at the computer can read the trackpad without a
-# password; nothing else on the system changes.
+# installs what it needs (Qt 6, PipeWire, polkit). Nothing else on the system
+# changes: tenfold asks for your password itself when it reads the trackpad.
 #
 #   curl -fsSL https://maxberggren.github.io/tenfold/install.sh | sh
 #

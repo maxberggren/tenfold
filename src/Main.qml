@@ -443,7 +443,8 @@ ApplicationWindow {
                     width: parent.width - 32
                     elide: Text.ElideRight
                     text: (backend.padState === Backend.Playing ? qsTr("Playing")
-                          : backend.padState === Backend.Starting ? qsTr("Waiting for the trackpad")
+                          : backend.padState === Backend.Starting
+                            ? (backend.padNeedsPassword ? qsTr("Waiting for your password") : qsTr("Waiting for the trackpad"))
                           : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
                           : backend.padState === Backend.Ready ? qsTr("Paused, pointer released")
                           : qsTr("Standby: Take pad to play"))
@@ -481,7 +482,8 @@ ApplicationWindow {
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     x: 14
-                    text: backend.padState === Backend.Starting ? qsTr("Waiting for the trackpad")
+                    text: backend.padState === Backend.Starting
+                          ? (backend.padNeedsPassword ? qsTr("Waiting for your password") : qsTr("Waiting for the trackpad"))
                         : backend.padState === Backend.Failed ? qsTr("Alarm — trackpad unavailable")
                         : backend.padState === Backend.Ready ? qsTr("Paused")
                         : qsTr("Standby")
@@ -515,6 +517,8 @@ ApplicationWindow {
                     text: backend.padState === Backend.Ready
                           ? qsTr("The trackpad is yours again and the sound keeps playing. Take it back with the button below.")
                           : qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Esc gives it back at any time. Meanwhile the mouse plays the pad too.")
+                            + (backend.padNeedsPassword && backend.padState !== Backend.Starting
+                               ? " " + qsTr("Reading the trackpad needs your password, once each time tenfold starts.") : "")
                     color: win.amber
                     font.family: win.mono
                     font.pixelSize: 15

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
+#include <unistd.h>
 
 #include "console.h"
 #include "device.h"
@@ -105,6 +106,10 @@ QString Backend::error() const {
 }
 
 QString Backend::padName() const { return QString::fromStdString(m_touch->padName()); }
+
+bool Backend::padNeedsPassword() const {
+    return !m_simulated && !m_device.isEmpty() && access(m_device.toLocal8Bit().constData(), R_OK) != 0;
+}
 
 void Backend::setPage(int page) {
     m_session->setPage(page);

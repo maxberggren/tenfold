@@ -1107,13 +1107,6 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     const int showColumn = ld ? ((showDegree % per) + per) % per : -1;
     const int showColour = ld ? int(ld[pub::Colour]) : 0;
     const float level = ld ? ld[pub::Level] : 0.0f;
-    const QRectF field = pc.rect(0, 0, 1, kRail);
-
-    // The chord's name, huge and faint behind the grid, breathing with it.
-    if (ld) {
-        chordText(p, field, chordName(t, showDegree, showColour), c::alpha(col, 0.06f + 0.12f * level),
-                  int(field.height() * 0.36));
-    }
 
     // Columns lit by what sounds in them: the fingers' bright, a loop's softer.
     for (int k = 0; k < cols; ++k) {

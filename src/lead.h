@@ -178,9 +178,34 @@ struct Sound {
     bool swoop = false;    // keeps a slow slur even across a step (trills smear on purpose)
     float echo = 0.15f, echoFb = 0.3f, echoBeats = 0.75f; // its own delay: send, feedback, time
     float gain = 1;
+    // What makes the tone, when it is not the oscillators above (whose
+    // levels are then 0). Each is a model of an instrument the oscillators
+    // can't imitate; the filter, the envelopes and the echo above still
+    // shape it.
+    //   String: a plucked string in a delay line (Karplus–Strong), its
+    //           bridge a curved one that the string buzzes against (a
+    //           sitar's jawari), with sympathetic strings in the key.
+    //   Pan:    a struck steel pan: a few tuned modes, each a pair of
+    //           sines a hair apart, and a roll on a held note.
+    //   Sync:   a saw hard-synced to an unheard master, its own pitch
+    //           swept down from high on every attack.
+    //   Bow:    a bowed string: a Helmholtz saw, rosin noise at each slip
+    //           of the bow, and a fiddle's skin body.
+    //   Reed:   free reeds, three to a note, tuned apart by a fixed beat in
+    //           hertz (an accordion's musette), in their chamber.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed };
+    int model = Osc;
+    float jawari = 0;      // String: how hard the string buzzes on its bridge
+    float sympathy = 0;    // String: how loud the sympathetic strings ring
+    float sustainS = 3.0f; // String, Pan: seconds the fundamental takes to fall 60 dB
+    float roll = 0;        // Pan: how strongly a held note is rolled
+    float syncFrom = 1, syncTo = 1, syncTime = 0.3f; // Sync: the slave's ratio, from the attack to where it settles, and how fast
+    float syncY = 0;       // Sync: how far the finger's height moves the ratio up
+    float scratch = 0;     // Bow: the rosin's noise
+    float beatHz = 0;      // Reed: how fast the outer reeds beat against the middle one
 };
 
-constexpr int kSounds = 10;
+constexpr int kSounds = 15;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -260,6 +285,53 @@ inline const Sound &sound(int i) {
          .envDecay = 0.2f, .keyTrack = 0.6f, .a = 0.07f, .d = 0.5f, .s = 0.88f, .r = 0.2f, .aHard = 0.018f, .glide = 0.05f,
          .scoop = 0.3f, .scoopTime = 0.05f, .vibRate = 4.9f, .vibDepth = 0.1f, .vibDelay = 0.38f, .vibAmp = 0.16f,
          .echo = 0.18f, .echoFb = 0.38f, .gain = 0.92f},
+        // A sitar, for raga, raga rock and psychedelia: a plucked wire
+        // string buzzing on its curved bridge (the jawari), bright and
+        // swarming on the stroke and sweetening as it rings, with two
+        // sympathetic strings tuned to the key's root and fifth humming
+        // along whenever a note shares their harmonics. Legato is meend: a
+        // hammer-on bends the ringing string slowly up to the next note,
+        // as a sitarist pulls the wire across the fret. A flatter finger
+        // buzzes more, a higher one plucks brighter.
+        {.name = "Sitar", .cutoff = 0.98f, .cutoffY = 0.06f, .keyTrack = 0.2f, .a = 0.0005f, .d = 1.0f, .s = 1.0f,
+         .r = 0.22f, .glide = 0.12f, .vibRate = 5.0f, .vibDepth = 0.06f, .vibDelay = 0.7f, .swoop = true, .echo = 0.12f,
+         .echoFb = 0.3f, .gain = 1.2f, .model = Sound::String, .jawari = 1.0f, .sympathy = 0.25f, .sustainS = 5.0f},
+        // A steel pan, for calypso, soca and island pop: tuned modes
+        // struck with a rubber-tipped stick, the octave blooming just
+        // after the fundamental, every mode a pair of sines a hair apart
+        // that shimmer against each other. A short note is one stroke; a
+        // held one is rolled, as panists sustain a note, the roll harder
+        // the harder the press.
+        {.name = "Steel pan", .cutoff = 0.95f, .cutoffY = 0.12f, .keyTrack = 0.3f, .a = 0.0008f, .d = 1.0f, .s = 1.0f,
+         .r = 0.5f, .glide = 0.03f, .scoop = -0.12f, .scoopTime = 0.03f, .vibDepth = 0.0f, .retrig = true, .echo = 0.2f,
+         .echoFb = 0.34f, .gain = 1.17f, .model = Sound::Pan, .sustainS = 2.2f, .roll = 1.0f},
+        // The sync lead of Italo disco and synth-pop: a saw hard-synced to
+        // the note, its own pitch swept down from high on each attack so
+        // every note opens with a vocal, tearing "yow"; the finger's height
+        // holds the sweep up, pressure tears it further. The master's own
+        // saw under it keeps the note's root solid, a little drive, and a
+        // ping-pong echo.
+        {.name = "Sync", .cutoff = 0.74f, .cutoffY = 0.12f, .res = 0.12f, .envAmt = 0.18f,
+         .envDecay = 0.35f, .keyTrack = 0.5f, .drive = 0.18f, .a = 0.002f, .d = 0.5f, .s = 0.85f, .r = 0.2f,
+         .glide = 0.04f, .vibRate = 5.5f, .vibDepth = 0.1f, .vibDelay = 0.5f, .echo = 0.22f, .echoFb = 0.4f,
+         .gain = 0.9f, .model = Sound::Sync, .syncFrom = 4.2f, .syncTo = 1.0f, .syncTime = 0.15f, .syncY = 0.9f},
+        // An erhu, the two-string fiddle of Chinese opera, film and
+        // C-pop: a bowed string through a small snakeskin body, nasal and
+        // close to a voice, rosin rasping on the stroke and under a hard
+        // bow. It slides into notes and between them, and its vibrato,
+        // from a hand pressing a string that has no fingerboard, is deep.
+        {.name = "Erhu", .cutoff = 0.84f, .cutoffY = 0.2f, .res = 0.05f, .envAmt = 0.1f, .envDecay = 0.3f,
+         .keyTrack = 0.6f, .drive = 0.08f, .a = 0.07f, .d = 0.6f, .s = 0.9f, .r = 0.16f, .aHard = 0.02f, .glide = 0.12f,
+         .scoop = 1.0f, .scoopTime = 0.07f, .vibRate = 5.7f, .vibDepth = 0.45f, .vibDelay = 0.28f, .vibAmp = 0.08f,
+         .swoop = true, .echo = 0.14f, .echoFb = 0.34f, .gain = 0.45f, .model = Sound::Bow, .scratch = 0.6f},
+        // A musette accordion, for cumbia, vallenato, tango and the
+        // French bal: three reeds to every note, one in tune and one
+        // either side of it by a few hertz, so the note shimmers at the
+        // same speed all the way up; reedy and bright in its chamber, the
+        // bellows' pressure its swell. No vibrato but the reeds' own.
+        {.name = "Accordion", .cutoff = 0.74f, .cutoffY = 0.2f, .res = 0.04f, .keyTrack = 0.6f, .a = 0.03f, .d = 0.4f,
+         .s = 0.92f, .r = 0.09f, .aHard = 0.012f, .glide = 0.02f, .vibDepth = 0.0f, .echo = 0.1f, .echoFb = 0.25f,
+         .gain = 2.2f, .model = Sound::Reed, .beatHz = 3.4f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

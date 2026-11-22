@@ -80,6 +80,85 @@ struct PulseOsc {
     }
 };
 
+// A saw hard-synced to a master oscillator that is never heard: every time
+// the master comes round, the saw starts its cycle again wherever it was,
+// so the note stays the master's while the saw's own, higher pitch sweeps
+// through its harmonics as a formant (the synth-pop and Italo disco lead).
+// Both the saw's own wrap and the reset are steps; each is smoothed with a
+// PolyBLEP over the two samples either side of it, which means the output
+// runs one sample late, so a step found in this sample can still reach
+// back into the last.
+struct SyncOsc {
+    float master = 0, slave = 0, prev = 0;
+    // inc: the master's (the note's) phase step; ratio: the slave's pitch
+    // over it; under it, `own` of the master's saw, which keeps the note's
+    // fundamental there however high the slave sweeps.
+    inline float step(float inc, float ratio, float own) {
+        const float incS = std::min(inc * ratio, 0.6f);
+        float cur, corr = 0;
+        // A step of height h, d samples before this one: half of it eased
+        // into the last sample, half out of this one.
+        auto blep = [&](float h, float d) {
+            prev += 0.5f * h * d * d;
+            corr -= 0.5f * h * (1.0f - d) * (1.0f - d);
+        };
+        master += inc;
+        if (master >= 1.0f) {
+            master -= 1.0f;
+            const float d = std::clamp(master / std::max(inc, 1e-9f), 0.0f, 1.0f); // since the reset
+            blep(-2.0f * own, d);
+            float at = slave + (1.0f - d) * incS;                                // the slave then
+            if (at >= 1.0f) {
+                at -= 1.0f;
+                blep(-2.0f, std::clamp(d + at / incS, 0.0f, 1.0f));
+            }
+            blep(-2.0f * at, d);
+            slave = d * incS;
+        } else {
+            slave += incS;
+            if (slave >= 1.0f) {
+                slave -= 1.0f;
+                blep(-2.0f, std::clamp(slave / incS, 0.0f, 1.0f));
+            }
+        }
+        cur = 2.0f * slave - 1.0f + own * (2.0f * master - 1.0f) + corr;
+        const float out = prev;
+        prev = cur;
+        return out;
+    }
+};
+
+// A free reed, as an accordion's are: a brass tongue swinging through a
+// slot chops the air into something between a saw and a narrow pulse, one
+// phase making both so they stay locked.
+struct ReedOsc {
+    float phase = 0;
+    inline float step(float inc) {
+        constexpr float pw = 0.34f;
+        phase += inc;
+        if (phase >= 1.0f)
+            phase -= 1.0f;
+        const float saw = 2.0f * phase - 1.0f - polyBlep(phase, inc);
+        float t2 = phase - pw;
+        if (t2 < 0)
+            t2 += 1.0f;
+        const float pulse = (phase < pw ? 1.0f : -1.0f) + polyBlep(phase, inc) - polyBlep(t2, inc) - (2.0f * pw - 1.0f);
+        return 0.55f * saw + 0.45f * pulse;
+    }
+};
+
+// A steel pan note's modes: its fundamental, the octave and the twelfth a
+// tuner hammers in on purpose, the double octave, and a short-lived
+// metallic ring well above them from the skirt around the note. Each
+// mode's share of a full strike and how long it rings against the
+// fundamental; the octave and the twelfth bloom a moment after the strike,
+// as the note's energy flows up into them.
+constexpr int kModes = 5;
+constexpr float kModeRatio[kModes] = {1.0f, 2.0f, 3.0f, 4.0f, 6.73f};
+constexpr float kModeLevel[kModes] = {1.0f, 0.62f, 0.26f, 0.1f, 0.07f};
+constexpr float kModeRing[kModes] = {1.0f, 0.62f, 0.32f, 0.18f, 0.025f};
+constexpr float kModeBloom[kModes] = {0.0f, 1.0f, 0.6f, 0.0f, 0.0f};
+
 // How much dry saw a vowel keeps under its formants.
 constexpr float kFormDry = 0.2f;
 
@@ -167,8 +246,23 @@ struct Bank {
     float car[2] = {}, mod[2] = {};
     SawOsc layer, layer2;
     SquareOsc sub;
-    Svf breath; // the band of air over the note
+    Svf breath; // the band of air over the note (and a bow's rosin)
     Oversampler2x osL, osR;
+    // String: the string itself, the loop filter's state, and the pluck
+    // still being fed in (samples left, of how many).
+    Delay string;
+    float strLp = 0;
+    int pluck = 0, pluckLen = 1;
+    OnePoleLp pluckLp;
+    bool wasLive = false; // a harmony string coming in is plucked
+    // Pan: each mode's energy, its level following that without a click,
+    // and its two sines' phases; the bloom still to come up.
+    float modeE[kModes] = {}, modeA[kModes] = {}, modePh[kModes][2] = {};
+    float bloom = 0;
+    float thud = 0; // how hard the stick's last stroke landed
+    Svf thudLp;
+    SyncOsc sync[2];
+    ReedOsc reeds[3];
 };
 
 struct Voice {
@@ -193,6 +287,9 @@ struct Voice {
     float drift[kDrifts] = {}, driftTo[kDrifts] = {}, driftLeft[kDrifts] = {};
     float vibPhase = 0, held = 0; // seconds since the note began, for the vibrato's delay
     float pwmPhase = 0;
+    float rollPhase = 0; // Pan: where the roll is between two strokes
+    int rollHand = 0;    // and which stick strikes next
+    float syncEnv = 0;   // Sync: the sweep from the attack, falling to 0
     float gateEnv = 1;
     float formNorm = 1; // the vowel's level made up
     float cut = 4;                // smoothed cutoff, in octaves above 60 Hz
@@ -209,8 +306,15 @@ public:
     void init(float rate) override {
         m_rate = rate;
         (void)sine();
-        for (size_t i = 0; i < m_voices.size(); ++i)
+        for (size_t i = 0; i < m_voices.size(); ++i) {
             m_voices[i].rng = Rng(0x1EADu + uint32_t(i) * 7919u);
+            // A string as long as the lowest note any bank can reach: the
+            // neck's bottom an octave down, its −OCT voice, bent.
+            for (auto &k : m_voices[i].banks)
+                k.string.init(size_t(rate / 24.0f));
+        }
+        for (auto &d : m_sym)
+            d.init(size_t(rate / 90.0f));
         m_echoL.init(size_t(3.2f * rate));
         m_echoR.init(size_t(3.2f * rate));
         m_echoTime.setTime(0.25f, rate);
@@ -268,6 +372,8 @@ public:
         if (hard) {
             m_echoL.clear();
             m_echoR.clear();
+            for (auto &d : m_sym)
+                d.clear();
         }
     }
 
@@ -585,7 +691,26 @@ private:
             k.layer2.phase = v.rng.unit();
             k.sub.phase = 0;
             k.breath.reset();
+            if (s.model == Sound::String)
+                k.string.clear();
+            k.strLp = 0;
+            k.pluck = 0;
+            k.pluckLp.y = 0;
+            k.wasLive = levels[b] > 0;
+            for (int m = 0; m < kModes; ++m) {
+                k.modeE[m] = k.modeA[m] = 0;
+                k.modePh[m][0] = v.rng.unit();
+                k.modePh[m][1] = v.rng.unit();
+            }
+            k.bloom = k.thud = 0;
+            k.thudLp.reset();
+            for (auto &o : k.sync)
+                o = SyncOsc{};
+            for (auto &o : k.reeds)
+                o.phase = v.rng.unit();
         }
+        v.rollPhase = 0;
+        v.rollHand = 0;
         // Each note begins somewhere in its drift, as an old synth's would.
         // (Only a drifting sound draws it, so the others' phases stay as they were.)
         for (int o = 0; o < Voice::kDrifts; ++o) {
@@ -607,9 +732,31 @@ private:
         v.filt.gate(true);
         v.fmEnv = 1.0f;
         v.chiff = v.chiffFast = 1.0f;
+        v.syncEnv = 1.0f;
+        // A string is plucked, a pan struck, in every voice of the line.
+        for (auto &k : v.banks) {
+            k.pluck = -1; // its length is worked out at its own pitch, when it sounds
+            if (s.model == Sound::Pan)
+                hit(k, s, vel, v.y, 1.0f);
+        }
         if (scoop)
             v.scoop = -s.scoop * (0.7f + 0.6f * vel);
         v.vel = vel;
+    }
+
+    // A pan's note struck: every mode takes the energy the stick gives it,
+    // the upper ones more of it the harder and higher on the pad it lands.
+    // A full stroke starts the bloom again; a roll's softer strokes only
+    // top it up, so the octave never drops out under a roll.
+    static void hit(Bank &k, const Sound &, float vel, float y, float stroke) {
+        const float hard = clampf(0.45f * vel + 0.45f * y + 0.1f, 0.0f, 1.0f) * stroke;
+        for (int m = 0; m < kModes; ++m) {
+            const float want = kModeLevel[m] * stroke * vel * std::pow(0.35f + 0.65f * hard, float(m));
+            k.modeE[m] = std::max(k.modeE[m], want) + 0.1f * std::min(k.modeE[m], want);
+        }
+        k.bloom = std::max(k.bloom, stroke >= 1.0f ? 1.0f : 0.3f);
+        k.pluck = -1;
+        k.thud = vel * stroke;
     }
 
     void release(Voice &v) {
@@ -765,13 +912,13 @@ private:
                 // The gate runs on the studio's beat, so it lands with the drums.
                 const int steps = gateSteps(m_lines[size_t(v.from)].gate);
                 const double phase = tr.beatAt(at) * steps;
-                renderVoice(v, l + at, r + at, m_sendL + at, m_sendR + at, n, dt, float(phase - std::floor(phase)),
+                renderVoice(v, l + at, r + at, m_sendL + at, m_sendR + at, m_symSend + at, n, dt, float(phase - std::floor(phase)),
                             float(tr.beatsPerSample * steps), steps > 0);
             }
     }
 
-    void renderVoice(Voice &v, float *outL, float *outR, float *sendL, float *sendR, int n, float dt, float gatePhase,
-                     float gateInc, bool gated) {
+    void renderVoice(Voice &v, float *outL, float *outR, float *sendL, float *sendR, float *sym, int n, float dt,
+                     float gatePhase, float gateInc, bool gated) {
         const Sound &s = sound(v.sound);
         const float rate = m_rate;
         // Expression follows the finger closely but never steps.
@@ -981,6 +1128,106 @@ private:
         const float outGain = s.gain * 0.3f * swell * (0.45f + 0.55f * v.vel);
         const float send = s.echo + 0.9f * m_lines[size_t(v.from)].throwAmt;
         const float inv = 1.0f / float(n);
+
+        // --- the models, set up for the segment ---
+        const int model = s.model;
+        // String: the loop's filter takes a little more off each harmonic
+        // every time round (less, the higher the finger and the harder the
+        // pluck); its loss is set so the fundamental falls 60 dB in the
+        // sound's sustain (shorter up the neck), and its delay at the
+        // fundamental is taken off the line's, so the string is in tune.
+        float strB = 0, strG[Voice::kBanks] = {}, strTau[Voice::kBanks] = {};
+        float jaw = 0;
+        if (model == Sound::String) {
+            strB = clampf(0.12f - 0.08f * v.y - 0.03f * v.vel - 0.08f * float(m_lines[size_t(v.from)].tone) / kToneSteps,
+                          0.02f, 0.5f);
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                const float w = kTwoPi * inc1[b];
+                const float c = std::cos(w), sn = std::sin(w);
+                const float mag = (1.0f - strB) / std::sqrt(1.0f - 2.0f * strB * c + strB * strB);
+                strTau[b] = std::atan2(strB * sn, 1.0f - strB * c) / std::max(w, 1e-6f);
+                const float t60 = s.sustainS * clampf(std::exp2(-(v.banks[b].pitch - 60.0f) / 24.0f), 0.3f, 1.6f);
+                strG[b] = std::min(std::pow(10.0f, -3.0f / (t60 * inc1[b] * rate)) / mag, 0.9995f);
+                // A harmony string coming in is plucked then, not left silent.
+                Bank &k = v.banks[b];
+                if (live[b] && !k.wasLive && !v.releasing)
+                    k.pluck = -1;
+                k.wasLive = live[b];
+            }
+            // How far the bridge folds the string's wave, a share of its
+            // period for each unit of swing. A flatter finger buzzes more.
+            jaw = s.jawari * 0.3f * (0.75f + 0.5f * v.fat);
+        }
+        // Pan: each mode's ring, per sample (the high notes ring shorter,
+        // as small note areas do), its two sines a hair apart so it
+        // shimmers, and the bloom's rise. A held note is rolled: strokes
+        // about thirteen a second, the two sticks a little unequal, harder
+        // the harder the press.
+        float modeDec[kModes] = {}, split[kModes] = {}, bloomDec = 0, smoothA = 0;
+        if (model == Sound::Pan) {
+            const float shorter = clampf(std::exp2(-(v.banks[0].pitch - 64.0f) / 18.0f), 0.35f, 1.5f);
+            for (int m = 0; m < kModes; ++m) {
+                modeDec[m] = std::exp(-6.9078f / (s.sustainS * kModeRing[m] * shorter * rate));
+                split[m] = (0.35f + 0.25f * float(m)) / rate;
+            }
+            bloomDec = std::exp(-1.0f / (0.018f * rate));
+            smoothA = 1.0f - std::exp(-1.0f / (0.0015f * rate));
+            if (s.roll > 0 && !v.releasing && v.held > 0.2f) {
+                v.rollPhase += (12.5f + 0.8f * v.press) * dt;
+                if (v.rollPhase >= 1.0f) {
+                    v.rollPhase -= std::floor(v.rollPhase);
+                    v.rollHand ^= 1;
+                    const float stroke =
+                        s.roll * (0.2f + 0.4f * clampf((v.press - 0.15f) / 0.7f, 0.0f, 1.0f)) * (v.rollHand ? 0.86f : 1.0f);
+                    for (int b = 0; b < Voice::kBanks; ++b)
+                        if (live[b])
+                            hit(v.banks[b], s, v.vel, v.y, stroke);
+                }
+            }
+        }
+        // Sync: the slave's ratio sweeps down from the attack to where it
+        // settles; height and pressure lift it, and the two sides' masters
+        // stand a few cents apart, so it is wide.
+        float ratio0 = 1, ratio1 = 1, syncDet = 1;
+        if (model == Sound::Sync) {
+            auto ratioAt = [&](float env) {
+                return s.syncTo + (s.syncFrom - s.syncTo) * env + s.syncY * v.y + 0.5f * (v.press - 0.5f);
+            };
+            ratio0 = ratioAt(v.syncEnv);
+            v.syncEnv *= std::exp(-dt / std::max(s.syncTime, 0.01f));
+            ratio1 = ratioAt(v.syncEnv);
+            syncDet = std::exp2((3.0f + 6.0f * v.fat) / 1200.0f);
+        }
+        // Bow: rosin noise in a band high over the note, loudest just as
+        // the string slips off the hair and rougher under a harder press
+        // and on the attack, before the string has settled into its swing.
+        float scratch = 0;
+        if (model == Sound::Bow) {
+            scratch = s.scratch * (0.4f + 0.9f * v.press);
+            for (int b = 0; b < Voice::kBanks; ++b)
+                if (live[b])
+                    v.banks[b].breath.set(std::max(3.0f * inc1[b] * rate, 2200.0f), 0.8f, rate);
+        }
+        // Reed: the outer reeds a fixed number of hertz either side of the
+        // middle one, however high the note, as an accordion's are tuned,
+        // so the musette's tremolo keeps its speed up the keyboard; a
+        // flatter finger tunes it wetter.
+        float beatInc = 0;
+        if (model == Sound::Reed)
+            beatInc = s.beatHz * (0.8f + 0.6f * v.fat) / rate;
+        // The bow's fiddle body and the reeds' chamber: fixed resonances,
+        // whatever the note.
+        static const float bodyHz[3] = {560.0f, 1350.0f, 2900.0f}, bodyQ[3] = {2.6f, 4.0f, 4.5f};
+        static const float bodyGain[3] = {1.0f, 0.9f, 0.6f};
+        if (model == Sound::Bow)
+            for (int k = 0; k < 3; ++k) {
+                v.form[0][k].set(bodyHz[k], bodyQ[k], rate);
+                v.form[1][k].set(bodyHz[k], bodyQ[k], rate);
+            }
+        if (model == Sound::Reed) {
+            v.form[0][0].set(1700.0f, 1.2f, rate);
+            v.form[1][0].set(1700.0f, 1.2f, rate);
+        }
         const float gateAttack = 1.0f - std::exp(-1.0f / (0.0015f * rate));
         const float gateRelease = 1.0f - std::exp(-1.0f / (0.004f * rate));
 
@@ -1040,6 +1287,105 @@ private:
                 if (s.breath > 0) {
                     air += k.breath.step(v.rng.bipolar()).band * (0.65f + 0.35f * tone) * gb;
                 }
+                switch (model) {
+                case Sound::String: {
+                    // The pluck: one period of the shape a wire plectrum
+                    // leaves the string in, pulled aside near its end (a
+                    // triangle, its mean taken out), with a little scrape
+                    // of noise, brighter for a harder stroke.
+                    const float D = clampf(1.0f / std::max(inc, 1e-6f) - strTau[b], 4.0f, float(k.string.buf.size()) - 8.0f);
+                    float in = 0;
+                    if (k.pluck < 0) {
+                        k.pluck = k.pluckLen = std::max(8, int(D));
+                        k.pluckLp.set(1500.0f + 9000.0f * v.vel * (0.4f + 0.6f * v.y), rate);
+                    }
+                    if (k.pluck > 0) {
+                        constexpr float at = 0.12f;
+                        const float ph = 1.0f - float(k.pluck) / float(k.pluckLen);
+                        const float shape = (ph < at ? ph / at : (1.0f - ph) / (1.0f - at)) - 0.5f;
+                        in = v.vel * (1.6f * shape + 0.8f * k.pluckLp.step(v.rng.bipolar()));
+                        --k.pluck;
+                    }
+                    const float y = k.string.read(D);
+                    k.strLp += (y - k.strLp) * (1.0f - strB);
+                    k.string.push(clampf(k.strLp * strG[b] + in, -3.0f, 3.0f));
+                    // What is heard is the string as it slaps the bridge:
+                    // while it swings toward it, past a small rest, it is
+                    // heard later in its cycle the further it swings, so
+                    // each period's wave folds over into a buzz. The fold
+                    // is as deep as the swing, so the buzz is brightest on
+                    // the stroke and its colour sweeps down as the note
+                    // rings out, sweetening to the plain string.
+                    const float lean = std::min(std::max(0.0f, y - 0.02f) * jaw * D, 0.5f * D);
+                    const float heard = k.string.read(1.0f + lean);
+                    bl += heard;
+                    br += heard;
+                    break;
+                }
+                case Sound::Pan: {
+                    for (int m = 0; m < kModes; ++m) {
+                        const float mi = inc * kModeRatio[m];
+                        if (mi > 0.45f)
+                            break;
+                        k.modeE[m] *= modeDec[m];
+                        k.modeA[m] += (k.modeE[m] - k.modeA[m]) * smoothA;
+                        float &pa = k.modePh[m][0], &pb = k.modePh[m][1];
+                        pa += mi;
+                        pb += mi + split[m];
+                        pa -= float(int(pa));
+                        pb -= float(int(pb));
+                        // The mode on its pitch, and its weaker twin a hair
+                        // sharp of it, leaning right: a slow shimmer, never
+                        // a null.
+                        const float amp = k.modeA[m] * (1.0f - kModeBloom[m] * k.bloom);
+                        const float sa = sine()(pa) * amp, sb = sine()(pb) * amp * 0.35f;
+                        bl += 0.8f * (sa + 0.4f * sb);
+                        br += 0.8f * (sa + sb);
+                    }
+                    k.bloom *= bloomDec;
+                    // The stick's rubber tip: a soft, dull thud of a few
+                    // milliseconds, as hard as the stroke.
+                    if (k.pluck < 0) {
+                        k.pluck = k.pluckLen = int(0.005f * rate);
+                        k.thudLp.set(500.0f + 1200.0f * k.thud, 0.7f, rate);
+                    }
+                    if (k.pluck > 0) {
+                        const float ph = 1.0f - float(k.pluck) / float(k.pluckLen);
+                        const float thud = k.thudLp.step(v.rng.bipolar()).low * 0.6f * k.thud * sine()(0.5f * ph);
+                        bl += thud;
+                        br += thud;
+                        --k.pluck;
+                    }
+                    break;
+                }
+                case Sound::Sync: {
+                    const float ratio = ratio0 + (ratio1 - ratio0) * t;
+                    bl += 0.6f * k.sync[0].step(std::min(inc / syncDet, 0.45f), ratio, 0.6f);
+                    br += 0.6f * k.sync[1].step(std::min(inc * syncDet, 0.45f), ratio, 0.6f);
+                    break;
+                }
+                case Sound::Bow: {
+                    const float o = k.saw[0].step(std::min(inc, 0.45f));
+                    const float slip = std::max(0.0f, 1.0f - 6.0f * k.saw[0].phase);
+                    const float rough = scratch * (0.3f + slip + 1.5f * (chiff0 + (chiff1 - chiff0) * t));
+                    const float noise = k.breath.step(v.rng.bipolar() * rough).band;
+                    bl += 0.85f * o + noise;
+                    br += 0.85f * o + noise;
+                    break;
+                }
+                case Sound::Reed: {
+                    const float mid = k.reeds[0].step(std::min(inc, 0.45f));
+                    const float hi = k.reeds[1].step(std::min(inc + beatInc, 0.45f));
+                    const float lo = k.reeds[2].step(std::min(std::max(inc - 0.93f * beatInc, 1e-5f), 0.45f));
+                    // The valve opening: a breath of air as the note speaks.
+                    const float valve = 0.08f * v.rng.bipolar() * (chiff0 + (chiff1 - chiff0) * t);
+                    bl += 0.5f * mid + 0.5f * lo + 0.32f * hi + valve;
+                    br += 0.5f * mid + 0.32f * lo + 0.5f * hi + valve;
+                    break;
+                }
+                default:
+                    break;
+                }
                 if (s.layer > 0) {
                     // Two saws an octave up, a few cents apart, one each side.
                     bl += k.layer.step(std::min(inc * 2.0f * layerDet, 0.45f)) * s.layer;
@@ -1069,6 +1415,17 @@ private:
                 }
                 sl = (fl + kFormDry * sl) * v.formNorm;
                 sr = (fr + kFormDry * sr) * v.formNorm;
+            } else if (model == Sound::Bow) {
+                float fl = 0, fr = 0;
+                for (int k = 0; k < 3; ++k) {
+                    fl += v.form[0][k].step(sl).band * bodyGain[k];
+                    fr += v.form[1][k].step(sr).band * bodyGain[k];
+                }
+                sl = fl + 0.3f * sl;
+                sr = fr + 0.3f * sr;
+            } else if (model == Sound::Reed) {
+                sl = 0.8f * sl + 0.55f * v.form[0][0].step(sl).band;
+                sr = 0.8f * sr + 0.55f * v.form[1][0].step(sr).band;
             }
             // Into the ladder at half level: its own soft clip stays a
             // colour, not a distortion that would smear a bell's partials.
@@ -1105,6 +1462,8 @@ private:
             v.lastR = sr;
             sendL[i] += sl * send;
             sendR[i] += sr * send;
+            if (s.sympathy > 0)
+                sym[i] += (sl + sr) * s.sympathy;
             peak = std::max(peak, std::fabs(sl) + std::fabs(sr));
         }
         v.level = std::max(peak * 2.0f, v.level * std::exp(-dt / 0.08f));
@@ -1141,8 +1500,51 @@ private:
         const float lpHz = 4800.0f * std::exp2(-1.6f * dark);
         m_echoLpL.set(lpHz, m_rate);
         m_echoLpR.set(lpHz, m_rate);
+        // The sympathetic strings: two, tuned to the key's root and its
+        // fifth between G3 and G4, never plucked, ringing only with what the
+        // played strings give them at their own harmonics. Each is a comb
+        // whose loop is tuned the way the played strings' are.
+        const Harmony &h = ctx.harmony();
+        float symD[2], symG = 0.0f;
+        {
+            const int per = h.tuning.degreesPerOctave();
+            int fifth = 0;
+            double best = 1e9;
+            for (int d = 1; d < per; ++d) {
+                const double e = std::fabs(h.tuning.degreeSemis(d) - 7.0);
+                if (e < best) {
+                    best = e;
+                    fifth = d;
+                }
+            }
+            const double root = h.tuning.baseMidi() + h.tuning.continuousSemis(0.0);
+            const double notes[2] = {root, root + h.tuning.continuousSemis(double(fifth)) - h.tuning.continuousSemis(0.0)};
+            for (int c = 0; c < 2; ++c) {
+                double m = notes[c];
+                while (m < 55.0)
+                    m += 12.0;
+                while (m >= 67.0)
+                    m -= 12.0;
+                const float w = kTwoPi * midiToHz(m) / m_rate;
+                symD[c] = clampf(kTwoPi / w - std::atan2(kSymB * std::sin(w), 1.0f - kSymB * std::cos(w)) / w, 4.0f,
+                                 float(m_sym[c].buf.size()) - 8.0f);
+            }
+            symG = 0.997f;
+        }
         float peak = 0;
         for (int i = 0; i < n; ++i) {
+            // Into the sympathetic strings and back out of them, the root's
+            // a little to the left, the fifth's to the right.
+            float sy[2];
+            for (int c = 0; c < 2; ++c) {
+                const float y = m_sym[c].read(symD[c]);
+                m_symLp[c] += (y - m_symLp[c]) * (1.0f - kSymB);
+                m_sym[c].push(fastTanh(m_symLp[c] * symG + 0.004f * m_symSend[i]));
+                sy[c] = y;
+            }
+            m_symSend[i] = 0;
+            l[i] += 0.9f * sy[0] + 0.5f * sy[1];
+            r[i] += 0.5f * sy[0] + 0.9f * sy[1];
             const float d = m_echoTime.step(target);
             const float dl = m_echoL.read(d), dr = m_echoR.read(d);
             // Ping-pong: what goes in starts on the left, every repeat crosses.
@@ -1172,6 +1574,11 @@ private:
     float m_pubPos[kLines] = {}, m_pubHarm[kLines][kHarmSlots] = {}, m_pubVib[kLines] = {};
 
     float m_sendL[kBlock] = {}, m_sendR[kBlock] = {};
+    // The sympathetic strings and what the played strings send them.
+    static constexpr float kSymB = 0.35f; // their loop's damping: they ring sweet, not bright
+    float m_symSend[kBlock] = {};
+    Delay m_sym[2];
+    float m_symLp[2] = {};
     Delay m_echoL, m_echoR;
     Smooth m_echoTime;
     Svf m_echoHp, m_echoHp2;
@@ -1614,7 +2021,9 @@ public:
     QString help() const override {
         return QStringLiteral(
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room, Mini (a vintage mono synth), "
-            "Flute\n"
+            "Flute, Sitar (a buzzing string; legato bends the string, meend), Steel pan (a held note is rolled), "
+            "Sync (Italo disco's hard-sync lead), Erhu (a Chinese fiddle), Accordion (a musette, three reeds); "
+            "the row under the pad shows the ones around the chosen sound, faded at an end with more beyond\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
             "Shift+← →\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
             "- and + (or =)\ttone: darker, brighter\n"
@@ -1630,10 +2039,11 @@ public:
             "second finger while one is held\tlegato: glides there, lift to fall back (trills, runs)\n"
             "slide\tglide through the scale; rest and it settles in tune\n"
             "wiggle\tvibrato as wide as the wiggle; hold still and it comes by itself\n"
-            "higher on the pad\tbrighter (on Vox, the vowel: oo, oh, ah, eh, ee)\n"
+            "higher on the pad\tbrighter (on Vox, the vowel: oo, oh, ah, eh, ee; on Sync, the sweep held higher)\n"
             "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
-            "on Flute, a quicker attack)\n"
-            "flatten the finger\tfatter: the unison spreads (on Flute, breathier)\n"
+            "on Flute, a quicker attack; on Steel pan, a harder roll; on Erhu, more rosin)\n"
+            "flatten the finger\tfatter: the unison spreads (on Flute, breathier; on Sitar, more buzz; "
+            "on Accordion, a wetter musette)\n"
             "twist the finger\tbend up or down one step of the scale\n"
             "click the pad\tleap an octave up while held\n"
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"
@@ -2478,13 +2888,13 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     auto chipWant = [&](const QString &label) { return console::textWidth(c::font(12, true), label) + 12; };
     c::clips(p, c::bandRow(pc, 0, 0, 0.42), pv, col, pc.time, &m_spots);
     {
-        std::vector<qreal> want;
+        // More sounds than the row has room for: the shared chip row shows
+        // a window onto them that follows the one chosen, faded at an end
+        // where there are more beyond it.
+        QStringList names;
         for (int s = 0; s < kSounds; ++s)
-            want.push_back(chipWant(QString::fromUtf8(sound(s).name).toUpper()));
-        const auto cells = lay(c::bandRow(pc, 0, 0.43, 1), want, 4);
-        for (int s = 0; s < kSounds; ++s)
-            c::chip(p, pc, cells[size_t(s)], QString::fromUtf8(sound(s).name).toUpper(), s == m_sound, &m_spots,
-                    SpotSound + s);
+            names << QString::fromUtf8(sound(s).name).toUpper();
+        c::chips(p, pc, c::bandRow(pc, 0, 0.43, 1), names, m_sound, &m_spots, SpotSound);
     }
     {
         struct Stepper {
@@ -2549,17 +2959,37 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         const QRectF lr(pc.pad.left() + 16, pc.pad.top() - 9, lw, 18);
         p.fillRect(lr, QColor(0, 0, 0));
         c::text(p, lr, QStringLiteral("Lead"), col, 13, true, Qt::AlignCenter);
+        // As many names as fit before the beat lights at the right,
+        // around the chosen one, taken one each side in turn; a name at an
+        // end with more beyond it is faded.
+        const QFont f = c::font(12, true);
+        auto width = [&](int s) { return console::textWidth(f, QString::fromUtf8(sound(s).name)) + 20; };
+        const qreal room = pc.pad.right() - 120 - (lr.right() + 12);
+        int first = m_sound, last = m_sound + 1;
+        qreal used = width(m_sound);
+        for (bool grew = true; grew;) {
+            grew = false;
+            if (last < kSounds && used + width(last) <= room) {
+                used += width(last++);
+                grew = true;
+            }
+            if (first > 0 && used + width(first - 1) <= room) {
+                used += width(--first);
+                grew = true;
+            }
+        }
         qreal x = lr.right() + 12;
-        for (int s = 0; s < kSounds; ++s) {
+        for (int s = first; s < last; ++s) {
             const QString name = QString::fromUtf8(sound(s).name);
+            const bool more = (s == first && first > 0) || (s == last - 1 && last < kSounds);
             if (s == m_sound) {
                 const QRectF r = c::tag(p, QPointF(x, pc.pad.top()), name, col, 12);
                 x = r.right() + 8;
             } else {
-                const QFont f = c::font(12, true);
                 const qreal w = console::textWidth(f, name) + 12;
                 p.fillRect(QRectF(x, pc.pad.top() - 9, w, 18), QColor(0, 0, 0));
-                c::text(p, QRectF(x, pc.pad.top() - 9, w, 18), name, c::alpha(col, 0.55f), 12, true, Qt::AlignCenter);
+                c::text(p, QRectF(x, pc.pad.top() - 9, w, 18), name, c::alpha(col, more ? 0.22f : 0.55f), 12, true,
+                        Qt::AlignCenter);
                 x += w + 8;
             }
         }

@@ -203,7 +203,7 @@ double choppiness(const testkit::Take &take, double from, double to, double bpm)
 const std::set<int> kAMinor = {9, 11, 0, 2, 4, 5, 7};
 
 // The sounds, in the order → steps through them.
-enum { Pad = 0, Trance, Organ, Piano, Pluck, Pump, Keys, Strings, Dub, Guitar, Accordion, Kalimba, Gamelan, Brass, Sitar, kSounds };
+enum { Pad = 0, Trance, Organ, Piano, Pluck, Pump, Keys, Strings, Dub, Guitar, Accordion, Kalimba, Gamelan, Steel, Sitar, kSounds };
 
 // The keys that choose sound s from the first (→ s times).
 std::string soundKeys(int s) {
@@ -1109,7 +1109,7 @@ private slots:
     void everySoundIsCleanAndInTune_data() {
         QTest::addColumn<int>("sound");
         const char *names[] = {"pad",    "trance", "organ",     "piano",   "pluck",   "pump",  "keys", "strings",
-                               "dub",    "guitar", "accordion", "kalimba", "gamelan", "brass", "sitar"};
+                               "dub",    "guitar", "accordion", "kalimba", "gamelan", "steel", "sitar"};
         for (int s = 0; s < kSounds; ++s)
             QTest::newRow(names[s]) << s;
     }
@@ -1278,7 +1278,7 @@ private slots:
         QTest::newRow("accordion") << int(Accordion) << QStringLiteral("ACCORDION");
         QTest::newRow("kalimba") << int(Kalimba) << QStringLiteral("KALIMBA");
         QTest::newRow("gamelan") << int(Gamelan) << QStringLiteral("GAMELAN");
-        QTest::newRow("brass") << int(Brass) << QStringLiteral("BRASS");
+        QTest::newRow("steel") << int(Steel) << QStringLiteral("STEEL");
         QTest::newRow("sitar") << int(Sitar) << QStringLiteral("SITAR");
     }
     void theWorldSoundsReopenByName() {
@@ -1349,15 +1349,101 @@ private slots:
         QVERIFY2(reeds > 0.5 * mid, qPrintable(QString("reeds %1 middle %2").arg(reeds).arg(mid)));
     }
 
+    // The voicing keys switch the accordion's registers: below the middle,
+    // bassoon and clarinet, a reed an octave under each note and no
+    // musette beating; above it, a piccolo reed an octave over.
+    void theAccordionSwitchesRegisters() {
+        auto held = [](const std::string &keys, std::vector<float> *notes) {
+            return playWatching("page 0 3\n" + soundKeys(Accordion) + keys + "down 0.2 9 " + rail(0) +
+                                    "\ndown 0.3 1 " + cell(0, Power) + " p=0.6\nup 2.8 1\nup 2.9 9\nend 3.2\n",
+                                [&](double now, const StudioView &v) {
+                                    if (now > 1.0 && now < 1.1)
+                                        *notes = voicing(v);
+                                });
+        };
+        std::vector<float> low, mid, high;
+        const auto bassoon = held("key 0.15 Down\n", &low), musette = held("", &mid), piccolo = held("key 0.15 Up\n", &high);
+        QVERIFY(!low.empty() && !mid.empty() && !high.empty());
+        auto at = [](const testkit::Take &t, double hz, double width) { return bandShare(t, 0.6, hz - width, hz + width); };
+        auto hzOf = [](float m) { return 440.0 * std::exp2((m - 69.0) / 12.0); };
+        // The musette's sharp and flat reeds against the middle one (the bins
+        // beside a single reed hold some of it too, so not nothing).
+        auto beating = [&](const testkit::Take &t, float m) {
+            const double hz = hzOf(m), c = std::min(0.0075, 3.0 / hz);
+            return (at(t, hz * (1 + c), 1.0) + at(t, hz * (1 - c), 1.0)) / std::max(1e-9, at(t, hz, 1.0));
+        };
+        const double bb = beating(bassoon, low[0]), bm = beating(musette, mid[0]);
+        QVERIFY2(bb < 0.45 * bm, qPrintable(QString("beating %1 bassoon, %2 musette").arg(bb).arg(bm)));
+        // The 16' reed's own fundamental is mostly under the page's
+        // high-pass, but its fifth harmonic, two and a half times the note,
+        // is a harmonic of no note of the power chord: it is there in the
+        // bassoon register only.
+        const double under = at(bassoon, 2.5 * hzOf(low[0]), 2.0), none = at(musette, 2.5 * hzOf(mid[0]), 2.0);
+        QVERIFY2(under > 4 * none, qPrintable(QString("the 16' reed's fifth %1, without it %2").arg(under).arg(none)));
+        // The piccolo: each note's octave, against the note itself, louder.
+        auto octaves = [&](const testkit::Take &t, const std::vector<float> &notes) {
+            double up = 0, at1 = 0;
+            for (float m : notes)
+                up += at(t, 2 * hzOf(m), 3.0), at1 += at(t, hzOf(m), 3.0);
+            return up / std::max(1e-9, at1);
+        };
+        const double over = octaves(piccolo, high), overMid = octaves(musette, mid);
+        QVERIFY2(over > 1.5 * overMid, qPrintable(QString("an octave over: %1 piccolo, %2 musette").arg(over).arg(overMid)));
+    }
+
     // The kalimba's bottle caps rattle harder the harder it is pressed: more
-    // of its energy is high hiss, while the tines themselves are the same.
+    // of its energy is rattle (2.5 to 6 kHz, well after the strikes' upper
+    // modes have gone), while the tines themselves are the same.
     void theKalimbaBuzzesWhenPressed() {
         const auto soft = heldChord(Kalimba, nullptr, false, 0.1), hard = heldChord(Kalimba, nullptr, false, 1.0);
-        // Above the tines' second modes, where only the caps and the third
-        // modes sound.
-        const double s = bandShare(soft, 0.6, 13000, 20000), h = bandShare(hard, 0.6, 13000, 20000);
+        const double s = bandShare(soft, 0.6, 2500, 6000), h = bandShare(hard, 0.6, 2500, 6000);
         QVERIFY2(h > 1.5 * s, qPrintable(QString("soft %1 hard %2").arg(s).arg(h)));
         QVERIFY(hard.peak() < 1.0);
+        // Nothing of it whistles: above 12 kHz there is next to nothing.
+        QVERIFY2(bandShare(hard, 0.6, 12000, 24000) < 1e-4, qPrintable(QString::number(bandShare(hard, 0.6, 12000, 24000))));
+    }
+
+    // The kalimba's thumbs and the gamelan's players take turns: on their
+    // gates each hit strikes a tine or a bar from one side, the next from
+    // the other, so the sound leans left and right in turn, hit by hit,
+    // where a chord struck whole (the piano) leans nowhere.
+    void theTinesAndBarsInterlock_data() {
+        // Each on its own gate: the kalimba's eighths, the gamelan's sixteenths.
+        QTest::addColumn<int>("sound");
+        QTest::addColumn<double>("step");
+        QTest::newRow("kalimba") << int(Kalimba) << 2 * 60.0 / 124 / 4;
+        QTest::newRow("gamelan") << int(Gamelan) << 60.0 / 124 / 4;
+    }
+    void theTinesAndBarsInterlock() {
+        QFETCH(int, sound);
+        QFETCH(double, step);
+        const auto take = testkit::play("page 0 3\n" + soundKeys(sound) + "down 0.3 1 " + cell(0, Triad) +
+                                        " p=0.5\nup 2.8 1\nend 3.0\n");
+        // Each hit's lean, just after it: (L − R) / (L + R) of its first
+        // 40 ms, the earlier strikes' rings taken off by measuring how much
+        // each side grew over the hit. Measured on the second difference of
+        // the sound (its treble, where a strike's upper modes are), so a bar
+        // damped as the next is struck takes nothing off its side.
+        auto energy = [&](const std::vector<float> &x, double from, double to) {
+            double e = 0;
+            for (size_t i = size_t(from * 48000); i < size_t(to * 48000) && i < x.size(); ++i) {
+                const double d = double(x[i]) - 2.0 * x[i - 1] + x[i - 2];
+                e += d * d;
+            }
+            return e;
+        };
+        int turns = 0, hits = 0;
+        double lastLean = 0;
+        for (double t = std::ceil(0.3 / step) * step; t + step < 2.7; t += step) {
+            const double l = energy(take.left, t + 0.004, t + 0.044) - energy(take.left, t - 0.04, t);
+            const double r = energy(take.right, t + 0.004, t + 0.044) - energy(take.right, t - 0.04, t);
+            const double lean = (l - r) / std::max(1e-12, std::fabs(l) + std::fabs(r));
+            if (hits > 0 && lean * lastLean < 0)
+                ++turns;
+            lastLean = lean;
+            ++hits;
+        }
+        QVERIFY2(turns > hits / 2, qPrintable(QString("%1 turns in %2 hits").arg(turns).arg(hits)));
     }
 
     // The gamelan's bars are bars, not strings: the root's first overtone
@@ -1380,15 +1466,36 @@ private slots:
         QVERIFY2(pair > 4 * middle, qPrintable(QString("the pair %1, between them %2").arg(pair).arg(middle)));
     }
 
-    // Brass grows brighter as it is blown harder: a chord struck hard is
-    // far brighter than one struck softly, where a pad barely changes.
-    void theBrassBrightensWhenBlownHard() {
-        auto played = [](int s, double pressure) {
-            return testkit::play("page 0 3\n" + soundKeys(s) + "down 0.2 9 " + rail(0) + "\ndown 0.3 1 " +
-                                 cell(0, Triad) + " p=" + num(pressure) + "\nup 2.8 1\nup 2.9 9\nend 3.0\n");
+    // The pedal steel swells in under its volume pedal: its first moments
+    // are far quieter, against the chord a moment later, than a picked
+    // guitar's. And pressing harder pushes its pedals: the fifth of the
+    // tonic triad (E in A minor) rises to the sixth (F) and the third (C)
+    // to the fourth (D), where a chord pressed lightly stays put.
+    void theSteelSwellsAndBends() {
+        const auto steel = heldChord(Steel, nullptr, true), guitar = heldChord(Guitar, nullptr, true);
+        const double s = steel.rms(0.30, 0.33) / steel.rms(0.6, 0.8), g = guitar.rms(0.30, 0.33) / guitar.rms(0.6, 0.8);
+        QVERIFY2(s < 0.5 * g, qPrintable(QString("steel %1 guitar %2").arg(s).arg(g)));
+        std::vector<float> notes;
+        const auto light = heldChord(Steel, &notes, true, 0.5), hard = heldChord(Steel, nullptr, true, 1.0);
+        double atHard = 0, atLight = 0, upHard = 0, upLight = 0;
+        auto band = [](const testkit::Take &t, double midi) {
+            const double hz = 440.0 * std::exp2((midi - 69.0) / 12.0);
+            return bandShare(t, 0.6, hz * std::exp2(-0.25 / 12), hz * std::exp2(0.25 / 12));
         };
-        const double soft = centroid(played(Brass, 0.05), 0.8), hard = centroid(played(Brass, 0.95), 0.8);
-        QVERIFY2(hard > 1.4 * soft, qPrintable(QString("soft %1 Hz hard %2 Hz").arg(soft).arg(hard)));
+        for (float n : notes) {
+            const int pc = int(std::lround(n)) % 12;
+            const double up = pc == 4 ? 1 : pc == 0 ? 2 : 0;
+            if (up == 0)
+                continue;
+            atHard += band(hard, n), atLight += band(light, n);
+            upHard += band(hard, n + up), upLight += band(light, n + up);
+        }
+        QVERIFY2(upHard > 3 * upLight && atHard < 0.5 * atLight,
+                 qPrintable(QString("raised: %1 pressed, %2 not; where they were: %3 pressed, %4 not")
+                                .arg(upHard)
+                                .arg(upLight)
+                                .arg(atHard)
+                                .arg(atLight)));
     }
 
     // The sitar buzzes and rings in sympathy: well into the note, it is
@@ -1401,6 +1508,28 @@ private slots:
         QVERIFY2(bright > 0.05, qPrintable(QString::number(bright)));
         const double s = sitar.rms(3.0, 3.5) / sitar.rms(0.5, 2.7), g = guitar.rms(3.0, 3.5) / guitar.rms(0.5, 2.7);
         QVERIFY2(s > 0.02 && s > 4 * g, qPrintable(QString("sitar %1 guitar %2").arg(s).arg(g)));
+    }
+
+    // Pressing the sitar harder is a meend: the top string is pulled up to
+    // the next note of the key (E to F over the tonic triad of A minor)
+    // without being plucked again, and the rest of the chord stays.
+    void theSitarBendsUnderPressure() {
+        std::vector<float> notes;
+        const auto light = heldChord(Sitar, &notes, true, 0.5), hard = heldChord(Sitar, nullptr, true, 1.0);
+        QVERIFY(!notes.empty());
+        const float top = *std::max_element(notes.begin(), notes.end()), low = notes.front();
+        auto band = [](const testkit::Take &t, double midi) {
+            const double hz = 440.0 * std::exp2((midi - 69.0) / 12.0);
+            return bandShare(t, 0.6, hz * std::exp2(-0.25 / 12), hz * std::exp2(0.25 / 12));
+        };
+        const double lift = int(std::lround(top)) % 12 == 4 || int(std::lround(top)) % 12 == 11 ? 1 : 2;
+        QVERIFY2(band(hard, top + lift) > 3 * band(light, top + lift) && band(hard, top) < 0.5 * band(light, top),
+                 qPrintable(QString("bent %1 / %2, unbent %3 / %4")
+                                .arg(band(hard, top + lift))
+                                .arg(band(light, top + lift))
+                                .arg(band(hard, top))
+                                .arg(band(light, top))));
+        QVERIFY2(band(hard, low) > 0.5 * band(light, low), qPrintable(QString::number(band(hard, low))));
     }
 };
 

@@ -46,7 +46,7 @@ enum Style : int {
     Accordion,
     Kalimba,
     Gamelan,
-    Brass,
+    Steel,
     Sitar,
     StyleCount
 };
@@ -59,12 +59,14 @@ enum Pattern : int { Hold, Offbeat, Eighths, Tresillo, Charleston, TranceGate, S
 // tine's bell on the attack and a pickup's bark; the string machine is
 // phase-locked octave saws (a divide-down organ's) through one low-pass; the
 // guitar is a plucked string (Karplus-Strong) per note. Beyond the dance
-// floor: the accordion is three free reeds a note, beating against each
-// other; the kalimba and the gamelan are struck bars and tines, their
-// partials out of the harmonic series as metal's are; the brass section is
-// saws whose filter follows their loudness (brass grows brighter as it
-// grows louder); the sitar is a string buzzing on its curved bridge, with
-// strings tuned to the key ringing in sympathy.
+// floor: the accordion is free reeds a note, beating against each other and
+// breathing with the bellows; the kalimba and the gamelan are struck tines
+// and bars, their partials out of the harmonic series as metal's are, and
+// they play the chord one tine or bar at a time, interlocking, as their
+// players do; the pedal steel is strings that swell in under a volume pedal,
+// slide on a bar and bend with the pedals; the sitar is a string buzzing on
+// its curved bridge, bent by pressing, with strings tuned to the key ringing
+// in sympathy.
 struct StyleDef {
     const char *name;
     const char *blurb;
@@ -78,7 +80,7 @@ struct StyleDef {
         ReedOsc,
         KalimbaOsc,
         GamelanOsc,
-        BrassOsc,
+        SteelOsc,
         SitarOsc
     } osc;
     int unison;       // saws per note (the organ and the piano: two copies, one each side)
@@ -100,10 +102,6 @@ struct StyleDef {
     // so it costs the same for one chord as for ten: the string machine's
     // ensemble chorus, the dub stab's echo, the sitar's sympathetic strings.
     enum Bus : uint8_t { Dry, Ensemble, Echo, Comp, Tarab } bus = Dry;
-    // How far the filter opens with the loudness envelope (the brass: a
-    // section blown harder is brighter, and darkens as it dies away), in
-    // the cutoff's units.
-    float track = 0;
 };
 constexpr int kBuses = StyleDef::Tarab + 1;
 
@@ -174,50 +172,65 @@ inline const StyleDef &styleDef(int s) {
          .detune = 0.0f, .a = 0.0008f, .d = 1.0f, .s = 1.0f, .r = 0.035f, .cutoff = 0.95f, .envAmt = 0.0f,
          .envDecay = 0.2f, .res = 0.05f, .retrig = true, .glide = 0.01f, .centre = 66.0f, .gain = 0.67f,
          .strum = 0.0045f, .width = 0.8f, .pattern = Sixteenths, .bus = StyleDef::Comp},
-        // A musette accordion (Paris waltzes, cumbia, tango): three reeds a
-        // note, one in tune, one a little sharp and one as flat, so each
-        // note shimmers at a few beats a second; narrow pulses for the
-        // reeds' nasal tone, the sharp reed left and the flat one right.
-        // The bellows swell it in, pressing harder pushes more air (louder
-        // and brighter), and the hands change chords without a gap.
+        // A musette accordion (Paris waltzes, cumbia, tango): free reeds a
+        // note, in the musette three of them, one in tune, one a little
+        // sharp and one as flat, so each note shimmers at a few beats a
+        // second. The voicing keys are its register switches: below the
+        // middle, bassoon and clarinet (a reed an octave down, no beating);
+        // above it, the musette with a piccolo reed an octave up. Each reed
+        // speaks a moment late and a little flat, with air and the valve's
+        // knock; the bellows are the pressure, louder and brighter; and a
+        // gate shakes the bellows in time.
         {.name = "ACCORDION", .blurb = "musette reeds, bellows", .osc = StyleDef::ReedOsc, .unison = 1,
          .detune = 0.0f, .a = 0.05f, .d = 1.5f, .s = 0.9f, .r = 0.07f, .cutoff = 0.68f, .envAmt = 0.05f,
-         .envDecay = 0.3f, .res = 0.0f, .legato = true, .glide = 0.006f, .centre = 63.0f, .gain = 0.2f,
+         .envDecay = 0.3f, .res = 0.0f, .legato = true, .glide = 0.006f, .centre = 63.0f, .gain = 0.31f,
          .width = 0.8f, .pattern = Hold},
         // A kalimba, the thumb piano of the mbira's family: each tine a sine
         // with its two bending modes far above (6.3 and 17.6 times, gone in
-        // a moment), a thumb's soft click, and the buzz of the bottle caps
-        // rattling on every swing of the tines (pressing harder, more).
-        // Rolled up the tines on the 3·3·2 of Afro house and Afrobeats.
-        {.name = "KALIMBA", .blurb = "thumb piano, buzzing", .osc = StyleDef::KalimbaOsc, .unison = 1,
-         .detune = 0.0f, .a = 0.0008f, .d = 1.3f, .s = 0.0f, .r = 0.4f, .cutoff = 0.98f, .envAmt = 0.0f,
-         .envDecay = 0.2f, .res = 0.0f, .retrig = true, .glide = 0.01f, .centre = 70.0f, .gain = 0.24f,
-         .strum = 0.016f, .width = 0.7f, .pattern = Tresillo},
+        // a few milliseconds), struck a few cents sharp, in a small box
+        // that sings at 250 Hz and 1.1 kHz, with bottle caps that rattle on
+        // each swing of a tine that is ringing hard enough to lift them
+        // (pressing harder loosens them). Played as it is played: on each
+        // hit of the gate one thumb plucks one tine, the thumbs taking turns,
+        // the left walking up its side and the right down its own, so a held
+        // chord becomes an interlocking figure.
+        {.name = "KALIMBA", .blurb = "thumb piano, two thumbs", .osc = StyleDef::KalimbaOsc, .unison = 1,
+         .detune = 0.0f, .a = 0.0008f, .d = 1.0f, .s = 1.0f, .r = 0.9f, .cutoff = 0.98f, .envAmt = 0.0f,
+         .envDecay = 0.2f, .res = 0.0f, .retrig = true, .glide = 0.01f, .centre = 70.0f, .gain = 0.33f,
+         .strum = 0.03f, .width = 0.7f, .pattern = Eighths},
         // A Balinese gamelan: every note two bronze bars, tuned a few hertz
-        // apart (the ombak, the beating that makes a gamelan shimmer), one
-        // each side; each bar with its partials at 2.76 and 5.4 times, the
-        // high ones dying first; a hard mallet; left to ring.
-        {.name = "GAMELAN", .blurb = "bronze, shimmering", .osc = StyleDef::GamelanOsc, .unison = 1,
-         .detune = 0.0f, .a = 0.0006f, .d = 2.6f, .s = 0.0f, .r = 0.6f, .cutoff = 0.96f, .envAmt = 0.0f,
-         .envDecay = 0.2f, .res = 0.0f, .retrig = true, .glide = 0.01f, .centre = 67.0f, .gain = 0.3f,
-         .strum = 0.028f, .width = 0.75f, .pattern = Hold},
-        // A brass section (Balkan brass, city pop's horns): three players a
-        // note, a few cents apart and not quite together, each lipping up
-        // into the note, through a filter that opens as they blow louder,
-        // with a breath on the attack and a growl when struck hard; stabbing
-        // the offbeats of an oom-pa.
-        {.name = "BRASS", .blurb = "horn section, offbeats", .osc = StyleDef::BrassOsc, .unison = 3,
-         .detune = 8.0f, .a = 0.016f, .d = 0.4f, .s = 0.72f, .r = 0.07f, .cutoff = 0.4f, .envAmt = 0.16f,
-         .envDecay = 0.07f, .res = 0.12f, .retrig = true, .glide = 0.02f, .centre = 64.0f, .gain = 0.36f,
-         .strum = 0.004f, .width = 0.6f, .pattern = Offbeat, .track = 0.5f},
+        // apart (the ombak, the beating that makes a gamelan shimmer); each
+        // bar with its partials at 2.76 and 5.4 times, the high ones dying
+        // first, over a resonator tube that swells the fundamental in. On
+        // its sixteenths it plays kotekan: the chord's tones shared between
+        // two players, polos on the left and sangsih on the right, each
+        // striking every other sixteenth, so the two make one fast figure,
+        // and each damping the bar it struck last as it strikes the next.
+        {.name = "GAMELAN", .blurb = "bronze, kotekan", .osc = StyleDef::GamelanOsc, .unison = 1,
+         .detune = 0.0f, .a = 0.0006f, .d = 1.0f, .s = 1.0f, .r = 0.6f, .cutoff = 0.96f, .envAmt = 0.0f,
+         .envDecay = 0.2f, .res = 0.0f, .retrig = true, .glide = 0.01f, .centre = 67.0f, .gain = 0.52f,
+         .strum = 0.028f, .width = 0.75f, .pattern = Sixteenths},
+        // A pedal steel guitar (country ballads, Hawaiian, slowcore): steel
+        // strings picked with the volume pedal down and swelled in, so a
+        // chord blooms without a pick's edge; the bar slides from the last
+        // chord's notes to the new ones; pressing harder pushes the pedals,
+        // which raise the third to the fourth and the fifth to the sixth
+        // (easing off resolves them, the steel's cry); a held chord grows a
+        // slow vibrato from the bar.
+        {.name = "STEEL", .blurb = "pedal steel, swells, bends", .osc = StyleDef::SteelOsc, .unison = 1,
+         .detune = 0.0f, .a = 0.16f, .d = 1.0f, .s = 1.0f, .r = 0.6f, .cutoff = 0.92f, .envAmt = 0.0f,
+         .envDecay = 0.2f, .res = 0.0f, .legato = true, .glide = 0.075f, .centre = 64.0f, .gain = 0.8f,
+         .strum = 0.012f, .width = 1.0f, .pattern = Hold},
         // A sitar: a steel string per note buzzing on the jawari, the wide
-        // curved bridge that cuts the string short as it swings onto it, so
-        // the note blooms with a buzz that fades as it rings; raked from
-        // the bottom with the mizrab; and under it a row of sympathetic
-        // strings tuned to the key's scale, ringing on after it.
-        {.name = "SITAR", .blurb = "jawari buzz, sympathetic", .osc = StyleDef::SitarOsc, .unison = 1,
+        // curved bridge that shortens the string as it swings onto it, so
+        // the note blooms with a buzz that sweeps down through its overtones
+        // as it rings; raked from the bottom with the mizrab, the chikari
+        // drone strings struck after it; pressing harder pulls the top
+        // string up to the next note of the key (the meend); and under it a
+        // row of sympathetic strings tuned to the key's scale, ringing on.
+        {.name = "SITAR", .blurb = "jawari, meend, sympathetic", .osc = StyleDef::SitarOsc, .unison = 1,
          .detune = 0.0f, .a = 0.0008f, .d = 1.0f, .s = 1.0f, .r = 0.5f, .cutoff = 0.92f, .envAmt = 0.0f,
-         .envDecay = 0.2f, .res = 0.0f, .retrig = true, .glide = 0.01f, .centre = 64.0f, .gain = 0.62f,
+         .envDecay = 0.2f, .res = 0.0f, .retrig = true, .glide = 0.01f, .centre = 64.0f, .gain = 0.385f,
          .strum = 0.024f, .width = 0.6f, .pattern = Hold, .bus = StyleDef::Tarab},
     };
     return defs[std::clamp(s, 0, StyleCount - 1)];
@@ -379,6 +392,12 @@ inline Shape shapeOf(const Tuning &t, int degree, int colour) {
 struct Voicing {
     int count = 0;
     float notes[4] = {};
+    // For the sounds that bend (see Engine::bends): how far up each note's
+    // next note of the key lies, in semitones (the sitar's meend), and how
+    // far the pedal steel's pedals raise it (the third to the fourth, the
+    // fifth to the sixth; nothing for the others).
+    float lift[4] = {};
+    float pedal[4] = {};
 };
 
 // Picks the voicing of a chord: every inversion in every octave, close or
@@ -665,128 +684,187 @@ struct PluckedString {
     }
 };
 
-// A sitar string: a plucked string like the guitar's (Karplus-Strong, the
-// same allpass for the fraction of a sample), heard bare, without a pickup,
-// and buzzing on its bridge. The jawari is a wide, gently curved bridge the
-// string grazes as it swings: each swing is cut off on one side, sharply,
-// which a delay line cannot do on its own, so the graze is made at the
-// output: the swing, taken at its own level, and the moments it passes a
-// point near its crest (a narrow, one-sided pulse a period, every harmonic
-// of the note) heard through a formant that sits high while the string
-// swings wide and falls as it dies down.
-// That falling formant is the sitar's "yowww": the note blooms bright and
-// nasal and sings purer as it rings.
-struct SitarString {
-    static constexpr int kSize = 2048; // a period of up to 2047 samples: down to about 24 Hz
+// A string whose length can change while it rings: the sitar's and the
+// pedal steel's. A plucked string like the guitar's (Karplus-Strong), but
+// read at a fractional delay through a cubic interpolator that moves a
+// little every sample, so a bend, a meend or a bar's slide retunes it
+// without a step and without plucking it again.
+// The sitar's string is heard through its bridge, the jawari: a wide,
+// gently curved bridge the string grazes on one side of each swing. The
+// graze is a narrow one-sided pulse a period (every harmonic of the note,
+// the buzz), strongest at the pluck and settling to half as the swing
+// narrows, so it never quite leaves the note. And the point where the string leaves
+// the curve moves with the swing, which acts on the sound as a comb whose
+// teeth sit far apart while the string swings wide and close up as it dies
+// down: its peaks and notches sweep down through the harmonics, the
+// sitar's "yowww", bright and nasal at the pluck, purer as it rings. (A
+// length that follows the swing inside the loop would do the same in
+// principle, but every fraction of a sample it moves costs the interpolator
+// treble, and the string came out darker, not buzzing.)
+struct BentString {
+    static constexpr int kSize = 2048; // a period of up to about 2040 samples: down to about 24 Hz
+    static constexpr int kComb = 128;  // the jawari's comb, up to 2.6 ms
     float line[kSize] = {};
-    int w = 0, period = 100;
-    float apC = 0, apX = 0, apY = 0;
+    int w = 0;
+    float delay = 100, delayStep = 0; // the loop's length now, and its move a sample
+    bool fresh = true;
     float lp = 0, damp = 0.9f, loss = 0.999f;
-    float excLp = 0, excAmp = 0;
+    float excLp = 0, excAmp = 0, excBright = 0.6f;
     int excLeft = 0, excLength = 1;
-    float env = 0, struck = 1e-3f, envRel = 0.999f; // the swing's level, and the widest since the pluck
-    Svf formant;
-    DcBlock dc;
-    int formantIn = 0;
-    float rate = 48000;
     float energy = 0;
-    static constexpr float kGraze = 0.6f, kBuzz = 1.5f;
+    // The jawari (the sitar only): the swing's level, the widest since the
+    // pluck, how fast the level lets go, and the comb.
+    float env = 0, widest = 1e-3f, envRel = 0.999f;
+    DcBlock dc;
+    float comb[kComb] = {};
+    int combW = 0;
+    float rate = 48000;
 
     void clear() {
         std::fill(std::begin(line), std::end(line), 0.0f);
-        apX = apY = lp = excLp = 0;
+        std::fill(std::begin(comb), std::end(comb), 0.0f);
+        lp = excLp = 0;
         excLeft = 0;
-        env = 0;
-        struck = 1e-3f;
-        formant.reset();
-        dc = DcBlock();
-        formantIn = 0;
         energy = 0;
+        env = 0;
+        widest = 1e-3f;
+        dc = DcBlock();
+        fresh = true;
     }
-    void tune(float hz, float r) {
+    // Tunes the loop to hz over the next n samples. ring is the time to
+    // die by 60 dB, bright the loop's lowpass (1 lets everything through).
+    void tune(float hz, float r, float ring, float bright, int n) {
         rate = r;
-        hz = clampf(hz, 40.0f, r * 0.2f);
-        // A steel string rings long and bright; high notes lose their top a
-        // little sooner.
-        damp = clampf(0.9f - 0.12f * (hz / 1500.0f), 0.6f, 0.9f);
-        loss = std::pow(10.0f, -3.0f / (9.0f * hz));
+        hz = clampf(hz, 30.0f, r * 0.2f);
+        damp = bright;
+        loss = std::pow(10.0f, -3.0f / (ring * hz));
         const float wv = kTwoPi * hz / r, b = 1.0f - damp;
         const float lpDelay = std::atan2(b * std::sin(wv), 1.0f - b * std::cos(wv)) / wv;
-        const float total = r / hz - lpDelay;
-        period = std::clamp(int(total - 0.1f), 2, kSize - 1);
-        const float frac = total - float(period);
-        apC = (1.0f - frac) / (1.0f + frac);
+        const float to = clampf(r / hz - lpDelay, 3.0f, float(kSize - 8));
+        if (fresh) {
+            delay = to;
+            fresh = false;
+        }
+        delayStep = (to - delay) / float(std::max(1, n));
         // The level follower holds over a period and a little more.
         envRel = std::exp(-1.0f / (std::max(0.02f, 2.5f / hz) * r));
     }
-    void pluck(float amp) {
-        // The mizrab, a wire plectrum: a short, bright scrape.
-        excAmp = 4.0f * amp;
-        excLength = std::max(8, period / 2);
+    inline float tap(int i) const { return line[(w - i) & (kSize - 1)]; }
+    // The string d samples back, between samples (Catmull-Rom, as Delay::read).
+    inline float read(float d) const {
+        d = std::max(d, 2.0f);
+        const int i = int(d);
+        const float t = d - float(i);
+        const float y0 = tap(i - 1), y1 = tap(i), y2 = tap(i + 1), y3 = tap(i + 2);
+        const float c1 = 0.5f * (y2 - y0);
+        const float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
+        const float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+        return ((c3 * t + c2) * t + c1) * t + y1;
+    }
+    // A pick: a burst of noise share of a period long, through a one-pole
+    // as bright as bright (0..1), faded over the burst so it has no edge.
+    void pluck(float amp, float share, float bright) {
+        excAmp = amp;
+        excBright = bright;
+        excLength = std::max(8, int(delay * share));
         excLeft = excLength;
-        struck = 1e-3f;
+        widest = 1e-3f;
     }
     inline float step(Rng &rng) {
         float in = 0;
         if (excLeft > 0) {
-            excLp += (rng.bipolar() - excLp) * 0.65f;
+            excLp += (rng.bipolar() - excLp) * excBright;
             in = excLp * excAmp * float(excLeft) / float(excLength);
             --excLeft;
         }
-        const float x = line[(w - period) & (kSize - 1)];
-        const float y = apC * (x - apY) + apX;
-        apX = x;
-        apY = y;
-        lp += (y - lp) * damp;
+        delay += delayStep;
+        const float x = read(delay);
+        lp += (x - lp) * damp;
         const float out = lp * loss + in;
         line[w] = out;
         w = (w + 1) & (kSize - 1);
-        // The graze on the bridge.
-        env = std::max(std::fabs(out), env * envRel);
-        struck = std::max(struck, env);
-        if (--formantIn <= 0) {
-            formantIn = 16;
-            const float wide = env / struck;
-            formant.set(800.0f + 2800.0f * std::pow(wide, 0.4f), 1.0f, rate);
-        }
+        return out;
+    }
+    // The string heard through the jawari (see above).
+    inline float jawari(float x) {
+        env = std::max(std::fabs(x), env * envRel);
+        widest = std::max(widest, env);
+        const float wide = env / widest;
         // (A tanh, not a step: the pulse's edges stay soft enough not to
         // alias.)
-        const float graze = fastTanh(8.0f * (out / (env + 1e-5f) - kGraze));
-        const float buzz = formant.step(dc.step(graze)).band;
-        return out + kBuzz * env * buzz;
+        const float graze = dc.step(fastTanh(7.0f * (x / (env + 1e-5f) - 0.55f)));
+        const float s = x + kBuzz * env * (0.5f + 0.5f * std::sqrt(wide)) * graze;
+        comb[combW] = s;
+        combW = (combW + 1) & (kComb - 1);
+        // The comb's delay: 0.1 ms at the pluck (its first peak near 5 kHz),
+        // 1.4 ms as the string dies down (near 360 Hz).
+        const float d = (0.0001f + 0.0013f * (1.0f - std::sqrt(wide))) * rate;
+        const int i = std::clamp(int(d), 1, kComb - 3);
+        const float t = d - float(i);
+        const float a0 = comb[(combW - i) & (kComb - 1)], a1 = comb[(combW - i - 1) & (kComb - 1)];
+        return s - kTeeth * (a0 + t * (a1 - a0));
     }
+    static constexpr float kBuzz = 1.0f, kTeeth = 0.55f;
 };
 
 // The sitar's sympathetic strings (the tarab): a row of strings under the
 // played ones, tuned to the notes of the key, never plucked, set ringing by
 // whatever the played strings sound that they share a pitch or an overtone
 // with, and ringing on after the chord is let go: the halo around a sitar.
-// One set for the whole bus, so it costs the same for any number of chords.
+// Each is tuned by an allpass for the fraction of a sample (a linear read
+// would dull the upper strings and pull them flat) and loses little in its
+// loop, so the halo shimmers. With them, the two chikari: high drone
+// strings tuned to the key's tonic and its octave, struck after a rake and
+// on the gate's off-hits, the sitar's rhythm strings. One set for the whole
+// bus, so it costs the same for any number of chords.
 struct Tarab {
     static constexpr int kStrings = 9, kSize = 1024;
     struct Str {
         float line[kSize] = {};
-        int w = 0;
-        float total = 100, lp = 0, damp = 0.6f, loss = 0.999f, pan = 0;
+        int w = 0, whole = 100;
+        float apC = 0, apX = 0, apY = 0;
+        float lp = 0, damp = 0.9f, loss = 0.999f, pan = 0;
     };
     Str str[kStrings];
+    BentString chik[2];
+    float chikHz[2] = {523.0f, 1046.0f};
+    int chikIn = -1;
+    float chikAmp = 0;
+    Rng rng{0x7ABAB5u};
     float rate = 48000;
     int idle = 1 << 30;
-    static constexpr float kCouple = 0.003f, kWet = 0.7f;
+    static constexpr float kCouple = 0.0026f, kWet = 0.5f, kChikari = 0.5f;
 
-    void init(float r) { rate = r; }
+    void init(float r) {
+        rate = r;
+        for (BentString &c : chik)
+            c.clear();
+    }
     // Tunes string k to midi (each to its own note of the scale).
     void tune(int k, float midi) {
         Str &s = str[k];
         const float hz = clampf(midiToHz(midi), 60.0f, rate * 0.2f);
-        s.damp = 0.75f;
-        s.loss = std::pow(10.0f, -3.0f / (4.5f * hz));
+        s.damp = 0.93f;
+        s.loss = std::pow(10.0f, -3.0f / (4.0f * hz));
         const float wv = kTwoPi * hz / rate, b = 1.0f - s.damp;
         const float lpDelay = std::atan2(b * std::sin(wv), 1.0f - b * std::cos(wv)) / wv;
-        s.total = std::min(float(kSize - 4), rate / hz - lpDelay);
+        const float total = std::min(float(kSize - 4), rate / hz - lpDelay);
+        s.whole = std::max(2, int(total - 0.1f));
+        const float frac = total - float(s.whole);
+        s.apC = (1.0f - frac) / (1.0f + frac);
         s.pan = -0.7f + 1.4f * float(k) / float(kStrings - 1);
     }
-    // Adds the dry bus and the strings' ringing to out.
+    // The chikari on the key's tonic at midi and an octave over it.
+    void tuneChikari(float midi) {
+        chikHz[0] = midiToHz(midi);
+        chikHz[1] = midiToHz(midi + 12.0f);
+    }
+    // Strikes the chikari at sample at of the coming blocks.
+    void strikeChikari(int at, float amp) {
+        chikIn = at;
+        chikAmp = amp;
+    }
+    // Adds the dry bus, the chikari and the strings' ringing to out.
     void process(const float *inL, const float *inR, float *outL, float *outR, int n) {
         float in = 0;
         for (int i = 0; i < n; ++i)
@@ -794,17 +872,38 @@ struct Tarab {
         idle = in > 1e-7f ? 0 : idle + n;
         if (idle > int(12.0f * rate)) // every string has died away
             return;
+        // The chikari, a little right of centre (they sit beside the
+        // played strings on the neck), feeding the sympathetic strings as
+        // the played ones do.
+        float drone[kBlock] = {};
+        for (int c = 0; c < 2; ++c) {
+            BentString &s = chik[c];
+            const bool due = chikIn >= 0 && chikIn < n;
+            if (s.energy < 1e-6f && s.excLeft == 0 && !due)
+                continue;
+            s.tune(chikHz[c], rate, 3.0f, 0.82f, n);
+            float e = 0;
+            for (int i = 0; i < n; ++i) {
+                if (i == chikIn)
+                    s.pluck(chikAmp * (c == 0 ? 1.0f : 0.7f), 0.4f, 0.7f);
+                const float x = s.step(rng);
+                e = std::max(e, std::fabs(x));
+                drone[i] += x;
+            }
+            s.energy = std::max(e, 0.9f * s.energy);
+        }
+        if (chikIn >= 0)
+            chikIn = chikIn >= n ? chikIn - n : -1;
         float wetL[kBlock] = {}, wetR[kBlock] = {};
         for (Str &s : str) {
             const float gl = std::sqrt(0.5f * (1.0f - s.pan)), gr = std::sqrt(0.5f * (1.0f + s.pan));
-            const float at0 = s.total;
-            const int whole = int(at0);
-            const float f = at0 - float(whole);
             for (int i = 0; i < n; ++i) {
-                const int i0 = (s.w - whole) & (kSize - 1), i1 = (s.w - whole - 1) & (kSize - 1);
-                const float x = s.line[i0] + f * (s.line[i1] - s.line[i0]);
-                s.lp += (x - s.lp) * s.damp;
-                const float out = s.lp * s.loss + kCouple * (inL[i] + inR[i]);
+                const float x = s.line[(s.w - s.whole) & (kSize - 1)];
+                const float y = s.apC * (x - s.apY) + s.apX;
+                s.apX = x;
+                s.apY = y;
+                s.lp += (y - s.lp) * s.damp;
+                const float out = s.lp * s.loss + kCouple * (inL[i] + inR[i] + kChikari * drone[i]);
                 s.line[s.w] = out;
                 s.w = (s.w + 1) & (kSize - 1);
                 wetL[i] += out * gl;
@@ -812,10 +911,23 @@ struct Tarab {
             }
         }
         for (int i = 0; i < n; ++i) {
-            outL[i] += inL[i] + kWet * wetL[i];
-            outR[i] += inR[i] + kWet * wetR[i];
+            const float d = kChikari * drone[i];
+            outL[i] += knee(inL[i] + 0.8f * d) + kWet * wetL[i];
+            outR[i] += knee(inR[i] + 1.1f * d) + kWet * wetR[i];
         }
     }
+    // A raked chord's strings, each buzzing in a narrow pulse at its crest,
+    // stack into peaks far over the sound's body; past kKnee they are eased
+    // down, smoothly (no edge to alias), so the sitar sits as loud as the
+    // other sounds without its peaks reaching the studio's ceiling.
+    static float knee(float x) {
+        const float a = std::fabs(x);
+        if (a <= kKnee)
+            return x;
+        const float over = a - kKnee;
+        return std::copysign(kKnee + over / (1.0f + over / kSoft), x);
+    }
+    static constexpr float kKnee = 0.2f, kSoft = 0.15f;
 };
 
 // One sounding chord: up to four voiced notes plus two doublings (the root
@@ -837,7 +949,20 @@ struct ChordVoice {
         int pluckIn = -1;     // the guitar: samples until this string is plucked (−1: not waiting)
         float pluckAmp = 1, pluckMute = 0;
         PluckedString string;
-        SitarString sitar;
+        BentString wire;      // the sitar's and the pedal steel's string
+        // The kalimba's tines and the gamelan's bars ring each on its own,
+        // struck one at a time: the level, what a strike climbs to (over
+        // half a millisecond, never a jump) and its fall a sample (faster
+        // once a gamelan player damps it); the upper modes' levels, the
+        // tine's pitch drop, the gamelan's resonator swelling the
+        // fundamental in, and the side it was struck from.
+        float ring = 0, ringPeak = 0, ringDecay = 1;
+        int ringRise = 0;
+        float m2 = 0, m3 = 0, drop = 0, bloom = 1, side = 0, sideTo = 0;
+        float osc[6][2] = {};  // the gamelan's partials, each a rotating pair (cos, sin)
+        float speak = 1;       // the accordion: how far the reed has started to speak
+        int speakIn = 0;       // samples before it starts
+        float lift = 0, pedal = 0; // see Voicing
     };
 
     bool active = false, releasing = false;
@@ -864,6 +989,18 @@ struct ChordVoice {
     float leslie = 0;    // the organ's slow rotor, the electric piano's tremolo
     bool upStroke = false;  // the guitar: the next strum goes up the strings
     int sinceStrum = 1 << 20; // the guitar: samples since the last strum began
+    // The kalimba's thumbs and the gamelan's players: where each has got to
+    // in its walk through the chord, the bar each struck last, and the hits
+    // since the chord began.
+    int walk[2] = {}, lastStruck[2] = {-1, -1}, hits = 0;
+    // The accordion's bellows (the pressure, smoothed per sample, so a
+    // sudden push never ticks) and its shake on the gate; the valve's knock.
+    float bellows = 0.5f, shake = 1, knock = 0;
+    // The bend of the sitar's meend and of the steel's pedals (0..1), and
+    // the steel's bar: seconds held, for its vibrato, and the vibrato's phase.
+    float bend = 0, held = 0, vib = 0;
+    Svf bodyA, bodyB, buzzBp, buzzLp;
+    OnePoleLp clickLp;
     Rng rng{0x1234567u};
 
     void init(uint32_t seed) { rng = Rng(seed); }
@@ -1062,6 +1199,17 @@ public:
         m_echo.init(rate);
         m_amp.init(rate);
         m_tarab.init(rate);
+        auto fall = [rate](float seconds) { return std::exp(-1.0f / (seconds * rate)); };
+        m_fall8ms = fall(0.008f);
+        m_fall20ms = fall(0.02f);
+        m_fall40ms = fall(0.04f);
+        m_fall400ms = fall(0.4f);
+        m_fall1600ms = fall(1.6f);
+        m_tetekep = fall(0.05f);
+        m_airDecay = fall(0.05f);
+        m_bloom = 1.0f - fall(0.06f);
+        m_bellowsCoef = 1.0f - fall(0.06f);
+        m_shakeCoef = 1.0f - fall(0.02f);
     }
 
     void command(const Command &c, AudioContext &ctx) override {
@@ -1429,6 +1577,8 @@ private:
             low -= 12.0;
         for (int k = 0; k < Tarab::kStrings; ++k)
             m_tarab.tune(k, float(low + t.degreeSemis(k) - t.degreeSemis(0)));
+        // The chikari: the tonic from C5 up, and its octave.
+        m_tarab.tuneChikari(float(low < 72.0 ? low + 12.0 : low));
         if (first)
             return;
         for (int k = 0; k < kLanes; ++k) {
@@ -1488,8 +1638,9 @@ private:
         const Shape shape = shapeOf(t, e.degree, e.colour);
         const double centre = sd.centre + 3.5 * e.reg;
         const Voicing *prev = L.hasLast && L.lastReg == e.reg ? &L.last : nullptr;
-        const Voicing vc = voiceChord(t, shape, centre, sd.spread, prev);
+        Voicing vc = voiceChord(t, shape, centre, sd.spread, prev);
         const double rootMidi = t.baseMidi() + t.degreeSemis(e.degree);
+        bends(t, rootMidi, vc);
         ChordVoice *cur = current(L);
         const bool same = cur && cur->degree == e.degree && cur->colour == e.colour && cur->reg == e.reg;
         if (cur && cur->style == e.style && (sd.legato || !fresh)) {
@@ -1512,6 +1663,14 @@ private:
                 cur->filt.on();
                 cur->graceEnv = 1;
                 cur->graceHold = int(0.06f * m_rate);
+                // The pedal steel picks the strings again as the bar slides,
+                // the volume pedal pulled back and swelled in once more.
+                if (sd.osc == StyleDef::SteelOsc) {
+                    cur->sinceStrum = -1;
+                    cur->amp.v *= 0.3f;
+                    cur->amp.on();
+                    cur->held = 0;
+                }
             }
         } else {
             // The chord it replaces is damped, not left to ring under the new
@@ -1533,6 +1692,29 @@ private:
         L.shape = shape;
         if (tell)
             announce(lane, ctx);
+    }
+
+    // How far each note of a voicing may bend: up to the next note of the
+    // key (the sitar's meend, at most two semitones), and, for the pedal
+    // steel's pedals, the third up to the fourth and the fifth up to the
+    // sixth (the next note of the key above each), the others not at all.
+    static void bends(const Tuning &t, double rootMidi, Voicing &vc) {
+        const int count = t.degreesPerOctave();
+        for (int k = 0; k < vc.count; ++k) {
+            const double m = vc.notes[k];
+            double next = m + 2.0;
+            for (int d = 0; d < 10 * count; ++d) {
+                const double p = t.baseMidi() + t.degreeSemis(d);
+                if (p > m + 0.5) {
+                    next = std::min(next, p);
+                    break;
+                }
+            }
+            vc.lift[k] = float(next - m);
+            const double above = std::fmod(m - rootMidi + 1200.0, 12.0);
+            const bool third = above > 2.5 && above < 4.5, fifth = above > 6.5 && above < 7.5;
+            vc.pedal[k] = third || fifth ? vc.lift[k] : 0.0f;
+        }
     }
 
     // The chord of the moment for Bass, Arp and Lead. A chord held live wins
@@ -1613,12 +1795,39 @@ private:
         v.svfL.reset();
         v.svfR.reset();
         v.clickBp.reset();
-        v.clickBp.set(e.style == Piano     ? 2600.0f
-                      : e.style == Keys    ? 1300.0f
-                      : e.style == Kalimba ? 3800.0f
-                      : e.style == Gamelan ? 2200.0f
-                                           : 3400.0f,
-                      1.2f, m_rate);
+        // The hammer's, the key click's, the thumb's and the mallet's
+        // noise; the accordion's, the air through an opening valve.
+        v.clickBp.set(e.style == Piano       ? 2600.0f
+                      : e.style == Keys      ? 1300.0f
+                      : e.style == Kalimba   ? 1200.0f
+                      : e.style == Gamelan   ? 1600.0f
+                      : e.style == Accordion ? 2200.0f
+                                             : 3400.0f,
+                      e.style == Kalimba || e.style == Gamelan || e.style == Accordion ? 0.8f : 1.2f, m_rate);
+        // (The thumb and the mallet are soft: nothing of them above about
+        // 6 kHz.)
+        v.clickLp.y = 0;
+        v.clickLp.set(6000.0f, m_rate);
+        // The kalimba's box (its air at 250 Hz, its wood at 1.1 kHz) and its
+        // bottle caps' rattle (2 to 5 kHz, steeply cut above); the
+        // accordion's valve knock.
+        v.bodyA.reset();
+        v.bodyB.reset();
+        v.buzzBp.reset();
+        v.buzzLp.reset();
+        v.bodyA.set(e.style == Accordion ? 350.0f : 250.0f, e.style == Accordion ? 1.5f : 3.0f, m_rate);
+        v.bodyB.set(1100.0f, 2.5f, m_rate);
+        v.buzzBp.set(3200.0f, 1.3f, m_rate);
+        v.buzzLp.set(5000.0f, 0.9f, m_rate);
+        v.walk[0] = v.walk[1] = 0;
+        v.lastStruck[0] = v.lastStruck[1] = -1;
+        v.hits = 0;
+        v.bellows = e.pressure;
+        v.shake = 1;
+        v.knock = 1;
+        v.bend = 0;
+        v.held = 0;
+        v.vib = 0;
         v.upStroke = false;
         v.sinceStrum = -1; // the guitar strums its first chord as it starts
         // The unison: detunes spread symmetrically with the outer pair
@@ -1627,14 +1836,8 @@ private:
         static const float spread7[] = {0.0f, -0.29f, 0.31f, -0.62f, 0.6f, -1.0f, 0.97f};
         static const float spread5[] = {0.0f, -0.42f, 0.4f, -1.0f, 0.95f};
         static const float spread4[] = {-0.22f, 0.24f, -1.0f, 0.93f};
-        // The brass section's three players: one in tune, one flat, one
-        // sharp, each standing in its own place.
-        static const float spread3[] = {0.0f, -1.0f, 0.8f};
-        const bool saw = sd.osc == StyleDef::Saw || sd.osc == StyleDef::BrassOsc;
-        const float *sp = sd.unison >= 7  ? spread7
-                          : sd.unison == 5 ? spread5
-                          : sd.unison == 3 ? spread3
-                                           : spread4;
+        const bool saw = sd.osc == StyleDef::Saw;
+        const float *sp = sd.unison >= 7 ? spread7 : sd.unison == 5 ? spread5 : spread4;
         v.unison = saw ? std::min(sd.unison, ChordVoice::kUnison) : 2;
         for (int u = 0; u < ChordVoice::kUnison; ++u) {
             // The organ and the piano: a centre copy in tune and a side copy
@@ -1648,9 +1851,24 @@ private:
         float low = 0, top = 0;
         doublings(vc, rootMidi, low, top);
         // The guitar's strings all start at once and its strum plucks them
-        // in turn (see strum), the same way on every hit of its gate.
-        const bool strings = sd.osc == StyleDef::PluckedOsc || sd.osc == StyleDef::SitarOsc;
+        // in turn (see strum), the same way on every hit of its gate; the
+        // kalimba's tines and the gamelan's bars are struck one by one (see
+        // strikeTines).
+        const bool strings = sd.osc == StyleDef::PluckedOsc || sd.osc == StyleDef::SitarOsc ||
+                             sd.osc == StyleDef::SteelOsc || sd.osc == StyleDef::KalimbaOsc ||
+                             sd.osc == StyleDef::GamelanOsc;
         const float noteStrum = strings ? 0.0f : sd.strum;
+        // A gamelan player damps the bars of the last chord as the new one is
+        // struck (tetekep), and the pedal steel's bar lifts off the last
+        // chord's strings: neither is left ringing under the new chord.
+        if (sd.osc == StyleDef::GamelanOsc || sd.osc == StyleDef::SteelOsc)
+            for (auto &o : m_voices)
+                if (&o != &v && o.active && o.releasing && o.lane == lane && o.style == e.style)
+                    release(o, sd.osc == StyleDef::SteelOsc ? 0.03f : 0.06f);
+        // The bar slides into the chord from where it was: each string from
+        // the last chord's nearest note, if it is within a fourth.
+        const Lane &L = m_lanes[lane];
+        const bool slide = sd.osc == StyleDef::SteelOsc && L.hasLast;
         for (int k = 0; k < ChordVoice::kNotes; ++k) {
             auto &nt = v.notes[k];
             nt.delay = 0;
@@ -1663,11 +1881,39 @@ private:
             nt.pluckIn = -1;
             if (sd.osc == StyleDef::PluckedOsc)
                 nt.string.clear();
-            if (sd.osc == StyleDef::SitarOsc)
-                nt.sitar.clear();
+            if (sd.osc == StyleDef::SitarOsc || sd.osc == StyleDef::SteelOsc)
+                nt.wire.clear();
+            nt.ring = nt.ringPeak = 0;
+            nt.ringRise = 0;
+            nt.ringDecay = 1;
+            nt.m2 = nt.m3 = nt.drop = 0;
+            nt.bloom = 1;
+            nt.side = nt.sideTo = 0;
+            if (sd.osc == StyleDef::GamelanOsc)
+                for (int j = 0; j < 6; ++j) {
+                    nt.osc[j][0] = std::cos(kTwoPi * nt.phase[j]);
+                    nt.osc[j][1] = std::sin(kTwoPi * nt.phase[j]);
+                }
+            // Each of the accordion's reeds speaks 8 to 22 ms after its valve
+            // opens.
+            nt.speak = sd.osc == StyleDef::ReedOsc ? 0.0f : 1.0f;
+            nt.speakIn = sd.osc == StyleDef::ReedOsc ? int((0.008f + 0.014f * v.rng.unit()) * m_rate) : 0;
+            nt.lift = nt.pedal = 0;
             if (k < vc.count) {
                 nt.role = ChordVoice::Core;
                 nt.midi = nt.target = vc.notes[k];
+                nt.lift = vc.lift[k];
+                nt.pedal = vc.pedal[k];
+                if (slide) {
+                    float from = nt.target, best = 1e9f;
+                    for (int j = 0; j < L.last.count; ++j)
+                        if (std::fabs(L.last.notes[j] - nt.target) < best) {
+                            best = std::fabs(L.last.notes[j] - nt.target);
+                            from = L.last.notes[j];
+                        }
+                    if (best <= 5.0f)
+                        nt.midi = from;
+                }
                 nt.amp = nt.ampPrev = nt.ampTarget = 1;
                 nt.delay = int(noteStrum * float(k) * m_rate);
                 nt.onset = nt.delay > 0 ? 0.0f : 1.0f;
@@ -1715,6 +1961,8 @@ private:
             if (best >= 0) {
                 taken[best] = true;
                 v.notes[owned[best]].target = vc.notes[i];
+                v.notes[owned[best]].lift = vc.lift[i];
+                v.notes[owned[best]].pedal = vc.pedal[i];
                 assigned[i] = true;
             }
         }
@@ -1726,12 +1974,22 @@ private:
                 if (nt.ampTarget > 0.01f || nt.amp > 0.02f)
                     continue;
                 nt.midi = nt.target = vc.notes[i];
+                nt.lift = vc.lift[i];
+                nt.pedal = vc.pedal[i];
                 nt.amp = nt.ampPrev = 0;
                 nt.ampTarget = 1;
                 nt.delay = 0;
-                nt.pluckIn = 0; // a string fading in is plucked (the other sounds ignore it)
+                nt.pluckIn = 0; // a string fading in is plucked, a tine or bar struck (the others ignore it)
                 nt.pluckAmp = 0.7f * v.vel;
                 nt.pluckMute = 0;
+                // An accordion's new reed speaks late, with its valve's knock
+                // and a breath of air.
+                nt.speak = 0;
+                nt.speakIn = int((0.008f + 0.014f * v.rng.unit()) * m_rate);
+                if (v.style == Accordion) {
+                    v.knock = 1;
+                    v.clickEnv = std::max(v.clickEnv, 0.6f);
+                }
                 break;
             }
         }
@@ -1841,8 +2099,9 @@ private:
         const StyleDef &sd = styleDef(v.style);
         const bool gated = G.active && !v.releasing;
         const float len = m_rhythm[v.style].length;
-        // The sitar is struck open every time: no palm, no dead strokes.
-        const bool guitar = sd.osc == StyleDef::PluckedOsc;
+        // The sitar and the steel are struck open every time: no palm, no
+        // dead strokes.
+        const bool guitar = sd.osc == StyleDef::PluckedOsc, sitar = sd.osc == StyleDef::SitarOsc;
         const float palm = gated && guitar ? clampf((0.7f - len) / 0.6f, 0.0f, 0.75f) : 0.0f;
         int since = v.sinceStrum;
         for (int i = from; i < n; ++i) {
@@ -1851,8 +2110,18 @@ private:
             if (!first && !(gated && G.hitOn[i] && since > int(0.03f * m_rate)))
                 continue;
             const bool accent = first || G.hitOn[i] == 2;
-            v.upStroke = accent ? false : !v.upStroke;
             since = 0;
+            // The pedal steel is picked as the chord starts (and as the bar
+            // slides to a new one), never on a gate.
+            if (sd.osc == StyleDef::SteelOsc && !first)
+                continue;
+            // The sitar's gate is its right hand's rhythm: the accents rake
+            // the chord, the hits between them strike the chikari alone.
+            if (sitar && !accent) {
+                m_tarab.strikeChikari(i + int(0.004f * m_rate * v.rng.unit()), 0.5f * (0.6f + 0.5f * v.vel));
+                continue;
+            }
+            v.upStroke = accent ? false : !v.upStroke;
             // The strings sounding, lowest first.
             int order[ChordVoice::kNotes], count = 0;
             for (int k = 0; k < ChordVoice::kNotes; ++k)
@@ -1885,6 +2154,85 @@ private:
                 const float weight = v.upStroke ? 0.6f + 0.4f * float(r) / float(std::max(1, count - 1)) : 1.0f;
                 nt.pluckAmp = (accent ? 1.0f : 0.72f) * weight * (0.92f + 0.16f * v.rng.unit());
                 nt.pluckMute = mute;
+            }
+            // After a rake, the little finger catches the chikari.
+            if (sitar)
+                m_tarab.strikeChikari(i + late + int(per * float(count)) + int(0.07f * m_rate),
+                                      0.35f * (0.6f + 0.5f * v.vel));
+        }
+        v.sinceStrum = since;
+    }
+
+    // The kalimba's thumbs and the gamelan's players: on each hit of the
+    // gate (and as a chord starts) one tine or bar is struck, not the chord.
+    // Without a gate, the chord is struck once, rolled up from the bottom.
+    // The kalimba's tines lie alternately left and right of the middle, so
+    // the chord's lowest tone, third and so on are the left thumb's and the
+    // others the right's: the thumbs take turns, hit by hit, the left on the
+    // chord's first hit (the beat, on its own gate) and walking up its tines,
+    // the right walking down its own. The
+    // gamelan plays kotekan: one figure of eight sixteenths through the
+    // chord, its even steps struck by the polos (left), its odd ones by the
+    // sangsih (right), each player damping the bar it struck before.
+    void strikeTines(ChordVoice &v, const GateBlock &G, int from, int n) {
+        const StyleDef &sd = styleDef(v.style);
+        const bool gated = G.active && !v.releasing;
+        const bool gamelan = sd.osc == StyleDef::GamelanOsc;
+        int since = v.sinceStrum;
+        for (int i = from; i < n; ++i) {
+            const bool first = since < 0;
+            ++since;
+            if (!first && !(gated && G.hitOn[i]))
+                continue;
+            since = 0;
+            int order[4], count = 0;
+            for (int k = 0; k < 4; ++k)
+                if (v.notes[k].ampTarget > 0.01f)
+                    order[count++] = k;
+            for (int a = 1; a < count; ++a)
+                for (int b = a; b > 0 && v.notes[order[b]].target < v.notes[order[b - 1]].target; --b)
+                    std::swap(order[b], order[b - 1]);
+            if (count == 0)
+                continue;
+            const int at = i - from;
+            auto strike = [&](int k, int when, float amp, float side) {
+                auto &nt = v.notes[k];
+                nt.pluckIn = when;
+                nt.pluckAmp = amp * (0.9f + 0.2f * v.rng.unit());
+                nt.sideTo = side;
+            };
+            if (first && !gated) {
+                for (int r = 0; r < count; ++r)
+                    strike(order[r], at + int(sd.strum * m_rate * float(r)), 0.85f, (r & 1) ? 1.0f : -1.0f);
+                continue;
+            }
+            const bool accent = first || G.hitOn[i] == 2;
+            const float amp = accent ? 1.0f : 0.72f;
+            if (gamelan) {
+                static const int figure[8] = {0, 1, 2, 0, 1, 2, 3, 1};
+                const int step = v.hits++ & 7;
+                const int player = step & 1;
+                const int k = order[figure[step] % count];
+                // Tetekep: the bar this player struck last is damped, unless
+                // the other player has just struck it too.
+                const int last = v.lastStruck[player];
+                if (last >= 0 && last != k && last != v.lastStruck[1 - player])
+                    v.notes[last].ringDecay = m_tetekep;
+                v.lastStruck[player] = k;
+                strike(k, at, amp, player ? 1.0f : -1.0f);
+            } else {
+                auto next = [&](int thumb) {
+                    int side[4], m = 0;
+                    for (int r = 0; r < count; ++r)
+                        if ((r & 1) == thumb)
+                            side[m++] = order[r];
+                    if (m == 0)
+                        return order[0];
+                    const int w = v.walk[thumb]++ % m;
+                    return thumb == 0 ? side[w] : side[m - 1 - w];
+                };
+                const int thumb = v.hits++ & 1;
+                strike(next(thumb), at, amp, thumb ? 1.0f : -1.0f);
             }
         }
         v.sinceStrum = since;
@@ -1938,20 +2286,11 @@ private:
         // climbing back over 2 ms when it is struck again (a jump would
         // click through the FM index and the percussion).
         float strikeAt[kBlock] = {};
-        const bool struck = sd.osc == StyleDef::OrganOsc || sd.osc == StyleDef::PianoOsc ||
-                            sd.osc == StyleDef::TineOsc || sd.osc == StyleDef::KalimbaOsc ||
-                            sd.osc == StyleDef::GamelanOsc || sd.osc == StyleDef::BrassOsc;
+        const bool struck =
+            sd.osc == StyleDef::OrganOsc || sd.osc == StyleDef::PianoOsc || sd.osc == StyleDef::TineOsc;
         if (struck) {
-            // How fast the strike falls away: the kalimba's high modes ring a
-            // moment, the gamelan's for a second, and the brass section's lip
-            // reaches the note in a few tens of milliseconds.
-            const float fallTime = v.style == Piano                  ? 0.32f
-                                   : sd.osc == StyleDef::TineOsc    ? 0.5f
-                                   : sd.osc == StyleDef::KalimbaOsc ? 0.16f
-                                   : sd.osc == StyleDef::GamelanOsc ? 0.55f
-                                   : sd.osc == StyleDef::BrassOsc   ? 0.035f
-                                                                    : 0.11f;
-            const float fall = std::exp(-1.0f / (fallTime * m_rate));
+            const float fall =
+                std::exp(-1.0f / ((v.style == Piano ? 0.32f : sd.osc == StyleDef::TineOsc ? 0.5f : 0.11f) * m_rate));
             const float rise = 1.0f / (0.002f * m_rate);
             float st = v.strike;
             const bool strikes = G.active && sd.retrig && !v.releasing;
@@ -1972,11 +2311,40 @@ private:
             }
             v.strike = st;
         }
-        if (sd.osc == StyleDef::PluckedOsc || sd.osc == StyleDef::SitarOsc)
+        if (sd.osc == StyleDef::PluckedOsc || sd.osc == StyleDef::SitarOsc || sd.osc == StyleDef::SteelOsc)
             strumOnHits(v, G, from, n);
+        const bool tines = sd.osc == StyleDef::KalimbaOsc || sd.osc == StyleDef::GamelanOsc;
+        if (tines)
+            strikeTines(v, G, from, n);
+        // The sitar's meend and the steel's pedals: pressing past 0.6 bends,
+        // all the way by 0.9, the string moving over about 70 ms (a pedal's
+        // travel, a hand pulling the string along the fret). The bend is
+        // taken from where the pressure stands, not from where it landed,
+        // so a chord landed hard sounds bent at once and resolves as the
+        // finger eases (the steel's cry, played backwards).
+        const bool bender = sd.osc == StyleDef::SitarOsc || sd.osc == StyleDef::SteelOsc;
+        if (bender) {
+            const float u = clampf((v.pressureSm - 0.6f) / 0.3f, 0.0f, 1.0f);
+            v.bend += (u * u * (3.0f - 2.0f * u) - v.bend) * (1.0f - std::exp(-float(n) / (0.07f * m_rate)));
+        }
+        // The steel's bar: a slow vibrato that grows in once a chord has been
+        // held most of a second, a tenth of a semitone each way at 5 Hz.
+        float vibrato = 0;
+        if (sd.osc == StyleDef::SteelOsc) {
+            v.held += float(n) * invRate;
+            v.vib = wrap01(v.vib + 5.0f * float(n) * invRate);
+            vibrato = 0.1f * clampf((v.held - 0.8f) / 1.2f, 0.0f, 1.0f) * lut(tables().sine, v.vib);
+        }
+        // The highest note of the chord sounding: the sitar's main string,
+        // the one the meend pulls.
+        int topNote = -1;
+        for (int k = 0; k < 4; ++k)
+            if (v.notes[k].ampTarget > 0.01f && (topNote < 0 || v.notes[k].target > v.notes[topNote].target))
+                topNote = k;
 
         // Oscillators, before the envelope and the filter.
         float bL[kBlock] = {}, bR[kBlock] = {};
+        float buzz[kBlock] = {}; // the kalimba: how far its tines lift the caps, sample by sample
         const float invN = 1.0f / float(n);
         const Tables &tb = tables();
         const float noteNorm = 1.0f / std::sqrt(std::max(2.0f, cores));
@@ -2131,23 +2499,46 @@ private:
                 if (nt.pluckIn >= 0)
                     nt.pluckIn = nt.pluckIn >= n - from ? nt.pluckIn - (n - from) : -1;
             } else if (sd.osc == StyleDef::ReedOsc) {
-                // The accordion: three reeds, the middle one in tune and the
-                // other two a little sharp and as flat, a few hertz each way
-                // (at most 13 cents), so the note beats as a musette does.
-                // A free reed's tone is a narrow pulse, hollow and nasal
-                // (a notch every fifth harmonic), with some saw for body.
+                // The accordion: free reeds, each a narrow pulse (hollow and
+                // nasal, a notch every fifth harmonic) with some saw for body.
+                // The register switches: the musette's three 8' reeds, the
+                // middle in tune and the other two a few hertz sharp and as
+                // flat (at most 13 cents), so the note beats; below the
+                // middle voicing, bassoon and clarinet, a 16' reed and one 8'
+                // (no beating, dry and dark); above it the musette and a 4'
+                // piccolo reed.
                 const float c = std::min(0.0075f, 3.0f / hz);
                 const float inc0 = std::min(hz * invRate, 0.3f);
-                const float incs[3] = {inc0, inc0 * (1.0f + c), inc0 * (1.0f - c)};
+                const float incs[5] = {inc0, inc0 * (1.0f + c), inc0 * (1.0f - c), 0.5f * inc0,
+                                       std::min(2.0f * inc0, 0.3f)};
+                const float musette = v.reg >= 0 ? 0.62f : 0.0f;
+                const float levels[5] = {v.reg < 0 ? 0.8f : v.reg > 0 ? 0.56f : 0.62f, musette, musette,
+                                         v.reg < 0 ? 0.7f : 0.0f, v.reg > 0 ? 0.8f : 0.0f};
+                static const float duties[5] = {0.22f, 0.22f, 0.22f, 0.34f, 0.22f};
                 const float pan = 0.6f * sd.width;
-                const float gs[3][2] = {{0.62f, 0.62f},
-                                        {std::sqrt(0.5f * (1.0f + pan)) * 0.62f, std::sqrt(0.5f * (1.0f - pan)) * 0.62f},
-                                        {std::sqrt(0.5f * (1.0f - pan)) * 0.62f, std::sqrt(0.5f * (1.0f + pan)) * 0.62f}};
-                constexpr float duty = 0.22f;
-                for (int u = 0; u < 3; ++u) {
+                const float sideL = std::sqrt(0.5f * (1.0f + pan)), sideR = std::sqrt(0.5f * (1.0f - pan));
+                const float pans[5][2] = {{0.707f, 0.707f}, {sideL, sideR}, {sideR, sideL}, {0.8f, 0.6f}, {0.6f, 0.8f}};
+                // A reed speaks a moment after its valve opens, swelling in
+                // over about 15 ms and sagging a sixth of a semitone flat
+                // until it does (the pitch a free reed has before it is fully
+                // swinging).
+                float spk[kBlock];
+                const float speakCoef = 1.0f - std::exp(-1.0f / (0.015f * m_rate));
+                for (int i = start; i < n; ++i) {
+                    if (nt.speakIn > 0)
+                        --nt.speakIn;
+                    else
+                        nt.speak += (1.0f - nt.speak) * speakCoef;
+                    spk[i] = nt.speak;
+                }
+                for (int u = 0; u < 5; ++u) {
+                    if (levels[u] <= 0)
+                        continue;
                     float ph = nt.phase[u];
-                    const float inc = incs[u];
+                    const float duty = duties[u];
+                    const float gl = pans[u][0] * levels[u], gr = pans[u][1] * levels[u];
                     for (int i = start; i < n; ++i) {
+                        const float inc = incs[u] * (1.0f - 0.01f * (1.0f - spk[i]));
                         ph += inc;
                         if (ph >= 1.0f)
                             ph -= 1.0f;
@@ -2156,104 +2547,151 @@ private:
                             p2 -= 1.0f;
                         const float saw = 2.0f * ph - 1.0f - polyBlep(ph, inc);
                         const float saw2 = 2.0f * p2 - 1.0f - polyBlep(p2, inc);
-                        const float x = 0.5f * (saw - saw2) + 0.3f * saw;
-                        nl[i] += x * gs[u][0];
-                        nr[i] += x * gs[u][1];
+                        const float x = (0.5f * (saw - saw2) + 0.3f * saw) * spk[i];
+                        nl[i] += x * gl;
+                        nr[i] += x * gr;
                     }
                     nt.phase[u] = ph;
                 }
             } else if (sd.osc == StyleDef::KalimbaOsc) {
                 // The kalimba: a tine is a bar clamped at one end, its modes
-                // at 1, 6.27 and 17.55 times the note; the upper two only
-                // ring for the strike (the second as it falls, the third as
-                // its square), and the tine's swing is a little lopsided (a
-                // touch of the second harmonic, its mean taken back off).
-                // Tines alternate sides from the middle, as on the instrument.
-                const float inc = hz * invRate;
-                const float inc2 = 6.27f * inc, inc3 = 17.55f * inc;
-                const float a2 = inc2 < 0.45f ? 0.5f : 0.0f, a3 = inc3 < 0.45f ? 0.16f : 0.0f;
-                const int k = int(&nt - v.notes);
-                const float pan = (k & 1 ? 0.5f : -0.5f) * sd.width;
-                const float gl = std::sqrt(0.5f * (1.0f - pan)), gr = std::sqrt(0.5f * (1.0f + pan));
-                float p1 = nt.phase[0], p2 = nt.phase[1], p3 = nt.phase[2];
-                for (int i = start; i < n; ++i) {
-                    p1 = wrap01(p1 + inc);
-                    p2 = wrap01(p2 + std::min(inc2, 0.45f));
-                    p3 = wrap01(p3 + std::min(inc3, 0.45f));
-                    const float st = strikeAt[i];
-                    const float s1 = lut(tb.sine, p1);
-                    const float x = s1 + 0.14f * (s1 * s1 - 0.5f) + a2 * st * lut(tb.sine, p2) +
-                                    a3 * st * st * lut(tb.sine, p3);
-                    nl[i] += x * gl;
-                    nr[i] += x * gr;
+                // at 1, 6.27 and 17.55 times the note. A pluck rings the
+                // fundamental for a second or two (less up high) and the
+                // upper modes only for the strike: 20 ms and 8 ms, and
+                // 15 dB and more under it, a plink rather than a whistle.
+                // The tine's swing is a little lopsided (a touch of the second
+                // harmonic, its mean taken back off), and it is struck a few
+                // cents sharp, settling as the bend of the strike relaxes.
+                // When it swings past the caps' weight on its upward swing it
+                // lifts them, once a period: the rattle is locked to each
+                // tine's own pitch (see the envelope loop).
+                const bool due = nt.pluckIn >= 0 && nt.pluckIn < n - from;
+                if (nt.ring > 1e-4f || nt.ringRise > 0 || due) {
+                    const float inc = hz * invRate;
+                    const float inc2 = std::min(6.27f * inc, 0.45f), inc3 = std::min(17.55f * inc, 0.45f);
+                    const float a2 = 6.27f * inc < 0.45f ? 0.088f : 0.0f, a3 = 17.55f * inc < 0.45f ? 0.025f : 0.0f;
+                    const float ringFall =
+                        std::exp(-1.0f / (clampf(1.8f - (nt.midi - 60.0f) / 30.0f, 0.5f, 1.8f) * m_rate));
+                    nt.side += (nt.sideTo - nt.side) * 0.3f;
+                    const float pan = 0.5f * nt.side * sd.width;
+                    const float gl = std::sqrt(0.5f * (1.0f - pan)), gr = std::sqrt(0.5f * (1.0f + pan));
+                    const float caps = 0.8f - 0.35f * v.pressureSm;
+                    float p1 = nt.phase[0], p2 = nt.phase[1], p3 = nt.phase[2];
+                    for (int i = start; i < n; ++i) {
+                        if (i - from == nt.pluckIn) {
+                            nt.ringPeak = std::max(nt.ring, nt.pluckAmp);
+                            nt.ringRise = 24;
+                            nt.ringDecay = ringFall;
+                            nt.m2 = nt.m3 = nt.pluckAmp;
+                            nt.drop = 1;
+                            v.clickEnv = 1;
+                        }
+                        if (nt.ringRise > 0) {
+                            nt.ring += (nt.ringPeak - nt.ring) / float(nt.ringRise);
+                            --nt.ringRise;
+                        } else {
+                            nt.ring *= nt.ringDecay;
+                        }
+                        nt.m2 *= m_fall20ms;
+                        nt.m3 *= m_fall8ms;
+                        nt.drop *= m_fall40ms;
+                        p1 = wrap01(p1 + inc * (1.0f + 0.004f * nt.drop));
+                        p2 = wrap01(p2 + inc2);
+                        p3 = wrap01(p3 + inc3);
+                        const float s1 = lut(tb.sine, p1);
+                        const float x = nt.ring * (s1 + 0.14f * (s1 * s1 - 0.5f)) + a2 * nt.m2 * lut(tb.sine, p2) +
+                                        a3 * nt.m3 * lut(tb.sine, p3);
+                        buzz[i] += std::max(0.0f, nt.ring * s1 - caps) * nt.amp;
+                        nl[i] += x * gl;
+                        nr[i] += x * gr;
+                    }
+                    nt.phase[0] = p1;
+                    nt.phase[1] = p2;
+                    nt.phase[2] = p3;
                 }
-                nt.phase[0] = p1;
-                nt.phase[1] = p2;
-                nt.phase[2] = p3;
+                if (nt.pluckIn >= 0)
+                    nt.pluckIn = nt.pluckIn >= n - from ? nt.pluckIn - (n - from) : -1;
             } else if (sd.osc == StyleDef::GamelanOsc) {
                 // The gamelan: two bars a note, the pengumbang a little low
                 // and the pengisep as high, so the pair beats at a steady
                 // six or so hertz across the range (the ombak; at most 11
                 // cents each way); each a free bar's modes at 1, 2.76 and
-                // 5.4 times, the second fading with the strike's square
-                // root (twice as long as it), the third with its power of
-                // one and a half.
-                const float half = std::min(3.1f, hz * 0.0064f);
-                const float side = 0.55f * sd.width;
-                const float glU = std::sqrt(0.5f * (1.0f + side)), grU = std::sqrt(0.5f * (1.0f - side));
-                const float ratios[3] = {1.0f, 2.76f, 5.4f};
-                float incs[6];
-                for (int j = 0; j < 3; ++j) {
-                    incs[j] = std::min((hz - half) * ratios[j] * invRate, 0.45f);
-                    incs[3 + j] = std::min((hz + half) * ratios[j] * invRate, 0.45f);
-                }
-                const float a2 = 5.4f * hz * invRate < 0.45f ? 0.22f : 0.0f;
-                float ph[6];
-                std::copy(nt.phase, nt.phase + 6, ph);
-                for (int i = start; i < n; ++i) {
-                    for (int j = 0; j < 6; ++j)
-                        ph[j] = wrap01(ph[j] + incs[j]);
-                    const float st = strikeAt[i], sq = std::sqrt(st);
-                    const float m2 = 0.42f * sq, m3 = a2 * st * sq;
-                    const float u = lut(tb.sine, ph[0]) + m2 * lut(tb.sine, ph[1]) + m3 * lut(tb.sine, ph[2]);
-                    const float s2 = lut(tb.sine, ph[3]) + m2 * lut(tb.sine, ph[4]) + m3 * lut(tb.sine, ph[5]);
-                    nl[i] += 0.72f * (u * glU + s2 * grU);
-                    nr[i] += 0.72f * (u * grU + s2 * glU);
-                }
-                std::copy(ph, ph + 6, nt.phase);
-            } else if (sd.osc == StyleDef::BrassOsc) {
-                // The brass section: three saws a note, each player's lip
-                // starting most of a semitone under the note and rising
-                // into it as the strike falls; summed and driven, harder the
-                // harder the chord is struck, for the growl of a section
-                // blowing hard. The filter that makes them brass follows the
-                // loudness (see the envelope loop).
-                const float uni = 1.0f / std::sqrt(float(v.unison));
-                for (int u = 0; u < v.unison; ++u) {
-                    float ph = nt.phase[u];
-                    const float inc0 = std::min(hz * v.ratio[u] * invRate, 0.45f);
-                    const float gl = v.panL[u] * uni, gr = v.panR[u] * uni;
+                // 5.4 times, the upper two fading first. The resonator tube
+                // under the bar swells the fundamental in over the first
+                // 100 ms or so. Each partial is a rotating pair, four
+                // multiplies a sample, and a bar that has died away (or
+                // been damped) costs nothing.
+                const bool due = nt.pluckIn >= 0 && nt.pluckIn < n - from;
+                if (nt.ring > 1e-4f || nt.ringRise > 0 || due) {
+                    const float half = std::min(3.1f, hz * 0.0064f);
+                    const float ratios[3] = {1.0f, 2.76f, 5.4f};
+                    float rc[6], rs[6];
+                    for (int j = 0; j < 3; ++j)
+                        for (int b = 0; b < 2; ++b) {
+                            const float w = kTwoPi * std::min((hz + (b ? half : -half)) * ratios[j] * invRate, 0.45f);
+                            rc[3 * b + j] = std::cos(w);
+                            rs[3 * b + j] = std::sin(w);
+                        }
+                    const float a3 = 5.4f * hz * invRate < 0.45f ? 0.22f : 0.0f;
+                    const float ringFall =
+                        std::exp(-1.0f / (clampf(3.2f - (nt.midi - 60.0f) / 20.0f, 1.0f, 3.2f) * m_rate));
+                    // The polos left, the sangsih right; within a note, the
+                    // pair of bars a little apart.
+                    nt.side += (nt.sideTo - nt.side) * 0.3f;
+                    const float pan = 0.55f * nt.side * sd.width;
+                    const float gl = std::sqrt(0.5f * (1.0f - pan)), gr = std::sqrt(0.5f * (1.0f + pan));
+                    const float spread = 0.25f * sd.width;
+                    const float gU = std::sqrt(0.5f * (1.0f + spread)), gS = std::sqrt(0.5f * (1.0f - spread));
+                    float (*o)[2] = nt.osc;
                     for (int i = start; i < n; ++i) {
-                        const float st = strikeAt[i];
-                        const float inc = inc0 * (1.0f - 0.04f * st * st);
-                        ph += inc;
-                        if (ph >= 1.0f)
-                            ph -= 1.0f;
-                        const float s = 2.0f * ph - 1.0f - polyBlep(ph, inc);
-                        nl[i] += s * gl;
-                        nr[i] += s * gr;
+                        if (i - from == nt.pluckIn) {
+                            nt.ringPeak = std::max(nt.ring, nt.pluckAmp);
+                            nt.ringRise = 24;
+                            nt.ringDecay = ringFall;
+                            nt.m2 = nt.m3 = 1;
+                            nt.bloom = 0.3f;
+                            v.clickEnv = std::max(v.clickEnv, nt.pluckAmp);
+                        }
+                        if (nt.ringRise > 0) {
+                            nt.ring += (nt.ringPeak - nt.ring) / float(nt.ringRise);
+                            --nt.ringRise;
+                        } else {
+                            nt.ring *= nt.ringDecay;
+                        }
+                        nt.m2 *= m_fall1600ms;
+                        nt.m3 *= m_fall400ms;
+                        nt.bloom += (1.0f - nt.bloom) * m_bloom;
+                        for (int j = 0; j < 6; ++j) {
+                            const float c = o[j][0], sn = o[j][1];
+                            o[j][0] = c * rc[j] - sn * rs[j];
+                            o[j][1] = c * rs[j] + sn * rc[j];
+                        }
+                        const float m2 = 0.42f * nt.m2, m3 = a3 * nt.m3;
+                        const float u = nt.bloom * o[0][1] + m2 * o[1][1] + m3 * o[2][1];
+                        const float s2 = nt.bloom * o[3][1] + m2 * o[4][1] + m3 * o[5][1];
+                        const float x = 0.72f * nt.ring;
+                        nl[i] += x * gl * (u * gU + s2 * gS);
+                        nr[i] += x * gr * (u * gS + s2 * gU);
                     }
-                    nt.phase[u] = ph;
+                    // (Rounding lets a rotating pair drift from the unit
+                    // circle: put it back once a block.)
+                    for (int j = 0; j < 6; ++j) {
+                        const float g = 1.5f - 0.5f * (o[j][0] * o[j][0] + o[j][1] * o[j][1]);
+                        o[j][0] *= g;
+                        o[j][1] *= g;
+                    }
                 }
-                const float drive = 1.1f + 1.4f * v.vel, norm = 1.0f / fastTanh(drive);
-                for (int i = start; i < n; ++i) {
-                    nl[i] = fastTanh(drive * nl[i]) * norm;
-                    nr[i] = fastTanh(drive * nr[i]) * norm;
-                }
-            } else if (sd.osc == StyleDef::SitarOsc) {
-                // The sitar: a buzzing string per note, plucked when the
-                // rake reaches it, low strings left and high ones right.
-                auto &str = nt.sitar;
+                if (nt.pluckIn >= 0)
+                    nt.pluckIn = nt.pluckIn >= n - from ? nt.pluckIn - (n - from) : -1;
+            } else if (sd.osc == StyleDef::SteelOsc || sd.osc == StyleDef::SitarOsc) {
+                // A string that bends: the sitar's, buzzing on the jawari,
+                // its top string pulled up by the meend; the pedal steel's,
+                // through a pickup near the bridge (the string a ninth of a
+                // period earlier subtracted, a bright, glassy comb), its
+                // third and fifth raised by the pedals and all of them moved
+                // by the bar's vibrato. Low strings left, high ones right.
+                auto &str = nt.wire;
+                const bool steel = sd.osc == StyleDef::SteelOsc;
                 const int k = int(&nt - v.notes);
                 const float pan = (nt.role == ChordVoice::Low   ? -0.6f
                                    : nt.role == ChordVoice::Top ? 0.7f
@@ -2262,17 +2700,32 @@ private:
                 const float gl = std::sqrt(0.5f * (1.0f - pan)), gr = std::sqrt(0.5f * (1.0f + pan));
                 const bool waiting = nt.pluckIn >= 0 && nt.pluckIn < n - from;
                 if (str.energy > 1e-6f || str.excLeft > 0 || waiting) {
-                    str.tune(hz, m_rate);
+                    const float bent = steel ? v.bend * nt.pedal + vibrato
+                                             : (k == topNote ? v.bend * std::min(nt.lift, 2.0f) : 0.0f);
+                    const float bhz = clampf(midiToHz(nt.midi + bent), 30.0f, m_rate * 0.2f);
+                    const float ring = steel ? clampf(12.0f - (nt.midi - 60.0f) / 6.0f, 5.0f, 12.0f) : 9.0f;
+                    const float bright = steel ? clampf(0.97f - 0.1f * (bhz / 2000.0f), 0.75f, 0.97f)
+                                               : clampf(0.93f - 0.12f * (bhz / 1500.0f), 0.6f, 0.93f);
+                    str.tune(bhz, m_rate, ring, bright, n - start);
+                    const float pick = 0.11f * str.delay;
                     float e = 0;
                     for (int i = start; i < n; ++i) {
-                        if (i - from == nt.pluckIn)
-                            str.pluck(nt.pluckAmp * (0.6f + 0.5f * v.vel));
-                        const float x = str.step(v.rng);
+                        if (i - from == nt.pluckIn) {
+                            if (steel)
+                                str.pluck(4.0f * nt.pluckAmp * (0.6f + 0.5f * v.vel), 0.3f, 0.75f);
+                            else
+                                str.pluck(2.0f * nt.pluckAmp * (0.6f + 0.5f * v.vel), 1.0f, 0.45f);
+                        }
+                        float x = str.step(v.rng);
                         e = std::max(e, std::fabs(x));
+                        x = steel ? 0.8f * (x - str.read(pick)) : str.jawari(x);
                         nl[i] += x * gl;
                         nr[i] += x * gr;
                     }
-                    str.energy = e;
+                    // (A pick shorter than the period leaves blocks of the
+                    // line quiet while the wave goes round: the level is held
+                    // over them, so a string is never taken for dead.)
+                    str.energy = std::max(e, 0.9f * str.energy);
                 }
                 if (nt.pluckIn >= 0)
                     nt.pluckIn = nt.pluckIn >= n - from ? nt.pluckIn - (n - from) : -1;
@@ -2314,34 +2767,42 @@ private:
         }
 
         // Envelopes, gate, filter, pump.
+        const bool accordion = sd.osc == StyleDef::ReedOsc;
         const float knob = (v.filterSm - 0.5f) * 0.9f;
         const float build = 0.07f * float(m_globalRate - 1);
         const float keyTrack = topMidi > 0 ? 0.12f * (topMidi - 64.0f) / 24.0f : 0.0f;
-        const float base = sd.cutoff + knob + 0.16f * (v.pressureSm - 0.5f) + build + keyTrack;
+        // (The accordion's bellows brighten it sample by sample, below.)
+        const float base = sd.cutoff + knob + (accordion ? 0.0f : 0.16f * (v.pressureSm - 0.5f)) + build + keyTrack;
         const float accent = 0.6f + 0.6f * v.vel;
-        const bool chop = G.active && !sd.retrig;
-        const bool strikeGate = G.active && sd.retrig;
-        const bool ladder = sd.osc == StyleDef::Saw || sd.osc == StyleDef::BrassOsc;
+        // The accordion's gate shakes the bellows rather than cutting the
+        // sound (below).
+        const bool chop = G.active && !sd.retrig && !accordion;
+        // The tines, the bars and the sitar ring on between the gate's hits:
+        // the hits strike them (see strikeTines, strumOnHits), they never
+        // stop them.
+        const bool strikeGate = G.active && sd.retrig && !tines && sd.osc != StyleDef::SitarOsc;
+        const bool ladder = sd.osc == StyleDef::Saw;
         const bool mono = sd.osc == StyleDef::StringOsc; // one filter does for both sides
         const float clickLevel = v.style == Piano     ? 0.16f
                                  : v.style == Keys    ? 0.035f
-                                 : v.style == Kalimba ? 0.05f
-                                 : v.style == Gamelan ? 0.07f
-                                 : v.style == Brass   ? 0.0f
+                                 : v.style == Kalimba ? 0.03f
+                                 : v.style == Gamelan ? 0.05f
                                                       : 0.1f;
-        const bool click = struck && clickLevel > 0;
-        const bool kalimba = sd.osc == StyleDef::KalimbaOsc, brass = sd.osc == StyleDef::BrassOsc;
+        const bool click = struck;
+        const bool kalimba = sd.osc == StyleDef::KalimbaOsc, gamelan = sd.osc == StyleDef::GamelanOsc;
         // The kalimba's bottle caps: how hard they rattle (pressing harder
-        // loosens them), and how far the tines must swing before they do.
-        const float rattle = 0.15f + 0.5f * v.pressureSm;
-        constexpr float kRattleFrom = 0.45f;
-        // (Blown softly, a section is mellow at any loudness; blown hard,
-        // it opens all the way.)
-        const float track = sd.track * (0.3f + 0.8f * v.vel);
+        // loosens them; how far a tine must swing to lift them is set in its
+        // oscillator).
+        const float rattle = 0.08f + 0.3f * v.pressureSm;
         const bool guitar = sd.osc == StyleDef::PluckedOsc;
         const float graceDecay = std::exp(-1.0f / (0.008f * m_rate));
         const float clickDecay = std::exp(-1.0f / (0.0035f * m_rate));
-        const float gain = sd.gain * (0.5f + 0.5f * v.vel) * (0.82f + 0.36f * v.pressureSm);
+        // (The steel's pressure is its pedals, the accordion's its bellows:
+        // neither is simply louder.)
+        const float pressed = accordion                       ? 1.0f
+                              : sd.osc == StyleDef::SteelOsc ? 1.0f
+                                                             : 0.82f + 0.36f * v.pressureSm;
+        const float gain = sd.gain * (0.5f + 0.5f * v.vel) * pressed;
         // The organ's rotor, slow; the electric piano's tremolo, a stereo
         // pan at a few hertz (it keeps the mono sum whole). Each moves
         // smoothly across the block.
@@ -2373,10 +2834,27 @@ private:
             }
             const float a = v.amp.step();
             const float fe = v.filt.step();
+            // The accordion's bellows: the pressure, smoothed over 60 ms
+            // sample by sample (louder, and brighter, the harder the push);
+            // on a gate, shaken in time, the sound dipping between the hits
+            // as the bellows turn, with a breath of air at each turn.
+            float bellows = 1;
+            if (accordion) {
+                v.bellows += (v.pressure - v.bellows) * m_bellowsCoef;
+                if (G.active && !v.releasing) {
+                    v.shake += (0.3f + 0.7f * std::min(1.0f, G.g[i]) - v.shake) * m_shakeCoef;
+                    if (G.hitOn[i])
+                        v.clickEnv = std::max(v.clickEnv, 0.4f);
+                } else {
+                    v.shake += (1.0f - v.shake) * m_shakeCoef;
+                }
+                bellows = (0.4f + 0.9f * v.bellows) * v.shake;
+            }
             if (((i - from) & 7) == 0) {
                 // A wub opens the filter as it swells: the chord talks.
                 const float wub = chop && G.smooth ? 0.32f * (G.g[i] - 0.55f) : 0.0f;
-                const float c = clampf(base + sd.envAmt * fe * accent + wub + track * a, 0.0f, 1.12f);
+                const float bel = accordion ? 0.24f * (v.bellows - 0.5f) : 0.0f;
+                const float c = clampf(base + sd.envAmt * fe * accent + wub + bel, 0.0f, 1.12f);
                 const float hz = std::min(60.0f * std::exp2(c * 8.1f), m_rate * 0.42f);
                 if (ladder) {
                     v.ladL.set(hz, sd.res, m_rate);
@@ -2389,29 +2867,46 @@ private:
             }
             float xl = bL[i], xr = bR[i];
             if (kalimba) {
-                // The thumb's click, and the caps' rattle: a bright hiss let
-                // through only while the tines swing past the caps' weight,
-                // so it chatters at the notes' own rate and fades with them.
-                const float nz = v.clickBp.step(v.rng.bipolar()).band;
-                // (The tines' swing is the oscillators' times the envelope:
-                // the caps fall quiet as the notes die away.)
-                const float swing = std::max(0.0f, 0.5f * std::fabs(xl + xr) * a - kRattleFrom);
-                const float c = nz * (v.clickEnv * clickLevel + rattle * swing);
-                xl += c;
-                xr += c;
+                // The box: its air and its wood, a little of each, rung by the
+                // tines.
+                const float m = 0.5f * (xl + xr);
+                const float body = 0.2f * v.bodyA.step(m).band + 0.12f * v.bodyB.step(m).band;
+                // The thumb's soft click, and the caps: a burst of noise each
+                // time a tine lifts them, so they chatter at the tines' own
+                // pitches and fall quiet as the tines die down, heard only
+                // where a rattle is (2 to 5 kHz).
+                const float nz = v.rng.bipolar();
+                const float thumb = v.clickLp.step(v.clickBp.step(nz).band) * v.clickEnv * clickLevel;
+                const float caps = v.buzzLp.step(v.buzzBp.step(nz * buzz[i] * rattle).band).low;
+                xl += body + thumb + caps;
+                xr += body + thumb + caps;
                 v.clickEnv *= clickDecay;
+            } else if (gamelan) {
+                // The mallet: a wooden thock, nothing of it above about
+                // 8 kHz, not a full-band spike.
+                if (v.clickEnv > 1e-4f) {
+                    const float c = v.clickLp.step(v.clickBp.step(v.rng.bipolar()).band) * v.clickEnv * clickLevel;
+                    xl += c;
+                    xr += c;
+                    v.clickEnv *= clickDecay;
+                }
+            } else if (accordion) {
+                // Air through the valves as they open (and as the bellows
+                // turn), a faint breath under the reeds as long as they
+                // blow, and each valve's knock as it opens.
+                const float nz = v.rng.bipolar();
+                const float air = v.clickBp.step(nz).band * (0.05f * v.clickEnv + 0.008f * v.bellows);
+                const float thud = v.bodyA.step(nz * v.knock).band * 0.05f;
+                xl += air + thud;
+                xr += air + thud;
+                v.clickEnv *= m_airDecay;
+                v.knock *= clickDecay;
             } else if (click && v.clickEnv > 1e-4f) {
-                // The hammer, the mallet, or the organ's key click.
+                // The hammer, or the organ's key click.
                 const float c = v.clickBp.step(v.rng.bipolar()).band * v.clickEnv * clickLevel;
                 xl += c;
                 xr += c;
                 v.clickEnv *= clickDecay;
-            }
-            if (brass) {
-                // Breath on the attack, as the players' tongues let go.
-                const float b = 0.06f * fe * v.rng.bipolar();
-                xl += b;
-                xr += b;
             }
             if (ladder) {
                 xl = v.ladL.step(xl);
@@ -2422,7 +2917,7 @@ private:
                 xl = v.svfL.step(xl).low;
                 xr = v.svfR.step(xr).low;
             }
-            float g = a * gain * (g0 + (g1 - g0) * float(i) * invN);
+            float g = a * gain * bellows * (g0 + (g1 - g0) * float(i) * invN);
             if (chop) {
                 if (v.graceHold > 0)
                     --v.graceHold;
@@ -2435,6 +2930,12 @@ private:
             const float rot = rot0 + (rot1 - rot0) * float(i) * invN;
             xl *= g * (1.0f + rot);
             xr *= g * (1.0f - rot);
+            // The steel's amp, a clean one pushed a little: the pickup's
+            // sharpest crests are rounded, as the sitar's are (Tarab::knee).
+            if (sd.osc == StyleDef::SteelOsc) {
+                xl = Tarab::knee(xl);
+                xr = Tarab::knee(xr);
+            }
             outL[i] += xl;
             outR[i] += xr;
             peak = std::max(peak, std::fabs(xl) + std::fabs(xr));
@@ -2466,6 +2967,12 @@ private:
     DubEcho m_echo;
     GuitarAmp m_amp;
     Tarab m_tarab;
+    // Falls a sample, worked out once: the kalimba's upper modes and its
+    // strike's pitch drop, the gamelan's upper modes, a damped bar, the
+    // accordion's air; and the gamelan's resonator bloom, the bellows' and
+    // their shake's smoothing.
+    float m_fall8ms = 0, m_fall20ms = 0, m_fall40ms = 0, m_fall400ms = 0, m_fall1600ms = 0, m_tetekep = 0;
+    float m_airDecay = 0, m_bloom = 0, m_bellowsCoef = 0, m_shakeCoef = 0;
 };
 
 }

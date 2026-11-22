@@ -1159,7 +1159,17 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     {
         qreal &x = tagsRight;
         const qreal y = pc.pad.top();
-        x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).name), col, 12).right() + 8;
+        // The sound, where it is in the row (the row shows only some of
+        // them), and what it is, dimmer.
+        x = c::tag(p, QPointF(x, y),
+                   QStringLiteral("%1 %2/%3").arg(QString::fromUtf8(styleDef(m_style).name)).arg(m_style + 1).arg(
+                       int(StyleCount)),
+                   col, 12)
+                .right() +
+            6;
+        x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).blurb).toUpper(), c::alpha(col, 0.5f), 10)
+                .right() +
+            8;
         if (m_hold)
             x = c::tag(p, QPointF(x, y), QStringLiteral("HOLD"), c::amber(), 12).right() + 8;
         if (m_register != 0)
@@ -1239,23 +1249,30 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     m_spots.clear();
     const qreal gap = 4, between = 12;
     QStringList sounds;
-    QList<bool> soundLit;
-    QList<int> soundIds;
-    for (int s = 0; s < StyleCount; ++s) {
+    for (int s = 0; s < StyleCount; ++s)
         sounds << QString::fromUtf8(styleDef(s).name);
-        soundLit << (s == m_style);
-        soundIds << SpotStyle + s;
-    }
     const QRectF top = c::bandRow(pc, 0);
-    // Ten sounds need most of the row: the keyboard gives up a little, and
-    // the sounds take what their words need and a few pixels each to
-    // breathe, the clips the rest.
+    // The sounds take half the row, the keyboard a little and the clips the
+    // rest. There are more sounds than fit on most windows: the row is then
+    // a window onto them that follows the sound chosen, faded at each end
+    // where more wait beyond it (console::chips).
     const qreal keysW = top.width() * 0.16;
-    const qreal soundsW = std::max(chipsWidth(sounds, gap) + 3.0 * qreal(sounds.size()), top.width() * 0.41);
+    const qreal soundsW = top.width() * 0.5;
     const qreal clipsW = top.width() - keysW - soundsW - 2 * between;
     c::clips(p, QRectF(top.left(), top.top(), clipsW, top.height()), *pc.view, col, pc.time, &m_spots);
-    fitChips(p, pc, QRectF(top.left() + clipsW + between, top.top(), soundsW, top.height()), sounds, soundLit,
-             soundIds, gap, &m_spots);
+    const QRectF soundsRow(top.left() + clipsW + between, top.top(), soundsW, top.height());
+    c::chips(p, pc, soundsRow, sounds, m_style, &m_spots, SpotStyle, gap);
+    // Under the window onto the sounds, a dot for each of them, the chosen
+    // one lit: how many there are, and how many wait beyond the faded ends.
+    {
+        const qreal step = 7, y = soundsRow.bottom() + 5;
+        qreal dx = soundsRow.center().x() - step * qreal(StyleCount - 1) / 2;
+        p.setPen(Qt::NoPen);
+        for (int s = 0; s < StyleCount; ++s, dx += step) {
+            p.setBrush(s == m_style ? col : c::alpha(col, 0.28f));
+            p.drawEllipse(QPointF(dx, y), s == m_style ? 2.2 : 1.6, s == m_style ? 2.2 : 1.6);
+        }
+    }
     paintKeys(p, QRectF(top.right() - keysW, top.top(), keysW, top.height()), pc, d);
 
     struct Setting {
@@ -1389,7 +1406,22 @@ QString Control::help() const {
     // The keys every part page shares come first, then this page's own.
     return QStringLiteral(
         "← →\tthe sound: pad, trance, organ, piano, pluck, pump, keys (electric piano), strings (string machine), "
-        "dub (stab into echo), guitar (funk, strummed)\n"
+        "dub (stab into echo), guitar (funk, strummed), accordion (musette reeds: press harder to push the bellows, "
+        "↑ ↓ switch its registers too, bassoon and clarinet below, piccolo above; on the offbeat, 3·3·2, Charleston "
+        "and wub gates its left hand plays the Stradella buttons, bass and chord, under the right hand's chord "
+        "held softly (press harder to bring it forward): polka, cumbia, tango, a waltz a beat; on the others the "
+        "bellows shake), kalimba (thumb piano: each hit of the gate plucks one tine, the thumbs taking turns, each "
+        "stopping the tine it plucked last; the box's hollow knocks under them; press harder, the caps rattle "
+        "longer; a flat finger plays with the thumb's pad, no nail), gamelan (Balinese bronze: two players "
+        "interlock, nyog cag on its sixteenths, norot on the wub, the jegogan on the root under each chord and "
+        "bar; let go mid-figure and they end together on the next stroke, damped, the angsel; HOLD strikes the "
+        "chord), steel (pedal steel through a clean amp and its spring, a low string under the chord: swells in, "
+        "slowly under a light touch, and sustains; the bar slides from the last chord; press harder for the B "
+        "pedal, third to fourth, then the A pedal, fifth to sixth, ease off to resolve; a flat finger is the knee "
+        "lever, the root down a step), sitar (jawari buzz and chikari: press harder to bend the top string up to "
+        "the next note, the meend; on a gate it plays jhala, its accents raking the strings short and its other "
+        "hits striking the chikari as hard); round from the last to the first. The page names the sound, what it "
+        "is and where it is in the row (11/15) along its top edge\n"
         "↑ ↓\tthe voicing higher or lower\n"
         "Shift+← →  (or [ ])\tthe gate pattern for this sound\n"
         "- +  (or =)\tthe filter darker or brighter\n"
@@ -1398,7 +1430,8 @@ QString Control::help() const {
         "Shift+Return\toverdub on or off: what you play joins the loop\n"
         "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot at the next bar · clear it · stop the loop\n"
         "play, then Space\tloops what you just played at once: played twice, one cycle of it\n"
-        "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds, and a chip for every key "
+        "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds (more than fit: the row "
+        "follows the one chosen, a faded chip at either end steps on to the ones beyond), and a chip for every key "
         "above: hold, let go, gate, voicing, darker, brighter, overdub\n"
         "touch a column\ta chord of the key, I to VII, voiced to flow from the last one\n"
         "the five rows\tits colour, bottom to top: power 5, sus, triad, add9, seventh\n"
@@ -1422,7 +1455,11 @@ QString Control::status() const {
         fingers += (h.touch >= 0 || h.key != 0) && h.role == Held::Chord;
     if (fingers > 0)
         parts << QStringLiteral("%1 chord%2 held").arg(fingers).arg(fingers == 1 ? "" : "s");
-    parts << QString::fromUtf8(styleDef(m_style).name);
+    parts << QStringLiteral("%1 %2/%3 (%4)")
+                 .arg(QString::fromUtf8(styleDef(m_style).name))
+                 .arg(m_style + 1)
+                 .arg(int(StyleCount))
+                 .arg(QString::fromUtf8(styleDef(m_style).blurb));
     const int sounding = m_override >= 0 ? m_override : m_pattern[m_style];
     parts << QStringLiteral("gate %1%2")
                  .arg(QString::fromUtf8(gateDef(sounding).name))

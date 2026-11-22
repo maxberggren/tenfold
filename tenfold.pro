@@ -116,6 +116,8 @@ linux {
         -framework ApplicationServices -framework AppKit -framework AVFoundation \
         -framework UniformTypeIdentifiers
     QMAKE_INFO_PLIST = src/macos/Info.plist
+    # Made from src/macos/tenfold-icon.svg (the Linux icon on macOS's
+    # rounded square) at every size the Finder and the Dock ask for.
     ICON = src/macos/tenfold.icns
     QMAKE_MACOSX_DEPLOYMENT_TARGET = 12.0
     portable: QMAKE_APPLE_DEVICE_ARCHS = x86_64 arm64

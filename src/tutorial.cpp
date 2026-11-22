@@ -22,6 +22,7 @@ const Tutorial::Probe kProbes[] = {
     {Drums, "hits"},     {Drums, "rolls"},      {Drums, "grooves"}, {Drums, "keeps"},
     {Chords, "chords"},  {Lead, "glides"},      {Lead, "wiggles"},  {Lead, "harmonized"},
     {Atmos, "swells"},   {FX, "drops"},         {Arrange, "drops"},   {Arrange, "backIns"},
+    {Vocal, "sung"},     {Vocal, "harmonized"},
 };
 constexpr int kProbeCount = int(sizeof(kProbes) / sizeof(kProbes[0]));
 
@@ -413,6 +414,44 @@ void Tutorial::build() {
          {},
          {{QStringLiteral("Backspace: stopped, kept"),
            [](Look &l) { return !l.playing(FX) && l.view().parts[FX].queued < 0 && l.hasClip(FX); }}}});
+
+    // --- Vocal: your voice, a choir of it, a loop of it -----------------------------
+    // The harmony lanes span x 0.085 to 0.915, seven of them (−8ve … +8ve),
+    // over the tape (y 0.12 to 0.32); +3RD is the fourth lane, +5TH the fifth.
+    const float vLane = (0.915f - 0.085f) / 7.0f;
+    auto vocalLane = [&](int k, const QString &label) {
+        return spot(0.085f + vLane * float(k), 0.4f, 0.085f + vLane * float(k + 1), 0.8f, label);
+    };
+    add({QStringLiteral("Vocal"), Vocal, QStringLiteral("Sing"),
+         QStringLiteral("Headphones on, and sing a few words: you hear yourself at once, and the tape under the lanes "
+                        "fills with what you sang. No microphone? Press V: a demo singer sings for you."),
+         QStringLiteral("The line rising up the middle is your note, as you sing it."),
+         QStringLiteral("That's you."),
+         {QStringLiteral("V")},
+         {},
+         {spot(0.085f, 0.12f, 0.915f, 0.32f, QStringLiteral("THE TAPE"))},
+         {{QStringLiteral("A voice"), [](Look &l) { return l.since(Vocal, "sung") >= 1.5f; }}}});
+
+    add({QStringLiteral("Vocal"), Vocal, QStringLiteral("A choir of you"),
+         QStringLiteral("Keep singing and rest a finger on +3RD: a second you sings a third above, always in the key. "
+                        "Each lane names the note it adds. Another finger on +5TH and you're a chord."),
+         QStringLiteral("Higher in a lane is a brighter throat, lower a darker one; your own is on the middle line."),
+         QStringLiteral("Three of you."),
+         {},
+         {},
+         {vocalLane(3, QStringLiteral("+3RD")), vocalLane(4, QStringLiteral("+5TH"))},
+         {{QStringLiteral("Sing with a harmony"), [](Look &l) { return l.since(Vocal, "harmonized") >= 1.0f; }}}});
+
+    add({QStringLiteral("Vocal"), Vocal, QStringLiteral("Loop a phrase"),
+         QStringLiteral("Sing a short phrase and press Space as it ends. The bracket on the tape shows what it takes, "
+                        "cut in the breaths between words, and the phrase loops on the bars."),
+         QStringLiteral("The edges are effects while you hold them: echo, reverb, radio, crush on top, a filter on the "
+                        "left, freeze and stutter on the right."),
+         QStringLiteral("Your voice is in the track."),
+         {QStringLiteral("Space")},
+         {},
+         {spot(0.085f, 0.12f, 0.915f, 0.32f, QStringLiteral("WHAT SPACE TAKES"))},
+         {{QStringLiteral("A vocal loop plays"), [](Look &l) { return l.playing(Vocal); }}}});
 
     // --- The Song page: the mix, the moves, the song ------------------------------
     // What it teaches: live moves (mute, breakdown, build and drop) on the

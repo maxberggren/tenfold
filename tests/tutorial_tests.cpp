@@ -22,7 +22,7 @@ namespace {
 constexpr double kBpm = 124;
 double beat(double b) { return b * 60.0 / kBpm; }
 double bar(double n) { return beat(n * 4); }
-constexpr int kTrack = 109; // the bar the written track starts on
+constexpr int kTrack = 117; // the bar the written track starts on
 
 // A script, line by line.
 struct Script {
@@ -178,38 +178,51 @@ std::string walkthrough() {
     s.key(bar(68) + 0.3, "Space");
     s.key(bar(69) + 0.5, "Backspace");
 
+    s.comment("8 Vocal. A few words sung; then a long note with a finger on +3RD.");
+    s.key(bar(70), "8");
+    s.add("voice %.3f %.3f hz=220 vowel=a", bar(71), beat(3));
+    s.add("voice %.3f %.3f hz=220 vowel=o", bar(73), beat(7));
+    s.add("down %.3f 60 0.5000 0.6 p=0.6", bar(73) + 0.4);
+    s.add("up %.3f 60", bar(73) + beat(6));
+
+    s.comment("A phrase inside bars 76 and 77, Space as it ends: it loops.");
+    s.add("voice %.3f %.3f hz=220 vowel=a", bar(76) + beat(0.1), beat(1.6));
+    s.add("voice %.3f %.3f hz=247 vowel=e", bar(76) + beat(2.1), beat(1.6));
+    s.add("voice %.3f %.3f hz=262 to=294 vowel=o", bar(77) + beat(0.1), beat(3.4));
+    s.key(bar(78) + 0.05, "Space");
+
     s.comment("0 Song page. The mouse clicks the bass loop: it stops on the bar; again: back.");
-    s.key(bar(72), "0");
+    s.key(bar(80), "0");
     const double laneH = 0.885 / kMaxParts; // a lane per part, all eight
     const double bassY = 0.885 - 1.5 * laneH, clipX = 0.12 + 0.07625 / 2;
-    s.add("mouse %.3f %.4f %.4f down", bar(73), clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f up", bar(73) + 0.1, clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f down", bar(75), clipX, bassY);
-    s.add("mouse %.3f %.4f %.4f up", bar(75) + 0.1, clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f down", bar(81), clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f up", bar(81) + 0.1, clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f down", bar(83), clipX, bassY);
+    s.add("mouse %.3f %.4f %.4f up", bar(83) + 0.1, clipX, bassY);
 
     s.comment("Q mutes the drums; Q again brings them back.");
-    s.key(bar(77), "Q");
-    s.key(bar(78), "Q");
+    s.key(bar(85), "Q");
+    s.key(bar(86), "Q");
 
     s.comment("N: a breakdown; N again: back.");
-    s.key(bar(79) + 0.5, "N");
-    s.key(bar(82) + 0.5, "N");
+    s.key(bar(87) + 0.5, "N");
+    s.key(bar(90) + 0.5, "N");
 
     s.comment("B: build to the end of the phrase (the FX loop leading in), and the drop.");
-    s.key(bar(85) + 0.5, "B");
+    s.key(bar(93) + 0.5, "B");
 
-    s.comment("Ctrl+R records the mix; I, I writes the whole track and plays it from bar 109.");
-    s.key(bar(108), "Ctrl+R");
-    s.key(bar(108) + 0.5, "I");
-    s.key(bar(108) + 0.9, "I");
+    s.comment("Ctrl+R records the mix; I, I writes the whole track and plays it from bar 117.");
+    s.key(bar(116), "Ctrl+R");
+    s.key(bar(116) + 0.5, "I");
+    s.key(bar(116) + 0.9, "I");
 
-    s.comment("Space punches in from bar 112: Q mutes the drums, Q brings them back; Space ends it on bar 115.");
+    s.comment("Space punches in from bar 120: Q mutes the drums, Q brings them back; Space ends it on bar 123.");
     s.key(bar(kTrack + 2) + 0.5, "Space");
     s.key(bar(kTrack + 3) + 0.5, "Q");
     s.key(bar(kTrack + 4) + 0.5, "Q");
     s.key(bar(kTrack + 5) + 0.5, "Space");
 
-    s.comment("The track plays to its end (76 bars, to bar 185); Ctrl+R saves it.");
+    s.comment("The track plays to its end (76 bars, to bar 193); Ctrl+R saves it.");
     s.key(bar(kTrack + 76) + 0.5, "Ctrl+R");
 
     s.comment("The end: Ctrl+Return finishes the tutorial.");
@@ -439,8 +452,9 @@ private slots:
 
     void theSongHasEveryPart() {
         const Walk &w = theWalk();
-        // A loop for every part that plays notes, the FX aside.
-        for (int p = 0; p < 6; ++p) {
+        // A loop for every part that plays notes, and the singing; the FX
+        // aside.
+        for (int p : {0, 1, 2, 3, 4, 5, 7}) {
             int clips = 0;
             for (const auto &c : w.take.view.parts[p].clips)
                 clips += c.state != ClipView::Empty;

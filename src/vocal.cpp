@@ -8,15 +8,17 @@
 //
 //   the middle    keys in the song's key, low to high across the pad: each
 //                 finger is your voice again at that note (the vowels stay
-//                 yours), its height the throat (low a giant, high an elf),
+//                 yours), its height the throat (darker low, brighter high,
+//                 your own in the middle),
 //                 pressure its level, twist a detune that widens it
 //   left edge     a resonant filter: slide for a wah
 //   right edge    freeze (lower half: the last sound held as a cloud you
 //                 can sing over) or stutter (upper half: the last slice
 //                 repeated on the grid, faster higher up)
-//   top edge      throws: echo on the left, a huge reverb on the right,
-//                 for as long as you hold
-//   bottom edge   lo-fi: a radio on the left, a bitcrusher on the right
+//   top edge      four effects for as long as you hold, left to right:
+//                 echo, a huge reverb, a radio, a bitcrusher
+//   bottom edge   nothing: where a thumb rests, and where the pad is
+//                 clicked
 //   the click     tape stop: the voice winds down while the pad is pressed
 //
 // ← → choose what happens to the voice itself (natural, hard-tuned, only
@@ -92,16 +94,22 @@ constexpr int kMaxVoices = 10;
 constexpr float kLeft = 0.085f, kRight = 0.915f, kBottom = 0.12f, kTop = 0.86f;
 // The keys' lower part shows the tape: what Space would take.
 constexpr float kTapeTop = 0.32f;
+// The lanes' middle: a finger here keeps your own throat (the engine's
+// formant is neutral half way up the lanes).
+constexpr float kThroatMid = 0.5f * (kTapeTop + kTop);
 
 // The right edge is two effects on one control (PFreeze): freeze below its
 // middle, stutter above, as the engine reads the height.
-enum Zone { Keys, Filter, Freeze, Echo, Reverb, Radio, Crush, Chop, Stutter };
+enum Zone { Keys, Filter, Freeze, Echo, Reverb, Radio, Crush, Chop, Stutter, Rest };
 constexpr float kRightMid = 0.5f * (kBottom + kTop);
 Zone zoneAt(float x, float y) {
+    // The top edge in quarters. The bottom edge plays nothing: thumbs rest
+    // there, and the click (tape stop) is pressed there, so an effect
+    // under them would sound by accident.
     if (y >= kTop)
-        return x < 0.5f ? Echo : Reverb;
+        return x < 0.25f ? Echo : x < 0.5f ? Reverb : x < 0.75f ? Radio : Crush;
     if (y <= kBottom)
-        return x < 0.5f ? Radio : Crush;
+        return Rest;
     if (x <= kLeft)
         return Filter;
     if (x >= kRight)
@@ -1361,6 +1369,20 @@ public:
         // What was sung, for the trail of notes the page draws.
         const PartView &v = ctx.studio().parts[part];
         const float hz = v.data[pub::Hz];
+        // For the tutorial: how long a voice has sung, and how long with a
+        // harmony finger down over it.
+        {
+            const double dt = std::clamp(t - m_lastHeard, 0.0, 0.1);
+            m_lastHeard = t;
+            if (hz > 0) {
+                m_sungSecs += dt;
+                for (const Finger &h : m_fingers)
+                    if (h.id >= 0 && !h.clicker && h.zone == Keys && h.mode == HarmonyNote) {
+                        m_harmonySecs += dt;
+                        break;
+                    }
+            }
+        }
         if (t - m_lastTrail >= 1.0 / 60) {
             m_lastTrail = t;
             m_trail[m_trailW++ % kTrail] = {t, hz > 0 ? midiOfHz(hz) : -1.0f, v.data[pub::InRms]};
@@ -1459,11 +1481,11 @@ public:
             if (lane >= 0) {
                 const int lanes = laneCount(ctx.studio());
                 t.x = kLeft + (kRight - kLeft) * (float(lane) + 0.5f) / float(lanes);
-                t.y = 0.5f * (kBottom + kTop);
+                t.y = kThroatMid;
             } else if (held == Echo) {
-                t.x = 0.3f, t.y = 0.93f;
+                t.x = 0.15f, t.y = 0.93f; // the dotted 1/8
             } else if (held == Reverb) {
-                t.x = 0.75f, t.y = 0.93f;
+                t.x = 0.375f, t.y = 0.93f; // a hall
             } else {
                 t.x = 0.955f;
                 t.y = k.key == Qt::Key_E ? 0.3f : 0.75f;
@@ -1619,7 +1641,7 @@ public:
             "melody, so it never clashes)\n"
             "in PRISM and VOCODER\tthe lanes are notes of the key instead, two octaves around your voice: your "
             "voice (or the vocoder) sings exactly the notes you hold\n"
-            "its height · pressure · twist\tthe throat, giant low to elf high · its level · a detune that widens it\n"
+            "its height · pressure · twist\tthe throat (your own on the middle line, darker below, brighter above) · its level · a detune that widens it\n"
             "more fingers\ta harmony, a chord, a ten-voice choir of you\n"
             "the tape (the strip of waveform under the lanes)\tTOUCH A WORD and it plays again, over and over while "
             "you hold; slide to another word; twist to pitch it; a loop can take what you chop\n"
@@ -1627,9 +1649,10 @@ public:
             "right edge, lower half\tFREEZE: the last sound held as a cloud you can sing over; twist to pitch it\n"
             "right edge, upper half\tSTUTTER: the last slice repeated on the grid, faster higher up; the voice "
             "steps aside\n"
-            "top edge\tthrows: ECHO on the left (across: 1/8, dotted 1/8, 1/4), REVERB on the right; the tails ring "
-            "on after you lift\n"
-            "bottom edge\tRADIO on the left, CRUSH on the right: further across is rougher, pressure is more\n"
+            "top edge\tfour throws, left to right: ECHO (across: 1/8, dotted 1/8, 1/4; press for more repeats), "
+            "REVERB (across: room to cathedral; twist for shimmer), RADIO and CRUSH (further across is rougher); "
+            "the echo and reverb ring on after you lift\n"
+            "bottom edge\tplays nothing: rest a thumb there, and click the pad there\n"
             "click the pad\tTAPE STOP: the voice winds down while you hold it\n"
             "Left / Right\tthe voice: natural, hard tune, prism (only the notes you hold), choir on the Chords "
             "page's chord, vocoder, robot\n"
@@ -1655,7 +1678,7 @@ public:
         QStringList parts;
         int notes = 0;
         for (const Finger &h : m_fingers)
-            if (h.id >= 0 && !h.clicker) {
+            if (h.id >= 0 && !h.clicker && h.zone != Rest) {
                 if (h.zone == Keys)
                     ++notes;
                 else
@@ -1886,6 +1909,12 @@ public:
     float tutorialProbe(const QString &name) const override {
         if (name == QLatin1String("loops"))
             return float(m_loopsMade);
+        if (name == QLatin1String("sung"))
+            return float(m_sungSecs);
+        if (name == QLatin1String("harmonized"))
+            return float(m_harmonySecs);
+        if (name == QLatin1String("demo"))
+            return m_demo ? 1.0f : 0.0f;
         return PartControl::tutorialProbe(name);
     }
 
@@ -1923,6 +1952,7 @@ private:
         case Filter: return "FILTER";
         case Freeze: return "FREEZE";
         case Stutter: return "STUTTER";
+        case Rest: return "";
         case Echo: return "ECHO";
         case Reverb: return "REVERB";
         case Radio: return "RADIO";
@@ -2100,7 +2130,7 @@ private:
         c.id = h.voice;
         c.i[0] = h.value;
         c.i[1] = h.mode;
-        const float u = clampf((h.y - kBottom) / (kTop - kBottom), 0, 1);
+        const float u = clampf((h.y - kTapeTop) / (kTop - kTapeTop), 0, 1);
         c.f[0] = 0.3f + 0.9f * clampf(h.p, 0, 1);
         c.f[1] = u;
         c.f[2] = clampf(h.twist / 0.8f, -1, 1);
@@ -2131,23 +2161,30 @@ private:
             break;
         case Echo:
             c.i[0] = PEcho;
-            c.f[0] = clampf(h.x * 2, 0, 0.999f);
+            c.f[0] = clampf(h.x * 4, 0, 0.999f);
             c.f[1] = p;
             break;
         case Reverb:
             c.i[0] = PReverb;
-            c.f[0] = clampf((h.x - 0.5f) * 2, 0, 1);
+            c.f[0] = clampf((h.x - 0.25f) * 4, 0, 1);
             c.f[1] = p;
             c.f[3] = clampf(0.25f + h.twist / 0.8f, 0, 1);
             break;
+        // One lo-fi engine, its first half the radio and its second the
+        // crush, each across its own quarter.
         case Radio:
+            c.i[0] = PLofi;
+            c.f[0] = clampf((h.x - 0.5f) * 2, 0, 0.499f);
+            c.f[1] = p;
+            break;
         case Crush:
             c.i[0] = PLofi;
-            c.f[0] = clampf(h.x, 0, 1);
+            c.f[0] = clampf(0.5f + (h.x - 0.75f) * 2, 0.5f, 1);
             c.f[1] = p;
             break;
         case Keys:
-        case Chop: return;
+        case Chop:
+        case Rest: return;
         }
         if (h.zone != Freeze && h.zone != Stutter)
             c.f[2] = on ? 1 : 0;
@@ -2596,6 +2633,7 @@ private:
     uint32_t m_takesSeen = 0;
     int m_playingSeen = -1;
     int m_loopsMade = 0, m_notesPlayed = 0, m_effectsUsed = 0, m_chopsPlayed = 0;
+    double m_sungSecs = 0, m_harmonySecs = 0, m_lastHeard = 0;
     bool m_demo = false;
     double m_autoUntil = -1;
     float m_autoPeak = 0;
@@ -2686,14 +2724,23 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             p.drawLine(QPointF(x, body.top()), QPointF(x, body.bottom()));
         }
     };
-    band(0, kTop, 0.5f, 1, QStringLiteral("ECHO"), QStringLiteral("press: more repeats"),
+    band(0, kTop, 0.25f, 1, QStringLiteral("ECHO"), QStringLiteral("press: more"),
          {QStringLiteral("1/8"), QStringLiteral("1/8."), QStringLiteral("1/4")}, Echo, fx);
-    band(0.5f, kTop, 1, 1, QStringLiteral("REVERB"), QStringLiteral("twist: shimmer"),
-         {QStringLiteral("room"), QStringLiteral("hall"), QStringLiteral("cathedral")}, Reverb, fx);
-    band(0, 0, 0.5f, kBottom, QStringLiteral("RADIO"), QStringLiteral("a tiny speaker"),
+    band(0.25f, kTop, 0.5f, 1, QStringLiteral("REVERB"), QStringLiteral("twist: shimmer"),
+         {QStringLiteral("room"), QStringLiteral("hall"), QStringLiteral("vast")}, Reverb, fx);
+    band(0.5f, kTop, 0.75f, 1, QStringLiteral("RADIO"), QStringLiteral("tiny speaker"),
          {QStringLiteral("radio"), QStringLiteral("phone"), QStringLiteral("blown")}, Radio, warm);
-    band(0.5f, 0, 1, kBottom, QStringLiteral("CRUSH"), QStringLiteral("fewer bits"),
-         {QStringLiteral("lo-fi"), QStringLiteral("gritty"), QStringLiteral("8-bit")}, Crush, warm);
+    band(0.75f, kTop, 1, 1, QStringLiteral("CRUSH"), QStringLiteral("fewer bits"),
+         {QStringLiteral("lo-fi"), QStringLiteral("grit"), QStringLiteral("8-bit")}, Crush, warm);
+    // The bottom edge: a place to rest, said plainly so it isn't mistaken
+    // for a control.
+    {
+        const QRectF r = pc.rect(0, 0, 1, kBottom);
+        p.setPen(QPen(c::alpha(col, 0.18f), 1, Qt::DashLine));
+        p.drawLine(r.topLeft(), r.topRight());
+        c::text(p, r, QStringLiteral("REST YOUR THUMB HERE  ·  CLICK THE PAD: TAPE STOP"),
+                c::alpha(col, m_button || m_tapeKey ? 1.0f : 0.45f), notePx + 1, true, Qt::AlignCenter);
+    }
 
     // A side strip: its name at the top, then labels at the heights they
     // hold, the finger's height marked across it.
@@ -2821,11 +2868,19 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         c::text(p, pc.rect(x0, kTapeTop, x0 + laneW, kTapeTop + 0.045f), name,
                 c::alpha(col, root ? 0.9f : 0.5f), labelPx, root, Qt::AlignCenter);
     }
-    // The throat, up the keys: giant at the foot, elf at the top.
-    c::text(p, pc.rect(kLeft + 0.008f, kTop - 0.055f, kLeft + 0.25f, kTop - 0.01f), QStringLiteral("↑ ELF THROAT"),
-            c::alpha(col, 0.6f), labelPx - 1, true);
-    c::text(p, pc.rect(kLeft + 0.008f, kTapeTop + 0.12f, kLeft + 0.25f, kTapeTop + 0.165f),
-            QStringLiteral("↓ GIANT THROAT"), c::alpha(col, 0.6f), labelPx - 1, true);
+    // The throat, up the keys: your own on the middle line, darker and
+    // bigger below it, brighter and smaller above.
+    {
+        const qreal y = pc.at(0, kThroatMid).y();
+        p.setPen(QPen(c::alpha(col, 0.22f), 1, Qt::DotLine));
+        p.drawLine(QPointF(pc.at(kLeft, 0).x(), y), QPointF(pc.at(kRight, 0).x(), y));
+        c::text(p, pc.rect(kLeft + 0.008f, kThroatMid, kLeft + 0.3f, kThroatMid + 0.045f),
+                QStringLiteral("YOUR OWN THROAT"), c::alpha(col, 0.5f), labelPx - 2, true);
+        c::text(p, pc.rect(kLeft + 0.008f, kTop - 0.055f, kLeft + 0.3f, kTop - 0.01f), QStringLiteral("↑ BRIGHTER"),
+                c::alpha(col, 0.55f), labelPx - 1, true);
+        c::text(p, pc.rect(kLeft + 0.008f, kTapeTop + 0.12f, kLeft + 0.3f, kTapeTop + 0.165f),
+                QStringLiteral("↓ DARKER"), c::alpha(col, 0.55f), labelPx - 1, true);
+    }
 
     // The note sung: a trail rising up the keys, at its pitch across them.
     const Harmony hv = harmonyOf(sv);
@@ -2922,6 +2977,8 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             QPainterPath path;
             bool started = false;
             int last = INT_MIN;
+            qreal labelled = -1e9; // where the last name went: names keep their distance
+            int named = INT_MIN;   // and which: a note flickering back isn't named again
             for (int t = 0; t < kTrail; ++t) {
                 const TrailPoint &tp = m_trail[(m_trailW + t) % kTrail];
                 const double age = pc.time - tp.t;
@@ -2938,7 +2995,10 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                     path.lineTo(at);
                 started = true;
                 const int note = int(std::lround(m));
-                if (note != last && last != INT_MIN && age > 0.15)
+                if (last == INT_MIN)
+                    named = note;
+                if (note != last && note != named && age > 0.15 && std::fabs(at.y() - labelled) > 3.0 * notePx &&
+                    (labelled = at.y(), named = note, true))
                     c::text(p, QRectF(at.x() + 6, at.y() - notePx, laneW * pc.pad.width() / 2, 2 * notePx),
                             noteName(m), c::alpha(col, float(0.85 * (1 - age / span))), notePx, true,
                             Qt::AlignLeft | Qt::AlignVCenter);
@@ -2993,7 +3053,11 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             label = QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12));
         }
         // A finger on a strip goes unnamed: the strip it lit says it.
-        c::finger(p, pc, t, h.zone == Keys ? col : c::cyan(), label, clampf(h.p, 0, 1));
+        // A resting thumb is drawn faint: it plays nothing.
+        if (h.zone == Rest)
+            c::finger(p, pc, t, c::alpha(col, 0.3f), {}, 0);
+        else
+            c::finger(p, pc, t, h.zone == Keys ? col : c::cyan(), label, clampf(h.p, 0, 1));
     }
 
     // Tape stop: the pad itself slows.

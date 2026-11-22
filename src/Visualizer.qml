@@ -18,7 +18,7 @@ import Tenfold
 Item {
     id: root
     // How much CRT the glass shows: the main window has scanlines of its own.
-    property real crt: 1.0
+    property real crt: visual.crt ? 1.0 : 0.0
     // For looking at one pass alone (TENFOLD_VISUAL_STAGE: 1 the world,
     // 2 the feedback without bloom); 0 the whole picture.
     property int stage: 0
@@ -60,6 +60,10 @@ Item {
         readonly property vector4d morph1: root.u.morph1
         readonly property vector4d morph2: root.u.morph2
         readonly property vector4d morph3: root.u.morph3
+        readonly property vector4d n0: root.u.n0
+        readonly property vector4d n1: root.u.n1
+        readonly property vector4d n2: root.u.n2
+        readonly property vector4d n3: root.u.n3
         fragmentShader: "qrc:/visual/scene.frag.qsb"
     }
     ShaderEffectSource {
@@ -179,7 +183,6 @@ Item {
         readonly property vector4d chord: root.u.chord
         readonly property vector4d fx: root.u.fx
         readonly property vector4d atmos: root.u.atmos
-        readonly property vector4d lead: root.u.lead
         readonly property vector4d drums2: root.u.drums2
         readonly property vector4d morph2: root.u.morph2
         readonly property vector4d roll: root.roll

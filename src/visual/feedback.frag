@@ -7,7 +7,6 @@
 //
 // Drawn on top, each in its part's colour:
 //   kick    pushes the echoes in (its shockwave is post.frag's)
-//   arp     each note a burst of sparks, placed by its pitch
 //   vocal   a ring at the centre, its edge the microphone's waveform
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -84,26 +83,9 @@ float fingerGlow(vec2 p, vec4 f, float aspect) {
     if (f.w <= 0.0) return 0.0;
     vec2 c = (f.xy - 0.5) * vec2(aspect, 1.0);
     vec2 d = p - c;
-    return f.w * (0.3 + f.z) * exp(-dot(d, d) * 900.0);
-}
-
-// A note's burst of sparks: 28 of them flung out from where it played,
-// slowing and fading over a second.
-vec3 burst(vec2 p, vec4 n, float aspect, float idx) {
-    float age = n.x;
-    if (age < 0.0 || age > 1.2 || n.w > 0.5) return vec3(0.0);
-    vec2 o = vec2((n.y - 0.5) * aspect * 0.85, (hash1(idx * 7.13 + floor(n.y * 97.0)) - 0.5) * 0.6);
-    vec2 d = p - o;
-    float a = atan(d.y, d.x);
-    float cells = 28.0;
-    float cell = floor((a + PI) / TAU * cells);
-    float ja = (cell + 0.5 + 0.35 * (hash1(cell + idx * 13.0) - 0.5)) / cells * TAU - PI;
-    float sp = 0.25 + 0.55 * hash1(cell * 3.7 + idx);
-    float r = sp * age * (1.0 - 0.45 * age) * (0.6 + n.z);
-    vec2 s = o + r * vec2(cos(ja), sin(ja)) + vec2(0.0, -0.15 * age * age);
-    float k = exp(-dot(p - s, p - s) * 40000.0);
-    float fade = (1.0 - age / 1.2);
-    return C_ARP * k * fade * fade * (3.0 + 4.0 * n.z);
+    // A small bright ring, not a blob: the finger's place in the flow.
+    float r = length(d);
+    return f.w * (0.3 + f.z) * exp(-abs(r - 0.018) * 260.0);
 }
 
 void main() {
@@ -134,9 +116,11 @@ void main() {
     q += (0.002 + 0.012 * warp) * vec2(sin(q.y * 9.0 + time * 1.3 + ubuf.morph0.w), cos(q.x * 7.0 - time * 1.1));
     vec2 puv = q / vec2(aspect, -1.0) + 0.5;
     vec3 old = texture(prev, puv).rgb;
-    // The trails: long when the hand asks, longer in a wash, cut by a drop.
-    float keep = mix(0.78, 0.965, ubuf.roll.y) + 0.03 * ubuf.fx.w - 0.4 * ubuf.fx.y;
-    old = max(old * clamp(keep, 0.0, 0.985) - 0.003, 0.0);
+    // The trails: short unless the hand asks, longer in a wash, and wiped
+    // clean on a drop, so the next world starts clear.
+    float keep = mix(0.55, 0.9, ubuf.roll.y) + 0.04 * ubuf.fx.w;
+    keep *= 1.0 - step(0.75, ubuf.fx.y);
+    old = max(old * clamp(keep, 0.0, 0.95) - 0.004, 0.0);
 
     vec3 now = texture(scene, uv).rgb;
     float lum = dot(now, vec3(0.3, 0.5, 0.2));
@@ -148,18 +132,6 @@ void main() {
     // (The kick's shockwave is the glass's, in post.frag: drawn here, its
     // sweep would fill a disc in the echoes.)
     float r = length(p);
-    // Percussion: sparks of light round the rim.
-    col += C_DRUMS * ubuf.drums.w * exp(-abs(r - 0.6) * 25.0) * step(0.8, hash1(floor(atan(p.y, p.x) * 20.0) + floor(time * 20.0)));
-
-    // Arp: sparks from each recent note.
-    col += burst(p, ubuf.n0, aspect, 0.0);
-    col += burst(p, ubuf.n1, aspect, 1.0);
-    col += burst(p, ubuf.n2, aspect, 2.0);
-    col += burst(p, ubuf.n3, aspect, 3.0);
-
-    // Bass: a low glow from below, as wide as the bass is deep.
-    col += C_BASS * ubuf.bass.w * exp(-max(p.y + 0.5, 0.0) * (3.0 + 6.0 * ubuf.bass.y)) * 0.25;
-
     // Vocal: a ring whose edge is the microphone's waveform.
     float va = atan(p.y, p.x);
     float wave = texture(wave, vec2(fract(va / TAU + 0.5), 0.25)).r * 2.0 - 1.0;
@@ -176,9 +148,9 @@ void main() {
     col += palette(0.6) * fg * ubuf.roll.z;
 
     now += col;
-    // The brighter of this frame and the echoes, so trails never pile up
-    // into white, and the echo of a bright thing outlives a dim one.
-    col = max(now, old * (1.0 - 0.35 * clamp(lum, 0.0, 1.0)));
+    // The echoes only where this frame is dark: they fill the black between
+    // things and never muddy the things themselves.
+    col = max(now, old * (1.0 - smoothstep(0.03, 0.35, lum)));
     if (ubuf.debug.x == 3.0) col = now;
     if (ubuf.debug.x == 4.0) col = old;
     fragColor = vec4(min(col, vec3(8.0)), 1.0) * ubuf.qt_Opacity;

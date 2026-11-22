@@ -14,7 +14,6 @@ layout(std140, binding = 0) uniform buf {
     vec4 chord;  // hue, change flash, level, tones
     vec4 fx;     // build, drop, sweep, wash
     vec4 atmos;  // level, swell, halo, tone
-    vec4 lead;   // level, pitch, brightness, bend
     vec4 drums2; // sub, snares counted, kicks counted, master
     vec4 morph2; // distance flown, warp, hue turn, chaos
     vec4 roll;   // roll speed, trails, markers, crt (0 flat .. 1 a full CRT)
@@ -59,7 +58,7 @@ void main() {
     uv.x += step(0.72, fract(uv.y * 9.0 + ubuf.drums2.y * 0.37)) * ubuf.drums.y * ubuf.drums.y * 0.02;
 
     // Chromatic fringes, wider toward the edge, split by the drums.
-    vec2 off = d * (0.003 + 0.012 * ubuf.drums.y + 0.008 * ubuf.drums.x + 0.02 * chaos);
+    vec2 off = d * (0.014 * ubuf.drums.y * ubuf.drums.y + 0.01 * ubuf.drums.x * ubuf.drums.x + 0.02 * chaos);
     vec3 col;
     col.r = texture(image, uv + off).r;
     col.g = texture(image, uv).g;
@@ -76,19 +75,13 @@ void main() {
     float band = pow(0.5 + 0.5 * sin(pl * 2.3), 14.0);
     vec3 plasma = mix(vec3(0.66, 0.55, 1.0), palette(pl * 0.12), 0.5) * band;
     float lum = dot(col, vec3(0.3, 0.5, 0.2));
-    col += plasma * (0.02 + 0.1 * ubuf.atmos.x + 0.6 * ubuf.atmos.y + 0.3 * ubuf.atmos.z) * (1.0 - clamp(lum * 3.0, 0.0, 1.0));
+    col += plasma * (0.03 * ubuf.atmos.x + 0.5 * ubuf.atmos.y + 0.25 * ubuf.atmos.z) * (1.0 - clamp(lum * 3.0, 0.0, 1.0));
 
-    // The lead: a thin laser across the glass at its pitch, wavering with
-    // its bend, wider and whiter as the finger brightens it.
-    float ly = (ubuf.lead.y - 0.5) * 0.75 + 0.025 * sin(pc.x * 7.0 + time * 4.0) * (1.0 + 4.0 * abs(ubuf.lead.w));
-    float lw = 260.0 / (1.0 + 2.0 * ubuf.lead.z);
-    float laser = exp(-abs(pc.y - ly) * lw);
-    col += mix(vec3(1.0, 0.69, 0.0), vec3(1.0, 0.95, 0.8), laser * laser) * laser * ubuf.lead.x * 1.3;
     // The snare: a shutter, for a blink: bands of the picture flash and
     // slide, shifted every hit.
     float snare = ubuf.drums.y * ubuf.drums.y;
     float bars = step(0.72, fract(uv.y * 9.0 + ubuf.drums2.y * 0.37));
-    col += vec3(1.0, 0.97, 0.92) * snare * bars * 0.22;
+    col += vec3(1.0, 0.97, 0.92) * snare * bars * 0.08;
 
     // Chords: each change washes the glass in the new chord's colour.
     col += palette(0.0) * ubuf.chord.y * 0.12;
@@ -102,14 +95,14 @@ void main() {
     col = max(col - 0.025, 0.0) * 1.03;
     col = col * (2.51 * col + 0.03) / (col * (2.43 * col + 0.59) + 0.14);
     col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.25);
-    col = mix(col, 1.0 - col, smoothstep(0.82, 0.95, drop) * 0.85);
+    col = mix(col, 1.0 - col, step(0.93, drop) * 0.85);
 
     // Scanlines every three pixels (the window's own), a vignette, grain that
     // the hats stir.
     float y = qt_TexCoord0.y * ubuf.res.y;
     col *= 1.0 - crt * 0.2 * step(fract(y / 3.0), 0.34);
-    col *= 1.0 - crt * 0.55 * dot(d, d) * 1.6;
-    col += (hash2(qt_TexCoord0 * ubuf.res.xy + fract(time * 7.13) * 91.0) - 0.5) * (0.03 + 0.06 * ubuf.drums.z);
+    col *= 1.0 - (0.25 + 0.3 * crt) * dot(d, d) * 1.6;
+    col += (hash2(qt_TexCoord0 * ubuf.res.xy + fract(time * 7.13) * 91.0) - 0.5) * (0.01 + 0.02 * crt + 0.04 * ubuf.drums.z);
     col *= inside;
     fragColor = vec4(clamp(col, 0.0, 1.0), 1.0) * ubuf.qt_Opacity;
 }

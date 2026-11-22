@@ -240,18 +240,29 @@ void SignalTracker::update(const StudioView &v, double dt) {
     if (v.partCount > Fx) {
         const float *d = v.parts[Fx].data;
         const float k = aud[Fx] ? 1.0f : 0.0f;
-        const float swept = clamp01((std::fabs(v.master[MasterFilter] - 0.5f) * 2.0f - 0.1f) * 1.4f);
+        // (Until the studio has published, the master reads all zeros.)
+        const float swept = v.sample > 0 ? clamp01((std::fabs(v.master[MasterFilter] - 0.5f) * 2.0f - 0.1f) * 1.4f) : 0.0f;
         const float target = std::max(k * clamp01(d[risers::pub::Intensity]), swept);
         s.build += (target - s.build) * float(1.0 - std::exp(-dt / 0.08));
-        m_sweepPeak = std::max(swept, m_sweepPeak * float(std::exp(-dt / 0.25)));
-        float flash = k * clamp01(d[risers::pub::Flash]);
-        if (m_sweepPeak > 0.45f && swept < 0.08f) {
-            flash = 1.0f;
+        // A drop: the risers' last drop moving on (its beat, published as it
+        // fires; its flash comes with the impact a moment later), or a
+        // filter sweep snapping back open.
+        m_sweepPeak = std::max(swept, m_sweepPeak * float(std::exp(-dt / 0.3)));
+        m_dropHold = std::max(0.0, m_dropHold - dt);
+        const float lastDrop = d[risers::pub::LastDrop];
+        const bool fired = m_seen && lastDrop > m_lastDrop + 0.01f && k > 0;
+        m_lastDrop = lastDrop;
+        const bool snapped = m_sweepPeak > 0.45f && swept < 0.08f;
+        if (snapped)
             m_sweepPeak = 0;
-        }
-        if (flash > m_prevDrop + 0.3f)
+        float flash = k * clamp01(d[risers::pub::Flash]);
+        // One drop per second at most: the drop and its flash are one.
+        if ((fired || snapped || flash > m_prevDrop + 0.3f) && m_dropHold <= 0) {
             ++s.drops;
-        m_prevDrop = flash;
+            m_dropHold = 1.0;
+            flash = 1.0f;
+        }
+        m_prevDrop = k * clamp01(d[risers::pub::Flash]);
         s.drop = std::max(decay(s.drop, dt, 0.4), flash);
         s.sweep = std::clamp(d[risers::pub::Sweep], -1.0f, 1.0f) * k;
         s.wash = clamp01(k * std::max(d[risers::pub::Wash], d[risers::pub::Throw]));
@@ -522,7 +533,7 @@ Look fromJson(const QJsonObject &o, Look l) {
 // --- the page ------------------------------------------------------------------
 
 namespace {
-const char *const kWorldNames[] = {"TUNNEL", "MANDELBOX", "CRYSTAL", "CITY", "LATTICE"};
+const char *const kWorldNames[] = {"CITY", "TUNNEL", "CRYSTAL", "SPONGE", "LATTICE"};
 const char *const kQualityNames[] = {"DRAFT", "NORMAL", "FINE", "FULL"};
 enum Spot : int { SpotWorld = 0, SpotAuto = 10, SpotMarkers, SpotQuality, SpotWindow, SpotFull, SpotJump, SpotHome };
 } // namespace
@@ -607,6 +618,7 @@ bool VisualPage::key(const KeyEvent &k, ControlContext &ctx) {
                                  : QStringLiteral("Autopilot off: it stays where the hand left it"));
             break;
         case Qt::Key_M: s.markers = !s.markers; break;
+        case Qt::Key_C: s.crt = !s.crt; break;
         case Qt::Key_Q:
             s.quality = (s.quality + 1) % 4;
             ask(ctx, QStringLiteral("Quality: %1").arg(QLatin1String(kQualityNames[s.quality])));
@@ -695,8 +707,8 @@ bool VisualPage::click(QPointF at, ControlContext &ctx) {
 QString VisualPage::help() const {
     return QStringLiteral(
         "Everything playing\tdraws itself: the kick punches the camera, the snare flashes a ring through the world, "
-        "hats sparkle, the bass bends space, each chord paints it, the lead is a streak at its pitch, arp notes "
-        "burst into sparks, the atmosphere is the fog, a build speeds it up and a drop throws it into another "
+        "hats sparkle, the bass bends space, each chord paints it, the lead is a ribbon of light at its pitch, "
+        "arp notes are orbs that light the walls, the atmosphere is the fog, a build speeds it up and a drop throws it into another "
         "world, the voice is the ring at the centre\n"
         "1 finger\tsteer: across turns the camera, up and down tilts it; press harder to fly faster\n"
         "2 fingers\ttwist to roll the world; spread or pinch to zoom\n"
@@ -706,12 +718,13 @@ QString VisualPage::help() const {
         "5 fingers\ttwist the whole hand to dial endless variations; spread for longer trails; up and down for speed\n"
         "Two hands\tthe left steers, the right travels and folds; spread both to zoom, twist both to roll\n"
         "Every finger\tis a whirlpool in the picture, as strong as it presses; a quick flick glitches it\n"
-        "A S D F G\tthe worlds: tunnel, mandelbox, crystal, city, lattice\n"
+        "A S D F G\tthe worlds: city, tunnel, crystal, sponge, lattice\n"
         "Left / Right\tthe next world (Shift: a little way toward it)\n"
         "Up / Down\tmore or less folded\n"
         "[ ]\troll · K kaleidoscope · W warp · T trails · Z zoom · H colours · + − speed\n"
         "Space\tanother variation of this world · Backspace the world back home\n"
-        "P\tautopilot: left alone it wanders on its own · M the fingers drawn over it · Q quality\n"
+        "P\tautopilot: left alone it wanders on its own, and a drop throws it into the next world with new "
+        "colours · M the fingers drawn over it · Q quality · C a CRT's glass\n"
         "Return\tthe picture in a window of its own; Shift+Return puts it full screen (there F11 or a "
         "double-click does too, and Esc leaves it). The fingers keep playing this window's page\n"
         "Ctrl+Shift+R (or Shift+click Record)\trecord the picture and the sound to a video (needs ffmpeg)\n"
@@ -739,6 +752,7 @@ void VisualPage::save(QJsonObject &out) const {
     out[QStringLiteral("autopilot")] = s.autopilot;
     out[QStringLiteral("quality")] = s.quality;
     out[QStringLiteral("markers")] = s.markers;
+    out[QStringLiteral("crt")] = s.crt;
 }
 
 void VisualPage::load(const QJsonObject &in, ControlContext &) {
@@ -749,6 +763,8 @@ void VisualPage::load(const QJsonObject &in, ControlContext &) {
         s.autopilot = in.value(QStringLiteral("autopilot")).toBool();
     if (in.value(QStringLiteral("markers")).isBool())
         s.markers = in.value(QStringLiteral("markers")).toBool();
+    if (in.value(QStringLiteral("crt")).isBool())
+        s.crt = in.value(QStringLiteral("crt")).toBool();
     if (in.value(QStringLiteral("quality")).isDouble())
         s.quality = std::clamp(in.value(QStringLiteral("quality")).toInt(), 0, 3);
 }
@@ -775,32 +791,37 @@ PartSpec makeVisual() {
 
 namespace tf::visual {
 
-void Drive::step(const Signals &s, const Look &l, double dt) {
+void Drive::step(const Signals &s, const Look &l, double dt, bool follow) {
     dt = std::clamp(dt, 0.0, 0.25);
     // Faster with the tempo, the hand's speed, a build; the kick shoves.
     const double pace = (0.5 + 2.8 * double(l.speed)) * std::clamp(double(s.bpm) / 124.0, 0.5, 2.0) *
                         (1.0 + 1.8 * double(s.build));
-    travel += dt * (pace + 2.5 * double(s.kick));
+    this->pace = float(pace + 2.5 * double(s.kick));
+    travel += dt * double(this->pace);
     // The echoes turn with the roll the hand gave the world and with how
     // fast it is twisting now.
     const float twistSpeed = dt > 0 ? float((l.twist - lastTwist) / dt) : 0.0f;
     lastTwist = l.twist;
     roll = 0.004f * std::sin(l.twist) + std::clamp(twistSpeed * 0.01f, -0.04f, 0.04f);
-    if (drops >= 0 && s.drops > drops)
+    if (follow && drops >= 0 && s.drops > drops) {
         worldShiftTo += 1.0f;
+        hueShiftTo += 0.33f;
+    }
     drops = s.drops;
     if (chordChanges >= 0 && s.chordChanges > chordChanges)
         seedShiftTo += 0.35f;
     chordChanges = s.chordChanges;
     worldShift += (worldShiftTo - worldShift) * float(1.0 - std::exp(-dt / 0.35));
     seedShift += (seedShiftTo - seedShift) * float(1.0 - std::exp(-dt / 0.6));
+    // The drop's new palette cuts in at once.
+    hueShift = hueShiftTo = std::fmod(hueShiftTo, 1.0f);
     // Kept small: only where it is between two worlds matters.
     if (worldShiftTo > kWorlds * 4) {
         worldShiftTo -= kWorlds * 4;
         worldShift -= kWorlds * 4;
     }
     // A float in the shader keeps a millimetre's precision only so far out:
-    // back by a multiple of the mandelbox's, crystals' and city's repeats
+    // back by a multiple of the sponge's, crystals' and city's repeats
     // (the tunnel's twist and the lattice may jump once, every half hour).
     if (travel > 6300)
         travel -= 6300;
@@ -839,8 +860,8 @@ std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand 
         {"levels1", {s.level[Arp], s.level[Atmos], s.level[Fx], s.level[Vocal]}},
         {"morph0", {world, l.fold, l.symmetry, l.seed + d.seedShift}},
         {"morph1", {l.yaw, l.pitch, l.twist, l.zoom}},
-        {"morph2", {float(d.travel), l.warp, l.hue, h.chaos}},
-        {"morph3", {float(marchSteps(set.quality)), clamp01(h.pressure * float(h.count > 0)), h.pressure, float(h.count)}},
+        {"morph2", {float(d.travel), l.warp, std::fmod(l.hue + d.hueShift, 1.0f), h.chaos}},
+        {"morph3", {float(marchSteps(set.quality)), clamp01(h.pressure * float(h.count > 0)), d.pace, float(h.count)}},
         {"roll", {d.roll, l.trails, set.markers ? 1.0f : 0.0f, crt}},
     };
     static const char *const fingers[] = {"f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"};

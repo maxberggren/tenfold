@@ -82,7 +82,11 @@ void Visualizer::step(double dt) {
         }
         ++m_dataSerial;
     }
-    m_drive.step(m_tracker.now(), state.settings.look, dt);
+    m_drive.step(m_tracker.now(), state.settings.look, dt, state.settings.autopilot);
+    if (state.settings.crt != m_crt) {
+        m_crt = state.settings.crt;
+        emit crtChanged();
+    }
     m_scale = visual::sceneScale(state.settings.quality);
     QVariantMap u;
     for (const visual::Uniform &x : visual::uniforms(m_tracker.now(), state.settings, state.hand, m_drive, 0, 0, 0))
@@ -193,7 +197,6 @@ bool VisualRenderer::init(QString *error) {
     }
     m_item->setParentItem(m_window->contentItem());
     m_item->setSize(m_size);
-    m_item->setProperty("crt", 1.0);
     if (qEnvironmentVariableIsSet("TENFOLD_VISUAL_STAGE"))
         m_item->setProperty("stage", qEnvironmentVariableIntValue("TENFOLD_VISUAL_STAGE"));
     if (!m_rc->initialize()) {

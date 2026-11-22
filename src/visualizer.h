@@ -51,6 +51,8 @@ class Visualizer : public QObject {
     Q_PROPERTY(QVariantMap u READ u NOTIFY updated)
     Q_PROPERTY(double sceneScale READ sceneScale NOTIFY updated)
     Q_PROPERTY(bool showing READ showing NOTIFY updated)
+    // The page's CRT glass (C): scanlines and a curve, off by default.
+    Q_PROPERTY(bool crt READ crt NOTIFY crtChanged)
 
 public:
     explicit Visualizer(tf::Session *session, QObject *parent = nullptr);
@@ -65,12 +67,14 @@ public:
     double sceneScale() const { return m_scale; }
     // The visual page is showing in the main window.
     bool showing() const { return m_showing; }
+    bool crt() const { return m_crt; }
     const QImage &data() const { return m_data; }
     int dataSerial() const { return m_dataSerial; }
     const tf::visual::Signals &signalsNow() const { return m_tracker.now(); }
 
 signals:
     void updated();
+    void crtChanged();
     // The page asked for the second window, or for it full screen.
     void windowAsked();
     void fullScreenAsked();
@@ -82,6 +86,7 @@ private:
     QVariantMap m_u;
     double m_scale = 0.5;
     bool m_showing = false;
+    bool m_crt = false;
     int m_windowAsks = -1, m_fullScreenAsks = -1;
     QImage m_data;
     int m_dataSerial = 0;

@@ -224,7 +224,7 @@ ApplicationWindow {
                         width: surface.pad.width
                         height: surface.pad.height
                         visible: visual.showing
-                        crt: 0.45
+                        crt: visual.crt ? 0.45 : 0
                     }
                 }
 

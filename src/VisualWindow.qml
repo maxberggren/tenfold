@@ -39,7 +39,6 @@ Window {
 
     Visualizer {
         anchors.fill: parent
-        crt: 1.0
     }
 
     // Keys here play the main window's page, as there.

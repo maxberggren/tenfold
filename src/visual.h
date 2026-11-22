@@ -101,6 +101,8 @@ private:
     float m_prevDrop = 0;
     float m_chordTarget = -1;
     float m_sweepPeak = 0;
+    double m_dropHold = 0;
+    float m_lastDrop = -1;
     float m_rate = 0;
     // The arp's newest published note, to tell the new ones from those seen.
     float m_arpBeat = -1, m_arpDegree = -1e9f;
@@ -115,7 +117,7 @@ bool audible(const StudioView &v, int part);
 
 // The shape of the world, as the hand leaves it. Saved with the song.
 struct Look {
-    float world = 0;    // which world, continuous: 0 tunnel, 1 mandelbox, 2 crystal, 3 city, 4 lattice (wraps)
+    float world = 0;    // which world, continuous: 0 city, 1 tunnel, 2 crystal, 3 sponge, 4 lattice (wraps)
     float fold = 0.5f;  // how folded and detailed, 0..1
     float symmetry = 0; // the kaleidoscope: 0 off .. 1 twelve-fold
     float warp = 0.25f; // domain warp of the feedback, 0..1
@@ -197,6 +199,7 @@ struct Settings {
     bool autopilot = true;
     int quality = 1;      // 0 draft, 1 normal, 2 fine, 3 full: the world's resolution
     bool markers = true;  // the fingers drawn over the picture
+    bool crt = false;     // scanlines and a curved glass (C)
 };
 
 // What the picture integrates between frames, so it moves smoothly: how far
@@ -208,9 +211,13 @@ struct Drive {
     float roll = 0;          // radians a frame the feedback turns
     float worldShift = 0, worldShiftTo = 0;
     float seedShift = 0, seedShiftTo = 0;
+    float hueShift = 0, hueShiftTo = 0;
+    float pace = 0;          // how fast the camera flies, units a second
     int drops = -1, chordChanges = -1;
     float lastTwist = 0;
-    void step(const Signals &s, const Look &l, double dt);
+    // follow: the music may move the world on (a drop to the next world and
+    // a new palette); off, only the hand moves it. The page's autopilot.
+    void step(const Signals &s, const Look &l, double dt, bool follow = true);
 };
 
 // The march steps and the world's share of the picture's resolution, per

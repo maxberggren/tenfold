@@ -1047,7 +1047,8 @@ private slots:
     // The keys every part page shares (docs/PARTS.md 4b), on the bass,
     // the primary ones (no AltGr on a Swedish keyboard) and their old
     // second keys: ← → the sound, § the chords, Shift+← → the roll,
-    // Delete lets it go, - + the tone. Q to P are the ten sounds.
+    // Delete lets it go, - + the tone. Q to P are the first ten sounds;
+    // the five after them are reached with ← and →.
     void sharedKeysDoWhatTheTableSays() {
         auto probe = [](const std::string &keys, const char *name) {
             float v = 0;
@@ -1056,8 +1057,9 @@ private slots:
             return v;
         };
         QCOMPARE(int(probe("key 0.1 Right\n", "sound")), int(bass::Reese));          // from PLUCK
-        QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\n", "sound")), int(bass::Upright)); // round from SUB
-        QCOMPARE(int(probe("key 0.1 P\nkey 0.2 Right\n", "sound")), int(bass::Sub));     // and back
+        QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\n", "sound")), int(bass::Didge)); // round from SUB
+        QCOMPARE(int(probe("key 0.1 P\nkey 0.2 Right\n", "sound")), int(bass::Log));   // on past P
+        QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\nkey 0.25 Right\n", "sound")), int(bass::Sub)); // and back
         QCOMPARE(int(probe("key 0.1 O\n", "sound")), int(bass::Moog));
         QCOMPARE(int(probe("key 0.1 P\n", "sound")), int(bass::Upright));
         QCOMPARE(probe("key 0.1 O\n", "follow"), 0.0f); // O was follow's old key
@@ -1104,16 +1106,27 @@ private slots:
 
     // The band under the pad, with the mouse. On the scripts' window the
     // pad is 562.5 px high: row 0 is 0.048 under it, row 1 0.119. The
-    // sounds fill row 0 from 0.38 of the width, ten across; row 1 is five
-    // steppers (0.11, 0.14, 0.12, 0.12, 0.12 wide, the left half down, the
-    // right half up), then five switches.
+    // sounds fill row 0 from 0.38 of the width: fifteen don't fit there,
+    // so it shows eight (0.0775 wide each) around the one playing, the
+    // ends faded where there are more; row 1 is five steppers (0.11, 0.14,
+    // 0.12, 0.12, 0.12 wide, the left half down, the right half up), then
+    // five switches.
     void theBandUnderThePadIsClickable() {
-        // ACID, the fourth sound, and UPRIGHT, the last.
-        testkit::play("page 0 2\nbutton 0.2 0.597 -0.048\nend 0.4\n", [](Session &s) {
+        // From PLUCK it shows SUB to BOUNCE: ACID is the fourth.
+        testkit::play("page 0 2\nbutton 0.2 0.651 -0.048\nend 0.4\n", [](Session &s) {
             QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Acid));
         });
-        testkit::play("page 0 2\nbutton 0.2 0.969 -0.048\nend 0.4\n", [](Session &s) {
+        // BOUNCE, faded at the right end, picks it and moves the window
+        // along (ACID to LOG): UPRIGHT is then the seventh.
+        testkit::play("page 0 2\nbutton 0.2 0.961 -0.048\nend 0.4\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Bounce));
+        });
+        testkit::play("page 0 2\nbutton 0.2 0.961 -0.048\nbutton 0.4 0.884 -0.048\nend 0.6\n", [](Session &s) {
             QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Upright));
+        });
+        // From DIDGE, the last, the window ends with it: LOG is the fourth.
+        testkit::play("page 0 2\nkey 0.1 Q\nkey 0.15 Left\nbutton 0.3 0.651 -0.048\nend 0.5\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Log));
         });
         // FOLLOW, the second switch.
         testkit::play("page 0 2\nbutton 0.2 0.727 -0.119\nend 0.4\n", [](Session &s) {
@@ -1245,6 +1258,190 @@ private slots:
             QCOMPARE(bassSettings(s.saveSong()), home);
             QVERIFY(!s.pageStatus(1).contains(QStringLiteral("latched")));
         });
+    }
+
+    // The five sounds past P, each from the keys: it plays its note in the
+    // key (A1 and E2), peaks under 0 dBFS played hard and bright, is named
+    // in the status line, and is saved and opened again by its name.
+    void theFiveNewSoundsPlaySaveAndReopen() {
+        const int sounds[] = {bass::Log, bass::Tuba, bass::Chip, bass::Tabla, bass::Didge};
+        const char *names[] = {"LOG", "TUBA", "CHIP", "TABLA", "DIDGE"};
+        for (int k = 0; k < 5; ++k) {
+            for (int degree : {0, 4}) {
+                Rig rig;
+                rig.send(noteOn(1, degree, sounds[k], bass::Accent, 1.0f, 1.0f));
+                rig.run(0.9);
+                const QString what = QStringLiteral("%1 degree %2").arg(QLatin1String(names[k])).arg(degree);
+                QVERIFY2(std::fabs(cents(rig.pitch(), degree == 0 ? 33 : 40)) < 15, qPrintable(what));
+                QVERIFY2(rig.peak() < 0.95, qPrintable(what + QStringLiteral(" peaks at %1").arg(rig.peak())));
+                QVERIFY(rig.finite());
+            }
+            std::string script = "page 0 2\nkey 0.1 P\n";
+            for (int r = 0; r <= k; ++r)
+                script += "key " + std::to_string(0.15 + 0.05 * r) + " Right\n";
+            script += "down 0.6 1 0.2083 0.7 p=0.95\nup 1.4 1\nend 1.6\n";
+            const auto take = testkit::reopen(script, 0.3, [&](Session &before, Session &opened, const QJsonObject &doc) {
+                QVERIFY2(before.pageStatus(1).contains(QLatin1String(names[k])), qPrintable(before.pageStatus(1)));
+                QCOMPARE(bassSettings(doc)[QStringLiteral("sound")].toString(), QString::fromLatin1(names[k]));
+                QCOMPARE(int(opened.probe(1, QStringLiteral("sound"))), sounds[k]);
+            });
+            QVERIFY(take.error.empty());
+            QVERIFY(take.finite());
+            QVERIFY2(take.peak() < 1.0, qPrintable(QStringLiteral("%1 peaks at %2").arg(QLatin1String(names[k])).arg(take.peak())));
+            QVERIFY2(take.rms(0.6, 1.0) > 0.03, qPrintable(QStringLiteral("%1 is silent").arg(QLatin1String(names[k]))));
+        }
+    }
+
+    // LOG and TABLA are struck: a second finger while the first holds
+    // strikes again, as hard as the first, its pitch sliding in from the
+    // held note; lifting it jumps back.
+    void logAndTablaStrikeEveryFinger() {
+        for (int sound : {int(bass::Log), int(bass::Tabla)}) {
+            Rig rig;
+            rig.send(noteOn(1, 0, sound, 0, 0.8f, 0.6f)); // A1
+            rig.run(0.5);
+            rig.send(noteOn(2, 4, sound, 0, 0.8f, 0.6f)); // E2, the first still held
+            rig.run(0.4);
+            const double first = rig.topRms(0.0, 0.06), second = rig.topRms(0.5, 0.56), before = rig.topRms(0.42, 0.5);
+            const QString what = QStringLiteral("%1: %2 %3 %4 dB").arg(bass::recipe(sound).name).arg(first).arg(before).arg(second);
+            QVERIFY2(second > first - 3 && second > before + 6, qPrintable(what));
+            QVERIFY2(std::fabs(cents(rig.pitch(0.25), 40)) < 15, qPrintable(what));
+            rig.send(noteOff(2));
+            rig.run(0.3);
+            QVERIFY(std::fabs(cents(rig.pitch(0.2), 33)) < 15);
+        }
+    }
+
+    // The tabla's gumki: pressing harder after the strike bends the note
+    // up, by four semitones at most; easing off lets it back down. The
+    // twist is the swoop: turned up, the note starts further under itself.
+    void tablaPressBendsItUp() {
+        Rig rig;
+        rig.send(noteOn(1, 0, bass::Tabla, 0, 0.6f, 0.5f));
+        rig.run(0.3);
+        QVERIFY(std::fabs(cents(rig.pitch(0.15), 33)) < 20);
+        Command press;
+        press.type = Command::Move;
+        press.id = 1;
+        press.f[0] = 1.0f;
+        press.f[1] = 0.5f;
+        press.f[2] = 0.3f;
+        rig.send(press);
+        rig.run(0.25);
+        const double up = cents(rig.pitch(0.15), 33);
+        QVERIFY2(up > 300 && up < 430, qPrintable(QStringLiteral("%1 cents").arg(up)));
+        press.f[0] = 0.6f;
+        rig.send(press);
+        rig.run(0.25);
+        QVERIFY(std::fabs(cents(rig.pitch(0.15), 33)) < 25);
+        QVERIFY(rig.finite());
+
+        // The swoop: the first 40 ms, under the note, more with the twist.
+        auto early = [](float morph) {
+            Rig r;
+            Command on = noteOn(1, 0, bass::Tabla, 0, 0.8f, 0.5f);
+            on.f[2] = morph;
+            r.send(on);
+            r.run(0.06);
+            r.left.erase(r.left.begin(), r.left.begin() + 480);
+            r.right.erase(r.right.begin(), r.right.begin() + 480);
+            return cents(r.pitch(0.05), 33);
+        };
+        const double flat = early(0.0f), deep = early(1.0f);
+        QVERIFY2(deep < flat - 200, qPrintable(QStringLiteral("%1 %2 cents").arg(flat).arg(deep)));
+    }
+
+    // TUBA is brass: louder is brighter. Played hard, more of it lies
+    // between 1 and 4 kHz (relative to its own level) than played softly.
+    void tubaIsBrighterPlayedHarder() {
+        double bright[2];
+        const float vels[2] = {0.35f, 1.0f};
+        for (int k = 0; k < 2; ++k) {
+            Rig rig;
+            rig.send(noteOn(1, 0, bass::Tuba, 0, vels[k], 0.5f));
+            rig.run(0.6);
+            bright[k] = rig.band(0.15, 0.55, 1000, 4000);
+        }
+        QVERIFY2(bright[1] > bright[0] + 4, qPrintable(QStringLiteral("%1 %2 dB").arg(bright[0]).arg(bright[1])));
+    }
+
+    // CHIP's four-bit steps and its pulse are band-limited: an octave up,
+    // bright and with the widest pulse, what folds back between the
+    // harmonics stays 45 dB under them. (Every sample goes into the DFT:
+    // with no filter, its harmonics reach past 12 kHz, and every other
+    // sample would fold them into the band measured.)
+    void chipStepsStayClean() {
+        Rig rig;
+        Command on = noteOn(1, 0, bass::Chip, 0, 0.8f, 1.0f);
+        on.i[1] = 1; // A2
+        on.f[2] = 1.0f;
+        rig.send(on);
+        rig.run(1.0);
+        const size_t n = 24000, from = rig.left.size() - n;
+        double harmonic = 0, other = 0;
+        for (double f = 1500; f < 12000; f += 4) {
+            double re = 0, im = 0;
+            const double w = 2 * M_PI * f / 48000.0;
+            for (size_t i = 0; i < n; ++i) {
+                const double x = double(i) / double(n);
+                const double win = 0.42 - 0.5 * std::cos(2 * M_PI * x) + 0.08 * std::cos(4 * M_PI * x);
+                const double v = 0.5 * (rig.left[from + i] + rig.right[from + i]) * win;
+                re += v * std::cos(w * double(i));
+                im += v * std::sin(w * double(i));
+            }
+            const double h = f / 110.0;
+            (std::fabs(h - std::round(h)) * 110.0 < 8 ? harmonic : other) += re * re + im * im;
+        }
+        const double db = 10 * std::log10(other / harmonic);
+        QVERIFY2(db < -45, qPrintable(QStringLiteral("%1 dB").arg(db)));
+    }
+
+    // DIDGE's mouth moves on the beat by itself: its top's level swings at
+    // the note's wobble rate (eighths), and with the twist turned up the
+    // mouth moves further, so its second formant's band (900 Hz to 2.5 kHz)
+    // swings wider.
+    void didgeMouthMovesOnTheBeat() {
+        double range[2];
+        for (int k = 0; k < 2; ++k) {
+            Rig rig;
+            Command on = noteOn(1, 0, bass::Didge, 0, 0.8f, 0.5f);
+            on.f[2] = k == 0 ? 0.0f : 1.0f;
+            rig.send(on);
+            rig.run(2.5);
+            double lo = 1e9, hi = -1e9;
+            // Windows of three whole cycles of the note, so its own wave
+            // doesn't move the reading.
+            for (double t = 0.5; t + 3.0 / 55.0 < 2.5; t += 0.02) {
+                const double v = rig.band(t, t + 3.0 / 55.0, 900, 2500);
+                lo = std::min(lo, v);
+                hi = std::max(hi, v);
+            }
+            range[k] = hi - lo;
+            if (k == 0)
+                continue;
+            std::vector<double> env;
+            for (double t = 0.5; t + 0.005 < 2.5; t += 0.005)
+                env.push_back(rig.topRms(t, t + 0.005));
+            double mean = 0;
+            for (double v : env)
+                mean += v / double(env.size());
+            double bestHz = 0, best = 0;
+            for (double hz = 1; hz < 20; hz += 0.05) {
+                double re = 0, im = 0;
+                for (size_t i = 0; i < env.size(); ++i) {
+                    const double w = 2 * M_PI * hz * 0.005 * double(i);
+                    re += (env[i] - mean) * std::cos(w);
+                    im += (env[i] - mean) * std::sin(w);
+                }
+                if (re * re + im * im > best) {
+                    best = re * re + im * im;
+                    bestHz = hz;
+                }
+            }
+            const double expect = 124.0 / 60.0 / bass::kRateBeats[3];
+            QVERIFY2(std::fabs(bestHz - expect) < 0.25, qPrintable(QStringLiteral("%1 Hz, expected %2").arg(bestHz).arg(expect)));
+        }
+        QVERIFY2(range[1] > range[0] + 2, qPrintable(QStringLiteral("%1 %2 dB").arg(range[0]).arg(range[1])));
     }
 
 private:

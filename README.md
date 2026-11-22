@@ -85,6 +85,7 @@ pick a page with its number:
 | 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws, in fifteen sets from EDM and analog to dub, lo-fi, trap, cinema and ambient, plus amapiano, gamelan, chiptune, phonk and shoegaze. Click to drop now. |
 | 8 | Vocal | Your microphone, heard at once in the headphones. Each finger in the middle is your voice again as a harmony in the key (−8ve to +8ve, the note named in each lane; height the throat, your own on the middle line); touch a word on the tape and it plays again; the left edge is a filter, the right freeze and stutter, the top echo, reverb, radio and crush; the bottom edge is for resting a thumb; click for tape stop. Hard tune, prism, choir, vocoder and robot on ← →, then talk box, throat singing, sitar, gamelan and chopped and screwed (B picks each one's option). Space loops your last phrase as audio, cut in the breaths; Shift+Space layers it. |
 | 0 | Arrange | Every part's clips, scenes on the bar, a ten-finger mixer, a tension fader for builds and drops. I writes a whole track from your loops. |
+| 9 | Visual | Everything playing, drawn as a raymarched world you fly through: a city whose towers are the parts, a tunnel, gem crystals, a Menger sponge, a gyroid lattice. One finger steers, two roll and scale the world, three travel between worlds, four turn space inside out, five dial endless variations, two hands do it all at once. See [The visualizer](#the-visualizer). |
 
 `?` shows the guide for the page you're on. Letter keys play most pages too.
 
@@ -166,7 +167,8 @@ cleared, the mix set back, nothing left muted.
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
 metronome, Ctrl+P pause and play (every loop stops at once; again, the same
 loops play on together from a downbeat, and a song on the Song page from
-the bar it stopped in), Ctrl+R record to `~/Music/tenfold`, Ctrl+Q quit.
+the bar it stopped in), Ctrl+R record to `~/Music/tenfold` (Ctrl+Shift+R, or
+Shift+click Record: with the Visual page's picture, as an `.mp4`), Ctrl+Q quit.
 
 **Songs.** Ctrl+S saves the song to a `.tenfold` file to pick up where you
 left off: tempo, key and mode, every part's loops (layers too, and the Vocal
@@ -183,6 +185,54 @@ says whether one opens and what is in it.
 | Ctrl O | open a song |
 | Ctrl Shift O | the song as it was when tenfold last quit |
 
+## The visualizer
+
+Page 9 turns everything playing into a picture: one hue for the chord at a
+low light, and each part's own mark in its page's colour. The kick shoves
+the world in and flares its edges with a shockwave, the snare breaks space
+into slabs, hats glint and streak down the city's road, the bass lifts the
+skyline and swells space, the lead is a ribbon of light at its pitch, arp
+notes are orbs that light the walls as you pass, the atmosphere is the fog,
+a build whitens and shakes it and a drop flashes into the next world, the
+voice is a filament down the middle. With the drums alone it is near black.
+
+| Key | Does |
+|---|---|
+| A S D F G | the worlds: city, tunnel, crystal, sponge, lattice (← → step, Shift: a little way) |
+| ↑ ↓ · [ ] | more or less folded · roll |
+| K · W · T · Z · H · + − | kaleidoscope · warp · trails · zoom · colours · speed |
+| Space · Backspace | another variation · the world back home |
+| P · M · Q · C | autopilot (wanders when left alone; a drop moves it on) · the fingers drawn · quality · CRT glass |
+| Return · Shift Return | the picture in a window of its own · that window full screen (on the other screen, if there is one) |
+
+In the second window F11 or a double-click goes full screen and Esc comes
+back. The trackpad keeps playing the page the main window shows, whichever
+tenfold window has the focus, and keys typed in the second window go to
+that page too: put the picture on a projector, play on pages 1–8, and come
+to page 9 when the hands should shape the picture. What they shape stays
+when they lift.
+
+Ctrl+Shift+R records the picture with the sound: it is drawn a second time,
+offscreen at 1280×720 (`TENFOLD_VIDEO_SIZE=1920x1080` for more), and piped
+to `ffmpeg` at 30 frames a second, each frame placed by the WAV's own sample
+count so the two cannot drift; at stop the two are muxed into an `.mp4`
+beside the `.wav`. Without `ffmpeg` (`TENFOLD_FFMPEG` names one) the window
+says so and records the sound alone. The audio thread never waits on any of
+it.
+
+Offline, `tenfold visualize` draws a script as `render` plays it, to a video
+with its sound or to a still:
+
+```bash
+tenfold visualize docs/visual/live-set-visual.tf demo.mp4 --from 98 --to 143.5
+tenfold visualize docs/parts/risers/build-and-drop.tf drop.png --at 32.75
+```
+
+The shaders are `src/visual/*.frag`, baked into the `.qsb` files beside them
+by `bin/shaders` (Qt's `qsb` from qt6-shadertools when it is there, else
+`tools/qsbmini`, which bakes OpenGL and Vulkan but not Metal; the macOS
+bundle is baked with `qsb`).
+
 ## Without a trackpad
 
 Every page can be driven from a script, which is how it is tested:
@@ -192,6 +242,7 @@ tenfold render docs/parts/drums/house_hands.tf out.wav --json
 tenfold screenshot shot.png docs/parts/lead/anthem.tf --page 4 --at 10
 tenfold bench
 tenfold check song.tenfold
+tenfold visualize docs/visual/live-set-visual.tf out.mp4 --from 98 --to 120
 ```
 
 `src/offline.h` documents the script language (`page`, `down`, `move`,

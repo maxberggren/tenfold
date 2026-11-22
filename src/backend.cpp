@@ -13,6 +13,7 @@
 
 #include "console.h"
 #include "offline.h"
+#include "visualizer.h"
 
 using namespace tf;
 
@@ -59,6 +60,19 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
 
 Backend::~Backend() { shutdown(); }
 
+void Backend::setVisualizer(Visualizer *visual, QQmlEngine *engine) {
+    m_visual = visual;
+    m_video = std::make_unique<VideoRecorder>(engine, visual, m_studio.get());
+    connect(m_video.get(), &VideoRecorder::done, this, [this](const QString &mp4, const QString &error) {
+        if (!mp4.isEmpty()) {
+            m_lastRecording = mp4;
+        } else {
+            m_session->say(tr("No video: %1").arg(error));
+        }
+        emit changed();
+    });
+}
+
 void Backend::shutdown() {
     if (m_shutDown)
         return;
@@ -71,6 +85,9 @@ void Backend::shutdown() {
     if (m_ticker.joinable())
         m_ticker.join();
     stopRecording();
+    // Waits for a video still being muxed, while the picture's engine is
+    // still there.
+    m_video.reset();
     if (m_touch)
         m_touch->stop();
     m_audio->stop();
@@ -324,6 +341,25 @@ void Backend::toggleRecording() {
     emit changed();
 }
 
+void Backend::toggleVideoRecording() {
+    if (m_recording) {
+        toggleRecording();
+        return;
+    }
+    if (!m_video || video::findFfmpeg().isEmpty()) {
+        // The sound is recorded anyway: the take isn't lost to a missing tool.
+        m_session->say(tr("Video needs ffmpeg: recording the sound only"));
+        toggleRecording();
+        return;
+    }
+    toggleRecording();
+    QString error;
+    m_recordingVideo = m_video->start(m_recordPath, &error);
+    if (!m_recordingVideo)
+        m_session->say(tr("No video (%1): recording the sound only").arg(error));
+    emit changed();
+}
+
 void Backend::recorderLoop() {
     // Written beside the target and renamed into place when finished, so a
     // half-written file never sits under the final name.
@@ -358,6 +394,13 @@ void Backend::stopRecording() {
     m_recording = false;
     m_lastRecording = m_recordPath;
     m_session->setMixRecording(false);
+    // The WAV is whole now: the video catches up to its length and is
+    // muxed with it (done() says where it went).
+    if (m_recordingVideo && m_video) {
+        m_recordingVideo = false;
+        m_video->stop();
+        m_session->say(tr("Saving the video…"));
+    }
 }
 
 void Backend::tick() {
@@ -366,6 +409,8 @@ void Backend::tick() {
         m_session->idle(monotonicSeconds());
     }
     m_session->refresh();
+    if (m_visual)
+        m_visual->stepLive();
     uint32_t seq = 0;
     const QString n = m_session->notice(&seq);
     if (seq != m_noticeSeq) {

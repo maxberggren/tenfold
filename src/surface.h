@@ -12,6 +12,8 @@
 class Surface : public QQuickPaintedItem {
     Q_OBJECT
     Q_PROPERTY(Backend *app READ backend WRITE setBackend NOTIFY backendChanged)
+    // Where the pad is drawn, in item pixels: the visualizer's picture goes there.
+    Q_PROPERTY(QRectF pad READ padRect NOTIFY padChanged)
 
 public:
     explicit Surface(QQuickItem *parent = nullptr);
@@ -29,11 +31,17 @@ protected:
     void hoverMoveEvent(QHoverEvent *e) override;
     void hoverLeaveEvent(QHoverEvent *e) override;
 
+    QRectF padRect() const;
+
 signals:
     void backendChanged();
+    void padChanged();
+
+protected:
+    void geometryChange(const QRectF &now, const QRectF &old) override;
 
 private:
-    QRectF padRect() const;
+    QRectF m_pad;
     void sendPointer(QPointF pos, bool down);
 
     QPointer<Backend> m_backend;

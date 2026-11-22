@@ -6,6 +6,7 @@
 //
 // Global keys, whatever page is showing:
 //   1–8 (and the keypad's)  the parts' pages     0  the arrange page
+//   9                       the visualizer
 //   Tab / Shift+Tab         next / previous page
 //   Ctrl+↑ / Ctrl+↓         tempo ±1 BPM (with Shift ±5)
 //   Ctrl+← / Ctrl+→         key down / up a fifth
@@ -44,6 +45,10 @@
 
 namespace tf {
 
+namespace visual {
+class VisualPage;
+}
+
 class Session : public FrameSink {
 public:
     // Builds every part (see parts.cpp) into the studio.
@@ -53,8 +58,12 @@ public:
     Studio *studio() const { return m_studio; }
     int pageCount() const { return int(m_pages.size()); }
     int partCount() const { return m_partCount; }
-    // The arrange page is the last page.
-    int arrangePage() const { return pageCount() - 1; }
+    // After the parts' pages: the arrange page (key 0), then the visualizer
+    // (key 9), which has no part either.
+    int arrangePage() const { return m_partCount; }
+    int visualPage() const { return m_partCount + 1; }
+    // The visualizer's page, for the window to read under lock().
+    visual::VisualPage *visual() const { return m_visual; }
     int page() const { return m_page; }
     void setPage(int page);
 
@@ -255,6 +264,7 @@ private:
     bool m_songPaused = false;
     uint32_t m_noticeSeq = 0;
     double (*m_clock)() = nullptr;
+    visual::VisualPage *m_visual = nullptr;
 };
 
 }

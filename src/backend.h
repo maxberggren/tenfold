@@ -19,6 +19,10 @@
 #include "studio.h"
 #include "wav.h"
 
+class QQmlEngine;
+class Visualizer;
+class VideoRecorder;
+
 // The app's state for QML: owns the studio, the session (the pages), the
 // touch helper, the audio stream and the recorder, and turns them into
 // properties.
@@ -61,6 +65,10 @@ class Backend : public QObject {
     Q_PROPERTY(bool audioOk READ audioOk NOTIFY changed)
     Q_PROPERTY(QString audioError READ audioError NOTIFY changed)
     Q_PROPERTY(bool recording READ recording NOTIFY changed)
+    // Shift+Record: the visualizer's picture is recorded with the sound.
+    Q_PROPERTY(bool recordingVideo READ recordingVideo NOTIFY changed)
+    Q_PROPERTY(int arrangePage READ arrangePage CONSTANT)
+    Q_PROPERTY(int visualPage READ visualPage CONSTANT)
     Q_PROPERTY(double recordSeconds READ recordSeconds NOTIFY changed)
     Q_PROPERTY(QString lastRecording READ lastRecording NOTIFY changed)
     Q_PROPERTY(double level READ level NOTIFY changed)
@@ -103,6 +111,12 @@ public:
     int page() const { return m_session->page(); }
     void setPage(int page);
     int pageCount() const { return m_session->pageCount(); }
+    int arrangePage() const { return m_session->arrangePage(); }
+    int visualPage() const { return m_session->visualPage(); }
+    bool recordingVideo() const { return m_recordingVideo; }
+    // The visualizer the window draws, stepped every screen frame, and the
+    // engine its offscreen video picture is made in (main.cpp).
+    void setVisualizer(Visualizer *visual, QQmlEngine *engine);
     QStringList pageNames() const;
     QStringList pageBlurbs() const;
     QVariantList pageColors() const;
@@ -162,6 +176,8 @@ public:
     Q_INVOKABLE void togglePlay();
     Q_INVOKABLE void windowActive(bool active);
     Q_INVOKABLE void toggleRecording();
+    // Record with the picture (needs ffmpeg; without it, the sound alone and a notice).
+    Q_INVOKABLE void toggleVideoRecording();
     Q_INVOKABLE void toggleMetronome() { m_session->toggleMetronome(); }
     Q_INVOKABLE void togglePause() { m_session->togglePause(); }
     Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
@@ -227,6 +243,9 @@ private:
     int m_lastPage = -1;
 
     bool m_recording = false;
+    bool m_recordingVideo = false;
+    Visualizer *m_visual = nullptr;
+    std::unique_ptr<VideoRecorder> m_video;
     QString m_recordPath, m_lastRecording;
     std::thread m_recorder;
     // Every page's background() and idle() at 250 Hz on a thread of its own,

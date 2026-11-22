@@ -1,0 +1,74 @@
+#!/bin/sh
+# Bakes the visualizer's shaders (src/visual/*.frag) into the .qsb files
+# Qt Quick loads (src/visual/*.frag.qsb, committed, so building tenfold
+# needs no shader tools).
+#
+#   bin/shaders           bake every shader
+#   bin/shaders --check   bake into a scratch folder and say if the committed
+#                         ones are out of date
+#   bin/shaders --metal   bake with Qt's qsb or fail: what a macOS build needs
+#
+# With Qt's qsb (qt6-shadertools; QSB names another) every backend is
+# baked: OpenGL, Vulkan, Metal. Without it, tools/qsbmini stands in, which
+# bakes OpenGL (and Vulkan when glslc is here) but not Metal: the macOS
+# bundle runs this script with the real qsb (bin/bundle-macos).
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+qmake="${QMAKE:-qmake6}"
+out="$ROOT/src/visual"
+if [ "${1:-}" = "--check" ]; then
+    out="$ROOT/build/shaders-check"
+    rm -rf "$out"
+    mkdir -p "$out"
+fi
+
+qsb="${QSB:-}"
+if [ -z "$qsb" ]; then
+    for c in "$("$qmake" -query QT_HOST_BINS 2>/dev/null)/qsb" "$("$qmake" -query QT_HOST_LIBEXECS 2>/dev/null)/qsb" \
+        "$(command -v qsb 2>/dev/null || true)" "$(command -v qsb6 2>/dev/null || true)"; do
+        if [ -n "$c" ] && [ -x "$c" ]; then
+            qsb="$c"
+            break
+        fi
+    done
+fi
+
+if [ -z "$qsb" ] && [ "${1:-}" = "--metal" ]; then
+    echo "bin/shaders: the Mac's Metal needs Qt's qsb (the qtshadertools module), and there is none" >&2
+    exit 1
+fi
+
+if [ -n "$qsb" ]; then
+    echo "Baking with $qsb"
+    for f in "$ROOT"/src/visual/*.frag; do
+        "$qsb" --glsl "300 es,120,150,330" --hlsl 50 --msl 12 -o "$out/$(basename "$f").qsb" "$f"
+    done
+else
+    echo "No qsb (qt6-shadertools): baking OpenGL and Vulkan with tools/qsbmini, no Metal"
+    mini="$ROOT/build/qsbmini"
+    mkdir -p "$mini"
+    (cd "$mini" && "$qmake" "$ROOT/tools/qsbmini/qsbmini.pro" >/dev/null && make -s >/dev/null)
+    dump="$ROOT/build/qsbmini/glsl"
+    rm -rf "$dump"
+    mkdir -p "$dump"
+    for f in "$ROOT"/src/visual/*.frag; do
+        "$mini/qsbmini" "$f" "$out/$(basename "$f").qsb" --dump "$dump"
+    done
+    # Every variant through the reference compiler, when it is here: a shader
+    # OpenGL refuses would only show at run time, as a blank picture.
+    if command -v glslangValidator >/dev/null; then
+        for g in "$dump"/*.frag; do
+            glslangValidator -S frag "$g" >"$g.log" 2>&1 || { cat "$g.log"; echo "bin/shaders: $g does not compile"; exit 1; }
+        done
+    fi
+fi
+
+if [ "${1:-}" = "--check" ]; then
+    stale=0
+    for f in "$out"/*.qsb; do
+        cmp -s "$f" "$ROOT/src/visual/$(basename "$f")" || { echo "out of date: src/visual/$(basename "$f")"; stale=1; }
+    done
+    exit $stale
+fi
+echo "Baked $(ls "$out"/*.qsb | wc -l) shaders into src/visual"

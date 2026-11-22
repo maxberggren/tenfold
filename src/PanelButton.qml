@@ -10,7 +10,8 @@ Item {
     property bool active: false
     property int labelSize: 16
     property bool hint: false // the tutorial points at it: a breathing halo
-    signal clicked()
+    // With the keys held as it was clicked (Shift+click on Record: video).
+    signal clicked(int modifiers)
 
     readonly property bool lit: active || mouse.pressed
 
@@ -74,6 +75,6 @@ Item {
     MouseArea {
         id: mouse
         anchors.fill: parent
-        onClicked: button.clicked()
+        onClicked: mouse => button.clicked(mouse.modifiers)
     }
 }

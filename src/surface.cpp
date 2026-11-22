@@ -20,8 +20,21 @@ void Surface::setBackend(Backend *b) {
         disconnect(m_backend, nullptr, this, nullptr);
     m_backend = b;
     if (b)
-        connect(b, &Backend::frame, this, [this] { update(); });
+        connect(b, &Backend::frame, this, [this] {
+            update();
+            // The pad's shape is known once the trackpad is.
+            if (padRect() != m_pad) {
+                m_pad = padRect();
+                emit padChanged();
+            }
+        });
     emit backendChanged();
+}
+
+void Surface::geometryChange(const QRectF &now, const QRectF &old) {
+    QQuickPaintedItem::geometryChange(now, old);
+    m_pad = padRect();
+    emit padChanged();
 }
 
 QRectF Surface::padRect() const {

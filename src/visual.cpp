@@ -233,12 +233,22 @@ void SignalTracker::update(const StudioView &v, double dt) {
             s.atmos = std::max(s.atmos, k * clamp01(d[atmosPub::Level] * 2));
     }
 
-    // Effects: the build, the drop (a jump in its flash), the sweep.
+    // Effects: the build, the drop (a jump in its flash), the sweep. A build
+    // is also the whole mix swept through its filter (the Song page's
+    // tension fader, a page's own build), and its drop the filter snapping
+    // back open.
     if (v.partCount > Fx) {
         const float *d = v.parts[Fx].data;
         const float k = aud[Fx] ? 1.0f : 0.0f;
-        s.build += (k * clamp01(d[risers::pub::Intensity]) - s.build) * float(1.0 - std::exp(-dt / 0.08));
-        const float flash = k * clamp01(d[risers::pub::Flash]);
+        const float swept = clamp01((std::fabs(v.master[MasterFilter] - 0.5f) * 2.0f - 0.1f) * 1.4f);
+        const float target = std::max(k * clamp01(d[risers::pub::Intensity]), swept);
+        s.build += (target - s.build) * float(1.0 - std::exp(-dt / 0.08));
+        m_sweepPeak = std::max(swept, m_sweepPeak * float(std::exp(-dt / 0.25)));
+        float flash = k * clamp01(d[risers::pub::Flash]);
+        if (m_sweepPeak > 0.45f && swept < 0.08f) {
+            flash = 1.0f;
+            m_sweepPeak = 0;
+        }
         if (flash > m_prevDrop + 0.3f)
             ++s.drops;
         m_prevDrop = flash;

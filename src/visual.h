@@ -100,6 +100,7 @@ private:
     float m_prevLeadPos = -1e9f;
     float m_prevDrop = 0;
     float m_chordTarget = -1;
+    float m_sweepPeak = 0;
     float m_rate = 0;
     // The arp's newest published note, to tell the new ones from those seen.
     float m_arpBeat = -1, m_arpDegree = -1e9f;

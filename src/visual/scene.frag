@@ -131,7 +131,7 @@ float mandelbox(vec3 p, out float trap) {
     vec3 z = p;
     float dr = 1.0;
     float t = 1e9;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 6; i++) {
         z = clamp(z, -1.0, 1.0) * 2.0 - z;
         float r2 = dot(z, z);
         t = min(t, r2);
@@ -163,7 +163,7 @@ float crystal(vec3 p, out float trap) {
     float a2 = 0.3 * sin(seed * 0.17 + ubuf.morph0.y * 2.0);
     mat2 r1 = rot(a1);
     mat2 r2 = rot(a2);
-    float sc = 1.9 + 0.5 * ubuf.morph0.y;
+    float sc = 2.2 + 0.6 * ubuf.morph0.y;
     vec3 off = vec3(1.0, 0.8 + 0.3 * sin(seed), 0.6);
     float s = 1.0;
     float t = 0.0;

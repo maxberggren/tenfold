@@ -441,6 +441,10 @@ int visualize(const VisualizeOptions &o) {
     // from there.
     const double warm = std::max(0.0, start - 4.0);
     double nextStep = warm;
+    // How long a frame takes to draw and read back, for the report.
+    QElapsedTimer drawClock;
+    qint64 drawNs = 0;
+    int drawn = 0;
     for (int tick = 0;; ++tick) {
         const double t = tick / tickRate;
         if (t > end + 1e-9)
@@ -459,7 +463,10 @@ int visualize(const VisualizeOptions &o) {
             session.refresh();
             vis.step(frameDt);
             if (nextStep >= start - 1e-9 || still) {
+                drawClock.start();
                 last = renderer.frame();
+                drawNs += drawClock.nsecsElapsed();
+                ++drawn;
                 if (!still && nextStep >= start - 1e-9) {
                     encoder.push(QByteArray(reinterpret_cast<const char *>(last.constBits()), qsizetype(last.sizeInBytes())),
                                  1);
@@ -479,6 +486,8 @@ int visualize(const VisualizeOptions &o) {
         }
     }
     if (still) {
+        if (qEnvironmentVariableIsSet("TENFOLD_VISUAL_DEBUG"))
+            std::fprintf(stderr, "%.1f ms a frame\n", drawn ? double(drawNs) / drawn / 1e6 : 0.0);
         if (!last.save(out)) {
             std::fprintf(stderr, "tenfold: cannot write %s\n", qPrintable(out));
             return 1;
@@ -492,7 +501,9 @@ int visualize(const VisualizeOptions &o) {
     }
     QFile::remove(videoPath);
     QFile::remove(wavPath);
-    std::printf("%s: %d frames at %d fps, %.1f s\n", qPrintable(out), frame, o.fps, double(frame) / o.fps);
+    std::printf("%s: %d frames at %d fps, %.1f s; %.1f ms a frame to draw and read back (%dx%d)\n", qPrintable(out),
+                frame, o.fps, double(frame) / o.fps, drawn ? double(drawNs) / drawn / 1e6 : 0.0, renderer.size().width(),
+                renderer.size().height());
     return 0;
 }
 

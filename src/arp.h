@@ -73,9 +73,9 @@ inline float soundColor(int s) {
 }
 
 // The sounds a press on the tone pad switches rather than bites. The
-// gamelan's switch is its tuning: off, the scale bent towards the selisir
-// of a Balinese gong kebyar; on, even, in the studio's own tuning, to sit
-// with the other parts.
+// gamelan's switch is its scale: off, selisir, the five-tone pelog of a
+// Balinese gong kebyar, every note one of its five keys; on, even, the
+// studio's own scale and tuning, to sit with the other parts.
 inline bool hasSwitch(int s) { return s == Juno || s == Organ || s == Gamelan; }
 inline const char *switchName(int s, bool alt) {
     if (s == Organ)
@@ -145,7 +145,7 @@ struct Settings {
     uint32_t seed = 1;   // the dice for random and chaos
     // The sound's own switch, flipped by a press on the tone pad: the
     // organ's Leslie fast (off: slow), the juno's chorus I (off: II), the
-    // gamelan even (off: bent to selisir).
+    // gamelan even (off: on selisir's five keys).
     bool alt = false;
     float gate = 0.45f;  // a step's sounding share, 0.06..1
     float swing = 0;     // 0..1: the off steps late by up to half a step

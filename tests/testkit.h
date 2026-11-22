@@ -21,6 +21,17 @@
 
 namespace testkit {
 
+// The tests that time the studio against the clock measure the machine as
+// much as the code. On a shared virtual machine (the macOS CI runner, three
+// cores among other jobs) a scheduling hiccup reads as a slow render, so
+// TENFOLD_SKIP_TIMING=1 there skips them, visibly, with the reason. The
+// job runs `tenfold bench` instead and prints what it measures.
+#define TENFOLD_TIMED()                                                                                     \
+    do {                                                                                                    \
+        if (qEnvironmentVariableIsSet("TENFOLD_SKIP_TIMING"))                                               \
+            QSKIP("timing on a shared virtual machine (TENFOLD_SKIP_TIMING); see the job's bench instead"); \
+    } while (0)
+
 struct Take {
     std::vector<float> left, right; // the mix, 48 kHz
     tf::StudioView view;            // the studio at the end

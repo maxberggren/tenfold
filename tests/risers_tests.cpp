@@ -905,6 +905,7 @@ private slots:
     // Ten fingers on the busiest risers stay well inside the page's share of
     // the audio callback.
     void tenFingersStayInsideBudget() {
+        TENFOLD_TIMED();
         std::string s = "page 0 7\n";
         for (int f = 0; f < 10; ++f)
             s += fmt("down %.3f %.0f %.3f %.3f p=0.8\n", 0.2 + 0.05 * f, 100 + f, 0.05 + 0.1 * f, 0.7);

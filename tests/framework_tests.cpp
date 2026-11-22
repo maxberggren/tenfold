@@ -725,6 +725,7 @@ private slots:
 #endif
 
     void theBenchRunsWellInsideRealTime() {
+        TENFOLD_TIMED();
         const RenderStats st = runBench(4.0);
         QVERIFY(st.error.empty());
         QVERIFY2(st.p99Load < 0.5, qPrintable(QString::number(st.p99Load)));

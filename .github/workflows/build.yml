@@ -254,8 +254,13 @@ jobs:
           qmake=$(find "$HOME/qt/$QT_VERSION" -path '*/bin/qmake' | head -n 1)
           echo "QMAKE=$qmake" >>"$GITHUB_ENV"
 
+      # A shared virtual Mac is no stopwatch: the two tests that time the
+      # studio against the clock are skipped here (they say so), and the
+      # bench below prints what this machine measures.
       - name: Test
         run: bin/test
+        env:
+          TENFOLD_SKIP_TIMING: 1
 
       # The Developer ID certificate into a keychain of the job's own, and
       # the notary key beside it, when the repository has them.
@@ -307,6 +312,7 @@ jobs:
           "$app/Contents/MacOS/tenfold" --help
           "$app/Contents/MacOS/tenfold" render docs/parts/arp/ten-sounds.tf out.wav --json
           "$app/Contents/MacOS/tenfold" screenshot shot.png docs/parts/lead/anthem.tf --page 4 --at 10
+          "$app/Contents/MacOS/tenfold" bench --json
           "$app/Contents/MacOS/tenfold" latency || true
           test -s shot.png
           hdiutil detach "$mount"

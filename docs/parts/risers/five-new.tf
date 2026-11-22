@@ -1,11 +1,13 @@
-# Five new sets: the same build, drop and hits in each of the FX page's
-# sets added after the first ten, four bars each, over a groove. Left from
-# EDM wraps round to the last set; five of them reach amapiano, and Right
-# steps on from there. The risers land on bar 1 of each four, Return rushes
-# them into a drop two bars on, a sub tapped during the build lands on it,
-# then each set's own: amapiano's log drum line, gamelan zaps over the
-# gong, chiptune blips, phonk's cowbell held for its melody, shoegaze's
-# fuzz into a wash. 128 BPM, A minor.
+# Five new sets: the same build and drop in each of the FX page's sets
+# added after the first ten, four bars each, over a groove, then what each
+# brings of its own. Left from EDM wraps round to the last set; five of
+# them reach amapiano, and Right steps on from there. The risers land on
+# bar 1 of each four and Return rushes them into a drop on the next bar
+# line. Then: amapiano's log drum alone on the ONE (the drums and bass wait
+# a beat) and a log drum line tapped across its cell, with a slide;
+# gamelan's gong and a bonang held; chiptune's triangle bass line and
+# blips; phonk's cowbell figures, its Memphis vocal and a sliding 808;
+# shoegaze's wall, a dive-bomb and harmonics. 128 BPM, A minor.
 #
 # The groove, made the way the studio makes loops: play, then Space.
 # Drums (page 1, the 4x4 pads; the near row is kick, snare, clap, hat): kick on
@@ -41,7 +43,7 @@ tap 12.688 0.433 0.5 len=0.2
 key 13.719 Space
 # FX (page 7).
 page 13.906 7
-# AMAPIANO: a breathy flute, deep-house keys off the beat, swung shakers and woodblock; the log drum on the drop, then a log drum line.
+# AMAPIANO: a whistle tongued up the scale, deep-house keys, swung shakers and woodblock; the log drum alone on the drop, then a log drum line with a slide.
 key 14.620 Left
 key 14.670 Left
 key 14.720 Left
@@ -51,57 +53,83 @@ tap 15.234 0.10 0.44 p=0.6 len=0.2
 tap 15.352 0.30 0.44 p=0.6 len=0.2
 tap 15.469 0.50 0.44 p=0.6 len=0.2
 tap 15.586 0.70 0.44 p=0.6 len=0.2
+tap 15.704 0.90 0.44 p=0.6 len=0.2
 key 17.016 Return
-tap 17.812 0.188 0.12
-tap 18.515 0.188 0.13
-tap 18.984 0.188 0.11
-tap 19.218 0.188 0.12
-tap 19.570 0.188 0.14
-tap 20.390 0.188 0.13
-tap 20.742 0.188 0.11
-tap 21.093 0.188 0.12
-tap 21.420 0.438 0.12
-# GAMELAN: a suling, saron bars beating in pairs, a gangsa run up the key; a gong ageng on the drop, then bell zaps.
+tap 17.727 0.1875 0.12 len=0.06
+tap 18.078 0.1875 0.12 len=0.06
+tap 18.547 0.2272 0.12 len=0.06
+tap 18.781 0.1478 0.12 len=0.06
+tap 19.016 0.1875 0.12 len=0.06
+tap 19.250 0.1875 0.12 len=0.06
+tap 19.602 0.2470 0.12 len=0.06
+tap 20.656 0.1677 0.12 len=0.06
+tap 20.891 0.1875 0.12 len=0.06
+down 19.953 41 0.1875 0.12 p=0.6
+glide 20.070 20.246 41 0.2470 0.12
+up 20.422 41
+# GAMELAN, in slendro: a suling, saron bars beating in pairs, a gangsa's kotekan; a gong ageng on the drop, then a bonang held.
 key 22.520 Right
 tap 22.734 0.10 0.44 p=0.6 len=0.2
 tap 22.852 0.30 0.44 p=0.6 len=0.2
 tap 22.969 0.50 0.44 p=0.6 len=0.2
 tap 23.086 0.70 0.44 p=0.6 len=0.2
+tap 23.204 0.90 0.44 p=0.6 len=0.2
 key 24.516 Return
-tap 25.312 0.188 0.12
-tap 27.422 0.438 0.14
-tap 27.891 0.420 0.12
-tap 28.125 0.450 0.15
-# CHIPTUNE: the noise channel's sweep turning to a buzz, an arpeggio, pulse stabs, a noise-drum roll; square blips; a reset.
+down 26.750 42 0.4375 0.14 p=0.6
+up 28.625 42
+# CHIPTUNE: the noise channel's sweep, an arpeggio stepping by frames, pulse stabs with a tracker's echo, the noise channel's stepped swell; the triangle's kick on the drop and a triangle bass line, blips, a stepped fall.
 key 30.020 Right
 tap 30.234 0.10 0.44 p=0.6 len=0.2
 tap 30.352 0.30 0.44 p=0.6 len=0.2
 tap 30.469 0.50 0.44 p=0.6 len=0.2
 tap 30.586 0.70 0.44 p=0.6 len=0.2
+tap 30.704 0.90 0.44 p=0.6 len=0.2
 key 32.016 Return
-tap 32.812 0.188 0.12
-tap 34.922 0.438 0.14
-tap 35.157 0.420 0.12
-tap 35.391 0.450 0.15
-tap 36.328 0.562 0.12
-# PHONK: worn saws, triplet hats, a distorted 808 on the drop; the cowbell held for its melody.
+tap 32.375 0.1875 0.10 len=0.06
+tap 32.609 0.1875 0.10 len=0.06
+tap 32.844 0.2272 0.10 len=0.06
+tap 33.078 0.1875 0.10 len=0.06
+tap 33.312 0.2470 0.10 len=0.06
+tap 33.547 0.2272 0.10 len=0.06
+tap 33.781 0.1875 0.10 len=0.06
+tap 34.016 0.1478 0.10 len=0.06
+tap 34.250 0.1875 0.10 len=0.06
+tap 34.484 0.1875 0.10 len=0.06
+tap 34.719 0.2272 0.10 len=0.06
+tap 34.953 0.2470 0.10 len=0.06
+down 35.188 43 0.4375 0.12 p=0.6
+up 35.656 43
+tap 35.773 0.3125 0.12 len=0.1
+# PHONK: blown-out saws, triplet hats, a horror chord on the drop; the cowbell's busy figure, then its falling one twisted; the Memphis vocal, tapped and held; an 808 line sliding.
 key 37.520 Right
 tap 37.734 0.10 0.44 p=0.6 len=0.2
 tap 37.852 0.30 0.44 p=0.6 len=0.2
 tap 37.969 0.50 0.44 p=0.6 len=0.2
 tap 38.086 0.70 0.44 p=0.6 len=0.2
+tap 38.204 0.90 0.44 p=0.6 len=0.2
 key 39.516 Return
-tap 40.312 0.188 0.12
-down 41.250 7 0.438 0.14
-up 44.250 7
-# SHOEGAZE: amp feedback, a fuzz guitar on the whammy bar, fuzz chords scooping up, a reverse reverb; a wall on the drop, then a wash.
+down 39.975 44 0.4375 0.19 p=0.6
+up 41.750 44
+down 41.800 45 0.4375 0.07 p=0.6
+move 42.219 45 0.4375 0.07 twist=30
+up 43.625 45
+tap 40.812 0.3125 0.12 len=0.1
+down 42.687 46 0.3125 0.12 p=0.6
+up 43.156 46
+tap 39.875 0.1875 0.14 len=0.06
+tap 40.578 0.2470 0.14 len=0.06
+tap 41.047 0.1478 0.14 len=0.06
+tap 41.750 0.1875 0.14 len=0.06
+tap 42.453 0.2669 0.14 len=0.06
+# SHOEGAZE: amp feedback singing, a glide guitar, fuzz chords, a reversed reverb; a wall on the drop, a dive-bomb, harmonics held.
 key 45.020 Right
 tap 45.234 0.10 0.44 p=0.6 len=0.2
 tap 45.352 0.30 0.44 p=0.6 len=0.2
 tap 45.469 0.50 0.44 p=0.6 len=0.2
 tap 45.586 0.70 0.44 p=0.6 len=0.2
+tap 45.704 0.90 0.44 p=0.6 len=0.2
 key 47.016 Return
-tap 47.812 0.188 0.12
-tap 49.922 0.438 0.14
-tap 50.391 0.812 0.14 len=0.3
+tap 49.250 0.3125 0.15 len=0.4
+down 49.953 47 0.4375 0.14 p=0.6
+up 50.891 47
 end 55.020

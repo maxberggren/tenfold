@@ -18,8 +18,9 @@
 // rhythms, and tap-then-hold loops them like every other page.
 //
 // Left and Right choose the set: the sound of all of it, from EDM through
-// analog, dub, lo-fi, trap, drum and bass, cinema, synthwave and techno to
-// ambient (see risers.h). Each riser and hit keeps the set it began in.
+// analog, dub, lo-fi, trap, drum and bass, cinema, synthwave, techno and
+// ambient to amapiano, gamelan, chiptune, phonk and shoegaze (see risers.h).
+// Each riser and hit keeps the set it began in.
 //
 // Pressing the pad until it clicks (or Return) is the drop gesture: the
 // drop comes on the next bar line, and whatever is rising rushes into it.
@@ -39,6 +40,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <vector>
 
 #include "console.h"
 #include "parts.h"
@@ -56,6 +59,7 @@ constexpr int kRows = 5;                              // 1, 2, 4, 8, 16 bars
 constexpr float kRowH = (1.0f - kHitTop) / kRows;
 constexpr double kDecide = 0.12;                      // a riser finger waits this long for a click
 constexpr int kKeyId = 1 << 20;                       // ids of notes played from the keyboard
+constexpr int kDrumsPart = 0, kBassPart = 1;          // the pages a drop can leave its ONE without (see parts.cpp)
 constexpr int kMods = MasterCount + kMaxParts * ChannelCount;
 
 enum Style { Clean = 0, Gap, Strip, StyleCount };
@@ -77,11 +81,11 @@ const char *setBlurb(int s) {
         "gated snare and crash, chorused brass, laser toms, a tape stop",
         "ring-modulated metal, an acid line, offbeat chords, gated swells, a clang",
         "grains, soft pads, a shaker, a bloom instead of a crash",
-        "a log drum for the sub, swung shakers and woodblock, keys off the beat, a breathy flute",
-        "bronze bars beating in pairs, a gangsa run, a suling, a gong on the drop",
-        "pulse waves, a frame-rate arpeggio, the noise channel's buzz, a square blip",
-        "an 808 cowbell (hold it for the melody), triplet hats, a distorted sliding 808",
-        "fuzz guitars on the whammy bar, amp feedback, a reverse reverb, a wall on the drop",
+        "a log drum to play lines on (tap across it, slide to glide), jazz keys, a whistle, the drop's ONE left to the drum",
+        "in slendro: saron bars beating in pairs, a gangsa kotekan, a suling, bonang, a gong ageng on the drop",
+        "an arpeggio stepping by frames, pulse stabs with a tracker's echo, the triangle bass (tap across it), a blip",
+        "an 808 cowbell (hold it: higher plays a busier figure, twist bends it), a Memphis vocal, a sliding clipped 808",
+        "fuzz guitars on a restless whammy bar, feedback singing out of the hiss, a reversed reverb, a wall, a dive-bomb",
     };
     static_assert(std::size(blurbs) == SetCount, "a blurb for every set");
     return blurbs[std::clamp(s, 0, int(SetCount) - 1)];
@@ -301,11 +305,13 @@ public:
     QString help() const override {
         return QStringLiteral(
             "Left / Right\tthe set, the sound of every riser and hit: EDM, analog, dub, lo-fi, trap, drum and bass, "
-            "cinema, synthwave (80S), techno, ambient, amapiano (AMAP), gamelan (GAMEL), chiptune (8BIT), phonk, "
-            "shoegaze (GAZE). The row of sets scrolls to follow the one lit; click it or step with the arrows. "
+            "cinema, synthwave (80S), techno, ambient, amapiano (PIANO), gamelan, chiptune (8BIT), phonk, "
+            "shoegaze (FUZZ). The row of sets scrolls to follow the one lit; click it or step with the arrows. "
             "What is already playing keeps its own, and loops keep theirs. "
-            "Some cells take the set's own name: a dub SIREN (twist it for a swept siren), trap HATS, a cinema BRAAM, "
-            "amapiano's LOG DRUM, a gamelan GONG, phonk's COWBELL (hold it: it plays the melody round the chord)\n"
+            "Some cells take the set's own name and instrument: a dub SIREN (twist it for a swept siren), trap HATS, "
+            "a cinema BRAAM; amapiano's WHISTLE, KEYS, SHAKERS and LOG DRUM; gamelan's SULING, SARON, GANGSA, GONG "
+            "and BONANG, all in slendro; chiptune's ARP, PULSE, TRIANGLE and BLIP; phonk's VOX and COWBELL; "
+            "shoegaze's FEEDBACK, GLIDE, FUZZ, REVERSE, WALL, DIVE and HARMONIC\n"
             "Shift+Left / Right (or [ ])\tdrop style: clean; gap, a half-beat breath before the ONE with only the "
             "risers' room ringing; or strip, the risers alone for the build's last bar, then the breath\n"
             "Up / Down\tlonger or shorter risers from the keys (1, 2, 4, 8, 16 bars)\n"
@@ -326,8 +332,13 @@ public:
             "flick down as you lift\tpull that riser out: it falls away\n"
             "click the pad\tdrop on the next bar line instead, as Return does\n"
             "bottom row\timpact, sub drop, downlifter, laser zap, power-down, echo throw, reverb wash, DJ sweep\n"
-            "sub drop during a build\tarms a sub onto the drop (the drop's boom gives way to it)\n"
-            "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger\n"
+            "sub drop during a build\tarms a sub onto the drop (the drop's boom gives way to it); a line bass "
+            "(LOG DRUM, TRIANGLE, phonk's 808) plays at once instead\n"
+            "LOG DRUM, TRIANGLE, 808\ttap across the cell for the scale's notes, one at a time; hold and slide "
+            "sideways (or twist) to glide to another. Amapiano's drop leaves its ONE to the log drum: the drums and "
+            "bass come back on beat two\n"
+            "hold a hit\tsub sustains, zaps fire sixteenths up the chord, throw and wash hold; higher in a cell is bigger; "
+            "phonk's COWBELL plays a figure (higher, busier; twist bends its notes down), its VOX chops in eighths\n"
             "hold the sweep\tslide left to close a low-pass on the whole mix, up to open a high-pass; press for drive\n"
             "record a build and its drop\tbuild, let it drop, press Space in the bar after: the loop runs from the bar "
             "the build began in to the bar after the drop, and drops on the same bar every pass\n"
@@ -426,9 +437,11 @@ private:
             const float cell = t.x * kHits;
             h.kind = kRisers + std::clamp(int(cell), 0, kHits - 1);
             // Higher in the cell, bigger. Across a zap's cell, a few steps
-            // of the scale either side of the chord's root.
+            // of the scale either side of the chord's root; across a line
+            // bass's (a log drum, a triangle, phonk's 808), three either side
+            // of the key's root, so taps across it play a bass line.
             h.int0 = h.intensity = clampf(0.35f + 0.65f * t.y / kHitTop, 0, 1);
-            if (h.kind == Zap)
+            if (h.kind == Zap || (h.kind == Sub && palette(m_set).sub.mono > 0))
                 h.tone0 = h.tone = clampf((cell - std::floor(cell) - 0.5f) * 0.9f, -1, 1);
             sendOn(h, ctx);
             return;
@@ -759,6 +772,26 @@ private:
             }
         }
 
+        // A drop that leaves its ONE to the FX page (amapiano's: the log drum
+        // alone on it): the drums and bass go quiet on the line itself, the
+        // mute scheduled onto it as the hand-backs are, so the kick left out
+        // is the ONE's; they come back exactly as they were after its first
+        // beats.
+        if (const float alone = d[pub::Alone]; alone > 0 && m_buildMix) {
+            const double last = std::max(double(d[pub::LastDrop]), m_liftDrop);
+            for (int part : {kDrumsPart, kBassPart}) {
+                if (part >= parts || part == ctx.part())
+                    continue;
+                const int idx = ch(part, Mute);
+                if (drop > 0 && beat >= drop - horizon && beat < drop)
+                    pull(idx, 1, 1, ctx.timeAt(drop) - 0.002);
+                else if (last > 0 && beat >= last && beat < last + alone - horizon)
+                    pull(idx, 1, 1);
+                else if (last > 0 && beat >= last + alone - horizon && beat < last + alone)
+                    m_mods[idx].releaseAt = ctx.timeAt(last + alone) - 0.005;
+            }
+        }
+
         // Recording a build and its drop with Space: once a live build's drop
         // has fired, mark the beat before the next bar line as part of what
         // was played. Space's take then runs from the build's first landing
@@ -931,9 +964,248 @@ bool FxPage::click(QPointF at, ControlContext &ctx) {
 
 // --- drawing -------------------------------------------------------------------
 
+// The instruments a set brings of its own, each with its own picture in
+// the cell it takes over.
+enum Icon {
+    IconStock = 0, // the kind's own
+    IconWhistle, IconKeys, IconShaker, IconLogDrum,
+    IconSuling, IconSaron, IconGangsa, IconGong, IconBonang,
+    IconArp, IconPulse, IconTriangle, IconBlip, IconSteps, IconStepFall,
+    IconCowbell, IconVox, IconSlide,
+    IconFeedback, IconGlide, IconFuzz, IconReverse, IconWall, IconDive, IconHarmonic,
+};
+Icon iconOf(int set, int kind) {
+    switch (set) {
+    case SetAmapiano:
+        return kind == Pitch ? IconWhistle : kind == Saw ? IconKeys : kind == Roll ? IconShaker : kind == Sub ? IconLogDrum : IconStock;
+    case SetGamelan:
+        return kind == Pitch ? IconSuling : kind == Saw ? IconSaron : kind == Roll ? IconGangsa : kind == Impact ? IconGong
+               : kind == Zap ? IconBonang : IconStock;
+    case SetChiptune:
+        return kind == Pitch ? IconArp : kind == Saw ? IconPulse : kind == Sub ? IconTriangle : kind == Zap ? IconBlip
+               : kind == Swell ? IconSteps : kind == Down ? IconStepFall : IconStock;
+    case SetPhonk:
+        return kind == Zap ? IconCowbell : kind == Down ? IconVox : kind == Sub ? IconSlide : IconStock;
+    case SetShoegaze:
+        return kind == Noise ? IconFeedback : kind == Pitch ? IconGlide : kind == Saw ? IconFuzz : kind == Swell ? IconReverse
+               : kind == Impact ? IconWall : kind == Down ? IconDive : kind == Zap ? IconHarmonic : IconStock;
+    default:
+        return IconStock;
+    }
+}
+
+// An instrument's own picture; false for a kind's stock one.
+bool drawIcon(QPainter &p, const QRectF &r, Icon icon, QColor col) {
+    QPainterPath path;
+    auto at = [&](double u, double v) { return QPointF(r.left() + u * r.width(), r.bottom() - v * r.height()); };
+    auto curve = [&](int steps, const std::function<double(double)> &f, double u0 = 0, double u1 = 1) {
+        QPainterPath c;
+        for (int i = 0; i <= steps; ++i) {
+            const double u = u0 + (u1 - u0) * i / steps;
+            i ? c.lineTo(at(u, f(u))) : c.moveTo(at(u, f(u)));
+        }
+        p.drawPath(c);
+    };
+    auto stairs = [&](const std::vector<double> &levels, double u0 = 0, double u1 = 1) {
+        QPainterPath c;
+        const double w = (u1 - u0) / double(levels.size());
+        for (size_t k = 0; k < levels.size(); ++k) {
+            const QPointF a = at(u0 + w * double(k), levels[k]), b = at(u0 + w * double(k + 1), levels[k]);
+            k ? c.lineTo(a) : c.moveTo(a);
+            c.lineTo(b);
+        }
+        p.drawPath(c);
+    };
+    const qreal unit = std::min(r.width() / 6.0, r.height());
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(col, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    switch (icon) {
+    case IconStock:
+        return false;
+    case IconWhistle: // a line tongued up in steps, each note's vibrato coming late
+        for (int k = 0; k < 4; ++k) {
+            const double u0 = k * 0.25, base = 0.1 + 0.22 * k;
+            curve(16, [&](double u) {
+                const double in = (u - u0) / 0.25;
+                return base + (in > 0.45 ? 0.08 * std::sin((in - 0.45) * 40.0) * (in - 0.45) * 2 : 0.0);
+            }, u0 + 0.02, u0 + 0.23);
+        }
+        return true;
+    case IconKeys: { // a piano's octave: white keys and five black
+        const double w = 1.0 / 7.0;
+        for (int k = 0; k < 7; ++k)
+            p.drawRect(QRectF(at(k * w, 1.0), at((k + 1) * w, 0.0)).normalized());
+        p.setBrush(col);
+        for (int k : {1, 2, 4, 5, 6})
+            p.drawRect(QRectF(at(k * w - w * 0.3, 1.0), at(k * w + w * 0.3, 0.4)).normalized());
+        return true;
+    }
+    case IconShaker: // swung sixteenths, the woodblock's three on the 3-3-2
+        for (int k = 0; k < 8; ++k) {
+            const double u = 0.06 + k * 0.125 + ((k & 1) ? 0.02 : 0.0);
+            const bool block = k == 0 || k == 3 || k == 6;
+            p.setBrush(block ? col : QColor(Qt::transparent));
+            p.drawEllipse(at(u, 0.5), block ? unit * 0.45 : unit * 0.25, block ? unit * 0.45 : unit * 0.25);
+        }
+        p.setBrush(Qt::NoBrush);
+        return true;
+    case IconLogDrum: // a line of plucks, each blooming down into its note
+    case IconSlide: { // an 808 sliding from one note to the next
+        const double notes[3] = {0.25, 0.6, 0.35};
+        if (icon == IconSlide) {
+            curve(40, [&](double u) {
+                const double a = u < 0.35 ? 0.3 : u < 0.5 ? 0.3 + 0.45 * (u - 0.35) / 0.15 : u < 0.75 ? 0.75 : 0.75 - 0.5 * std::min(1.0, (u - 0.75) / 0.1);
+                return a;
+            });
+            return true;
+        }
+        for (int k = 0; k < 3; ++k)
+            curve(14, [&](double u) {
+                const double in = (u - k * 0.33) / 0.3;
+                return notes[k] + 0.35 * std::exp(-in * 9.0);
+            }, k * 0.33, k * 0.33 + 0.28);
+        return true;
+    }
+    case IconSuling: // a bamboo flute and its holes
+        p.drawRoundedRect(QRectF(at(0.02, 0.75), at(0.98, 0.25)).normalized(), unit * 0.3, unit * 0.3);
+        for (int k = 0; k < 4; ++k)
+            p.drawEllipse(at(0.45 + k * 0.13, 0.5), unit * 0.14, unit * 0.14);
+        p.drawLine(at(0.12, 0.75), at(0.12, 0.25));
+        return true;
+    case IconSaron: // bronze bars on a frame, shorter as they go up
+        p.drawLine(at(0.0, 0.15), at(1.0, 0.15));
+        p.drawLine(at(0.0, 0.85), at(1.0, 0.85));
+        for (int k = 0; k < 6; ++k) {
+            const double u = 0.06 + k * 0.16, h = 0.5 - 0.05 * k;
+            p.drawRect(QRectF(at(u, 0.5 + h), at(u + 0.11, 0.5 - h)).normalized());
+        }
+        return true;
+    case IconGangsa: // two parts, interlocking: one line from two
+        for (int k = 0; k < 10; ++k) {
+            const double u = 0.05 + k * 0.1;
+            const bool sangsih = k & 1;
+            p.setBrush(sangsih ? QColor(Qt::transparent) : col);
+            p.drawEllipse(at(u, sangsih ? 0.72 : 0.28), unit * 0.28, unit * 0.28);
+        }
+        p.setBrush(Qt::NoBrush);
+        return true;
+    case IconGong: { // a gong hung in its frame, its boss
+        const QPointF c = at(0.5, 0.45);
+        const qreal rad = std::min(r.height() * 0.48, r.width() * 0.2);
+        p.drawLine(at(0.2, 1.0), at(0.8, 1.0));
+        p.drawLine(at(0.5, 1.0), QPointF(c.x(), c.y() - rad));
+        p.drawEllipse(c, rad, rad);
+        p.setBrush(col);
+        p.drawEllipse(c, rad * 0.3, rad * 0.3);
+        p.setBrush(Qt::NoBrush);
+        return true;
+    }
+    case IconBonang: // a row of kettle gongs, each with its boss
+        for (int k = 0; k < 3; ++k) {
+            const QPointF c = at(0.2 + k * 0.3, 0.4);
+            const qreal rad = std::min(r.height() * 0.4, r.width() * 0.12);
+            p.drawEllipse(c, rad, rad * 0.7);
+            p.setBrush(col);
+            p.drawEllipse(QPointF(c.x(), c.y() - rad * 0.3), rad * 0.35, rad * 0.3);
+            p.setBrush(Qt::NoBrush);
+        }
+        return true;
+    case IconArp: // notes a frame each, climbing in steps
+        stairs({0.1, 0.35, 0.6, 0.2, 0.45, 0.7, 0.3, 0.55, 0.8, 0.45, 0.7, 0.95});
+        return true;
+    case IconPulse: // a narrow pulse
+        stairs({0.9, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1, 0.9, 0.1, 0.1, 0.1});
+        return true;
+    case IconTriangle: { // a triangle in sixteen steps
+        std::vector<double> l;
+        for (int k = 0; k < 24; ++k)
+            l.push_back(0.1 + 0.8 * (k < 12 ? k : 23 - k) / 11.0);
+        stairs(l);
+        return true;
+    }
+    case IconBlip: // up into a note, the coin's second, and down in steps
+        stairs({0.3, 0.45, 0.6, 0.85, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1}, 0.05, 0.75);
+        return true;
+    case IconSteps: // the volume climbing its sixteen levels
+        stairs({0.05, 0.1, 0.15, 0.22, 0.3, 0.4, 0.52, 0.66, 0.82, 0.98}, 0.0, 0.95);
+        return true;
+    case IconStepFall: // a pulse falling a semitone at a time
+        stairs({0.95, 0.85, 0.76, 0.67, 0.58, 0.5, 0.42, 0.34, 0.26, 0.18, 0.1});
+        return true;
+    case IconCowbell: { // a cowbell and its stick
+        QPainterPath bell;
+        bell.moveTo(at(0.38, 0.95));
+        bell.lineTo(at(0.62, 0.95));
+        bell.lineTo(at(0.72, 0.1));
+        bell.lineTo(at(0.28, 0.1));
+        bell.closeSubpath();
+        p.drawPath(bell);
+        p.drawLine(at(0.78, 0.9), at(0.95, 0.35));
+        return true;
+    }
+    case IconVox: { // a voice in a speech bubble, its word's shape inside
+        p.drawRoundedRect(QRectF(at(0.15, 1.0), at(0.85, 0.25)).normalized(), unit * 0.4, unit * 0.4);
+        p.drawLine(at(0.3, 0.25), at(0.22, 0.0));
+        curve(30, [&](double u) { return 0.62 + 0.25 * std::sin(u * 30.0) * std::sin((u - 0.25) / 0.5 * 3.14159); }, 0.25, 0.75);
+        return true;
+    }
+    case IconFeedback: // hiss, and out of it a tone growing
+        for (int k = 0; k < 10; ++k) {
+            const double u = 0.02 + k * 0.04, h = 0.15 + 0.2 * std::fabs(std::sin(k * 2.3));
+            p.drawLine(at(u, 0.5 - h / 2), at(u, 0.5 + h / 2));
+        }
+        curve(50, [&](double u) { return 0.5 + 0.45 * (u - 0.42) / 0.58 * std::sin((u - 0.42) * 55.0); }, 0.42, 1.0);
+        return true;
+    case IconGlide: // a slide up, the whammy bar wandering slowly round it
+        curve(60, [&](double u) { return 0.15 + 0.6 * u + 0.12 * std::sin(u * 9.0) + 0.05 * std::sin(u * 23.0); });
+        return true;
+    case IconFuzz: // a wave clipped flat, twice
+        curve(80, [&](double u) { return 0.5 + 0.42 * std::clamp(2.6 * std::sin(u * 18.85), -1.0, 1.0); });
+        return true;
+    case IconReverse: { // a tail growing into the ONE, and cut there
+        for (int k = 0; k < 22; ++k) {
+            const double u = 0.04 + k * 0.042, h = 0.95 * std::exp((u - 0.96) * 4.0) * (0.6 + 0.4 * std::fabs(std::sin(k * 1.9)));
+            p.drawLine(at(u, 0.5 - h / 2), at(u, 0.5 + h / 2));
+        }
+        p.drawLine(at(0.99, 0.0), at(0.99, 1.0));
+        return true;
+    }
+    case IconWall: { // a wall: everything at once, jagged on top
+        QPainterPath wall;
+        wall.moveTo(at(0.0, 0.0));
+        for (int k = 0; k <= 16; ++k)
+            wall.lineTo(at(k / 16.0, 0.75 + 0.2 * std::fabs(std::sin(k * 2.1))));
+        wall.lineTo(at(1.0, 0.0));
+        wall.closeSubpath();
+        p.setBrush(alphaOf(col, 0.35f));
+        p.drawPath(wall);
+        p.setBrush(Qt::NoBrush);
+        return true;
+    }
+    case IconDive: // a chord pushed down, shaking at the bottom
+        curve(60, [&](double u) { return 0.9 - 0.75 * std::pow(u, 0.7) + (u > 0.6 ? 0.07 * std::sin(u * 60.0) : 0.0); });
+        return true;
+    case IconHarmonic: { // a diamond note-head ringing on
+        QPainterPath d;
+        d.moveTo(at(0.18, 0.95));
+        d.lineTo(at(0.28, 0.5));
+        d.lineTo(at(0.18, 0.05));
+        d.lineTo(at(0.08, 0.5));
+        d.closeSubpath();
+        p.drawPath(d);
+        curve(50, [&](double u) { return 0.5 + 0.35 * std::exp(-(u - 0.33) * 3.0) * std::sin((u - 0.33) * 60.0); }, 0.33, 1.0);
+        return true;
+    }
+    }
+    return false;
+}
+
 // A small picture of each sound's shape over time, left to right: what the
-// column or cell will do before a finger asks it to.
-void glyph(QPainter &p, const QRectF &r, int kind, QColor col) {
+// column or cell will do before a finger asks it to; a set's own instrument
+// drawn as itself.
+void glyph(QPainter &p, const QRectF &r, int kind, QColor col, int set) {
+    if (drawIcon(p, r, iconOf(set, kind), col))
+        return;
     QPainterPath path;
     auto at = [&](double u, double v) { return QPointF(r.left() + u * r.width(), r.bottom() - v * r.height()); };
     p.setBrush(Qt::NoBrush);
@@ -1140,7 +1412,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
         p.fillRect(plate, QColor(0, 0, 0, 220));
         c::text(p, QRectF(head.left(), head.top() + 42, head.width(), 18), kindTitle(m_set, k), col, 13, true,
                 Qt::AlignCenter);
-        glyph(p, QRectF(head.center().x() - gw / 2, head.top() + 61, gw, 14), k, c::alpha(col, 0.8f));
+        glyph(p, QRectF(head.center().x() - gw / 2, head.top() + 61, gw, 14), k, c::alpha(col, 0.8f), m_set);
     }
 
     // The hit row.
@@ -1167,7 +1439,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
                 lit > 0.5f ? QColor::fromRgb(c::kInk) : col, 12, true, Qt::AlignCenter);
         const qreal gw = std::min<qreal>(56, cell.width() * 0.5);
         glyph(p, QRectF(cell.center().x() - gw / 2, cell.center().y() - 24, gw, 18), kRisers + k,
-              lit > 0.5f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.6f));
+              lit > 0.5f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.6f), m_set);
         c::text(p, QRectF(cell.left() + 6, cell.top() + 4, 30, 14), QString(QChar(kHitKeys[k])), c::alpha(col, 0.75f), 11, true);
     }
 

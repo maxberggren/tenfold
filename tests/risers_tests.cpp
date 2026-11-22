@@ -4,6 +4,7 @@
 #include "testkit.h"
 
 #include <QJsonArray>
+#include <functional>
 
 #include "../src/risers.h"
 #include "parts.h"
@@ -176,6 +177,133 @@ std::vector<float> notesHeld(int set, int kind, double seconds) {
     return notes;
 }
 
+// The FX engine alone at 124 BPM, driven by hand: commands sent when a
+// test says, and every block what it played and what it published.
+struct Rig {
+    PartSpec spec = makeRisers();
+    FxAudio ctx;
+    float data[kPartData] = {};
+    std::vector<float> l, r;
+    Rig() {
+        ctx.tr.rate = 48000;
+        ctx.tr.bpm = 124;
+        ctx.tr.beatsPerSample = 124 / 60.0 / 48000.0;
+        spec.engine->init(48000);
+    }
+    void send(Command c) { spec.engine->command(c, ctx); }
+    // A finger landing: a riser of `bars` aimed four beats on, or a hit.
+    void on(int id, int kind, int set, float tone = 0, float intensity = 0.7f, float motion = 0) {
+        Command c;
+        c.type = Command::On;
+        c.id = id;
+        c.i[0] = kind;
+        c.i[1] = 1;
+        c.i[3] = set;
+        c.f[0] = 0.6f;
+        c.f[1] = tone;
+        c.f[2] = intensity;
+        c.f[3] = motion;
+        c.f[5] = 4.0f;
+        send(c);
+    }
+    void move(int id, float tone, float intensity = 0.7f, float motion = 0) {
+        Command c;
+        c.type = Command::Move;
+        c.id = id;
+        c.f[0] = 0.6f;
+        c.f[1] = tone;
+        c.f[2] = intensity;
+        c.f[3] = motion;
+        send(c);
+    }
+    void off(int id) {
+        Command c;
+        c.type = Command::Off;
+        c.id = id;
+        send(c);
+    }
+    double seconds() const { return double(ctx.tr.sample) / 48000.0; }
+    // Plays on for a while; `each` sees what was published after every block.
+    void run(double secs, const std::function<void(const float *)> &each = {}) {
+        for (int b = 0; b < int(secs * 48000 / kBlock); ++b) {
+            ctx.tr.beat = double(ctx.tr.sample) * ctx.tr.beatsPerSample;
+            float bl[kBlock] = {}, br[kBlock] = {};
+            spec.engine->render(bl, br, kBlock, ctx);
+            l.insert(l.end(), bl, bl + kBlock);
+            r.insert(r.end(), br, br + kBlock);
+            ctx.tr.sample += kBlock;
+            spec.engine->publish(data);
+            if (each)
+                each(data);
+        }
+    }
+    // The published note of the first voice of a kind (−1 if none sounds).
+    float note(int kind) const {
+        for (int w = 0; w < risers::pub::MaxVoices; ++w) {
+            const float *o = data + risers::pub::Voices + risers::pub::Stride * w;
+            if (o[risers::pub::VKind] == float(kind))
+                return o[risers::pub::VNote];
+        }
+        return -1;
+    }
+    int voices(int kind) const {
+        int count = 0;
+        for (int w = 0; w < risers::pub::MaxVoices; ++w)
+            count += data[risers::pub::Voices + risers::pub::Stride * w + risers::pub::VKind] == float(kind);
+        return count;
+    }
+};
+
+// The notes a kind played while it ran, one each time it changed.
+std::vector<float> notesOf(Rig &rig, int kind, double secs) {
+    std::vector<float> notes;
+    rig.run(secs, [&](const float *) {
+        const float n = rig.note(kind);
+        if (n > 0 && (notes.empty() || notes.back() != n))
+            notes.push_back(n);
+    });
+    return notes;
+}
+
+bool inKeyNote(const Harmony &h, float note, float within = 0.5f) {
+    for (int d = -21; d < 42; ++d)
+        if (std::fabs(note - float(h.midi(d, 0))) < within)
+            return true;
+    return false;
+}
+bool inSlendro(const Harmony &h, float note, float within = 0.02f) {
+    for (int k = -15; k < 30; ++k)
+        if (std::fabs(note - risers::slendro(h, k, 0)) < within)
+            return true;
+    return false;
+}
+// Whether a note is in a set's own scale, the key's or slendro's, give or
+// take what a glide still has to go at the line.
+bool inScaleOf(int set, const Harmony &h, float note) {
+    return risers::palette(set).tuning == 1 ? inSlendro(h, note, 0.3f) : inKeyNote(h, note);
+}
+
+// RMS in dB of the mono mix over [t0, t1) seconds, after a low-pass (0: none).
+double windowDb(const std::vector<float> &l, const std::vector<float> &r, double t0, double t1, float lowpass = 0) {
+    Svf a, b;
+    if (lowpass > 0) {
+        a.set(lowpass, 0.7f, 48000);
+        b.set(lowpass, 0.7f, 48000);
+    }
+    double e = 0;
+    int count = 0;
+    for (size_t i = 0; i < l.size() && double(i) < t1 * 48000; ++i) {
+        float m = 0.5f * (l[i] + r[i]);
+        if (lowpass > 0)
+            m = b.step(a.step(m).low).low;
+        if (double(i) >= t0 * 48000) {
+            e += double(m) * m;
+            ++count;
+        }
+    }
+    return 10 * std::log10(e / std::max(1, count) + 1e-20);
+}
+
 // What a sound is like: its level; its colour, as the energy in eight
 // octave bands (63 Hz to 8 kHz) against its whole, so a sound only louder
 // or softer has the same colour; and its envelope in quarters, against its
@@ -256,7 +384,7 @@ const int kSounding[] = {risers::Noise,  risers::Pitch, risers::Saw,  risers::Ro
 class RisersTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs it with the machine to itself.
-    Q_CLASSINFO("alone", "tenFingersStayInsideBudget")
+    Q_CLASSINFO("alone", "tenFingersStayInsideBudget newSetsStayInsideBudget")
 private slots:
     void aLoopsFallDropsOnlyItsOwnLayersRisers() {
         // A riser from the hand and one replayed by a loop's second layer;
@@ -613,7 +741,7 @@ private slots:
     // The band under the pad does what the keys do. On the scripts' window
     // row 0 is 0.048 of the pad under it, row 1 0.119. Row 0: the clips to
     // 0.26, then the sets from 0.31, more than fit, so a window onto the
-    // first eleven while EDM is lit; row 1: the three drop styles from
+    // first nine while EDM is lit; row 1: the three drop styles from
     // 0.07 to 0.33, then shorter, the length and longer to 0.58, then DROP,
     // FALL AWAY and MOVE MIX.
     void theBandUnderThePadIsClickable() {
@@ -622,7 +750,7 @@ private slots:
             QVERIFY2(s.pageStatus().contains(QStringLiteral("gap")), qPrintable(s.pageStatus()));
         });
         // DUB, the third set.
-        testkit::play("page 0 7\nbutton 0.2 0.452 -0.048\nend 0.5\n", [](Session &s) {
+        testkit::play("page 0 7\nbutton 0.2 0.50 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("dub")), qPrintable(s.pageStatus()));
         });
         // DROP with nothing building: the next bar line.
@@ -842,6 +970,8 @@ private slots:
     void everySetIsCleanLevelAndItsOwn() {
         constexpr int kinds = int(std::size(kSounding));
         static Features f[risers::SetCount][kinds];
+        // Every problem at once, so one run shows all a change has moved.
+        QStringList wrong;
         for (int s = 0; s < risers::SetCount; ++s)
             for (int k = 0; k < kinds; ++k) {
                 const Heard solo = playSolo(s, kSounding[k]);
@@ -856,26 +986,45 @@ private slots:
                 mean /= 2.0 * double(solo.l.size());
                 const double rms = std::sqrt(power / (2.0 * double(solo.l.size())));
                 const QString what = QStringLiteral("%1 %2").arg(risers::palette(s).name, risers::kindName(kSounding[k]));
-                QVERIFY2(finite, qPrintable(what));
-                QVERIFY2(peak < 0.9, qPrintable(QStringLiteral("%1: peak %2").arg(what).arg(peak)));
+                if (!finite)
+                    wrong << what + QStringLiteral(": not finite");
+                if (peak >= 0.9)
+                    wrong << QStringLiteral("%1: peak %2").arg(what).arg(peak);
                 // A decaying sine leaves a little offset of its own (EDM's sub
                 // does); nothing more than that.
-                QVERIFY2(std::fabs(mean) < 0.04 * rms + 1e-4,
-                         qPrintable(QStringLiteral("%1: offset %2 at %3 rms").arg(what).arg(mean).arg(rms)));
+                if (std::fabs(mean) >= 0.04 * rms + 1e-4)
+                    wrong << QStringLiteral("%1: offset %2 at %3 rms").arg(what).arg(mean).arg(rms);
                 f[s][k] = featuresOf(solo);
-                QVERIFY2(std::fabs(f[s][k].level - f[0][k].level) < 4.5,
-                         qPrintable(QStringLiteral("%1: %2 dB against EDM's %3").arg(what).arg(f[s][k].level).arg(f[0][k].level)));
+                if (std::fabs(f[s][k].level - f[0][k].level) >= 4.5)
+                    wrong << QStringLiteral("%1: %2 dB against EDM's %3").arg(what).arg(f[s][k].level).arg(f[0][k].level);
             }
+        // Against any other set, most of a set's ten sounds would be told
+        // apart; a set added after the first ten, eight of them from the
+        // older set it is nearest (phonk from trap, shoegaze from EDM and
+        // analog), and seven from any other.
+        auto near = [](int a, int b) {
+            return (a == risers::SetTrap && b == risers::SetPhonk) ||
+                   (b == risers::SetShoegaze && (a == risers::SetEdm || a == risers::SetAnalog));
+        };
         for (int a = 0; a < risers::SetCount; ++a)
             for (int b = a + 1; b < risers::SetCount; ++b) {
                 int told = 0;
-                for (int k = 0; k < kinds; ++k)
-                    told += differ(f[a][k], f[b][k]);
-                QVERIFY2(told >= 6, qPrintable(QStringLiteral("%1 and %2: %3 of %4 sounds differ")
-                                                   .arg(risers::palette(a).name, risers::palette(b).name)
-                                                   .arg(told)
-                                                   .arg(kinds)));
+                QStringList same;
+                for (int k = 0; k < kinds; ++k) {
+                    const bool d = differ(f[a][k], f[b][k]);
+                    told += d;
+                    if (!d)
+                        same << QString::fromUtf8(risers::kindName(kSounding[k]));
+                }
+                const int need = near(a, b) ? 8 : b >= risers::SetAmapiano ? 7 : 6;
+                if (told < need)
+                    wrong << QStringLiteral("%1 and %2: %3 of %4 sounds differ (alike: %5)")
+                                 .arg(risers::palette(a).name, risers::palette(b).name)
+                                 .arg(told)
+                                 .arg(kinds)
+                                 .arg(same.join(QStringLiteral(", ")));
             }
+        QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("\n"))));
     }
 
     // Lo-fi's sampler grit stays under its output filter: nothing of it
@@ -916,17 +1065,12 @@ private slots:
     }
 
     // The five sets added after the first ten: every sound they make is in
-    // the key wherever it has a pitch, under 0 dBFS, and each is reached
-    // from the keys (Left from EDM wraps to the last) and the row of chips,
-    // named in the page's status line, and saved and reopened by name.
+    // the set's scale wherever it has a pitch (the key's, or gamelan's
+    // slendro), under 0 dBFS, and each is reached from the keys (Left from
+    // EDM wraps to the last) and the row of chips, named in the page's
+    // status line, and saved and reopened by name.
     void theNewSetsPlayInKeyAndComeBackByName() {
         Harmony h;
-        auto inKey = [&](float note) {
-            for (int d = -21; d < 42; ++d)
-                if (std::fabs(note - float(h.midi(d, 0))) < 0.5f)
-                    return true;
-            return false;
-        };
         for (int set = risers::SetAmapiano; set < risers::SetCount; ++set) {
             const QString name = QString::fromUtf8(risers::palette(set).name);
             for (int kind : kSounding) {
@@ -945,7 +1089,7 @@ private slots:
                 // the stabs' last beat is an octave's glide onto the chord.
                 if (kind != risers::Stop && kind != risers::Down && kind != risers::Swell && kind != risers::Impact &&
                     kind != risers::Saw)
-                    QVERIFY2(inKey(solo.note), qPrintable(QStringLiteral("%1: note %2").arg(what).arg(solo.note)));
+                    QVERIFY2(inScaleOf(set, h, solo.note), qPrintable(QStringLiteral("%1: note %2").arg(what).arg(solo.note)));
             }
             // Its chip on the row under the pad and its name in the status.
             const int steps = int(risers::SetCount) - set;
@@ -968,24 +1112,82 @@ private slots:
         }
     }
 
-    // What makes the new sets theirs. A phonk cowbell held plays its
-    // melody: a note a sixteenth, at least three different chord tones, all
-    // in the key. And the log drum is a bass with a body, its weight in the
-    // octaves at 125 and 250 Hz, over the sub's and the treble's.
-    void theNewSetsHaveTheirOwnInstruments() {
+    // Amapiano's log drum is a bass line: across its cell it plays the
+    // scale's notes, one at a time (a new one chokes the last within a few
+    // milliseconds), and a held finger sliding sideways glides to the next.
+    // Tapped, it is down 20 dB in 0.35 to 0.45 s. Its register is one
+    // octave whatever the key (62 to 124 Hz for the root), its weight in
+    // the octaves at 125 and 250 Hz. Chiptune's triangle is played the
+    // same way, and phonk's 808 slides from the last note into the next.
+    void theLogDrumIsALine() {
         Harmony h;
-        const std::vector<float> bell = notesHeld(risers::SetPhonk, risers::Zap, 1.5);
-        std::vector<float> distinct;
-        for (float n : bell) {
-            bool inKey = false;
-            for (int d = -21; d < 42; ++d)
-                inKey |= std::fabs(n - float(h.midi(d, 0))) < 0.5f;
-            QVERIFY2(inKey, qPrintable(QString::number(n)));
-            if (std::find(distinct.begin(), distinct.end(), n) == distinct.end())
-                distinct.push_back(n);
+        for (int set : {int(risers::SetAmapiano), int(risers::SetChiptune), int(risers::SetPhonk)}) {
+            const QString name = QString::fromUtf8(risers::palette(set).name);
+            std::vector<float> struck;
+            for (float tone : {-0.4f, 0.0f, 0.4f}) {
+                Rig rig;
+                rig.on(5, risers::Sub, set, tone);
+                rig.run(0.15);
+                struck.push_back(rig.note(risers::Sub));
+                QVERIFY2(inKeyNote(h, struck.back(), 0.05f), qPrintable(name + QString::number(struck.back())));
+            }
+            QVERIFY2(struck[0] < struck[1] && struck[1] < struck[2],
+                     qPrintable(QStringLiteral("%1: %2 %3 %4").arg(name).arg(struck[0]).arg(struck[1]).arg(struck[2])));
+            // One at a time.
+            Rig rig;
+            rig.on(5, risers::Sub, set, 0);
+            rig.run(0.2);
+            rig.on(6, risers::Sub, set, 0.4f);
+            rig.run(0.02);
+            QCOMPARE(rig.voices(risers::Sub), 1);
+            // Held and slid: through the notes between, onto the new one.
+            Rig slide;
+            slide.on(5, risers::Sub, set, 0);
+            slide.run(0.2);
+            const float from = slide.note(risers::Sub);
+            slide.move(5, 0.43f);
+            const std::vector<float> path = notesOf(slide, risers::Sub, 0.6);
+            const float to = path.back();
+            QVERIFY2(to > from + 2 && inKeyNote(h, to, 0.05f), qPrintable(QStringLiteral("%1 → %2").arg(from).arg(to)));
+            int between = 0;
+            for (float n : path)
+                between += n > from + 0.3f && n < to - 0.3f;
+            QVERIFY2(between >= 3, qPrintable(name + QStringLiteral(": glides through %1 blocks").arg(between)));
         }
-        QVERIFY2(bell.size() >= 8, qPrintable(QString::number(bell.size())));
-        QVERIFY2(distinct.size() >= 3, qPrintable(QString::number(distinct.size())));
+        // An 808 struck while the last still rings slides in from it.
+        {
+            Rig rig;
+            rig.on(5, risers::Sub, risers::SetPhonk, 0);
+            rig.run(0.3);
+            const float before = rig.note(risers::Sub);
+            rig.on(6, risers::Sub, risers::SetPhonk, 0.43f);
+            rig.run(0.004);
+            QVERIFY2(std::fabs(rig.note(risers::Sub) - before) < 1.5f, qPrintable(QString::number(rig.note(risers::Sub))));
+        }
+        // Tapped, the log drum is a pluck.
+        {
+            Rig rig;
+            rig.on(5, risers::Sub, risers::SetAmapiano, 0);
+            rig.run(0.01);
+            rig.off(5);
+            rig.run(1.2);
+            double loudest = -200, at20 = -1;
+            for (double t = 0; t < 1.15; t += 0.01)
+                loudest = std::max(loudest, windowDb(rig.l, rig.r, t, t + 0.02));
+            for (double t = 0; t < 1.15 && at20 < 0; t += 0.01)
+                if (windowDb(rig.l, rig.r, t, t + 0.02) < loudest - 20 && t > 0.05)
+                    at20 = t;
+            QVERIFY2(at20 > 0.33 && at20 < 0.47, qPrintable(QString::number(at20)));
+        }
+        // One octave for the root in every key.
+        for (int root = 0; root < 12; ++root) {
+            Rig rig;
+            rig.ctx.h.tuning.set(root, rig.ctx.h.tuning.familyIndex(), rig.ctx.h.tuning.brightnessIndex(), false);
+            rig.on(5, risers::Sub, risers::SetAmapiano, 0);
+            rig.run(0.2);
+            const float hz = midiToHz(rig.note(risers::Sub));
+            QVERIFY2(hz >= 62 && hz < 124, qPrintable(QStringLiteral("root %1: %2 Hz").arg(root).arg(hz)));
+        }
         const Heard log = playSolo(risers::SetAmapiano, risers::Sub);
         double bands[8];
         bandsOf(log, bands);
@@ -993,6 +1195,193 @@ private slots:
         const double body = std::max(bands[1], bands[2]);
         QVERIFY2(body > bands[0] + 3 && body > bands[5] + 6,
                  qPrintable(QStringLiteral("%1 %2 %3 %4").arg(bands[0]).arg(bands[1]).arg(bands[2]).arg(bands[5])));
+    }
+
+    // Amapiano's drop is the log drum alone on the ONE: the drums and bass
+    // sit out its first beat and come back on the second, exactly as they
+    // were.
+    void anAmapianoDropLeavesTheOneToTheLogDrum() {
+        std::string fx = std::string(kBeat) + "page 3.0 7\n";
+        for (int k = 0; k < 5; ++k)
+            fx += fmt("key %.3f Left\n", 3.05 + 0.04 * k);
+        fx += fmt("down 3.3 1 %.3f %.3f\nup 3.8 1\n", columnX(1), rowY(0));
+        std::vector<VoiceInfo> v;
+        StudioView view, first, second;
+        testkit::play(fx + "end 4\n", [&](Session &s) {
+            v = voicesOf(s.view());
+            view = s.view();
+        });
+        QVERIFY(!v.empty());
+        const double tDrop = timeOfBeat(view, v[0].end), beat = 60.0 / view.bpm;
+        testkit::play(fx + fmt("end %.3f\n", tDrop + 0.4 * beat), [&](Session &s) { first = s.view(); });
+        QCOMPARE(first.parts[0].channel.value[Mute], 1.0f);
+        QCOMPARE(first.parts[1].channel.value[Mute], 1.0f);
+        QCOMPARE(first.parts[2].channel.value[Mute], 0.0f);
+        testkit::play(fx + fmt("end %.3f\n", tDrop + 1.5 * beat), [&](Session &s) { second = s.view(); });
+        for (int p = 0; p < second.partCount; ++p)
+            QCOMPARE(second.parts[p].channel.value[Mute], 0.0f);
+    }
+
+    // Gamelan is in slendro, not the key: its saron, gangsa, suling and
+    // bonang all play slendro's tones, some of them well off any note of
+    // the key. The gangsa's kotekan is two parts in one line: in the first
+    // half of a long build, two notes to each beat, one part to each side.
+    // And the gong leaves the kick's band alone: below 120 Hz it hums by
+    // under 6 dB through its first bar, and is 30 dB down by its third.
+    void gamelanIsInSlendro() {
+        Harmony h;
+        bool offKey = false;
+        for (int kind : {int(risers::Saw), int(risers::Roll), int(risers::Pitch), int(risers::Zap)}) {
+            Rig rig;
+            rig.on(5, kind, risers::SetGamelan, 0.3f);
+            const std::vector<float> notes = notesOf(rig, kind, kind == risers::Zap ? 0.3 : 1.9);
+            QVERIFY(!notes.empty());
+            for (float n : notes) {
+                QVERIFY2(inSlendro(h, n), qPrintable(QStringLiteral("%1: %2").arg(risers::kindName(kind)).arg(n)));
+                offKey |= !inKeyNote(h, n, 0.3f);
+            }
+        }
+        QVERIFY(offKey);
+        {
+            Rig rig;
+            Command c;
+            c.type = Command::On;
+            c.id = 5;
+            c.i[0] = risers::Roll;
+            c.i[1] = 4;
+            c.i[3] = risers::SetGamelan;
+            c.f[0] = 0.6f;
+            c.f[2] = 0.7f;
+            c.f[5] = 16.0f;
+            rig.send(c);
+            const std::vector<float> notes = notesOf(rig, risers::Roll, timeOf(7.9));
+            QVERIFY2(notes.size() >= 14 && notes.size() <= 17, qPrintable(QString::number(notes.size())));
+            // Each eighth's strike on its own side: the left half-beats louder
+            // on the left, the right ones on the right.
+            double onL = 0, onR = 0, offL = 0, offR = 0;
+            for (int e = 2; e < 14; ++e) {
+                const size_t i0 = size_t(timeOf(0.5 * e) * 48000), i1 = size_t(timeOf(0.5 * e + 0.25) * 48000);
+                for (size_t i = i0; i < i1; ++i) {
+                    (e % 2 ? offL : onL) += double(rig.l[i]) * rig.l[i];
+                    (e % 2 ? offR : onR) += double(rig.r[i]) * rig.r[i];
+                }
+            }
+            QVERIFY2(onL > 1.5 * onR && offR > 1.5 * offL, qPrintable(QStringLiteral("%1 %2 %3 %4").arg(onL).arg(onR).arg(offL).arg(offR)));
+        }
+        Rig gong;
+        gong.on(5, risers::Impact, risers::SetGamelan);
+        gong.off(5);
+        gong.run(6.0);
+        const double bar = 4 * 60.0 / 124;
+        double hi = -200, lo = 200;
+        for (double t = 0.3; t < bar; t += 0.1) {
+            const double db = windowDb(gong.l, gong.r, t, t + 0.1, 120);
+            hi = std::max(hi, db);
+            lo = std::min(lo, db);
+        }
+        QVERIFY2(hi - lo < 6, qPrintable(QStringLiteral("%1 dB of hum").arg(hi - lo)));
+        const double later = windowDb(gong.l, gong.r, 2 * bar, 2 * bar + 0.3, 120);
+        QVERIFY2(later < hi - 30, qPrintable(QStringLiteral("%1 against %2").arg(later).arg(hi)));
+    }
+
+    // A console's arpeggio is notes of the key and nothing between: each
+    // held for whole frames (a sixtieth of a second at least), and many of
+    // them, the climb a step at a time. Its triangle kick falls onto its
+    // note a frame at a time.
+    void chiptuneSteps() {
+        Harmony h;
+        Rig rig;
+        rig.on(5, risers::Pitch, risers::SetChiptune);
+        std::vector<std::pair<float, int>> runs;
+        rig.run(1.9, [&](const float *) {
+            const float n = rig.note(risers::Pitch);
+            if (n <= 0)
+                return;
+            if (runs.empty() || runs.back().first != n)
+                runs.push_back({n, 0});
+            ++runs.back().second;
+        });
+        QVERIFY2(runs.size() > 40, qPrintable(QString::number(runs.size())));
+        std::vector<float> distinct;
+        for (size_t k = 0; k < runs.size(); ++k) {
+            QVERIFY2(inKeyNote(h, runs[k].first, 0.001f), qPrintable(QString::number(runs[k].first)));
+            // Whole frames: 25 blocks of 32 samples, the first and last cut short.
+            if (k > 0 && k + 1 < runs.size())
+                QVERIFY2(runs[k].second >= 24, qPrintable(QString::number(runs[k].second)));
+            if (std::find(distinct.begin(), distinct.end(), runs[k].first) == distinct.end())
+                distinct.push_back(runs[k].first);
+        }
+        QVERIFY2(distinct.size() >= 10, qPrintable(QString::number(distinct.size())));
+        Rig kick;
+        kick.on(5, risers::Sub, risers::SetChiptune);
+        std::vector<std::pair<float, int>> fall;
+        kick.run(0.12, [&](const float *) {
+            const float n = kick.note(risers::Sub);
+            if (fall.empty() || fall.back().first != n)
+                fall.push_back({n, 0});
+            ++fall.back().second;
+        });
+        QVERIFY2(fall.size() >= 4, qPrintable(QString::number(fall.size())));
+        for (size_t k = 1; k < fall.size(); ++k)
+            QVERIFY2(fall[k].first < fall[k - 1].first, qPrintable(QString::number(fall[k].first)));
+    }
+
+    // Phonk's cowbell held plays a figure with rests in it, not a note
+    // every sixteenth, all of it in the key; higher in the cell, another
+    // figure. Its vocal and its 808 are covered by the sets' own checks.
+    void phonkFiguresHaveRests() {
+        Harmony h;
+        std::vector<float> figures[2];
+        int k = 0;
+        for (float intensity : {0.4f, 0.98f}) {
+            Rig rig;
+            rig.on(5, risers::Zap, risers::SetPhonk, 0, intensity);
+            figures[k] = notesOf(rig, risers::Zap, 0.2 + 2 * timeOf(4));
+            for (float n : figures[k])
+                QVERIFY2(inKeyNote(h, n, 0.05f), qPrintable(QString::number(n)));
+            ++k;
+        }
+        // Two bars of sixteenths would be 32; the 3-3-2 strikes 12.
+        QVERIFY2(figures[0].size() >= 8 && figures[0].size() <= 16, qPrintable(QString::number(figures[0].size())));
+        QVERIFY(figures[0] != figures[1]);
+    }
+
+    // Shoegaze: the feedback grows into a harmonic of the note, its octave
+    // and then its twelfth; the glide guitar's whammy bar wanders either
+    // side of the glide by between a third of a semitone and a semitone,
+    // both ways; and the fuzz is a fuzz: brighter at 2 and 4 kHz than EDM's
+    // saws, and scooped, its 1 kHz under both 250 Hz and 2 kHz.
+    void shoegazeSingsAndWanders() {
+        Harmony h;
+        {
+            Rig rig;
+            rig.on(5, risers::Noise, risers::SetShoegaze);
+            const std::vector<float> notes = notesOf(rig, risers::Noise, 1.9);
+            QVERIFY(!notes.empty());
+            QCOMPARE(notes.back(), float(h.midi(0, 1)) + 19.0f);
+            QVERIFY(std::find(notes.begin(), notes.end(), float(h.midi(0, 1)) + 12.0f) != notes.end());
+        }
+        {
+            Rig rig;
+            rig.on(5, risers::Pitch, risers::SetShoegaze, 0, 0.7f, 0.5f);
+            double up = 0, down = 0;
+            const float target = float(h.midi(0, 2)) - 12.0f;
+            rig.run(1.9 * 0.7, [&](const float *) {
+                const double p = rig.seconds() / (4 * 60.0 / 124);
+                const double glide = target - risers::palette(risers::SetShoegaze).pitch.glide * (1 - std::pow(p, 1.5));
+                const double dev = rig.note(risers::Pitch) - glide;
+                up = std::max(up, dev);
+                down = std::min(down, dev);
+            });
+            QVERIFY2(up > 0.33 && down < -0.33 && up < 1.1 && down > -1.1, qPrintable(QStringLiteral("%1 %2").arg(up).arg(down)));
+        }
+        double fuzz[8], edm[8];
+        bandsOf(playSolo(risers::SetShoegaze, risers::Saw), fuzz);
+        bandsOf(playSolo(risers::SetEdm, risers::Saw), edm);
+        QString all;
+        for (int k = 0; k < 8; ++k)
+            all += QStringLiteral("%1/%2 ").arg(fuzz[k], 0, 'f', 1).arg(edm[k], 0, 'f', 1);
+        QVERIFY2(fuzz[5] > edm[5] + 3 && fuzz[6] > edm[6] + 3 && fuzz[4] < fuzz[2] && fuzz[4] < fuzz[5], qPrintable(all));
     }
 
     // A loop keeps the set it was played in: zaps looped in the trap set
@@ -1028,6 +1417,29 @@ private slots:
         QVERIFY(st.error.empty());
         QVERIFY2(st.p99Load < 0.12, qPrintable(QString::number(st.p99Load)));
         QVERIFY(st.peakDb < 0);
+    }
+
+    // The same in each set added after the first ten, with three of the
+    // fingers on the hit row's busiest (a line bass, the zap held, the
+    // downlifter), so a kotekan, a fuzz, a reversed reverb and the rest all
+    // play at once.
+    void newSetsStayInsideBudget() {
+        TENFOLD_TIMED();
+        for (int set = risers::SetAmapiano; set < risers::SetCount; ++set) {
+            std::string s = "page 0 7\n";
+            for (int k = 0; k < int(risers::SetCount) - set; ++k)
+                s += fmt("key %.2f Left\n", 0.05 + 0.02 * k);
+            for (int f = 0; f < 7; ++f)
+                s += fmt("down %.3f %.0f %.3f %.3f p=0.8\n", 0.3 + 0.05 * f, 100 + f, 0.07 + 0.14 * f, 0.7);
+            for (int f = 0; f < 3; ++f)
+                s += fmt("down %.3f %.0f %.3f 0.1 p=0.8\n", 0.7 + 0.05 * f, 110 + f, hitX(1 + f));
+            s += "click 4.0\nend 6\n";
+            const RenderStats st = renderScript(s, "");
+            const QString name = QString::fromUtf8(risers::palette(set).name);
+            QVERIFY(st.error.empty());
+            QVERIFY2(st.p99Load < 0.12, qPrintable(name + QStringLiteral(": ") + QString::number(st.p99Load)));
+            QVERIFY2(st.peakDb < 0, qPrintable(name + QStringLiteral(": ") + QString::number(st.peakDb)));
+        }
     }
 
     // A song keeps the page's settings: the drop style, the keys' riser

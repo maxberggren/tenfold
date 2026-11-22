@@ -14,9 +14,9 @@
 // the drop back from what the engine publishes and moves the mix around it,
 // so a build replayed from a clip moves the mix exactly as the live one did.
 //
-// All of it comes in ten sets, one sound per genre (see SetId below): EDM,
-// analog, dub, lo-fi, trap, drum and bass, cinema, synthwave, techno and
-// ambient.
+// All of it comes in fifteen sets, one sound per genre (see SetId below):
+// EDM, analog, dub, lo-fi, trap, drum and bass, cinema, synthwave, techno,
+// ambient, amapiano, gamelan, chiptune, phonk and shoegaze.
 
 #include <algorithm>
 #include <cmath>
@@ -78,6 +78,12 @@ enum SetId : int {
     SetSynthwave, // gated-reverb snare, laser toms, chorused brass
     SetTechno,    // ring-modulated metal, acid riser, dub-techno chord, gated swell, clang
     SetAmbient,   // granular shimmer, soft swells, a bloom instead of an impact
+    // Appended: a song saves its set by name, but the order is the arrows'.
+    SetAmapiano,  // a log drum played as a line and rolled, shakers, a cabasa, jazz keys, a whistle, an "ayy"
+    SetGamelan,   // in slendro: bronze bars beating in pairs, a kotekan, ceng-ceng, a suling, a bonang, a gong
+    SetChiptune,  // a stepped arpeggio, a tracker's pattern, the triangle's bass, the noise channel, a blip
+    SetPhonk,     // an 808 cowbell, a Memphis vocal off a slowing tape, a horror chord, a clipped 808, blown out
+    SetShoegaze,  // fuzz guitars strummed into a wall on a whammy bar, singing feedback, a reversed reverb
     SetCount
 };
 
@@ -90,17 +96,31 @@ struct NoiseLook {
     float gate = 0;        // a stutter on the riser's grid, 0..1
     float gain = 1;
     float ring = 0;        // ring-modulated by two squares at an unrelated ratio: metal, 0..1
+    float chip = 0;        // the hiss from a game console's shift register instead, 0..1
+    float feedback = 0;    // an amp feeding back: a harmonic of the chord that grows out of the hiss and sings
+    // 0 a sweep; 1 a log drum rolled on the root, quickening and climbing;
+    // 2 a ceng-ceng's rattle rung in slendro; 3 a worn tape's hiss and a
+    // record's crackle, thickening
+    int mode = 0;
 };
 struct PitchLook {
-    int shape = 0;         // 0 saw, 1 square, 2 sine
+    // 0 saw, 1 square, 2 sine, 3 a console's arpeggio, 4 a fuzz guitar on the
+    // whammy bar, 5 an airy whistle lead calling and answering, 6 a suling,
+    // 7 a horror chord on a tape spinning up to speed
+    int shape = 0;
     float oct = 0, glide = 24, detune = 1, fifth = 1, vib = 1;
     float siren = 0;       // a square LFO between the note and its fifth, 0..1
     float sirenRate = 2;   // its cycles per beat at the start (it quickens)
     float cut = 1, res = 0, gain = 1;
     float acid = 0;        // its filter struck again on every sixteenth, 0..1
+    float breath = 0;      // a flute's breath: noise in a narrow band on the note
 };
 struct StabLook {
-    int shape = 0;         // 0 saw, 1 square, 2 electric piano, 3 bell (FM at 1:3.5)
+    // 0 saw, 1 square, 2 electric piano, 3 bell (FM at 1:3.5), 4 bronze bars
+    // struck one chord tone at a time, 5 a tracker's pulse channel, 6 fuzz
+    // guitars strummed into a wall, 7 deep house keys: sevenths and ninths,
+    // voiced wide, 8 an 808 cowbell's 3-3-2 rolling faster
+    int shape = 0;
     float oct = 0, detune = 1, cut = 1, res = 0;
     float decay = 1, depth = 1, sub = 1;
     float offbeat = 0;     // 1: the stabs fall between the grid's steps
@@ -115,12 +135,19 @@ struct RollLook {
     float room = 1;        // its send to the room, against the set's
     float climb = 1;       // how far up the scale the body climbs as it speeds up
     float hp = 1, hpRise = 1; // the high-pass under it, and how far it climbs
-    int pattern = 0;       // 0 a roll; 1 a chopped break, then a fill; 2 hi-hats changing rate every beat
+    int pattern = 0;       // 0 a roll; 1 a chopped break, then a fill; 2 hi-hats changing rate every beat;
+                           // 3 swung shakers with a woodblock on the 3-3-2, then a roll;
+                           // 4 a gangsa's kotekan: two parts interlocking, each damping its last key
+    float partial = 1.52f; // the body's second partial, against its first (2.76: a struck bar)
+    float chip = 0;        // its noise from the shift register, 0..1
 };
 struct SwellLook {
     float cym = 1, pad = 1, oct = 0, metal = 1, cut = 1, gain = 1;
     float noise = 1;       // the cymbal's noise against its square-wave metal
     float gate = 0;        // chopped in sixteenths, 0..1
+    float reverse = 0;     // a fuzz chord's reverb played backwards instead
+    float chip = 0;        // a console's: the noise channel and pulse waves, the volume in sixteen steps
+    float cabasa = 0;      // a cabasa twisted faster and harder, a reversed keys chord under it
 };
 struct ImpactLook {
     float boom = 1, boomDecay = 1;
@@ -134,17 +161,38 @@ struct ImpactLook {
     float gain = 1;
     float padDrive = 1.8f;
     float padBlare = 0;    // a band around 1.4 kHz pushed into the drive as it swells: the brass edge
+    float gong = 0;        // a gong ageng on the key's root, its humming pair of modes beating
+    float chip = 0;        // the crash's noise from the shift register, its clock falling: an 8-bit explosion
+    float muff = 0;        // the pad through a fuzz pedal, on the whammy bar: a wall of guitars
+    float log = 0;         // a log drum on the ONE (with the sub's look), the boom's place
+    float alone = 0;       // beats the drums and bass sit out after the ONE, leaving it to the FX
+    float feedback = 0;    // amp feedback swelling up out of the wall after the ONE, as if reversed
 };
 struct SubLook {
     float dive = 12, diveTime = 1, drive = 0, decay = 1, reese = 0, gain = 1;
     float swell = 0;       // seconds it takes to swell in (0: struck)
     float body = 0;        // a tom's skin an octave up, struck and gone in a quarter second
+    float log = 0;         // amapiano's log drum instead: hollow, plucked, a wooden knock
+    // A line instrument: across its cell a finger picks the note, and one
+    // note at a time (a new one chokes the last). Held, sliding sideways or
+    // twisting glides to another note in `glide` seconds.
+    float mono = 0, glide = 0.05f;
+    float slide = 0;       // 1: a new note slides in from where the last one was (an 808's slide)
+    float tri = 0;         // a console's triangle channel instead: 32 steps, full volume, then cut
+    float clip = 0;        // clipped hard, the 808 blown out
 };
 struct DownLook {
     float noise = 1, tone = 0.25f, detune = 0.1f, q = 1.6f, range = 36, len = 1, gain = 1;
+    // 0 a downlifter, 1 a slowed Memphis vocal, 2 a fuzz chord dive-bombed on
+    // the whammy bar, 3 a console's: a pulse falling a semitone at a time
+    // over the noise channel, its clock falling too
+    int mode = 0;
 };
 struct ZapLook {
-    int mode = 0;          // 0 a laser (or tom), 1 a reversed vocal chop
+    // 0 a laser (or tom), 1 a reversed vocal chop, 2 an 808 cowbell, 3 a
+    // bonang's kettle gongs, 4 a console's blip on its sweep unit, 5 a
+    // guitar's natural harmonic, 6 a sung "ayy" chopped from a vocal
+    int mode = 0;
     float fall = 40, fallTime = 1, decay = 1, fm = 1, square = 0.25f, oct = 0, click = 0, gain = 1;
 };
 struct StopLook {
@@ -172,6 +220,9 @@ struct Palette {
     float echo = 0;    // send to the tape echo (dotted eighths)
     float echoFb = 0.5f;
     float spring = 0;  // send to the spring
+    int tuning = 0;    // 0 the key's own scale; 1 slendro, five near-equal steps from the key's root
+    float clip = 0;    // a soft clipper on everything, last: a set that sounds blown out
+    float trackerEcho = 0; // a console's echo channel: a quieter copy a tracker row late, its duty changed
     NoiseLook noise;
     PitchLook pitch;
     StabLook stab;
@@ -318,6 +369,121 @@ inline const Palette kPalettes[SetCount] = {
      .zap = {.fall = 7, .fallTime = 2, .decay = 2, .fm = 0.1f, .square = 0},
      .stop = {.cut = 0.3f, .gain = 1.2f, .brake = 3.0f},
      .moves = {.shimmer = 0.5f}},
+    // Amapiano: the log drum is the sub, plucked and hollow, played as a
+    // line across its cell, one note at a time, sliding when the finger
+    // does; on the drop it is alone on the ONE, the drums and bass waiting
+    // a beat. Its build is the log drum too, rolled on the root and
+    // climbing; swung shakers with a woodblock on the 3-3-2; a cabasa
+    // twisted into the ONE; deep-house keys in sevenths and ninths off the
+    // beat; a whistle calling and answering itself a step higher each bar;
+    // and a sung "ayy", chopped.
+    {.name = "amapiano", .label = "AMAPIANO",
+     .names = {"LOG ROLL", "WHISTLE", "KEYS", "SHAKERS", "CABASA", nullptr, "LOG DRUM", nullptr, "AYY"},
+     .drive = 0.08f, .chorus = 0.25f, .room = 0.9f, .echo = 0.22f, .echoFb = 0.35f,
+     .noise = {.gain = 1.0f, .mode = 1},
+     .pitch = {.shape = 5, .oct = 1, .glide = 0, .detune = 0, .fifth = 0, .vib = 1, .gain = 0.8f, .breath = 1},
+     .stab = {.shape = 7, .detune = 0, .cut = 0.9f, .decay = 1.3f, .depth = 0.9f, .sub = 0, .offbeat = 1, .gain = 0.8f},
+     .roll = {.body = 0.9f, .oct = 1, .drop = 0.05f, .ring = 0.35f, .wires = 1.3f, .wireHz = 2.3f, .decay = 0.55f, .clap = 0,
+              .ghost = 0.3f, .gain = 1.1f, .room = 0.7f, .climb = 0.6f, .pattern = 3, .partial = 2.62f},
+     .swell = {.cym = 1.0f, .pad = 1.0f, .gain = 1.0f, .cabasa = 1},
+     .impact = {.boom = 0, .body = 0.9f, .snap = 0.5f, .crash = 0.45f, .crashDecay = 0.6f, .tail = 0.2f, .log = 1, .alone = 1},
+     .sub = {.dive = 0, .decay = 1.0f, .log = 1, .mono = 1, .glide = 0.045f},
+     .down = {.noise = 0.4f, .tone = 0.7f, .q = 3.0f, .len = 1.2f},
+     .zap = {.mode = 6, .gain = 1.0f},
+     .stop = {.cut = 0.7f, .sub = 0.9f, .gain = 1.9f, .brake = 0.5f}},
+    // Gamelan, in slendro: five tones to the octave, none of them quite
+    // the key's, though near it. Saron bars struck one chord tone at a
+    // time, each pair beating (the ombak); a gangsa's kotekan, two parts
+    // interlocking into one line twice as fast as either; a ceng-ceng's
+    // cymbals rattling, rung in the bars' tones; a suling's overblown
+    // breath and ornaments; a bonang's kettle gongs; and a gong ageng on
+    // the drop.
+    {.name = "gamelan", .label = "GAMELAN",
+     .names = {"CENG-CENG", "SULING", "SARON", "GANGSA", nullptr, "GONG", nullptr, nullptr, "BONANG"},
+     .room = 1.4f, .echo = 0.12f, .echoFb = 0.35f, .tuning = 1,
+     .noise = {.gain = 1.0f, .mode = 2},
+     .pitch = {.shape = 6, .oct = 1, .glide = 0, .detune = 0, .fifth = 0, .vib = 1, .gain = 0.85f, .breath = 1},
+     .stab = {.shape = 4, .oct = 1, .cut = 12, .decay = 1.0f, .depth = 0, .sub = 0, .gain = 1.0f},
+     .roll = {.body = 1.6f, .oct = 1, .drop = 0, .ring = 6, .wires = 0.08f, .decay = 0.6f, .clap = 0, .gain = 0.15f,
+              .room = 1.2f, .climb = 1.0f, .hp = 1.5f, .hpRise = 0.3f, .pattern = 4, .partial = 2.756f},
+     .swell = {.cym = 0.4f, .pad = 1.2f, .metal = 0.6f, .cut = 1.2f},
+     .impact = {.boom = 0, .body = 0.5f, .bodyHz = 0.5f, .snap = 0, .crash = 0, .tail = 0, .gong = 0.45f},
+     .sub = {.dive = 2, .decay = 1.6f, .swell = 0.1f},
+     .down = {.noise = 0.6f, .tone = 0.4f, .q = 2.0f},
+     .zap = {.mode = 3, .decay = 1.2f, .gain = 0.5f},
+     .stop = {.cut = 0.5f, .brake = 2.0f},
+     .moves = {.shimmer = 0.3f}},
+    // Chiptune: a console's channels and nothing else, bone dry but for a
+    // tracker's echo channel. Pulse waves in their duties, an arpeggio
+    // stepping a note per frame-rate tick and climbing the scale in steps,
+    // the triangle channel's bass and kick, the noise channel's shift
+    // register, and a blip on the pulse channel's sweep unit. The pulse
+    // channel's build is a tracker's pattern: a volume column climbing,
+    // each note fading a step a frame, duty sweeps, then a slide up and a
+    // vibrato into the ONE. Behind it all the console's output filter and
+    // a television's speaker, closing above 11 kHz: the pulses' edges are
+    // still hard, but nothing of them is left up where it would only make
+    // peaks between the samples.
+    {.name = "chiptune", .label = "8BIT",
+     .names = {nullptr, "ARP", "PULSE", nullptr, nullptr, nullptr, "TRIANGLE", nullptr, "BLIP"},
+     .lowpass = 11000, .room = 0, .trackerEcho = 1,
+     .noise = {.q = 0.5f, .comb = 0.2f, .air = 0.6f, .gate = 0.5f, .chip = 1},
+     .pitch = {.shape = 3, .oct = 1, .detune = 0, .fifth = 0, .vib = 0, .gain = 0.8f},
+     .stab = {.shape = 5, .detune = 0, .cut = 3, .decay = 1.2f, .depth = 0.9f, .sub = 0, .gain = 0.85f},
+     .roll = {.body = 0.8f, .drop = 1.2f, .wires = 1.2f, .wireHz = 0.8f, .decay = 0.5f, .clap = 0, .gain = 0.75f, .room = 0.4f, .chip = 1},
+     .swell = {.cym = 0.9f, .pad = 0.9f, .gain = 0.5f, .chip = 1},
+     .impact = {.body = 1.1f, .crash = 1.1f, .crashDecay = 0.45f, .metal = 0, .noise = 1.4f, .tail = 0, .chip = 1},
+     .sub = {.dive = 24, .diveTime = 0.3f, .decay = 1.0f, .gain = 1.4f, .mono = 1, .glide = 0.03f, .tri = 1},
+     .down = {.noise = 0.5f, .tone = 1.0f, .range = 36, .gain = 0.7f, .mode = 3},
+     .zap = {.mode = 4, .decay = 1.0f, .gain = 1.0f},
+     .stop = {.cut = 2.0f, .gain = 1.8f, .brake = 0.4f, .square = 1, .res = 1.0f}},
+    // Phonk: the 808 cowbell, which held plays one of four syncopated
+    // figures round the chord, falling in pitch as the finger twists, and
+    // which rolls its 3-3-2 faster for a build; a Memphis vocal off a
+    // cassette, slowing as it speaks; a horror chord on a tape spinning up
+    // to speed; a worn tape's hiss, the horror chord printed through it
+    // from the next layer of tape, rewound with a squeal into the ONE;
+    // triplet hats; an 808 clipped hard that slides from note to note; and
+    // everything through a clipper, blown out, as if dubbed off a worn tape.
+    {.name = "phonk", .label = "PHONK",
+     .names = {"HISS", "HORROR", "BELL ROLL", "TRIPLETS", nullptr, nullptr, "808", "VOX", "COWBELL"},
+     .lowpass = 9000, .wow = 0.08f, .crackle = 0.15f, .room = 0.6f, .clip = 1,
+     .noise = {.gain = 1.0f, .mode = 3},
+     .pitch = {.shape = 7, .oct = -1, .glide = 24, .gain = 0.65f},
+     .stab = {.shape = 8, .sub = 0, .gain = 0.6f},
+     .roll = {.body = 0, .wires = 0, .decay = 0.35f, .clap = 0, .hat = 1, .triplet = 1, .gain = 4.2f},
+     .swell = {.cym = 1.2f, .pad = 0.8f, .oct = -1, .cut = 0.5f, .gate = 0.3f},
+     .impact = {.boom = 1.5f, .boomDecay = 2.5f, .snap = 1.4f, .crash = 0.2f, .tail = 0.1f,
+                .pad = 0.5f, .padChord = 1, .padAttack = 0.01f, .padDecay = 1.2f, .padOpen = 1500, .gain = 0.55f, .padDrive = 3.0f},
+     .sub = {.dive = 5, .diveTime = 0.6f, .drive = 0.95f, .decay = 4.0f, .gain = 1.0f, .mono = 1, .glide = 0.08f, .slide = 1,
+             .clip = 1},
+     .down = {.gain = 0.085f, .mode = 1},
+     .zap = {.mode = 2},
+     .stop = {.sub = 1.1f, .gain = 0.38f, .brake = 2.0f}},
+    // Shoegaze: guitars through a fuzz pedal (two clipping stages, the
+    // mids scooped, a speaker's top) on a whammy bar that never sits
+    // still; amp feedback singing out of the hiss; a fuzz chord's reverb
+    // played backwards into the ONE; strummed chords sustaining into a
+    // wall, the pedal and the tone opening with the build; on the drop a
+    // palm-muted chug and the wall blooming out of it, the feedback
+    // swelling back up within the beat; a dive-bomb; and a natural
+    // harmonic for the zap.
+    {.name = "shoegaze", .label = "FUZZ",
+     .names = {"FEEDBACK", "GLIDE", "FUZZ", nullptr, "REVERSE", "WALL", nullptr, "DIVE", "HARMONIC"},
+     .chorus = 0.25f, .room = 1.8f, .echo = 0.2f, .echoFb = 0.45f,
+     .noise = {.lp = 0.5f, .q = 1.0f, .comb = 0, .air = 0.3f, .gain = 1.0f, .feedback = 1},
+     .pitch = {.shape = 4, .oct = -1, .glide = 5, .detune = 1.0f, .fifth = 1.0f, .vib = 1, .gain = 0.9f},
+     .stab = {.shape = 6, .oct = -1, .detune = 0.3f, .decay = 2.5f, .depth = 0.5f, .sub = 0, .gain = 0.8f},
+     .roll = {.body = 1.2f, .oct = -1, .wires = 0.9f, .decay = 1.1f, .clap = 0.5f},
+     .swell = {.cym = 0.6f, .pad = 1.0f, .gain = 2.2f, .reverse = 1},
+     .impact = {.snap = 0.3f, .crash = 0, .tail = 0,
+                .pad = 0.62f, .padChord = 1, .padAttack = 0.15f, .padDecay = 3.0f, .padOpen = 5000, .gain = 0.7f, .muff = 1,
+                .feedback = 1},
+     .sub = {.dive = 2, .decay = 1.2f, .swell = 0.2f},
+     .down = {.noise = 0.3f, .range = 19, .len = 1.2f, .gain = 0.8f, .mode = 2},
+     .zap = {.mode = 5, .decay = 2.0f, .oct = 1, .gain = 0.55f},
+     .stop = {.cut = 0.6f, .brake = 2.5f},
+     .moves = {.throwFb = 0.2f, .shimmer = 0.4f}},
 };
 // clang-format on
 #pragma GCC diagnostic pop
@@ -375,6 +541,7 @@ constexpr int LastDrop = 14;  // the beat of the last drop that fired
 constexpr int SubArmed = 15;  // a sub waits for the drop
 constexpr int Hits = 16;      // a flash per hit cell, kHits of them
 constexpr int StopRamp = 24;  // a brake: beats until the power-down is all the way down (0: its whole length)
+constexpr int Alone = 25;     // beats the drums and bass sit out after the coming (or last) drop's ONE
 constexpr int Voices = 32;    // then per voice:
 constexpr int Stride = 12;
 constexpr int MaxVoices = 18;
@@ -394,6 +561,205 @@ inline float sin01(float ph) {
     y = 0.225f * (y * std::fabs(y) - y) + y;
     return -y;
 }
+
+// A pulse wave of duty w (0..1), its two edges smoothed as the saw's are
+// so its harmonics stop where the sample rate does, and centred: a game
+// console's 12.5% pulse is mostly offset otherwise.
+inline float pulseWave(float ph, float inc, float w) {
+    float v = ph < w ? 1.0f : -1.0f;
+    v += polyBlep(ph, inc);
+    float t = ph - w;
+    if (t < 0.0f)
+        t += 1.0f;
+    v -= polyBlep(t, inc);
+    return v - (2.0f * w - 1.0f);
+}
+
+// A game console's noise channel: a 15-bit shift register clocked at a rate
+// of its own, its output bit held between clocks. Short, it taps bit 6
+// instead of bit 1 and repeats every 93 clocks, a metallic buzz pitched at
+// clock / 93.
+struct ChipNoise {
+    uint32_t reg = 1;
+    float ph = 0, out = 1;
+    inline float step(float clockInc, bool shortMode) {
+        ph += clockInc;
+        while (ph >= 1.0f) {
+            ph -= 1.0f;
+            const uint32_t fb = (reg ^ (reg >> (shortMode ? 6 : 1))) & 1u;
+            reg = (reg >> 1) | (fb << 14);
+            out = (reg & 1u) ? 1.0f : -1.0f;
+        }
+        return out;
+    }
+};
+
+// Two squares a fifth-and-a-bit apart (the TR-808's 540 and 800 Hz, scaled
+// to the note), what a cowbell is made of before its band-pass.
+inline float cowbellPair(SquareOsc &a, SquareOsc &b, float inc) {
+    return a.step(inc) + 0.8f * b.step(std::min(inc * 1.4815f, 0.45f));
+}
+
+// A voice's folds, one period of the flow through them, differentiated (the
+// lips radiate the flow's slope, not the flow): open over 40% of the period,
+// snapping shut over 16%, closed for the rest. The snap is the voice's
+// excitation, a step at the instant of closing, band-limited as a saw's
+// edge is. ph in [0, 1), inc its step per sample; about −1..0.4, no offset.
+inline float glottal(float ph, float inc) {
+    constexpr float open = 0.4f, shut = 0.16f;
+    float y = 0;
+    if (ph < open)
+        y = (shut / open) * sin01(0.5f * ph / open);
+    else if (ph < open + shut)
+        y = -sin01(0.25f * (ph - open) / shut);
+    float t = ph - (open + shut);
+    if (t < 0.0f)
+        t += 1.0f;
+    return y + 0.5f * polyBlep(t, inc);
+}
+
+// A vocal tract after Klatt's cascade: four resonances one after another,
+// each the low-pass of a state-variable filter, unity below its peak, so
+// that how loud each formant is falls out of where they all are, as in a
+// throat. Set every few samples from the formants (F4 a fixed 3.3 kHz),
+// all of them scaled by a tape's speed.
+inline void setTract(Svf *const *f, const float *formants, float speed, float rate) {
+    static const float bw[4] = {80.0f, 100.0f, 140.0f, 250.0f};
+    for (int k = 0; k < 4; ++k) {
+        const float hz = (k < 3 ? formants[k] : 3300.0f) * speed;
+        f[k]->set(hz, hz / bw[k], rate);
+    }
+}
+inline float tract(Svf *const *f, float x) {
+    for (int k = 0; k < 4; ++k)
+        x = f[k]->step(x).low;
+    return x;
+}
+
+// Slendro: five tones to the octave, a little over two semitones and a
+// half apart and not quite evenly (as no two gamelans are tuned alike), in
+// semitones over the key's root. Laid on a minor key, every one of them is
+// within half a semitone of one of its notes, so a gamelan set sits in the
+// song while sounding like nothing tuned to it.
+constexpr float kSlendro[5] = {0.0f, 2.35f, 4.75f, 7.2f, 9.6f};
+// Tone k of slendro (five to the octave, any sign), octave as Harmony counts.
+inline float slendro(const Harmony &h, int k, int octave) {
+    const int o = k >= 0 ? k / 5 : -((4 - k) / 5);
+    return float(h.midi(0, octave)) + 12.0f * float(o) + kSlendro[k - 5 * o];
+}
+// A note moved onto the nearest slendro tone.
+inline float toSlendro(const Harmony &h, float midi) {
+    const float root = float(h.midi(0, 0));
+    const float o = std::floor((midi - root) / 12.0f);
+    const float in = midi - root - 12.0f * o;
+    float best = 0;
+    for (int k = 1; k <= 5; ++k) {
+        const float tone = k < 5 ? kSlendro[k] : 12.0f;
+        if (std::fabs(in - tone) < std::fabs(in - best))
+            best = tone;
+    }
+    return root + 12.0f * o + best;
+}
+// A gangsa's kotekan, stroke j (0..7) of a group of eight that lands on the
+// pokok tone (0) at its end: the tone each player strikes, in steps of the
+// scale over the pokok, or −1 for a rest; polos first, sangsih second.
+// Norot rocks between the pokok and the tone above, sangsih joining polos
+// on the landing; telu turns three tones over, the middle one struck by
+// both. Neither part is ever every other stroke.
+inline void kotekanStroke(bool telu, int j, int *strike) {
+    static const int8_t norot[8][2] = {{-1, 1}, {0, -1}, {-1, 1}, {-1, 1}, {0, -1}, {-1, 1}, {0, -1}, {0, 0}};
+    static const int8_t threes[8][2] = {{1, 1}, {0, -1}, {-1, 2}, {1, 1}, {0, -1}, {-1, 2}, {1, 1}, {0, -1}};
+    const int8_t *s = (telu ? threes : norot)[j & 7];
+    strike[0] = s[0];
+    strike[1] = s[1];
+}
+// A scale degree in a set's tuning: the key's own, or slendro's tones.
+inline float degreeNote(const Harmony &h, int tuning, int degree, int octave) {
+    return tuning == 1 ? slendro(h, degree, octave) : float(h.midi(degree, octave));
+}
+
+// A soft clipper, 1.5x − 0.5x³ up to ±1 and flat beyond, with first-order
+// antiderivative antialiasing: what comes out is the clipper's average over
+// the step between two samples, not its value at each, which takes most of
+// the folding-back out of clipping hard without oversampling.
+struct Clipper {
+    float x1 = 0, F1 = 0;
+    static inline float f(float x) { return x >= 1.0f ? 1.0f : x <= -1.0f ? -1.0f : x * (1.5f - 0.5f * x * x); }
+    static inline float F(float x) {
+        const float a = std::fabs(x);
+        if (a >= 1.0f)
+            return a - 0.375f;
+        const float x2 = x * x;
+        return x2 * (0.75f - 0.125f * x2);
+    }
+    inline float step(float x) {
+        const float Fx = F(x), d = x - x1;
+        const float y = std::fabs(d) > 1e-4f ? (Fx - F1) / d : f(0.5f * (x + x1));
+        x1 = x;
+        F1 = Fx;
+        return y;
+    }
+    void reset() { x1 = F1 = 0; }
+};
+
+// A fuzz pedal and its amp, after a Big Muff: the highs lifted going in so
+// the clipping bites, two clipping stages one into the other with a
+// coupling high-pass and a little top cut between, a tone stack that
+// scoops the mids (a low-pass and a high-pass mixed, a dip around 700 Hz),
+// and a speaker that rolls off above 5.5 kHz. The second stage clips off
+// centre, which adds the even harmonics a transistor's does.
+struct Muff {
+    Svf pre, couple, between, lo, hi, cab1, cab2, cabLow;
+    Clipper one, two;
+    void set(float rate) {
+        pre.set(650.0f, 0.7f, rate);
+        couple.set(90.0f, 0.7f, rate);
+        between.set(7000.0f, 0.7f, rate);
+        lo.set(450.0f, 0.7f, rate);
+        hi.set(1100.0f, 0.7f, rate);
+        cab1.set(5500.0f, 0.8f, rate);
+        cab2.set(5800.0f, 0.6f, rate);
+        cabLow.set(75.0f, 0.7f, rate);
+    }
+    void reset() {
+        for (Svf *f : {&pre, &couple, &between, &lo, &hi, &cab1, &cab2, &cabLow})
+            f->reset();
+        one.reset();
+        two.reset();
+    }
+    // gain: how hard the strings hit the first stage (around 1 is a fuzz,
+    // 4 a wall).
+    inline float step(float x, float gain) {
+        x += 1.4f * pre.step(x).high;
+        float y = one.step(gain * 3.0f * x);
+        y = couple.step(y).high;
+        y = between.step(y).low;
+        // Off centre, its offset taken out by the speaker's own low cut.
+        y = two.step(6.0f * y + 0.25f);
+        y = 0.6f * (lo.step(y).low + hi.step(y).high);
+        y = cab2.step(cab1.step(y).low).low;
+        return cabLow.step(y).high;
+    }
+};
+
+// A whammy bar under a resting hand, as a glide guitarist plays it: a slow,
+// uneven wander either side of the note (two slow sines that never line
+// up, and a random drift), per unit depth. Not on the grid: a hand, not an
+// LFO.
+struct Whammy {
+    float a = 0, b = 0.37f, drift = 0, target = 0;
+    // Advances by dt seconds and returns the bend for depth 1 (about ±1).
+    inline float step(float dt, Rng &rng) {
+        a += 0.53f * dt;
+        b += 0.31f * dt;
+        a -= std::floor(a);
+        b -= std::floor(b);
+        if (rng.unit() < dt * 1.7f)
+            target = rng.bipolar();
+        drift += (target - drift) * std::min(1.0f, dt * 2.5f);
+        return 0.55f * sin01(a) + 0.3f * sin01(b) + 0.35f * drift;
+    }
+};
 
 inline float smoothstep(float u) {
     u = clampf(u, 0.0f, 1.0f);
@@ -464,6 +830,44 @@ struct Voice {
     Svf postL, postR, post2L, post2R; // the set's low-pass, the last thing it goes through
     DcBlock dcL, dcR;
     float crushPh = 0, holdL = 0, holdR = 0, crack = 0;
+
+    // The sets added after the first ten: a console's noise register, a
+    // gong's and the bronze bars' modes, each bar's own ring, and the
+    // amp's filters in front of a fuzz.
+    ChipNoise chip;
+    float modal[8] = {}, modalEnv[8] = {};
+    float bar[18] = {}, barEnv[3] = {};
+    Svf fuzzL, fuzzR;
+
+    // A line instrument's note (a log drum's, an 808's, a whistle's),
+    // MIDI, as it glides; where a grace note slides in from; and a note cut
+    // short by the next one, going in a few milliseconds.
+    float line = 0, lineFrom = 0;
+    bool choke = false;
+    // A kotekan's two parts, each with the key it is playing and the one
+    // it is damping: their envelopes and pitches.
+    float slotEnv[4] = {}, slotHz[4] = {};
+    // A guitar's fuzz pedal, one to a side, its whammy bar, and the clippers
+    // a blown-out set and its 808 go through.
+    Muff muffL, muffR;
+    Whammy wham;
+    Clipper clipL, clipR, subClip;
+    DcBlock dc2L, dc2R; // after the clipper, which can leave an offset of its own
+    // The combs a reversed reverb rings its chord's other notes in.
+    Delay combs[4];
+    // A console's frame clock (seconds), and what its channel played on
+    // each of the last sixteen frames, for the tracker's echo.
+    float frames = 0;
+    float hist[16] = {};
+    int histFrame = -1;
+    // A guitar's strings, three to a side, each a plucked loop (in the
+    // combs above): the samples until its pick lands, the pick's burst
+    // still going into it, how hard, the loop's own low-pass and the
+    // pick's.
+    struct String {
+        float wait = -1, left = 0, amp = 0, lp = 0, pick = 0;
+    };
+    String strings[6];
 };
 
 // A spring tank, roughly: two springs, delays of 33 and 41 ms, each in a
@@ -549,6 +953,8 @@ public:
             v.rng = Rng(0x7EA5u + uint32_t(i) * 2654435761u);
             v.combL.init(size_t(rate / 30.0f));
             v.combR.init(size_t(rate / 30.0f));
+            for (Delay &d : v.combs)
+                d.init(size_t(rate / 30.0f));
             v.chL.init(size_t(0.008f * rate));
             v.chR.init(size_t(0.008f * rate));
             static const int ap[3] = {347, 113, 37};
@@ -596,9 +1002,22 @@ public:
                 if (kind == Stop)
                     v.end = stopEnd(onset);
                 m_hitFlash[kind - kRisers] = 1.0f;
+                // A line instrument plays one note at a time: the new one
+                // chokes the last, and an 808 slides in from its pitch. It
+                // is played through a build like any bass line, not saved
+                // for the drop.
+                const bool line = kind == Sub && palette(v.set).sub.mono > 0;
+                if (line)
+                    for (Voice &o : m_voices)
+                        if (&o != &v && o.active && o.kind == Sub && !o.choke && palette(o.set).sub.mono > 0) {
+                            if (palette(v.set).sub.slide > 0 && o.line > 0)
+                                v.lineFrom = o.line;
+                            o.choke = true;
+                            o.held = false;
+                        }
                 // A sub tapped while a drop is coming is armed onto it: subs
                 // belong on the ONE.
-                if (kind == Sub)
+                if (kind == Sub && !line)
                     for (const DropPoint &d : m_drops)
                         if (d.active && d.beat > onset + 1.0) {
                             v.state = Waiting;
@@ -861,6 +1280,7 @@ public:
             if (p.active && (!next || p.beat < next->beat))
                 next = &p;
         d[pub::Drop] = next ? float(next->beat) : -1.0f;
+        d[pub::Alone] = next ? palette(next->set).impact.alone : m_lastAlone;
         d[pub::Start] = next ? float(next->start) : 0.0f;
         float intensity = next ? next->intensity : 0.0f;
         int layers = 0;
@@ -1029,7 +1449,45 @@ private:
         v.post2L.reset();
         v.post2R.reset();
         v.dcL = v.dcR = DcBlock{};
+        // None of this draws on the voice's noise, which the first ten sets
+        // hear exactly as they always have. The register starts anywhere
+        // but zero, where it would stay; the bars' phases are spread by the
+        // golden ratio, so no two modes start together.
+        v.chip = ChipNoise{};
+        v.chip.reg = 0x4A3Bu;
+        std::fill(std::begin(v.modal), std::end(v.modal), 0.0f);
+        std::fill(std::begin(v.modalEnv), std::end(v.modalEnv), 0.0f);
+        std::fill(std::begin(v.barEnv), std::end(v.barEnv), 0.0f);
+        for (int k = 0; k < 18; ++k)
+            v.bar[k] = 0.618034f * float(k + 1) - std::floor(0.618034f * float(k + 1));
+        v.fuzzL.reset();
+        v.fuzzR.reset();
+        v.line = v.lineFrom = 0;
+        v.choke = false;
+        std::fill(std::begin(v.slotEnv), std::end(v.slotEnv), 0.0f);
+        std::fill(std::begin(v.slotHz), std::end(v.slotHz), 0.0f);
+        v.wham = Whammy{};
+        v.clipL.reset();
+        v.clipR.reset();
+        v.subClip.reset();
+        v.dc2L = v.dc2R = DcBlock{};
+        v.frames = 0;
+        std::fill(std::begin(v.hist), std::end(v.hist), 0.0f);
+        v.histFrame = -1;
         const Palette &s = palette(v.set);
+        // Only the sets that play through a fuzz pay for clearing one, and
+        // only the reversed reverb for its combs.
+        if (s.stab.shape == 6 || s.pitch.shape == 4 || s.noise.feedback > 0 || s.impact.muff > 0 || s.down.mode == 2 ||
+            s.swell.reverse > 0) {
+            v.muffL.set(m_rate);
+            v.muffR.set(m_rate);
+            v.muffL.reset();
+            v.muffR.reset();
+        }
+        if ((kind == Swell && s.swell.reverse > 0) || (kind == Saw && s.stab.shape == 6))
+            for (Delay &d : v.combs)
+                d.clear();
+        std::fill(std::begin(v.strings), std::end(v.strings), Voice::String{});
         if (s.lowpass > 0) {
             v.postL.set(s.lowpass, 0.7f, m_rate);
             v.postR.set(s.lowpass, 0.7f, m_rate);
@@ -1158,6 +1616,7 @@ private:
     void fireDrop(const DropPoint &d, int offset) {
         m_flash = 1.0f;
         m_lastDrop = d.beat;
+        m_lastAlone = palette(d.set).impact.alone;
         const float intensity = clampf(0.55f + 0.45f * d.intensity, 0.4f, 1.0f);
         const float size = clampf(float(d.beat - d.start) / 16.0f, 0.3f, 1.0f);
         bool armedSub = false;
@@ -1176,6 +1635,25 @@ private:
         boom.vel = (0.75f + 0.25f * size) * (0.6f + 0.4f * d.climb);
         boom.quiet = armedSub;
         m_hitFlash[Impact - kRisers] = 1.0f;
+        // A set whose drop is a log drum strikes one on the key's root, on
+        // the sample, unless a sub armed onto the drop is already there. It
+        // has the ONE to itself (the page holds the drums and bass back), so
+        // it needs no room left for a kick.
+        if (palette(d.set).impact.log > 0 && !armedSub) {
+            c.id = -3;
+            c.f[0] = 0.75f;
+            c.f[1] = 0;
+            Voice &log = take(-3);
+            begin(log, c, Sub, false);
+            for (Voice &o : m_voices)
+                if (&o != &log && o.active && o.kind == Sub && palette(o.set).sub.mono > 0)
+                    o.choke = true;
+            log.held = false;
+            log.delay = offset;
+            log.start = d.beat;
+            log.releasedAt = d.beat;
+            m_hitFlash[Sub - kRisers] = 1.0f;
+        }
     }
 
     // --- shared pieces -------------------------------------------------------
@@ -1338,6 +1816,16 @@ private:
                 }
             }
         }
+        // Blown out: everything through a soft clipper, driven hard enough
+        // that peaks flatten and the quiet parts come up, as a mix bounced
+        // too hot to a cassette does.
+        if (s.clip > 0) {
+            const float in = 1.0f + 6.0f * s.clip, out = 1.0f / (1.0f + 1.5f * s.clip);
+            for (int i = 0; i < n; ++i) {
+                l[i] = v.dc2L.step(v.clipL.step(l[i] * in) * out);
+                r[i] = v.dc2R.step(v.clipR.step(r[i] * in) * out);
+            }
+        }
         // Four poles behind a sampler's steps, two otherwise.
         if (s.lowpass > 0 && s.crush > 0)
             for (int i = 0; i < n; ++i) {
@@ -1362,6 +1850,12 @@ private:
         const float c = std::pow(p, 1.4f);
         const float I = v.sInt;
         const NoiseLook &k = palette(v.set).noise;
+        switch (k.mode) {
+        case 1: renderLogRoll(v, l, r, n, b0, bps, h, p, c); return;
+        case 2: renderCeng(v, l, r, n, b0, bps, h, p, c); return;
+        case 3: renderHiss(v, l, r, n, b0, bps, h, p, c); return;
+        default: break;
+        }
         // From a breath at 1.4 kHz to the full hiss: never so dark that it
         // can't be heard over a beat, with air above it from the start. A
         // set with resonance makes it sing as it opens, as a synth's filter
@@ -1397,8 +1891,39 @@ private:
         const uint32_t grainChance = uint32_t(30.0 / double(m_rate) * 4294967295.0);
         const float width = 0.2f + 0.8f * c;
         const float wa = std::sqrt(1.0f - 0.5f * width), wb = std::sqrt(0.5f * width);
+        // A console's noise channel: its clock climbs with the build, and in
+        // the last stretch the register turns short and buzzes on the
+        // whistle's note two octaves down, so even the hiss lands in key.
+        const bool chipShort = k.chip > 0 && c > 0.62f;
+        const float chipHz =
+            chipShort ? 93.0f * midiToHz(midi - 24.0f) : 900.0f * std::exp2(c * 4.8f + 0.5f * v.sTone);
+        const float chipInc = std::min(chipHz / m_rate, 1.0f);
         // Twist: an autopan that speeds up with the build, on the grid.
         const double rate = std::exp2(std::floor(c * 3.99f)) * 0.5;
+        // Amp feedback: a harmonic of the note the finger slid to (its
+        // octave, then from two thirds of the way its twelfth, the jump
+        // feedback makes as it grows) blooming out of the hiss. It wanders
+        // round its pitch at first and locks onto it as it gets louder, as
+        // a string and an amp pull each other into tune; a second string a
+        // hertz away beats against it; the pedal makes it sing.
+        float fbInc = 0, fbInc2 = 0, fbAmp = 0, fbHit = 0;
+        if (k.feedback > 0) {
+            const float base = degreeNote(h, palette(v.set).tuning, int(std::lround(v.sTone * 4.0f)), 1);
+            const float want = base + (c < 0.66f ? 12.0f : 19.0f);
+            if (v.line == 0)
+                v.line = want;
+            v.line += (want - v.line) * (1.0f - std::exp(-float(n) / (0.03f * m_rate)));
+            const float lock = smoothstep(c * 1.4f);
+            const float wander = 0.35f * (1.0f - lock) * v.wham.step(float(n) / m_rate, v.rng);
+            v.note = v.line;
+            const float hzFb = midiToHz(v.line + wander);
+            fbInc = std::min(hzFb / m_rate, 0.45f);
+            fbInc2 = std::min((hzFb + 1.1f) / m_rate, 0.45f);
+            v.ph[3] += float(n) * 0.9f / m_rate;
+            v.ph[3] -= std::floor(v.ph[3]);
+            fbAmp = k.feedback * std::pow(c, 1.3f) * (0.85f + 0.15f * sin01(v.ph[3]));
+            fbHit = 0.5f + 1.2f * c + v.sGrit;
+        }
         const float g0 = v.gain;
         const float g1 =
             riseGain(pe, 17.0f, 1.4f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.9f + 0.4f * I) * 0.25f * k.gain;
@@ -1419,7 +1944,11 @@ private:
                 v.env3 *= grainFall;
                 g *= 1.0f - k.grain + k.grain * 1.8f * v.env2;
             }
-            const float nc = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            float nc = v.rng.bipolar();
+            const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            // The register's bit is all power: 0.6 of it is as loud as the hiss.
+            if (k.chip > 0)
+                nc += k.chip * (0.6f * v.chip.step(chipInc, chipShort) - nc);
             float L = nc * wa + n1 * wb, R = nc * wa + n2 * wb;
             const float airL = v.cL.step(L).high * air, airR = v.cR.step(R).high * air;
             L = v.bL.step(v.aL.step(L).low).high + airL;
@@ -1438,6 +1967,15 @@ private:
                 const float rm = 1.0f - k.ring + k.ring * 1.4f * (sin01(v.ph[0]) + sin01(v.ph[1]));
                 L *= rm;
                 R *= rm;
+            }
+            if (fbAmp > 0) {
+                v.ph[0] += fbInc;
+                v.ph[0] -= std::floor(v.ph[0]);
+                v.ph[1] += fbInc2;
+                v.ph[1] -= std::floor(v.ph[1]);
+                const float tone = (sin01(v.ph[0]) + 0.45f * sin01(v.ph[1])) * fbAmp;
+                L = 0.45f * L + 1.6f * v.muffL.step(0.25f * tone, fbHit);
+                R = 0.45f * R + 1.6f * v.muffR.step(0.25f * tone, fbHit);
             }
             if (v.sMotion > 0.02f) {
                 const float tri = 2.0f * std::fabs(2.0f * float(b * rate - std::floor(b * rate)) - 1.0f) - 1.0f;
@@ -1463,6 +2001,10 @@ private:
         const float c = std::pow(p, 1.5f);
         const float I = v.sInt;
         const PitchLook &k = palette(v.set).pitch;
+        if (k.shape >= 3) {
+            renderLead(v, l, r, n, b0, bps, h);
+            return;
+        }
         // It lands on a scale note: the tonic, or the degree the finger slid
         // to, two octaves above where it began.
         const int degree = int(std::lround(v.sTone * 7.0f));
@@ -1556,6 +2098,286 @@ private:
         v.level = v.level * 0.8f + 0.2f * peak;
     }
 
+    // The pitch risers that are instruments rather than a glide: a console's
+    // arpeggio, a fuzz guitar, a whistle and a suling. Each lands on the
+    // scale note the finger slid to (in the set's tuning), as every pitch
+    // riser does.
+    void renderLead(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
+        const double bm = b0 + 0.5 * bps * n;
+        const float p = progressAt(v, bm), pe = progressAt(v, b0 + bps * n);
+        const float c = std::pow(p, 1.5f);
+        const float I = v.sInt;
+        const Palette &set = palette(v.set);
+        const PitchLook &k = set.pitch;
+        const int degree = int(std::lround(v.sTone * 7.0f));
+        const int steps = set.tuning == 1 ? 5 : 7; // the scale's notes to the octave
+        const float target = degreeNote(h, set.tuning, degree, 2) + 12.0f * k.oct;
+        const float g0 = v.gain;
+        const float g1 =
+            riseGain(pe, 19.0f, 1.3f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.16f * k.gain;
+        v.gain = g1;
+        const float dt = 1.0f / m_rate;
+        float peak = 0;
+
+        if (k.shape == 3) {
+            // A console's arpeggio. The frame clock ticks sixty times a
+            // second and the arpeggio steps every fourth, third, second,
+            // then every frame as it builds (15 to 60 notes a second). Every
+            // note is a note of the key, and the climb is in the key's steps
+            // too: two octaves of them under the target, a step at a time.
+            // Its pulse narrows from 12.5% to a square on the way; under it
+            // the second channel holds the arpeggio's root an octave down;
+            // and a tracker row (six frames) late, the echo channel plays
+            // the arpeggio again, quieter, its duty changed.
+            const float duty = c < 0.34f ? 0.125f : c < 0.67f ? 0.25f : 0.5f;
+            const float echoDuty = duty < 0.4f ? 0.5f : 0.125f;
+            const int div = 4 - std::min(3, int(c * 4.0f));
+            static const int arp[4] = {0, 2, 4, 7};
+            const int arpLen = c > 0.5f ? 4 : 3;
+            const int climb = int(std::lround(2.0f * float(steps) * (1.0f - c)));
+            const float echo = 0.35f * set.trackerEcho;
+            float incMain = std::min(midiToHz(v.line) / m_rate, 0.45f);
+            float incBass = std::min(midiToHz(v.lineFrom) / m_rate, 0.45f);
+            float incEcho = v.hist[(v.histFrame - 6) & 15] > 0 ? std::min(midiToHz(v.hist[(v.histFrame - 6) & 15]) / m_rate, 0.45f) : 0.0f;
+            for (int i = 0; i < n; ++i) {
+                const double b = b0 + bps * i;
+                const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+                const int frame = int(v.frames * 60.0f);
+                v.frames += dt;
+                if (frame != v.histFrame) {
+                    v.histFrame = frame;
+                    if (frame % div == 0 || v.line == 0)
+                        ++v.stepCount;
+                    const int base = degree - climb;
+                    v.line = degreeNote(h, set.tuning, base + arp[v.stepCount % arpLen], 2) + 12.0f * k.oct;
+                    v.lineFrom = degreeNote(h, set.tuning, base, 1) + 12.0f * k.oct;
+                    v.hist[frame & 15] = v.line;
+                    const float late = frame >= 6 ? v.hist[(frame - 6) & 15] : 0.0f;
+                    incMain = std::min(midiToHz(v.line) / m_rate, 0.45f);
+                    incBass = std::min(midiToHz(v.lineFrom) / m_rate, 0.45f);
+                    incEcho = late > 0 ? std::min(midiToHz(late) / m_rate, 0.45f) : 0.0f;
+                }
+                v.ph[0] += incMain;
+                v.ph[0] -= std::floor(v.ph[0]);
+                v.ph[1] += incBass;
+                v.ph[1] -= std::floor(v.ph[1]);
+                const float main = 0.9f * pulseWave(v.ph[0], incMain, duty);
+                const float bass = 0.45f * pulseWave(v.ph[1], incBass, 0.25f);
+                float late = 0;
+                if (echo > 0 && incEcho > 0) {
+                    v.ph[2] += incEcho;
+                    v.ph[2] -= std::floor(v.ph[2]);
+                    late = echo * pulseWave(v.ph[2], incEcho, echoDuty);
+                }
+                const float L = drive((main * 1.1f + bass + 0.4f * late) * g * 1.6f, v.sGrit);
+                const float R = drive((main * 0.9f + bass + 1.6f * late) * g * 1.6f, v.sGrit);
+                l[i] += L;
+                r[i] += R;
+                peak = std::max(peak, std::fabs(L) + std::fabs(R));
+            }
+            v.note = v.line;
+            v.level = v.level * 0.8f + 0.2f * peak;
+            return;
+        }
+
+        if (k.shape == 4) {
+            // A fuzz guitar's power chord (root, fifth and octave, two strings
+            // to a note a few cents apart) sliding up onto its note, through
+            // the pedal, with a hand resting on the whammy bar: a slow uneven
+            // bend of 45 cents either side, a hundred with a twist, let go
+            // of as it arrives so it lands in tune.
+            const float c8 = c * c * c * c * c * c * c * c;
+            const float bend = (0.45f + 0.55f * v.sMotion) * (1.0f - c8) * v.wham.step(float(n) * dt, v.rng);
+            const float fifth = float(h.tuning.degreeSemis(degree + 4) - h.tuning.degreeSemis(degree));
+            const float midi = target - k.glide * (1.0f - c) + bend + v.bend;
+            v.note = midi;
+            const float cents = 7.0f * k.detune;
+            const float notes[3] = {midi, midi + fifth, midi + 12.0f};
+            float inc[6];
+            for (int j = 0; j < 3; ++j) {
+                inc[2 * j] = std::min(midiToHz(notes[j] + cents * 0.01f) / m_rate, 0.45f);
+                inc[2 * j + 1] = std::min(midiToHz(notes[j] - cents * 0.01f) / m_rate, 0.45f);
+            }
+            const float hit = 0.8f + 1.2f * I + 2.0f * v.sGrit;
+            for (int i = 0; i < n; ++i) {
+                const double b = b0 + bps * i;
+                const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+                float sl = 0, sr = 0;
+                for (int j = 0; j < 3; ++j) {
+                    const float w = j == 0 ? 1.0f : j == 1 ? k.fifth : 0.6f;
+                    sl += w * v.saw[2 * j].step(inc[2 * j]);
+                    sr += w * v.saw[2 * j + 1].step(inc[2 * j + 1]);
+                }
+                const float L = v.muffL.step(0.3f * sl, hit) * g * 3.2f;
+                const float R = v.muffR.step(0.3f * sr, hit) * g * 3.2f;
+                l[i] += L;
+                r[i] += R;
+                peak = std::max(peak, std::fabs(L) + std::fabs(R));
+            }
+            v.level = v.level * 0.8f + 0.2f * peak;
+            return;
+        }
+
+        if (k.shape == 7) {
+            renderHorror(v, l, r, n, b0, bps, h, p, c);
+            return;
+        }
+
+        // The suling: a line tongued up the scale onto the target, a note
+        // on each step of the riser's grid (no faster than sixteenths),
+        // starting an octave of the scale's steps under it and climbing as
+        // the build does. The whistle instead calls and answers itself:
+        // a phrase a bar long, a short call and its answer, which comes
+        // again a scale step higher every bar, so the last bar's answer
+        // ends on the target at the line.
+        const bool suling = k.shape == 6;
+        const double grid = std::max(0.25, gridFor(p, v.bars));
+        constexpr int8_t R = -99;
+        static const int8_t phrases[2][16] = {
+            {4, R, 2, R, 0, R, R, R, 2, R, 2, R, 4, R, R, R}, // a call falling, a rest, an answer rising to land
+            {R, R, 0, 2, 4, R, R, R, R, R, 2, R, 4, R, R, R}, // a call climbing from a pickup, an answer
+        };
+        // A whistle's formants and air, a suling's pipe: filters set once a
+        // block from the note it is on.
+        const float hz0 = midiToHz(v.line > 0 ? v.line : target);
+        if (suling) {
+            v.oL.set(std::min(6.0f * hz0, 9000.0f), m_rate);
+        } else {
+            v.bL.set(1150.0f, 3.0f, m_rate);
+            v.bR.set(2700.0f, 4.0f, m_rate);
+            v.aR.set(hz0, 8.0f, m_rate);
+        }
+        v.cL.set(suling ? 3800.0f : 5200.0f, 0.8f, m_rate);
+        v.cR.set(std::min(3.0f * hz0, 9000.0f), 2.0f, m_rate);
+        const float chiffDecay = std::exp(-dt / (suling ? 0.035f : 0.022f));
+        const float vibHz = suling ? 4.6f : 5.4f, vibDepth = (suling ? 0.22f : 0.3f) * k.vib * (1.0f + 0.6f * v.sMotion);
+        // A suling overblows: pushed harder, its octave and twelfth come up.
+        const float over = suling ? 0.12f + 0.45f * I * I : 0.0f;
+        const float breath = 0.22f * k.breath;
+        const float sixteenth = float(15.0 / m_bpm);
+        const float release = std::exp(-dt / 0.03f);
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+            const bool live = v.state == Running && b < v.end;
+            if (suling) {
+                const double step = std::floor(b / grid + 1e-7);
+                if ((step != v.lastStep || v.line == 0) && live) {
+                    v.lastStep = step;
+                    const int deg = degree - int(std::lround(float(steps) * (1.0f - c)));
+                    const float note = degreeNote(h, set.tuning, deg, 2) + 12.0f * k.oct;
+                    v.line = note;
+                    // A suling player's ornaments are never the same twice:
+                    // some notes plain, some slid into from the tone above
+                    // or below, some turned (above, the note, below, the
+                    // note), each slide quicker or slower.
+                    const float pick = v.rng.unit();
+                    v.env3 = pick < 0.25f ? 0.0f : pick < 0.55f ? 1.0f : pick < 0.8f ? 2.0f : 3.0f;
+                    v.pitchEnv = 0.018f + 0.05f * v.rng.unit();
+                    v.lineFrom = degreeNote(h, set.tuning, deg + 1, 2) + 12.0f * k.oct;
+                    v.glideNote = degreeNote(h, set.tuning, deg - 1, 2) + 12.0f * k.oct;
+                    v.env4 = v.env3 == 2.0f ? v.glideNote : v.env3 == 0.0f ? note : v.lineFrom;
+                    v.since = 0;
+                    v.env2 = 1.0f; // the chiff
+                    v.env = 1.0f;  // the breath on
+                }
+            } else {
+                const double fromEnd = v.end - b;
+                const int barsLeft = std::max(1, int(std::ceil(fromEnd / kBeatsPerBar - 1e-9)));
+                const double barStart = v.end - kBeatsPerBar * barsLeft;
+                const int s16 = std::clamp(int(std::floor((b - barStart) * 4.0 + 1e-7)), 0, 15);
+                const double step = barStart * 4.0 + s16;
+                if (step != v.lastStep && live) {
+                    v.lastStep = step;
+                    const int8_t *phrase = phrases[(barsLeft - 1) & 1];
+                    if (phrase[s16] != R) {
+                        // How long it is held: to the phrase's next note,
+                        // two sixteenths at most (the last, to the bar
+                        // line), so the rest between call and answer is heard.
+                        int gap = 1;
+                        while (s16 + gap < 16 && phrase[s16 + gap] == R && gap < (s16 >= 12 ? 4 : 2))
+                            ++gap;
+                        const int deg = degree - 4 - (barsLeft - 1) + phrase[s16];
+                        const float note = degreeNote(h, set.tuning, deg, 2) + 12.0f * k.oct;
+                        v.lineFrom = note - 0.5f; // a whistle scoops up into it a little
+                        v.line = note;
+                        v.since = 0;
+                        v.env2 = 1.0f;
+                        v.env = 1.0f;
+                        v.env3 = 0.85f * float(gap) * sixteenth;
+                    }
+                }
+            }
+            v.since += dt;
+            float midi;
+            if (suling) {
+                const float d = v.pitchEnv;
+                if (v.env3 == 3.0f) {
+                    // The turn: a quarter of the ornament on each tone.
+                    const float want = v.since < d ? v.lineFrom : v.since < 2 * d ? v.line : v.since < 3 * d ? v.glideNote : v.line;
+                    v.env4 += (want - v.env4) * (1.0f - std::exp(-dt / 0.006f));
+                } else {
+                    v.env4 += (v.line - v.env4) * (1.0f - std::exp(-dt / d));
+                }
+                midi = v.env4;
+            } else {
+                midi = v.line + (v.lineFrom - v.line) * std::exp(-v.since / 0.025f);
+                if (v.since > v.env3)
+                    v.env *= release;
+            }
+            // Vibrato only once the note has settled, as a player's comes.
+            const float vib = vibDepth * smoothstep((v.since - 0.15f) / 0.3f);
+            v.ph[5] += vibHz * dt * (1.0f + 0.08f * sin01(v.ph[6]));
+            v.ph[5] -= std::floor(v.ph[5]);
+            v.ph[6] += 0.7f * dt;
+            v.ph[6] -= std::floor(v.ph[6]);
+            midi += vib * sin01(v.ph[5]) + v.bend;
+            const float hz = midiToHz(midi);
+            const float inc = std::min(hz / m_rate, 0.45f);
+            v.ph[0] += inc;
+            v.ph[0] -= std::floor(v.ph[0]);
+            float p2 = 2.0f * v.ph[0], p3 = 3.0f * v.ph[0];
+            p2 -= std::floor(p2);
+            p3 -= std::floor(p3);
+            // Each note tongued: in over 12 ms, the breath's chiff on top.
+            const float tongue = std::min(1.0f, v.since / 0.012f) * v.env;
+            const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            const float chiff = v.cR.step(n1).band * v.env2 * (suling ? 1.4f : 0.9f);
+            v.env2 *= chiffDecay;
+            const float airL = v.cL.step(n1).band, airR = 0.75f * airL + 0.15f * n2;
+            float L, R;
+            if (suling) {
+                // Overblown pipe: the tone, its octave and twelfth as the
+                // breath pushes, and noise rung in a comb at the note's
+                // period, the pipe's own resonance, so the breath is pitched.
+                const float tone = sin01(v.ph[0]) + over * (sin01(p2) + 0.5f * sin01(p3));
+                const float period = m_rate / hz;
+                const float fed = v.combL.read(period);
+                const float pipe = n1 * 0.08f + 0.93f * v.oL.step(fed);
+                v.combL.push(pipe);
+                L = 0.9f * tone + 1.1f * breath * pipe + breath * 0.6f * airL;
+                R = 0.9f * tone + 1.1f * breath * pipe + breath * 0.6f * airR;
+            } else {
+                // A whistle with a reed's colour: a soft tone, and the same
+                // note as a saw through two formants (1.15 and 2.7 kHz), mixed
+                // in for the body a sax-flute lead has; air above it all.
+                const float tone = sin01(v.ph[0]) + 0.12f * sin01(p2) + 0.05f * sin01(p3);
+                const float buzz = v.saw[0].step(inc);
+                const float formant = 0.35f * v.bL.step(buzz).band + 0.2f * v.bR.step(buzz).band;
+                const float atNote = v.aR.step(n2).band;
+                L = 0.9f * tone + formant + breath * (0.9f * airL + 1.5f * atNote);
+                R = 0.9f * tone + formant + breath * (0.9f * airR + 1.5f * atNote);
+            }
+            L = drive((L * tongue + chiff) * g * 1.3f, v.sGrit);
+            R = drive((R * tongue + chiff) * g * 1.3f, v.sGrit);
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.note = v.line;
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
     void renderSaw(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
         if (!riserLive(v, b0, b0 + bps * n))
             return;
@@ -1565,22 +2387,30 @@ private:
         const float c = std::pow(p, 1.4f);
         const float I = v.sInt;
         const StabLook &k = palette(v.set).stab;
+        switch (k.shape) {
+        case 5: renderTracker(v, l, r, n, b0, bps, h, p, c); return;
+        case 6: renderWall(v, l, r, n, b0, bps, h, p, c); return;
+        case 8: renderBellRoll(v, l, r, n, b0, bps, h, p, c); return;
+        default: break;
+        }
         // The chord of the moment, turned over by the finger's slide.
         const int count = std::clamp(h.chordCount, 1, 3);
         const int inv = int(std::lround(v.sTone * 3.0f));
-        float midis[3];
-        for (int t = 0; t < count; ++t) {
-            const int j = t + inv;
-            const int lift = j >= 0 ? j / count : -((count - 1 - j) / count);
-            const int idx = j - lift * count;
-            midis[t] = float(h.midi(h.chordTones[idx], 1)) + 12.0f * float(lift);
-        }
+        float midis[3] = {};
+        for (int t = 0; t < count; ++t)
+            midis[t] = chordNote(h, t, inv, 1);
+        // A gamelan's bars are tuned to slendro: each chord tone to the
+        // nearest of its five.
+        if (palette(v.set).tuning == 1)
+            for (float &m : midis)
+                m = toSlendro(h, m);
         for (float &m : midis)
             m += 12.0f * k.oct + v.bend;
         // The last beat rises an octave, landing on the chord again.
         const double riseBeats = v.bars >= 2 ? 1.0 : 0.5;
         const float u = v.state == Running ? clampf(float(1.0 - (v.end - bm) / riseBeats), 0, 1) : 0.0f;
-        const float lift = 12.0f * u * u;
+        // Bronze bars and keys can't bend: theirs are struck faster instead.
+        const float lift = k.shape == 4 || k.shape == 7 ? 0.0f : 12.0f * u * u;
         v.note = midis[0] + lift;
         const float cents = (6.0f + 22.0f * c) * k.detune;
         static const float spread[3] = {0.0f, -1.0f, 1.0f};
@@ -1603,12 +2433,59 @@ private:
         v.gain = g1;
         float peak = 0;
         const float panW = 0.3f + 0.6f * c;
+        // Bronze bars: each a free bar's first three modes (1, 2.76, 5.40),
+        // the higher ones dying faster, and each struck on a pair of
+        // instruments tuned 6 Hz apart, one to each side, so the pair beats
+        // (the ombak) wherever it is played. A stab strikes one chord tone,
+        // turning over the chord as the build goes, and lets every bar ring.
+        static const float barModes[3] = {1.0f, 2.756f, 5.404f};
+        float barInc[3][3][2] = {};
+        if (k.shape == 4)
+            for (int t = 0; t < count; ++t)
+                for (int m = 0; m < 3; ++m) {
+                    const float hz = inc[3 * t] * m_rate * barModes[m];
+                    barInc[t][m][0] = std::min(hz / m_rate, 0.45f);
+                    barInc[t][m][1] = std::min((hz + 6.0f * barModes[m]) / m_rate, 0.45f);
+                }
+        const float barDecay = std::exp(-1.0f / (0.9f * k.decay * m_rate));
+        const float malletDecay = std::exp(-1.0f / (0.0015f * m_rate));
+        // Deep-house keys: the chord's root low, and over it the seventh, the
+        // ninth, then the third and fifth an octave up: a minor ninth spread
+        // wide, as Larry Heard voices it. Sliding turns the upper four over.
+        float keyInc[5] = {};
+        if (k.shape == 7) {
+            const int root = h.chordTones[0];
+            int upper[4] = {root + 6, root + 8, root + 9, root + 11};
+            const int turn = int(std::lround(v.sTone * 3.0f));
+            for (int t = 0; t < std::abs(turn); ++t) {
+                if (turn > 0) {
+                    std::sort(upper, upper + 4);
+                    upper[0] += 7;
+                } else {
+                    std::sort(upper, upper + 4);
+                    upper[3] -= 7;
+                }
+            }
+            keyInc[0] = std::min(midiToHz(float(h.midi(root, 0)) + 12.0f * k.oct + v.bend) / m_rate, 0.45f);
+            for (int t = 0; t < 4; ++t)
+                keyInc[1 + t] = std::min(midiToHz(float(h.midi(upper[t], 0)) + 12.0f * k.oct + v.bend) / m_rate, 0.45f);
+            v.note = float(h.midi(root, 0)) + 12.0f * k.oct;
+        }
+        const float tineDecay = std::exp(-1.0f / (0.03f * m_rate));
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
             const double step = std::floor(b / grid - shift);
             if (step != v.lastStep && v.state == Running && b < v.end) {
                 v.lastStep = step;
                 v.env = 1.0f;
+                if (k.shape == 4) {
+                    v.barEnv[v.stepCount % count] = 1.0f;
+                    v.env2 = 1.0f;
+                }
+                if (k.shape == 7)
+                    v.env2 = 1.0f;
+                v.since = 0;
+                ++v.stepCount;
             }
             v.env *= stabDecay;
             if ((i & 7) == 0) {
@@ -1618,7 +2495,53 @@ private:
             }
             const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b) * (1.0f - depth + depth * v.env);
             float L = 0, R = 0;
-            if (k.shape == 3) {
+            if (k.shape == 4) {
+                for (int t = 0; t < count; ++t) {
+                    const float e = v.barEnv[t];
+                    if (e < 1e-4f)
+                        continue;
+                    const float e2 = e * e;
+                    const float amp[3] = {e, 0.4f * e2, 0.16f * e2 * e2};
+                    float sl = 0, sr = 0;
+                    for (int m = 0; m < 3; ++m) {
+                        float &pl = v.bar[6 * t + 2 * m], &pr = v.bar[6 * t + 2 * m + 1];
+                        pl += barInc[t][m][0];
+                        pl -= std::floor(pl);
+                        pr += barInc[t][m][1];
+                        pr -= std::floor(pr);
+                        sl += amp[m] * sin01(pl);
+                        sr += amp[m] * sin01(pr);
+                    }
+                    L += 1.8f * sl;
+                    R += 1.8f * sr;
+                    v.barEnv[t] *= barDecay;
+                }
+                // The mallet: a millisecond and a half of knock.
+                const float knock = v.rng.bipolar() * v.env2 * 0.6f;
+                v.env2 *= malletDecay;
+                L += knock;
+                R += knock;
+            } else if (k.shape == 7) {
+                // A tine piano: each note a sine bent by itself while the stab
+                // is fresh (the bark), and the tine's ping, a partial fourteen
+                // times up gone in 30 ms.
+                const float bark = 0.08f + 0.5f * v.env;
+                static const float pan[5] = {0.0f, -0.5f, 0.5f, -0.25f, 0.25f};
+                static const float level[5] = {0.8f, 0.55f, 0.5f, 0.5f, 0.45f};
+                for (int t = 0; t < 5; ++t) {
+                    float &ph = v.bar[t], &tine = v.bar[5 + t];
+                    ph += keyInc[t];
+                    ph -= std::floor(ph);
+                    tine += std::min(14.0f * keyInc[t], 0.45f);
+                    tine -= std::floor(tine);
+                    float q = ph + bark * sin01(ph);
+                    q -= std::floor(q);
+                    const float o = level[t] * (2.0f * sin01(q) + 0.25f * v.env2 * sin01(tine));
+                    L += o * (1.0f - pan[t]);
+                    R += o * (1.0f + pan[t]);
+                }
+                v.env2 *= tineDecay;
+            } else if (k.shape == 3) {
                 // A bell: each note's sine bent by another at three and a
                 // half times its pitch, harder while the stab is fresh, so
                 // its partials are not harmonics.
@@ -1687,6 +2610,10 @@ private:
         const float c = std::pow(p, 1.3f);
         const float I = v.sInt;
         const RollLook &k = palette(v.set).roll;
+        if (k.pattern == 4) {
+            renderKotekan(v, l, r, n, b0, bps, h, p, c);
+            return;
+        }
         // The drum's body climbs the scale as the roll speeds up: five steps
         // up from the degree the finger slid to (a taiko stays down low).
         const int degree = int(std::floor(p * 5.0f * k.climb)) + int(std::lround(v.sTone * 4.0f));
@@ -1725,6 +2652,16 @@ private:
         // Hats that change rate on every beat: sixteenths, triplets, thirty-
         // seconds, and in the build's second half sixty-fourth stutters.
         static const double slow[4] = {0.25, 0.25, 1.0 / 6.0, 0.125}, fast[4] = {0.125, 1.0 / 12.0, 0.0625, 1.0 / 6.0};
+        // Amapiano's shakers: sixteenths, every second one late by a sixth
+        // of its length (a lazy 58% swing), the late ones leaning forward;
+        // the woodblock only on the 3-3-2 of each half bar. A shaker is a
+        // swish, not a hit: its noise comes in over 4 ms.
+        constexpr double swing = 0.16;
+        static const bool tresillo[8] = {true, false, false, true, false, false, true, false};
+        constexpr float shake = 1.0f / 0.004f;
+        // The console's noise channel for a drum: its clock high on the
+        // strike and falling with the hit, as a tracker's snare sweeps.
+        const float chipBase = 4000.0f / m_rate;
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
             double step;
@@ -1732,6 +2669,10 @@ private:
             if (k.pattern == 1 && p < 0.75f) {
                 step = std::floor(b * 4.0 + 1e-7);
                 hit = amen[int(step - 16.0 * std::floor(step / 16.0))];
+            } else if (k.pattern == 3 && p < 0.75f) {
+                const double pos = b * 4.0 + 1e-7, eighth = std::floor(pos * 0.5);
+                step = 2.0 * eighth + (pos - 2.0 * eighth >= 1.0 + swing ? 1.0 : 0.0);
+                hit = tresillo[int(step - 8.0 * std::floor(step / 8.0))] ? 4 : 3;
             } else if (k.pattern == 2) {
                 const double beatNo = std::floor(b + 1e-7);
                 const int pick = int(beatNo * 3.0 + std::floor(beatNo / 4.0)) & 3;
@@ -1755,8 +2696,10 @@ private:
                     vel *= 1.0f - k.ghost;
                 if (hit == 2)
                     vel *= 0.35f;
+                if (hit >= 3 && std::fmod(step, 2.0) < 0.5)
+                    vel *= 0.6f;
                 v.env = hit == 0 ? 0.0f : vel;
-                v.env2 = hit == 0 ? 1.4f * vel : vel;
+                v.env2 = hit == 0 ? 1.4f * vel : hit == 3 ? 0.0f : vel;
                 v.glideNote = hit == 0 ? 0.45f : 1.0f; // a kick is the body, lower and falling further
                 v.pitchEnv = 1.0f;
                 v.since = 0;
@@ -1770,11 +2713,15 @@ private:
             v.pitchEnv *= pitchDecay;
             v.ph[0] += bodyInc * v.glideNote * (1.0f + (v.glideNote < 1.0f ? 1.5f : k.drop) * v.pitchEnv);
             v.ph[0] -= std::floor(v.ph[0]);
-            v.ph[1] += bodyInc * 1.52f;
+            v.ph[1] += std::min(bodyInc * k.partial, 0.45f);
             v.ph[1] -= std::floor(v.ph[1]);
             const float tone = (sin01(v.ph[0]) + 0.45f * sin01(v.ph[1])) * v.env2 * k.body;
-            const float nz = v.rng.bipolar();
-            float wires = (v.aL.step(nz).band * 1.3f + v.bL.step(nz).high * 0.5f) * v.env * k.wires;
+            float nz = v.rng.bipolar();
+            if (k.chip > 0)
+                nz += k.chip * (0.6f * v.chip.step(std::min(chipBase * (1.0f + 4.0f * v.env), 1.0f), false) - nz);
+            // A console's drum is its noise channel as it comes, unfiltered.
+            float wires = k.chip > 0 ? nz * 1.3f * v.env * k.wires
+                                     : (v.aL.step(nz).band * 1.3f + v.bL.step(nz).high * 0.5f) * v.env * k.wires;
             if (k.hat > 0) {
                 float m = 0;
                 for (int j = 0; j < 6; ++j) {
@@ -1786,9 +2733,11 @@ private:
                 const float x = 0.12f * m + 0.5f * nz;
                 wires += (x - v.oL.step(x)) * 1.6f * v.env * k.hat;
             }
+            if (k.pattern == 3)
+                wires *= 1.0f - std::exp(-v.since * shake);
             const float clap = v.bR.step(nz).band * 2.2f * v.env3;
+            v.since += 1.0f / m_rate;
             if (k.gate > 0) {
-                v.since += 1.0f / m_rate;
                 if (v.since > k.gate)
                     v.env *= gateCut;
             } else {
@@ -1811,9 +2760,116 @@ private:
             v.active = false;
     }
 
+    // A gangsa's kotekan: two players, polos and sangsih, whose parts lock
+    // into one line twice as fast as either could play, each with rests
+    // and some tones in common. Under it a slow melody, the pokok, a tone
+    // to each group of eight strokes, climbing with the build; the kotekan
+    // figures it and lands on it at the group's end. In the first half,
+    // norot: the line rocks between the pokok and the tone above it, polos
+    // on the one, sangsih on the other, and both together on the landing.
+    // In the second, telu: three tones, polos the lower two, sangsih the
+    // upper two, the middle one theirs together, so the line turns over in
+    // threes against the beat. Eighths, then sixteenths, then thirty-
+    // seconds as the build quickens. Polos is on the left, sangsih on the
+    // right on an instrument tuned 4.5 Hz higher, as the pair always is,
+    // so the shared tones beat. Each player damps the key they played last
+    // as they strike the next.
+    void renderKotekan(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const RollLook &k = palette(v.set).roll;
+        const int tuning = palette(v.set).tuning;
+        const float I = v.sInt;
+        static const int pokok[4] = {0, 2, 1, 3};
+        const int base = int(std::floor(p * 5.0f * k.climb)) + int(std::lround(v.sTone * 4.0f));
+        const double grid = std::max(0.125, 0.5 * gridFor(p, 1));
+        const bool telu = p >= 0.5f;
+        const float fade = fallFade(v, b0 + 0.5 * bps * n);
+        const float master = dbToGain(-8.0f * (1.0f - c)) * (0.7f + 0.5f * I) * fade * 0.55f * pressGain(v) * k.gain;
+        const float ring = std::exp(-1.0f / (0.07f * k.ring * m_rate));
+        const float damp = std::exp(-1.0f / (0.006f * m_rate));
+        const float knockDecay = std::exp(-1.0f / (0.0012f * m_rate));
+        static const float modes[3] = {1.0f, 2.756f, 5.404f};
+        static const float modeAmp[3] = {1.0f, 0.35f, 0.12f};
+        v.cL.set(90.0f * k.hp * std::exp2(2.6f * c * k.hpRise), 0.7f, m_rate);
+        v.cR.set(90.0f * k.hp * std::exp2(2.6f * c * k.hpRise), 0.7f, m_rate);
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b / grid + 1e-7);
+            const bool fresh =
+                step != v.lastStep && (v.state == Running || v.state == Falling) && b < v.end - 1e-9 && b >= v.start - 1e-9;
+            if (fresh) {
+                v.lastStep = step;
+                const int j = int(step - 8.0 * std::floor(step / 8.0));
+                const int group = int(std::floor(step / 8.0));
+                const int x = base + pokok[(group & 3)];
+                int strike[2];
+                kotekanStroke(telu, j, strike);
+                const bool onBeat = std::fabs(b - std::round(b)) < 0.01;
+                for (int part = 0; part < 2; ++part) {
+                    if (strike[part] < 0)
+                        continue;
+                    // This player's last key, damped: it moves to the slot
+                    // that dies in 6 ms, and the new note takes its place.
+                    v.slotEnv[2 + part] = v.slotEnv[part];
+                    v.slotHz[2 + part] = v.slotHz[part];
+                    for (int m = 0; m < 3; ++m)
+                        v.bar[3 * (2 + part) + m] = v.bar[3 * part + m];
+                    const float midi = degreeNote(h, tuning, x + strike[part], 1) + 12.0f * k.oct + v.bend;
+                    v.note = midi;
+                    v.slotHz[part] = midiToHz(midi) + (part ? 4.5f : 0.0f);
+                    v.slotEnv[part] = (onBeat ? 1.0f : 0.8f) * (0.55f + 0.45f * std::pow(p, 0.8f)) *
+                                      (strike[0] >= 0 && strike[1] >= 0 ? 0.8f : 1.0f);
+                    for (int m = 0; m < 3; ++m)
+                        v.bar[3 * part + m] = 0;
+                }
+                ++v.stepCount;
+                v.env = 1.0f; // the mallet
+                v.env4 = strike[0] >= 0 && strike[1] >= 0 ? 0.0f : strike[1] >= 0 ? 0.45f : -0.45f;
+            }
+            const float g = master * cutAt(v, b);
+            float L = 0, R = 0;
+            for (int s = 0; s < 4; ++s) {
+                float &e = v.slotEnv[s];
+                if (e < 1e-4f)
+                    continue;
+                float x = 0;
+                for (int m = 0; m < 3; ++m) {
+                    float &ph = v.bar[3 * s + m];
+                    ph += std::min(v.slotHz[s] * modes[m] / m_rate, 0.45f);
+                    ph -= std::floor(ph);
+                    // The higher modes die sooner: a bar's ring is its
+                    // fundamental.
+                    x += modeAmp[m] * (m ? e * e : e) * sin01(ph);
+                }
+                e *= s < 2 ? ring : damp;
+                const float pan = (s & 1) ? 0.45f : -0.45f;
+                L += x * (1.0f - pan);
+                R += x * (1.0f + pan);
+            }
+            const float knock = v.rng.bipolar() * v.env * 0.35f;
+            v.env *= knockDecay;
+            L = v.cL.step((1.6f * L + knock * (1.0f - v.env4)) * g * k.body).high;
+            R = v.cR.step((1.6f * R + knock * (1.0f + v.env4)) * g * k.body).high;
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+        if (v.state == Running && b0 >= v.end + 0.5)
+            v.active = false;
+    }
+
     void renderSwell(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
         if (!riserLive(v, b0, b0 + bps * n))
             return;
+        if (palette(v.set).swell.reverse > 0) {
+            renderReverse(v, l, r, n, b0, bps, h);
+            return;
+        }
+        if (palette(v.set).swell.cabasa > 0) {
+            renderCabasa(v, l, r, n, b0, bps, h);
+            return;
+        }
         const double bm = b0 + 0.5 * bps * n, be = b0 + bps * n;
         v.p = progressAt(v, bm);
         const float I = v.sInt;
@@ -1865,6 +2921,31 @@ private:
         for (int i = 0; i < n; ++i) {
             const double b = b0 + bps * i;
             const float g = e0 + (e1 - e0) * float(i) / float(n);
+            if (look.chip > 0) {
+                // A console has no reverb to run backwards: its swell is the
+                // noise channel, its clock climbing, and the chord in 12.5%
+                // pulses, the volume stepping up its sixteen levels a frame
+                // at a time.
+                const float e = clampf(g / (0.24f * look.gain * 1.45f), 0, 1);
+                const float vol = std::floor(e * 15.0f + 0.5f) / 15.0f * 0.24f * look.gain * 1.45f;
+                const float hiss = 0.6f * v.chip.step(std::min((1500.0f + 21000.0f * e * e) / m_rate, 1.0f), e > 0.85f);
+                float pl = 0, pr = 0;
+                for (int k = 0; k < count; ++k) {
+                    float &a = v.ph[k], &c = v.ph[3 + k];
+                    a += inc[2 * k];
+                    a -= std::floor(a);
+                    c += inc[2 * k + 1];
+                    c -= std::floor(c);
+                    pl += pulseWave(a, inc[2 * k], 0.125f);
+                    pr += pulseWave(c, inc[2 * k + 1], 0.125f);
+                }
+                const float cut = cutAt(v, b);
+                const float L = (cym * hiss + 0.5f * pad * pl) * vol * cut, R = (cym * hiss + 0.5f * pad * pr) * vol * cut;
+                l[i] += L;
+                r[i] += R;
+                peak = std::max(peak, std::fabs(L) + std::fabs(R));
+                continue;
+            }
             float m = 0;
             for (int k = 0; k < 6; ++k) {
                 v.ph[k] += metal[k] * metalInc;
@@ -1902,6 +2983,844 @@ private:
             l[i] += L;
             r[i] += R;
             peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // A fuzz chord's reverb, played backwards into the ONE. A long room's
+    // tail is noise whose highs die first; heard after a chord, it is that
+    // noise coloured by the chord: its notes and all their harmonics. So
+    // here: noise, its top opening as the tail (reversed) comes nearer its
+    // start, rung in a comb at each of the chord's notes (each comb's ring
+    // as long as a strummed note's), through the fuzz's scooped tone and
+    // its speaker; growing as a reversed tail grows, long and then sucked
+    // in. In the last moment before the line the chord itself, through the
+    // pedal, backwards: from nothing to the strum, cut on the ONE.
+    void renderReverse(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
+        const double bm = b0 + 0.5 * bps * n, be = b0 + bps * n;
+        v.p = progressAt(v, bm);
+        const float len = float(std::max(1.0, v.end - v.start));
+        const float tauLong = 0.5f * len, tauShort = 0.6f + 0.05f * len;
+        auto curve = [&](double left) {
+            const float x = float(std::max(0.0, left));
+            return 0.75f * std::exp(-x / tauLong) + 0.25f * std::exp(-x / tauShort);
+        };
+        auto envAt = [&](double b) {
+            if (v.state == Falling)
+                return curve(v.end - v.fallAt) * fallFade(v, b);
+            return curve(v.end - b);
+        };
+        const SwellLook &look = palette(v.set).swell;
+        const float e0 = v.gain, e1 = envAt(be) * pressGain(v) * 0.24f * look.gain;
+        v.gain = e1;
+        const int count = std::clamp(h.chordCount, 1, 3);
+        const int shift = int(std::lround(v.sTone * 3.0f));
+        float period[3], inc[6], fb[3];
+        for (int k = 0; k < 3; ++k) {
+            const int t = k % count;
+            const float m = float(h.midi(h.chordTones[t], 0)) + 12.0f * float(shift > t) - 12.0f * float(-shift > t) +
+                            12.0f * look.oct + 12.0f * float(k >= count) + v.bend;
+            if (k == 0)
+                v.note = m;
+            const float hz = midiToHz(m);
+            period[k] = m_rate / hz;
+            fb[k] = std::exp(-period[k] / (0.25f * m_rate));
+            inc[2 * k] = std::min(hz * 1.003f / m_rate, 0.45f);
+            inc[2 * k + 1] = std::min(hz / 1.003f / m_rate, 0.45f);
+        }
+        const float norm = std::sqrt(1.0f - fb[0] * fb[0]);
+        // The tail's highs arrive late: dark a bar out, bright at the line.
+        const float open = 500.0f * std::exp2(4.5f * envAt(bm));
+        v.aL.set(open, 0.7f, m_rate);
+        v.aR.set(open * 1.04f, 0.7f, m_rate);
+        // The pedal's scooped tone and its speaker for the tail, filters of
+        // their own: the pedal itself is busy with the strum.
+        v.bL.set(450.0f, 0.7f, m_rate);
+        v.bR.set(450.0f, 0.7f, m_rate);
+        v.cL.set(1100.0f, 0.7f, m_rate);
+        v.cR.set(1100.0f, 0.7f, m_rate);
+        v.blareL.set(5500.0f, 0.7f, m_rate);
+        v.blareR.set(5500.0f, 0.7f, m_rate);
+        const float spb = float(60.0 / m_bpm);
+        Delay *combL[3] = {&v.combL, &v.combs[0], &v.combs[1]}, *combR[3] = {&v.combR, &v.combs[2], &v.combs[3]};
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const float g = e0 + (e1 - e0) * float(i) / float(n);
+            const float n1 = v.aL.step(v.rng.bipolar()).low, n2 = v.aR.step(v.rng.bipolar()).low;
+            float tl = 0, tr = 0;
+            for (int k = 0; k < 3; ++k) {
+                const float yl = n1 + fb[k] * combL[k]->read(period[k]);
+                const float yr = n2 + fb[k] * combR[k]->read(period[k] * 1.002f);
+                combL[k]->push(yl);
+                combR[k]->push(yr);
+                tl += yl;
+                tr += yr;
+            }
+            tl = 0.6f * (v.bL.step(tl).low + v.cL.step(tl).high);
+            tr = 0.6f * (v.bR.step(tr).low + v.cR.step(tr).high);
+            tl = v.blareL.step(tl).low * norm;
+            tr = v.blareR.step(tr).low * norm;
+            // The strum itself, backwards, in its last 150 ms.
+            const float left = float(v.end - b) * spb;
+            float sl = 0, sr = 0;
+            if (left < 0.25f && v.state == Running) {
+                const float rev = std::exp(-std::max(0.0f, left) / 0.06f);
+                float cl = 0, cr = 0;
+                for (int k = 0; k < count; ++k) {
+                    cl += v.saw[2 * k].step(inc[2 * k]);
+                    cr += v.saw[2 * k + 1].step(inc[2 * k + 1]);
+                }
+                sl = rev * v.muffL.step(0.15f * cl, 2.0f);
+                sr = rev * v.muffR.step(0.15f * cr, 2.0f);
+            }
+            float L = (1.1f * look.pad * tl + 0.5f * sl) * g, R = (1.1f * look.pad * tr + 0.5f * sr) * g;
+            for (int k = 0; k < 3; ++k) {
+                L = v.apL[k].step(L);
+                R = v.apR[k].step(R);
+            }
+            const float cut = cutAt(v, b);
+            L *= cut;
+            R *= cut;
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // --- the risers some sets play on their own instruments ---------------------
+
+    // Amapiano's build on its log drum: the root struck in eighths, then
+    // sixteenths, then thirty-seconds, and the line climbing an octave of
+    // the scale as it quickens, as a producer rolls the log drum into a
+    // drop. Each strike is the log drum's: plucked nine semitones sharp and
+    // falling into its note in 18 ms, sliding from the last strike's pitch
+    // in 45 ms, choking it. It sits in the log drum's octave, whatever the
+    // key, and its weight is in the octaves round 125 Hz.
+    void renderLogRoll(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const NoiseLook &k = palette(v.set).noise;
+        const float dt = 1.0f / m_rate;
+        const double grid = p < 0.4f ? 0.5 : p < 0.75f ? 0.25 : 0.125;
+        float root = float(h.midi(0, -1));
+        while (midiToHz(root) < 62.0f)
+            root += 12.0f;
+        while (midiToHz(root) >= 124.0f)
+            root -= 12.0f;
+        const int degree = int(std::floor(c * 7.99f)) + int(std::lround(v.sTone * 4.0f));
+        const float target = root + float(h.midi(degree, -1) - h.midi(0, -1));
+        const float spb = float(60.0 / m_bpm);
+        // Each strike rings for most of the gap to the next, and no longer:
+        // a log drum roll is a line, not a wash.
+        const float tau = std::min(0.3f, 0.55f * float(grid) * spb) * (0.8f + 0.4f * v.sPress);
+        const float decay = std::exp(-dt / tau);
+        const float pluckDecay = std::exp(-dt / 0.018f), skinDecay = std::exp(-dt / 0.25f);
+        const float glide = 1.0f - std::exp(-dt / 0.045f), smooth = 1.0f - std::exp(-dt / 0.001f);
+        const float fade = fallFade(v, b0 + 0.5 * bps * n);
+        const float master = dbToGain(-9.0f * (1.0f - c)) * (0.75f + 0.4f * I) * fade * pressGain(v) * 0.32f * k.gain;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b / grid + 1e-7);
+            if (step != v.lastStep && v.state == Running && b < v.end - 1e-9 && b >= v.start - 1e-9) {
+                v.lastStep = step;
+                if (v.line == 0)
+                    v.glideNote = target;
+                v.line = target;
+                v.note = target;
+                const bool beat = std::fabs(b - std::round(b)) < 0.01;
+                v.env3 = (beat ? 1.0f : 0.78f) * (0.6f + 0.4f * c); // the strike's level
+                v.env2 = 1.0f;                                      // the bite
+                v.since = 0;                                        // the stick
+                v.pitchEnv = 1.0f;
+                v.aL.set(std::min(midiToHz(target) * 3.7f, 2000.0f), 5.0f, m_rate);
+                ++v.stepCount;
+            }
+            // The choke: the level follows the strike within a millisecond,
+            // so a new one cuts the last without a click.
+            v.env += (v.env3 - v.env) * smooth;
+            v.env3 *= decay;
+            v.glideNote += (v.line - v.glideNote) * glide;
+            const float f = midiToHz(v.glideNote + v.bend) * (1.0f + 0.68f * v.pitchEnv);
+            v.pitchEnv *= pluckDecay;
+            v.ph[0] += std::min(f * dt, 0.45f);
+            v.ph[0] -= std::floor(v.ph[0]);
+            const float s = sin01(v.ph[0]);
+            const float bite = 1.0f + 3.5f * v.env2;
+            const float stick = std::exp(-v.since / 0.004f);
+            v.since += dt;
+            const float knock = v.aL.step(v.rng.bipolar() * stick).band * 0.35f;
+            v.env2 *= skinDecay;
+            const float o = (fastTanh(bite * s) / fastTanh(bite) * 0.8f + knock) * v.env * master * cutAt(v, b);
+            l[i] += o;
+            r[i] += o;
+            peak = std::max(peak, 2.0f * std::fabs(o));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // A ceng-ceng: small cymbals clashed in pairs, quickening from eighths
+    // to thirty-seconds, open strokes that ring and closed ones choked on
+    // the plate (the "cek"), each clash a flam of plates a few milliseconds
+    // apart. Its metal is noise in two bands with a cluster of high square
+    // partials, under the 10 kHz a plate's ring stops at, never the same
+    // cluster twice running; every clash also
+    // rings two of the bars' modes, a slendro tone and the bar's partial at
+    // 2.76 times it, climbing the scale with the build, so the rattle has
+    // the orchestra's tuning in it.
+    void renderCeng(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const float dt = 1.0f / m_rate;
+        const double grid = std::max(0.125, 0.5 * gridFor(p, v.bars));
+        const int tone = int(std::floor(c * 5.0f)) + int(std::lround(v.sTone * 4.0f));
+        const float bell = slendro(h, tone, 3);
+        v.note = bell;
+        if (v.lastStep < 0) {
+            v.aL.set(5200.0f, 0.9f, m_rate);
+            v.aR.set(5500.0f, 0.9f, m_rate);
+            v.bL.set(8400.0f, 1.3f, m_rate);
+            v.bR.set(8000.0f, 1.3f, m_rate);
+            v.fuzzL.set(10000.0f, 0.7f, m_rate);
+            v.fuzzR.set(10000.0f, 0.7f, m_rate);
+        }
+        const float hz = midiToHz(bell);
+        v.cL.set(hz, 180.0f, m_rate);
+        v.cR.set(std::min(hz * 2.756f, 0.45f * m_rate), 220.0f, m_rate);
+        // A pair of hand cymbals never rings the same partials twice: where
+        // the plates meet, and how hard, changes every clash. Three plate
+        // sets (the player's two pairs, and the edge of one), taken in
+        // turn, each clash a few percent sharp or flat of the last.
+        static const float metals[3][6] = {{3150.0f, 4372.0f, 5260.0f, 6711.0f, 7340.0f, 9120.0f},
+                                           {2890.0f, 4105.0f, 5585.0f, 6170.0f, 7905.0f, 8640.0f},
+                                           {3420.0f, 3980.0f, 4890.0f, 6395.0f, 7120.0f, 9480.0f}};
+        const float openDecay = std::exp(-dt / (0.09f + 0.06f * I)), closedDecay = std::exp(-dt / 0.012f);
+        const float fade = fallFade(v, b0 + 0.5 * bps * n);
+        const float master = dbToGain(-12.0f * (1.0f - c)) * (0.7f + 0.5f * I) * fade * pressGain(v) * 0.5f *
+                             palette(v.set).noise.gain;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b / grid + 1e-7);
+            if (step != v.lastStep && v.state == Running && b < v.end - 1e-9 && b >= v.start - 1e-9) {
+                v.lastStep = step;
+                const int j = v.stepCount++;
+                // Kecek: open, closed, closed; open on every beat.
+                const bool beat = std::fabs(b - std::round(b)) < 0.01;
+                v.env4 = (beat || j % 3 == 0) ? 1.0f : 0.0f; // 1 open
+                v.env = (beat ? 1.0f : 0.75f) * (0.55f + 0.45f * c);
+                // The flam: the other plates land 4 to 9 ms later.
+                v.since = -(0.004f + 0.005f * v.rng.unit());
+                v.env3 = v.env * 0.7f;
+                v.env2 = float((j + (v.rng.unit() < 0.3f ? 1 : 0)) % 3); // the plate set
+                v.glideNote = 1.0f + 0.035f * v.rng.bipolar();            // and how far off it
+            }
+            if (v.since < 0.0f && v.since + dt >= 0.0f)
+                v.env = std::max(v.env, v.env3);
+            v.since += dt;
+            v.env *= v.env4 > 0.5f ? openDecay : closedDecay;
+            float m = 0;
+            const float *metal = metals[std::clamp(int(v.env2), 0, 2)];
+            const float detune = v.glideNote > 0.5f ? v.glideNote : 1.0f;
+            for (int q = 0; q < 6; ++q) {
+                float &ph = v.ph[q];
+                ph += metal[q] * detune * dt;
+                ph -= std::floor(ph);
+                m += ph < 0.5f ? 1.0f : -1.0f;
+            }
+            const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            const float hitL = (n1 + 0.12f * m) * v.env, hitR = (n2 + 0.12f * m) * v.env;
+            const float L0 = v.aL.step(hitL).band + 0.8f * v.bL.step(hitL).band;
+            const float R0 = v.aR.step(hitR).band + 0.8f * v.bR.step(hitR).band;
+            // The bars rung by the clash: the noise into two narrow modes.
+            const float ring = 0.12f * v.cL.step(n1 * v.env).band + 0.05f * v.cR.step(n2 * v.env).band;
+            const float g = master * cutAt(v, b);
+            const float L = v.fuzzL.step(L0 + ring).low * g, R = v.fuzzR.step(R0 + ring).low * g;
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // A worn Memphis tape's hiss, thickening into the ONE, and what only
+    // a tape that has been dubbed and played to death has in it. The hiss
+    // under a cassette's top (opening from 2 to 7 kHz as the build goes),
+    // and in it a resonance sweeping up three octaves onto the tonic,
+    // warbling with the tape; the crackle of the record it was dubbed from,
+    // in ticks and pops, a few a second at first and a storm at the end.
+    // Under the hiss, print-through: the HORROR chord on the next layer of
+    // tape has magnetised this one, so its ghost is heard a beat before
+    // every bar, dull and wavering, louder as the build goes. On the last
+    // beat the deck is put into rewind with the heads still touching: the
+    // ghost and the hiss race up five octaves, chopped as the program
+    // flies past, a cassette's squeal into the line.
+    void renderHiss(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const float dt = 1.0f / m_rate;
+        const NoiseLook &k = palette(v.set).noise;
+        v.p = p;
+        v.wowPh += float(n) * 0.7f * dt;
+        v.wowPh -= std::floor(v.wowPh);
+        const float target = float(h.midi(0, 3)) + 12.0f * std::round(v.sTone * 0.6f);
+        const float midi = target - 36.0f * (1.0f - c) + 0.3f * sin01(v.wowPh) * (1.0f - c);
+        v.note = target - 36.0f * (1.0f - c);
+        v.aL.set(midiToHz(midi), 4.0f + 6.0f * c, m_rate);
+        v.aR.set(midiToHz(midi) * 1.01f, 4.0f + 6.0f * c, m_rate);
+        const float top = 2000.0f * std::exp2(1.8f * c);
+        v.bL.set(top, 0.6f, m_rate);
+        v.bR.set(top * 1.05f, 0.6f, m_rate);
+        v.cL.set(250.0f, 0.7f, m_rate);
+        v.cR.set(250.0f, 0.7f, m_rate);
+        const float rate = 4.0f + 90.0f * c * c;
+        const uint32_t chance = uint32_t(double(rate) / double(m_rate) * 4294967295.0);
+        const uint32_t popChance = uint32_t(double(1.0f + 8.0f * c) / double(m_rate) * 4294967295.0);
+        const float tickDecay = std::exp(-dt / 0.0003f), popDecay = std::exp(-dt / 0.003f);
+        v.oL.set(900.0f, m_rate);
+        // The ghost: HORROR's chord (the root, third, sixth and ninth), each
+        // tone a fundamental and its octave, as a piano's are.
+        static const int chord[4] = {0, 2, 5, 8};
+        const Palette &set = palette(v.set);
+        float ghostHz[4];
+        for (int t = 0; t < 4; ++t)
+            ghostHz[t] = midiToHz(degreeNote(h, set.tuning, chord[t], 2) + 12.0f * set.pitch.oct);
+        const float ghostRing = std::exp(-dt / 0.9f), ghostSwell = 1.0f - std::exp(-dt / 0.03f);
+        const float ghostLevel = 0.3f + 0.5f * c;
+        const float g0 = v.gain;
+        const float g1 =
+            riseGain(progressAt(v, b0 + bps * n), 15.0f, 1.4f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.9f + 0.4f * I) *
+            0.3f * k.gain;
+        v.gain = g1;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+            v.flutterPh += 7.3f * dt;
+            v.flutterPh -= std::floor(v.flutterPh);
+            const float flutter = 1.0f + 0.12f * sin01(v.flutterPh);
+            const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            float hl = v.cL.step(v.bL.step(n1).low).high, hr = v.cR.step(v.bR.step(n2).low).high;
+            const float singL = v.aL.step(n1).band, singR = v.aR.step(n2).band;
+            hl = (0.5f * hl + (0.4f + 0.5f * c) * singL) * flutter;
+            hr = (0.5f * hr + (0.4f + 0.5f * c) * singR) * flutter;
+            float &tick = v.modalEnv[2];
+            if (v.rng.next() < chance) {
+                const float a = v.rng.bipolar();
+                tick = a * a * a * 1.6f;
+                v.env4 = v.rng.bipolar() * 0.7f;
+            }
+            if (v.rng.next() < popChance)
+                v.env3 = (0.5f + 0.5f * v.rng.unit()) * (v.rng.unit() < 0.5f ? 1.0f : -1.0f);
+            const float pop = v.oL.step(v.env3) * 2.0f;
+            v.env3 *= popDecay;
+            // Print-through: a beat before every bar the chord bleeds in
+            // under the hiss, swelling over 30 ms as a pre-echo does.
+            const double bar = std::floor((b + 1.0) / 4.0 + 1e-7);
+            if (v.lastStep < 0) {
+                v.lastStep = bar; // not on the build's first sample: on a bar's beat four
+                v.env = v.env2 = 0;
+                v.blareR.reset();
+            } else if (bar != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = bar;
+                v.env2 = 1.0f; // the ghost's target
+            }
+            v.env += (v.env2 - v.env) * ghostSwell;
+            v.env2 *= ghostRing;
+            // The rewind: over the last beat the tape's speed climbs five
+            // octaves, its program chopped faster and faster as it flies by.
+            const float u = clampf(float(b - (v.end - 1.0)), 0.0f, 1.0f);
+            const float speed = std::exp2(5.0f * std::pow(u, 1.4f)) * (1.0f + 0.006f * sin01(v.wowPh));
+            float ghost = 0;
+            for (int t = 0; t < 4; ++t) {
+                const float hz = ghostHz[t] * speed;
+                float &ph = v.ph[t];
+                ph += std::min(hz * dt, 0.45f);
+                ph -= std::floor(ph);
+                float p2 = 2.0f * ph;
+                p2 -= std::floor(p2);
+                // Nothing over 15 kHz: a partial the rewind pushes past it fades.
+                ghost += (t == 0 ? 1.0f : 0.7f) * (sin01(ph) * clampf((15000.0f - hz) / 3000.0f, 0, 1) +
+                                                    0.45f * sin01(p2) * clampf((15000.0f - 2.0f * hz) / 3000.0f, 0, 1));
+            }
+            float squeal = 0;
+            if (u > 0.0f) {
+                v.sirenPh += (8.0f + 60.0f * u) * speed * dt;
+                v.sirenPh -= std::floor(v.sirenPh);
+                const float chop = 0.5f + 0.5f * sin01(v.sirenPh);
+                squeal = ghost * std::sqrt(u) * (0.4f + 0.6f * chop * chop) * 1.5f;
+            }
+            // Dull, as print-through is: the tape's top under 1.4 kHz, and
+            // rising with its speed.
+            if ((i & 15) == 0)
+                v.blareR.set(std::min(1400.0f * speed, 0.45f * m_rate), 0.8f, m_rate);
+            const float pr2 = v.blareR.step(ghost * v.env * ghostLevel * (1.0f - u) + squeal).low * flutter * 0.22f;
+            // The rewinding tape lifts a little off the heads: its hiss
+            // thins as the squeal takes over.
+            const float lift = 1.0f - 0.45f * u;
+            const float L = ((hl + tick * (1.0f - v.env4) + pop) * lift + pr2) * g,
+                        R = ((hr + tick * (1.0f + v.env4) + pop) * lift + pr2) * g;
+            tick *= tickDecay;
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // A cabasa twisted into the ONE, after Cook's model of a shaker: the
+    // hand puts energy into the beads on every stroke (swung sixteenths,
+    // then thirty-seconds, then a continuous twist in the last bars), the
+    // beads collide at random as often as there is energy for, each
+    // collision a click, and the gourd rings them at 3 kHz with a bright
+    // band at 6.5. It swells as a reversed tail does, and under it the
+    // deep-house keys' chord, reversed, from nothing to its brightest at
+    // the line.
+    void renderCabasa(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
+        const double bm = b0 + 0.5 * bps * n, be = b0 + bps * n;
+        v.p = progressAt(v, bm);
+        const float p = v.p;
+        const float I = v.sInt;
+        const float dt = 1.0f / m_rate;
+        const SwellLook &look = palette(v.set).swell;
+        const float len = float(std::max(1.0, v.end - v.start));
+        const float tauLong = 0.5f * len, tauShort = 0.6f + 0.05f * len;
+        auto curve = [&](double left) {
+            const float x = float(std::max(0.0, left));
+            return 0.75f * std::exp(-x / tauLong) + 0.25f * std::exp(-x / tauShort);
+        };
+        auto envAt = [&](double b) {
+            if (v.state == Falling)
+                return curve(v.end - v.fallAt) * fallFade(v, b);
+            return curve(v.end - b);
+        };
+        const float e0 = v.gain, e1 = envAt(be) * pressGain(v) * 0.3f * look.gain;
+        v.gain = e1;
+        if (v.lastStep < 0) {
+            v.aL.set(3000.0f, 1.6f, m_rate);
+            v.aR.set(3150.0f, 1.6f, m_rate);
+            v.bL.set(6500.0f, 2.0f, m_rate);
+            v.bR.set(6800.0f, 2.0f, m_rate);
+            v.oL.set(11000.0f, m_rate);
+            v.oR.set(11000.0f, m_rate);
+        }
+        // The keys: the chord's root, its seventh and ninth, the third an
+        // octave up, as the KEYS cell voices them.
+        const int root = h.chordTones[0];
+        const int keys[4] = {root, root + 6, root + 8, root + 9};
+        float keyInc[4];
+        for (int t = 0; t < 4; ++t)
+            keyInc[t] = std::min(midiToHz(float(h.midi(keys[t], t == 0 ? 0 : 1)) + v.bend) * dt, 0.45f);
+        v.note = float(h.midi(root, 0));
+        constexpr double swing = 0.16;
+        const float beadFall = std::exp(-dt / 0.0008f);
+        const float energyFall = std::exp(-dt / (0.045f + 0.03f * I));
+        const float twist = smoothstep((p - 0.75f) / 0.2f); // the strokes run together
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const float g = e0 + (e1 - e0) * float(i) / float(n);
+            const double grid = p < 0.5f ? 0.25 : 0.125;
+            const double pos = b / grid + 1e-7, pair = std::floor(pos * 0.5);
+            const double step = 2.0 * pair + (pos - 2.0 * pair >= 1.0 + swing ? 1.0 : 0.0);
+            if (step != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = step;
+                v.env = std::min(1.5f, v.env + ((int(step) & 1) ? 0.6f : 1.0f));
+                v.env4 = (int(step) & 1) ? 0.35f : -0.35f;
+            }
+            // The hand keeps the beads moving between strokes as it twists.
+            v.env = v.env * energyFall + twist * 0.0004f;
+            // A collision: as likely as the beads have energy for.
+            if (v.rng.unit() < 0.25f * v.env)
+                v.env2 += 0.15f * (0.3f + 0.7f * v.rng.unit()) * v.env;
+            v.env2 *= beadFall;
+            const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            const float bl = v.env2 * n1 * (1.0f - v.env4), br = v.env2 * n2 * (1.0f + v.env4);
+            const float sl = v.oL.step(v.aL.step(bl).band + 0.7f * v.bL.step(bl).band);
+            const float sr = v.oR.step(v.aR.step(br).band + 0.7f * v.bR.step(br).band);
+            // The keys reversed: a tine's sine, brighter (bent by itself)
+            // the nearer the line.
+            float kl = 0, kr = 0;
+            const float bark = 0.05f + 0.4f * g / std::max(1e-4f, 0.3f * look.gain * pressGain(v));
+            for (int t = 0; t < 4; ++t) {
+                float &ph = v.ph[t];
+                ph += keyInc[t];
+                ph -= std::floor(ph);
+                float q = ph + bark * sin01(ph);
+                q -= std::floor(q);
+                const float o = (t == 0 ? 0.8f : 0.5f) * sin01(q);
+                kl += o * (t & 1 ? 1.3f : 0.7f);
+                kr += o * (t & 1 ? 0.7f : 1.3f);
+            }
+            const float cut = cutAt(v, b);
+            const float L = (look.cym * 2.2f * sl + look.pad * 0.35f * kl) * g * cut;
+            const float R = (look.cym * 2.2f * sr + look.pad * 0.35f * kr) * g * cut;
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // A Memphis horror sample on a tape spinning up to speed. The chord is
+    // the key's root, its third, its sixth and the ninth over the octave
+    // (in a minor key the sixth and the ninth a tritone apart): a piano's
+    // tones, a little out of tune with themselves either side, struck on
+    // the riser's grid as a chopped sample is. The tape starts two octaves
+    // slow and comes up to speed as the build does, wobbling as a deck
+    // does when it is getting there, steadying as it arrives; its top
+    // opens with the speed, as everything on a tape does, and the cassette
+    // saturates it. On the line it plays at pitch, on the note slid to.
+    void renderHorror(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const Palette &set = palette(v.set);
+        const PitchLook &k = set.pitch;
+        const float dt = 1.0f / m_rate;
+        const int degree = int(std::lround(v.sTone * 7.0f));
+        const float pe = progressAt(v, b0 + bps * n);
+        const float slow = 1.0f - c;
+        v.wowPh += float(n) * 0.9f * dt;
+        v.wowPh -= std::floor(v.wowPh);
+        const float wobble = 0.6f * slow * (sin01(v.wowPh) + 0.4f * sin01(v.flutterPh));
+        const float semis = -k.glide * std::pow(slow, 1.6f) + wobble + v.bend;
+        const float speed = std::exp2(semis / 12.0f);
+        static const int chord[4] = {0, 2, 5, 8};
+        float inc[8];
+        for (int t = 0; t < 4; ++t) {
+            const float m = degreeNote(h, set.tuning, degree + chord[t], 2) + 12.0f * k.oct;
+            const float hz = midiToHz(m) * speed;
+            inc[2 * t] = std::min(hz * 1.0035f * dt, 0.3f);
+            inc[2 * t + 1] = std::min(hz / 1.0035f * dt, 0.3f);
+        }
+        v.note = degreeNote(h, set.tuning, degree, 2) + 12.0f * k.oct + 12.0f * std::log2(speed);
+        const float top = 500.0f + 6500.0f * speed * speed;
+        v.aL.set(top, 0.8f, m_rate);
+        v.aR.set(top * 1.04f, 0.8f, m_rate);
+        const double grid = gridFor(p, v.bars);
+        // A struck sample rings as long as the tape is slow: its decay
+        // played slower too.
+        const float ring = std::exp(-dt * speed / (0.5f + 0.4f * I));
+        const float g0 = v.gain;
+        const float g1 = riseGain(pe, 14.0f, 1.3f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.16f * k.gain;
+        v.gain = g1;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+            const double step = std::floor(b / grid + 1e-7);
+            if (step != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = step;
+                v.env = 1.0f;
+                v.env2 = 1.0f; // the hammer
+            }
+            v.flutterPh += 6.1f * dt;
+            v.flutterPh -= std::floor(v.flutterPh);
+            float sl = 0, sr = 0;
+            for (int t = 0; t < 4; ++t) {
+                for (int side = 0; side < 2; ++side) {
+                    float &ph = v.ph[2 * t + side];
+                    ph += inc[2 * t + side];
+                    ph -= std::floor(ph);
+                    float p2 = 2.0f * ph, p3 = 3.0f * ph;
+                    p2 -= std::floor(p2);
+                    p3 -= std::floor(p3);
+                    // A piano's tone: the fundamental, a strong octave and
+                    // a twelfth, the upper ones dying first.
+                    const float o = sin01(ph) + (0.5f * sin01(p2) + 0.25f * sin01(p3)) * v.env;
+                    (side ? sr : sl) += (t == 0 ? 1.0f : 0.7f) * o;
+                }
+            }
+            const float hammer = v.rng.bipolar() * v.env2 * 0.5f;
+            v.env2 *= std::exp(-dt * speed / 0.004f);
+            const float e = 0.15f + 0.85f * v.env;
+            v.env *= ring;
+            const float L = fastTanh(1.8f * v.aL.step((sl * e + hammer) * 0.45f).low) * g * 2.2f;
+            const float R = fastTanh(1.8f * v.aR.step((sr * e + hammer) * 0.45f).low) * g * 2.2f;
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // The chord of the moment, turned over by the finger's slide: chord
+    // tone t of it, inverted `inv` times, in an octave.
+    static float chordNote(const Harmony &h, int t, int inv, int octave) {
+        const int count = std::clamp(h.chordCount, 1, 3);
+        const int j = t + inv;
+        const int lift = j >= 0 ? j / count : -((count - 1 - j) / count);
+        return float(h.midi(h.chordTones[j - lift * count], octave)) + 12.0f * float(lift);
+    }
+
+    // A tracker's pulse channel playing a pattern into the drop, the way a
+    // chiptune build is written: rows are sixteenths, and the pattern
+    // walks the chord (every other row at first, every row from halfway).
+    // Each row's volume column climbs with the build; within a note the
+    // volume slides down a step every three frames (two from halfway), so
+    // notes fade in sixteen steps; the instrument's duty runs 50, 25, 12.5%
+    // over its first frames (the pluck) and in the second half of the
+    // build cycles on, the duty sweep that makes a pulse wah. Halfway, a vibrato command
+    // on every note, stepped a frame at a time; in the last beat the note
+    // is held and slid up an octave a frame at a time (a portamento up)
+    // into the line. The echo channel plays it again two rows late,
+    // quieter, a square.
+    void renderTracker(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const StabLook &k = palette(v.set).stab;
+        const float dt = 1.0f / m_rate;
+        const int inv = int(std::lround(v.sTone * 3.0f));
+        constexpr int8_t R = -1;
+        static const int8_t sparse[16] = {0, R, 2, R, 1, R, 2, R, 0, R, 2, R, 3, R, 2, R};
+        static const int8_t busy[16] = {0, 2, 1, 2, 0, 2, 1, 2, 0, 2, 3, 2, 1, 2, 3, 4};
+        const int8_t *pattern = p < 0.5f ? sparse : busy;
+        const float fadeFrames = p < 0.5f ? 3.0f : 2.0f; // frames per volume step down
+        const double slideFrom = v.end - std::min(1.0, 0.25 * (v.end - v.start));
+        static const float pluck[3] = {0.5f, 0.25f, 0.125f}, sweep[4] = {0.125f, 0.25f, 0.5f, 0.25f};
+        const float g0 = v.gain;
+        const float g1 = pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) * 0.2f * k.gain;
+        v.gain = g1;
+        const float echo = 0.33f * palette(v.set).trackerEcho;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double row = std::floor(b * 4.0 + 1e-7);
+            const bool sliding = b >= slideFrom;
+            if (row != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = row;
+                const int8_t t = pattern[int(row - 16.0 * std::floor(row / 16.0))];
+                if (t != R && !sliding) {
+                    const int count = std::clamp(h.chordCount, 1, 3);
+                    v.line = chordNote(h, t % count, inv, 2 + t / count) + 12.0f * k.oct;
+                    v.note = v.line;
+                    // The volume column: 4 at the start, F at the line.
+                    v.env = std::round(4.0f + 11.0f * c);
+                    v.frames = 0;
+                    v.histFrame = -1;
+                    ++v.stepCount;
+                }
+                // The echo channel: what this channel played two rows ago.
+                v.hist[int(row) & 15] = (t != R && !sliding) ? v.line : 0.0f;
+                const float late = v.hist[int(row - 2) & 15];
+                if (late > 0) {
+                    v.lineFrom = late;
+                    v.env3 = std::round(std::max(1.0f, (4.0f + 11.0f * c) * echo));
+                }
+            }
+            // Effects run once a frame.
+            const int frame = int(v.frames * 60.0f);
+            v.frames += dt;
+            if (frame != v.histFrame) {
+                v.histFrame = frame;
+                if (sliding) {
+                    // Hold the last note at full volume and slide it up an
+                    // octave by the line, a frame at a time.
+                    const float frames = float((v.end - slideFrom) * 60.0 / m_bpm * 60.0);
+                    const float u = clampf(float((b - slideFrom) * 60.0 / m_bpm * 60.0) / std::max(1.0f, frames), 0, 1);
+                    v.glideNote = v.line + 12.0f * u;
+                    v.env = 15.0f;
+                } else {
+                    if (frame > 0 && frame % int(fadeFrames) == 0)
+                        v.env = std::max(0.0f, v.env - 1.0f);
+                    // The vibrato command from halfway: a frame-stepped sine,
+                    // a quarter tone either side, eight frames round.
+                    const float vib = p >= 0.5f ? 0.25f * sin01(float(frame % 8) / 8.0f) : 0.0f;
+                    v.glideNote = v.line + vib;
+                }
+                if (frame > 0 && frame % 2 == 0)
+                    v.env3 = std::max(0.0f, v.env3 - 1.0f);
+                v.env2 = frame < 3 ? pluck[frame] : p < 0.5f ? 0.125f : sweep[(frame / 2) & 3];
+            }
+            const float inc = std::min(midiToHz(v.glideNote + v.bend) * dt, 0.45f);
+            v.ph[0] += inc;
+            v.ph[0] -= std::floor(v.ph[0]);
+            float o = pulseWave(v.ph[0], inc, v.env2) * v.env / 15.0f;
+            float e = 0;
+            if (echo > 0 && v.env3 > 0 && v.lineFrom > 0) {
+                const float einc = std::min(midiToHz(v.lineFrom + v.bend) * dt, 0.45f);
+                v.ph[1] += einc;
+                v.ph[1] -= std::floor(v.ph[1]);
+                e = pulseWave(v.ph[1], einc, 0.5f) * v.env3 / 15.0f;
+            }
+            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+            o *= g;
+            e *= g;
+            const float L = drive(1.1f * o + 0.5f * e, v.sGrit), R2 = drive(0.9f * o + 1.4f * e, v.sGrit);
+            l[i] += L;
+            r[i] += R2;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R2));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // Shoegaze's guitars as a wall: two guitars, one to each side, each a
+    // power chord on three plucked strings (a loop of the string's length
+    // that a pick excites and its own low-pass slowly damps, so it rings
+    // as a string does, its top dying first). They strum once each half
+    // bar, the pick crossing the strings 11 ms apart, the right guitar a
+    // little late and its own; from 60% of the way they tremolo-pick
+    // sixteenths, soft, up and down. A pick on a ringing string damps it as
+    // it lands. Through the pedal, which sustains them into one sound; the
+    // pedal pushed harder and the tone opening from 1.8 to 6 kHz as the
+    // build grows. A hand on the whammy bar keeps it all wandering.
+    void renderWall(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const StabLook &k = palette(v.set).stab;
+        const float dt = 1.0f / m_rate;
+        const int inv = int(std::lround(v.sTone * 3.0f));
+        const int count = std::clamp(h.chordCount, 1, 3);
+        const int j = ((inv % count) + count) % count;
+        const int root = h.chordTones[j];
+        // A power chord's fifth through a fuzz is tuned pure, as a player's
+        // ear tunes it: a tempered one, two cents flat, beats against its
+        // root in every difference tone the pedal makes, and the chord
+        // smears. A tuning whose fifth is not near 7 semitones keeps its own.
+        float fifth = float(h.tuning.degreeSemis(root + 4) - h.tuning.degreeSemis(root));
+        if (std::fabs(fifth - 7.0f) < 0.15f)
+            fifth = 7.0196f;
+        const float low = chordNote(h, 0, inv, 1) + 12.0f * k.oct;
+        const float notes[3] = {low, low + fifth, low + 12.0f};
+        v.note = low;
+        // The bar under a resting hand: never more than 15 cents either
+        // side, so the chord's notes stay notes.
+        const float bend = std::exp2((0.07f + 0.05f * v.sMotion) * v.wham.step(float(n) * dt, v.rng) / 12.0f);
+        Delay *loops[6] = {&v.combL, &v.combs[0], &v.combs[1], &v.combR, &v.combs[2], &v.combs[3]};
+        float period[6], fb[6];
+        for (int s = 0; s < 6; ++s) {
+            // The right guitar a cent or two off the left: two takes.
+            const float hz = midiToHz(notes[s % 3] + v.bend + (s >= 3 ? 0.012f : -0.008f)) * bend;
+            period[s] = clampf(m_rate / hz, 8.0f, float(m_rate / 30.0f) - 4.0f);
+            fb[s] = std::exp(-period[s] / ((2.5f + 2.0f * I) * m_rate));
+        }
+        const bool tremolo = p >= 0.6f;
+        const double grid = tremolo ? 0.25 : 2.0;
+        const float spread = (tremolo ? 0.004f : 0.011f) * m_rate;
+        const float hit = 0.9f + 2.6f * c + 2.0f * v.sGrit;
+        const float tone = 1800.0f * std::exp2(1.75f * c);
+        v.aL.set(tone, 0.7f, m_rate);
+        v.aR.set(tone * 1.03f, 0.7f, m_rate);
+        // The tone knob down from noon: the mids scooped further, a broad
+        // dip at 1 kHz, so the wall is lows and an edge, not a honk.
+        v.bL.set(1000.0f, 0.7f, m_rate);
+        v.bR.set(1000.0f, 0.7f, m_rate);
+        // Tight in front of the pedal (a high-pass at 120 Hz, as a boost
+        // before a fuzz is set), so the strings' lows do not swamp the
+        // clipper and come out as a mush of difference tones; and behind it
+        // a dip of about 4 dB at 190 Hz, where two guitars' fifths and
+        // octaves pile up, and the cabinet's thump on the root itself (5 dB,
+        // narrow, following the chord), so the low end is one note and not
+        // a smear.
+        v.blareL.set(midiToHz(low + v.bend) * bend, 2.0f, m_rate);
+        v.blareR.set(midiToHz(low + v.bend) * bend, 2.0f, m_rate);
+        if (v.lastStep < 0) {
+            v.cL.set(80.0f, 0.7f, m_rate);
+            v.cR.set(80.0f, 0.7f, m_rate);
+            v.fuzzL.set(190.0f, 1.4f, m_rate);
+            v.fuzzR.set(190.0f, 1.4f, m_rate);
+            v.blareL.reset();
+            v.blareR.reset();
+        }
+        const float g0 = v.gain;
+        const float g1 = riseGain(progressAt(v, b0 + bps * n), 15.0f, 1.2f) * pressGain(v) * fallFade(v, b0 + bps * n) *
+                         (0.85f + 0.3f * I) * 0.3f * k.gain;
+        v.gain = g1;
+        const float loopLp = 0.55f + 0.3f * c, pickLp = 0.15f + 0.3f * I;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b / grid + 1e-7);
+            if (step != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = step;
+                const bool up = tremolo && (v.stepCount & 1);
+                ++v.stepCount;
+                const float vel = tremolo ? 0.3f + 0.3f * c : 1.0f;
+                for (int s = 0; s < 6; ++s) {
+                    const int order = up ? 2 - s % 3 : s % 3;
+                    Voice::String &str = v.strings[s];
+                    str.wait = float(order) * spread + (s >= 3 ? 0.007f * m_rate * (tremolo ? 0.3f : 1.0f) : 0.0f) + 1.0f;
+                    str.amp = vel * (0.85f + 0.3f * v.rng.unit());
+                }
+            }
+            float gl = 0, gr = 0;
+            for (int s = 0; s < 6; ++s) {
+                Voice::String &str = v.strings[s];
+                if (str.wait > 0.0f) {
+                    str.wait -= 1.0f;
+                    if (str.wait <= 0.0f)
+                        str.left = period[s];
+                }
+                float x = 0, damp = 1.0f;
+                if (str.left > 0.0f) {
+                    str.left -= 1.0f;
+                    str.pick += pickLp * (v.rng.bipolar() - str.pick);
+                    x = str.pick * str.amp;
+                    damp = tremolo ? 0.97f : 0.8f;
+                }
+                const float back = loops[s]->read(period[s] - (1.0f - loopLp) / loopLp);
+                str.lp += loopLp * (back - str.lp);
+                const float y = x + fb[s] * damp * str.lp;
+                loops[s]->push(y);
+                (s < 3 ? gl : gr) += y;
+            }
+            const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+            float L = v.aL.step(v.muffL.step(0.22f * v.cL.step(gl).high, hit)).low;
+            float R = v.aR.step(v.muffR.step(0.22f * v.cR.step(gr).high, hit)).low;
+            L += 0.7f * v.blareL.step(L).band - v.bL.step(L).band - 0.4f * v.fuzzL.step(L).band;
+            R += 0.7f * v.blareR.step(R).band - v.bR.step(R).band - 0.4f * v.fuzzR.step(R).band;
+            L = drive(L * g * 2.0f, v.sGrit);
+            R = drive(R * g * 2.0f, v.sGrit);
+            l[i] += L;
+            r[i] += R;
+            peak = std::max(peak, std::fabs(L) + std::fabs(R));
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // Phonk's cowbell rolled into the drop: the 3-3-2 in sixteenths, then
+    // in thirty-seconds, then every thirty-second in the last eighth of
+    // the build. Each strike is the 808's cowbell (two squares through a
+    // band an octave over the note, a click and a short ring, shorter as
+    // it quickens) on a chord tone, and the chord climbs a scale step every
+    // eighth of the way, so the roll rises as it speeds up.
+    void renderBellRoll(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
+        const float I = v.sInt;
+        const StabLook &k = palette(v.set).stab;
+        const float dt = 1.0f / m_rate;
+        const int count = std::clamp(h.chordCount, 1, 4);
+        const int base = int(std::lround(v.sTone * 7.0f)) + int(std::floor(p * 7.99f));
+        const double unit = p < 0.5f ? 0.25 : 0.125;
+        const bool straight = p >= 0.875f;
+        static const bool tresillo[8] = {true, false, false, true, false, false, true, false};
+        const float ring = std::exp(-dt / ((0.06f + 0.1f * (1.0f - c) + 0.06f * I))), click = std::exp(-dt / 0.012f);
+        const float g0 = v.gain;
+        const float g1 =
+            riseGain(progressAt(v, b0 + bps * n), 14.0f, 1.2f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.85f + 0.3f * I) *
+            0.2f * k.gain;
+        v.gain = g1;
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b / unit + 1e-7);
+            if (step != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = step;
+                if (straight || tresillo[int(step - 8.0 * std::floor(step / 8.0))]) {
+                    const int j = v.stepCount++;
+                    v.line = float(h.midi(h.chordTones[j % count] + base, 2));
+                    v.note = v.line;
+                    v.env = 1.0f;
+                    v.env2 = 1.0f;
+                    v.env4 = (j & 1) ? 0.3f : -0.3f;
+                    v.aL.set(midiToHz(v.line) * 2.0f, 1.3f, m_rate);
+                    v.glideNote = std::min(midiToHz(v.line + v.bend) * dt, 0.3f);
+                }
+            }
+            const float x = cowbellPair(v.sq[0], v.sq[1], v.glideNote);
+            const float y = v.aL.step(x).band + 0.15f * x;
+            const float e = 0.6f * v.env2 + 0.4f * v.env;
+            v.env *= ring;
+            v.env2 *= click;
+            const float o = y * e * (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
+            l[i] += o * (1.0f - v.env4);
+            r[i] += o * (1.0f + v.env4);
+            peak = std::max(peak, 2.0f * std::fabs(o));
         }
         v.level = v.level * 0.8f + 0.2f * peak;
     }
@@ -1969,6 +3888,20 @@ private:
             v.blareR.reset();
             v.blareL.set(1400.0f, 1.1f, m_rate);
             v.blareR.set(1500.0f, 1.1f, m_rate);
+            if (k.muff > 0) {
+                // The palm on the strings: the chug's chord under 700 Hz.
+                v.fuzzL.reset();
+                v.fuzzR.reset();
+                v.fuzzL.set(700.0f, 0.7f, m_rate);
+                v.fuzzR.set(740.0f, 0.7f, m_rate);
+            }
+            if (k.gong > 0) {
+                static const float amp[7] = {0.6f, 0.15f, 0.5f, 0.4f, 0.3f, 0.18f, 0.1f};
+                for (int m = 0; m < 7; ++m) {
+                    v.modal[m] = 0;
+                    v.modalEnv[m] = amp[m];
+                }
+            }
         }
         constexpr float kickWindow = 0.04f, fadeIn = 0.03f, kHitDelay = 0.02f;
         const float dt = 1.0f / m_rate;
@@ -1999,7 +3932,15 @@ private:
         float padRise = 0, padFall = 1;
         if (k.pad > 0) {
             float m[3];
-            if (k.padChord > 0) {
+            if (k.muff > 0) {
+                // Guitars play a power chord into a fuzz, not a triad: the
+                // chord's root, a pure fifth and the octave, low on the
+                // neck, so the wall is one note and its colour, not mud.
+                const float root = float(h.midi(h.chordTones[0], 1)) - 12.0f + 12.0f * k.padOct;
+                m[0] = root;
+                m[1] = root + 7.0196f;
+                m[2] = root + 12.0f;
+            } else if (k.padChord > 0) {
                 for (int j = 0; j < 3; ++j)
                     m[j] = float(h.midi(h.chordTones[j % std::max(1, h.chordCount)], 2)) + 12.0f * k.padOct;
             } else {
@@ -2008,13 +3949,60 @@ private:
                 m[1] = root + float(h.tuning.degreeSemis(4) - h.tuning.degreeSemis(0));
                 m[2] = root + 12.0f;
             }
+            // Two saws to a note, 8 cents apart; two takes of a guitar only 2.
+            const float spread = k.muff > 0 ? 0.02f : 0.08f;
             for (int j = 0; j < 3; ++j) {
-                padInc[2 * j] = std::min(midiToHz(m[j] + 0.08f) / m_rate, 0.45f);
-                padInc[2 * j + 1] = std::min(midiToHz(m[j] - 0.08f) / m_rate, 0.45f);
+                padInc[2 * j] = std::min(midiToHz(m[j] + spread) / m_rate, 0.45f);
+                padInc[2 * j + 1] = std::min(midiToHz(m[j] - spread) / m_rate, 0.45f);
             }
             padRise = 1.0f - std::exp(-dt / std::max(0.002f, k.padAttack));
             padFall = std::exp(-dt / k.padDecay);
         }
+        // A gong ageng: its fundamental on the key's root with a weaker mode
+        // 2.2 Hz above it, so it hums a little without pumping the kick's
+        // band; the ombak a gong is tuned for is up in its body, a pair of
+        // modes 1.9 Hz apart at 4.16 times the root, where it beats clearly
+        // and out of the bass's way. The other modes inharmonic, each dying
+        // sooner than the one below. Struck with a padded beater, the low
+        // modes bloom over 60 ms and every mode settles a fifth of a semitone
+        // from sharp as the metal relaxes. After its first bar everything
+        // under about 170 Hz dies fast: the next bar's kick and bass have the
+        // low end back, and the gong rings on above them.
+        float gongInc[7] = {}, gongDecay[7] = {};
+        float gongBloom = 0;
+        if (k.gong > 0) {
+            const float ratio[7] = {1.0f, 1.0f + 2.2f / boomHz, 2.004f, 2.93f, 4.16f, 4.16f + 1.9f / boomHz, 5.47f};
+            static const float tau[7] = {4.0f, 4.0f, 3.5f, 2.6f, 2.0f, 2.0f, 0.9f};
+            const float glide = 1.0f + 0.012f * std::exp(-v.t / 0.15f);
+            const bool pastBar = v.t > float(4.0 * 60.0 / m_bpm);
+            for (int m = 0; m < 7; ++m) {
+                gongInc[m] = std::min(boomHz * ratio[m] * glide / m_rate, 0.45f);
+                gongDecay[m] = std::exp(-dt / ((m < 4 && pastBar) ? 0.5f : tau[m] * (0.8f + 0.4f * I)));
+            }
+            gongBloom = 1.0f / 0.06f;
+        }
+        // The wall: the pad's chord through the fuzz, its whammy bar wandering.
+        if (k.muff > 0 && k.pad > 0) {
+            // Never more than about 15 cents either side.
+            const float bend = std::exp2(0.12f * v.wham.step(float(n - from) / m_rate, v.rng) / 12.0f);
+            for (float &x : padInc)
+                x = std::min(x * bend, 0.45f);
+        }
+        // The amp feeding back out of the wall: the chord's root two
+        // octaves up (and a string a hertz and a half off it, beating),
+        // swelling in over the first beat as if the tail were played
+        // backwards, then holding as long as the wall does. It goes in
+        // after the pedal, as the amp's own note: in front of it the wall
+        // would swallow it until the chord had died.
+        float fbInc = 0, fbInc2 = 0, fbAmp = 0;
+        if (k.feedback > 0) {
+            const float hz = midiToHz(float(h.midi(h.chordTones[0], 3)));
+            fbInc = std::min(hz / m_rate, 0.45f);
+            fbInc2 = std::min((hz + 1.5f) / m_rate, 0.45f);
+            const float u = smoothstep((v.t - 0.06f) / (0.6f * float(60.0 / m_bpm)));
+            fbAmp = k.feedback * u;
+        }
+
         // A layer under the kick, not over it: the drop's weight is the
         // kick's, the impact is its size.
         const float vel = v.vel * (0.75f + 0.35f * I) * pressGain(v) * 0.42f * k.gain;
@@ -2031,7 +4019,15 @@ private:
             v.glideNote *= bodyPitchDecay;
             v.ph[1] += bodyHz * (1.0f + 1.2f * v.glideNote) / m_rate;
             v.ph[1] -= std::floor(v.ph[1]);
-            const float n0 = v.rng.bipolar(), n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            const float n0 = v.rng.bipolar();
+            float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            // A console's explosion: one register for both sides, its clock
+            // falling from 24 kHz to under 1 as the crash decays.
+            if (k.chip > 0) {
+                const float x = 0.6f * v.chip.step(std::min((800.0f + 23000.0f * v.env3 * v.env3) / m_rate, 1.0f), false);
+                n1 += k.chip * (x - n1);
+                n2 += k.chip * (x - n2);
+            }
             const float knock = v.aL.step(n0).band * 2.5f + v.cR.step(n0).band * 2.6f;
             const float body = v.aR.step((sin01(v.ph[1]) + knock) * v.env2).high * k.body;
             v.env2 *= bodyDecay;
@@ -2092,20 +4088,80 @@ private:
                     xl += blare * v.blareL.step(xl).band;
                     xr += blare * v.blareR.step(xr).band;
                 }
-                pl = fastTanh(k.padDrive * xl) * g;
-                pr = fastTanh(k.padDrive * xr) * g;
+                if (fbAmp > 0 && k.muff <= 0) {
+                    v.modal[0] += fbInc;
+                    v.modal[0] -= std::floor(v.modal[0]);
+                    v.modal[1] += fbInc2;
+                    v.modal[1] -= std::floor(v.modal[1]);
+                    const float fb = fbAmp * (0.3f + 0.7f * v.padEnv);
+                    xl += 0.3f * fb * sin01(v.modal[0]);
+                    xr += 0.3f * fb * sin01(v.modal[1]);
+                }
+                if (k.muff > 0) {
+                    // A palm-muted chug on the ONE, the transient the wall
+                    // blooms out of: the raw strings under the palm, dying in
+                    // a tenth of a second, and the pick's click, into the
+                    // pedal ahead of the wall.
+                    const float since = v.t - kHitDelay;
+                    const float chug = since < 0.8f ? std::exp(-since / 0.11f) : 0.0f;
+                    const float pick = since < 0.05f ? v.rng.bipolar() * std::exp(-since / 0.004f) * 0.9f : 0.0f;
+                    const float cl0 = v.fuzzL.step(a0 + a3 + a4).low * chug, cr0 = v.fuzzR.step(a1 + a2 + a5).low * chug;
+                    const float hit = 1.5f + 2.5f * std::max(v.padEnv, chug);
+                    const float gw = 0.45f * k.pad * std::max(v.padEnv, 1.8f * chug);
+                    pl = v.muffL.step(0.6f * (xl + cl0 + pick), hit) * gw * 1.7f;
+                    pr = v.muffR.step(0.6f * (xr + cr0 + pick), hit) * gw * 1.7f;
+                    if (fbAmp > 0) {
+                        v.modal[0] += fbInc;
+                        v.modal[0] -= std::floor(v.modal[0]);
+                        v.modal[1] += fbInc2;
+                        v.modal[1] -= std::floor(v.modal[1]);
+                        // A string singing on its own, a little rough, as a
+                        // feeding-back note is.
+                        const float fb = 0.32f * fbAmp * k.pad;
+                        pl += fb * fastTanh(1.6f * sin01(v.modal[0]));
+                        pr += fb * fastTanh(1.6f * sin01(v.modal[1]));
+                    }
+                } else {
+                    pl = fastTanh(k.padDrive * xl) * g;
+                    pr = fastTanh(k.padDrive * xr) * g;
+                }
+            }
+            // The gong: its humming pair dry and mono with the boom, under
+            // the kick; the modes above it spread either side.
+            float gongLow = 0, gl = 0, gr = 0;
+            if (k.gong > 0) {
+                const float bloom = clampf((v.t - kHitDelay) * gongBloom, 0, 1);
+                for (int m = 0; m < 7; ++m) {
+                    v.modal[m] += gongInc[m];
+                    v.modal[m] -= std::floor(v.modal[m]);
+                    const float x = sin01(v.modal[m]) * v.modalEnv[m];
+                    v.modalEnv[m] *= gongDecay[m];
+                    // The beating pair goes one to each side, so the ombak
+                    // also swings across the room.
+                    if (m < 2)
+                        gongLow += x * bloom * bloom;
+                    else if (m == 3 || m == 4)
+                        gl += x * (m == 3 ? bloom : 1.0f);
+                    else
+                        gr += x * (m == 2 ? bloom : 1.0f);
+                }
+                const float g = 0.5f * k.gong;
+                gongLow *= g * (v.quiet ? 0.0f : 1.0f - 0.95f * duck[i]);
+                const float mid = 0.35f * (gl + gr);
+                gl = g * (gl + mid);
+                gr = g * (gr + mid);
             }
             const float attack = clampf((v.t - kHitDelay) * 1000.0f, 0, 1);
-            const float L = (0.55f * body + 0.2f * snap + 0.3f * cl + 0.12f * tl + pl) * vel * attack;
-            const float R = (0.55f * body - 0.2f * snap + 0.3f * cr + 0.12f * tr + pr) * vel * attack;
+            const float L = (0.55f * body + 0.2f * snap + 0.3f * cl + 0.12f * tl + pl + gl) * vel * attack;
+            const float R = (0.55f * body - 0.2f * snap + 0.3f * cr + 0.12f * tr + pr + gr) * vel * attack;
             l[i] += L;
             r[i] += R;
-            low[i] += 0.22f * boom * vel;
+            low[i] += 0.22f * boom * vel + gongLow * vel;
             peak = std::max(peak, std::fabs(L) + std::fabs(R) + std::fabs(boom));
             v.t += 1.0f / m_rate;
         }
         v.level = v.level * 0.8f + 0.2f * peak;
-        if (v.t > 0.2f && v.env < 1e-4f && v.env3 < 1e-4f && v.env4 < 1e-4f && v.padEnv <= 0)
+        if (v.t > 0.2f && v.env < 1e-4f && v.env3 < 1e-4f && v.env4 < 1e-4f && v.padEnv <= 0 && v.modalEnv[0] < 1e-4f)
             v.active = false;
     }
 
@@ -2123,13 +4179,17 @@ private:
             v.state = Running;
             v.quiet = true; // started on a drop: mind the kick's window
         }
+        const SubLook &k = palette(v.set).sub;
+        if (k.mono > 0) {
+            renderLine(v, l, r, low, n, h, duck);
+            return;
+        }
         const int from = startOf(v, n);
         if (from >= n)
             return;
         const float I = v.sInt;
-        const SubLook &k = palette(v.set).sub;
         const int degree = int(std::lround(v.sTone * 4.0f));
-        float endHz = midiToHz(h.midi(degree, -1));
+        float endHz = midiToHz(degreeNote(h, palette(v.set).tuning, degree, -1));
         while (endHz < 36.0f)
             endHz *= 2.0f;
         const float spb = float(60.0 / m_bpm);
@@ -2148,7 +4208,7 @@ private:
         }
         const float vel = v.vel * pressGain(v) * 0.3f * k.gain;
         const float skinDecay = std::exp(-1.0f / (0.25f * m_rate)), stickDecay = std::exp(-1.0f / (0.004f * m_rate));
-        const float skinInc = std::min(2.0f * hz / m_rate, 0.45f);
+        const float inc = hz / m_rate, skinInc = std::min(2.0f * hz / m_rate, 0.45f);
         const float window = v.quiet ? 0.04f : 0.0f;
         // An 808 pushed into distortion: more drive, the same loudness.
         const float push = 1.6f + 4.0f * k.drive, norm = 1.0f / (1.0f + 0.35f * k.drive);
@@ -2161,7 +4221,7 @@ private:
         for (int i = from; i < n; ++i) {
             const float attack = clampf((v.t - window) * (v.quiet ? 40.0f : 400.0f), 0, 1);
             if (attack > 0) {
-                v.ph[0] += hz / m_rate;
+                v.ph[0] += inc;
                 v.ph[0] -= std::floor(v.ph[0]);
             }
             const float s = sin01(v.ph[0]);
@@ -2196,11 +4256,164 @@ private:
             v.active = false;
     }
 
-    void renderDown(Voice &v, float *l, float *r, int n, double, double bps, const Harmony &h) {
+    // A console's triangle channel: 32 steps up and down at sixteen levels
+    // (15 to 0 and back), each step's edge smoothed as a saw's is so it
+    // stops at the sample rate. In −1..1.
+    static inline float triangleStep(float ph, float inc) {
+        auto level = [](int i) {
+            i &= 31;
+            return float(i < 16 ? 15 - i : i - 16);
+        };
+        const float u = ph * 32.0f, dt = std::min(inc * 32.0f, 0.5f);
+        const int idx = int(u);
+        const float frac = u - float(idx);
+        float y = level(idx);
+        if (frac < dt)
+            y += 0.5f * (level(idx) - level(idx - 1)) * polyBlep(frac, dt);
+        else if (frac > 1.0f - dt)
+            y += 0.5f * (level(idx + 1) - level(idx)) * polyBlep(frac, dt);
+        return y / 7.5f - 1.0f;
+    }
+
+    // A bass played as a line, one note at a time: amapiano's log drum, the
+    // console's triangle, phonk's 808. Across its cell the finger picks the
+    // scale degree; held, sliding sideways (or a twist, two degrees more)
+    // glides to the next note in the look's glide time, the portamento these
+    // basses are played with. The key's root is kept in one octave and the
+    // line moves from there, so a bass's weight doesn't jump an octave from
+    // one key to the next. A new note chokes this one in 4 ms.
+    void renderLine(Voice &v, float *l, float *r, float *low, int n, const Harmony &h, const float *duck) {
+        const SubLook &k = palette(v.set).sub;
+        if (v.choke) {
+            // Choked before it began: gone without a sound.
+            if (v.delay > 0) {
+                v.active = false;
+                return;
+            }
+        }
+        const int from = startOf(v, n);
+        if (from >= n)
+            return;
+        const float I = v.sInt;
+        const int degree = int(std::lround(v.sTone * 7.0f)) + int(std::lround(v.sMotion * 2.0f));
+        const float floorHz = k.log > 0 ? 62.0f : 41.0f;
+        float root = float(h.midi(0, -1));
+        while (midiToHz(root) < floorHz)
+            root += 12.0f;
+        while (midiToHz(root) >= 2.0f * floorHz)
+            root -= 12.0f;
+        const float target = root + float(h.midi(degree, -1) - h.midi(0, -1));
+        const float spb = float(60.0 / m_bpm);
+        const float dt = 1.0f / m_rate;
+        if (v.t == 0) {
+            v.line = v.lineFrom > 0 ? v.lineFrom : target;
+            v.env = 1.0f;
+            v.env2 = 1.0f; // the log drum's bite
+            v.env3 = 1.0f; // its stick, the triangle kick's noise
+            v.pitchEnv = 1.0f;
+            v.chip = ChipNoise{};
+            v.chip.reg = 0x4A3Bu;
+        }
+        v.line += (target - v.line) * (1.0f - std::exp(-float(n - from) * dt / std::max(0.005f, k.glide)));
+        // The dive a struck 808 or a triangle kick falls onto its note
+        // through; a console's moves once a frame, sixty times a second.
+        const float diveSec = std::max(0.01f, (0.35f + 0.3f * I) * spb * k.diveTime);
+        const float diveT = k.tri > 0 ? std::floor(v.t * 60.0f) / 60.0f : v.t;
+        const float u = clampf(diveT / diveSec, 0, 1);
+        // A note slid into from the last has no dive of its own: the slide is it.
+        const float midi = v.line + (v.lineFrom > 0 ? 0.0f : k.dive) * (1.0f - u) * (1.0f - u);
+        v.note = midi;
+        const float hz = midiToHz(midi);
+        // How long it rings. A log drum is a pluck, down 20 dB in about 0.4 s
+        // (longer pressed harder) and held up while the finger stays for a
+        // slide; the triangle has no volume, only on and then cut; the 808
+        // sustains while held.
+        float tau;
+        if (k.log > 0)
+            tau = v.held ? 0.5f : (0.09f + 0.15f * v.sPress) * k.decay;
+        else
+            tau = (v.held || v.t < diveSec) ? 4.0f : (0.18f + 0.25f * I) * spb / 0.47f * k.decay;
+        const float decay = std::exp(-dt / tau);
+        const float triLen = (0.12f + 0.12f * I + 0.2f * v.sPress) * k.decay;
+        const float chokeFall = dt / 0.004f; // from full to nothing in 4 ms, a straight line
+        const float vel = v.vel * pressGain(v) * 0.3f * k.gain;
+        if (k.log > 0 && v.t == 0)
+            v.aL.set(std::min(hz * 3.7f, 2000.0f), 5.0f, m_rate);
+        if (k.tri > 0 && v.t == 0)
+            v.fuzzL.set(palette(v.set).lowpass > 0 ? palette(v.set).lowpass : 14000.0f, 0.7f, m_rate);
+        const float pluckDecay = std::exp(-dt / 0.018f), skinDecay = std::exp(-dt / 0.25f), stickDecay = std::exp(-dt / 0.004f);
+        // An 808 clipped hard (a near-square, every odd harmonic), or pushed
+        // into a tanh as trap's is.
+        const float push = 1.6f + 4.0f * k.drive, norm = 1.0f / (1.0f + 0.35f * k.drive);
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            if (v.choke)
+                v.env = std::max(0.0f, v.env - chokeFall);
+            float f = hz;
+            if (k.log > 0) {
+                // Plucked nine semitones sharp, falling into its note.
+                f *= 1.0f + 0.68f * v.pitchEnv;
+                v.pitchEnv *= pluckDecay;
+            }
+            const float inc = std::min(f / m_rate, 0.45f);
+            v.ph[0] += inc;
+            v.ph[0] -= std::floor(v.ph[0]);
+            const float gain = v.env * vel * (1.0f - 0.85f * duck[i]) * std::min(1.0f, v.t * 1000.0f);
+            float o;
+            if (k.tri > 0) {
+                // On at full level, cut in 3 ms when its time is up (or the
+                // finger lifts after it), as a tracker's note-off does.
+                if (!v.held && v.t > triLen)
+                    v.env = std::max(0.0f, v.env - dt / 0.003f);
+                // Through the console's output filter, as the rest of the
+                // set is: the steps' edges stop short of the top octave,
+                // where they would only make peaks between the samples.
+                o = v.fuzzL.step(triangleStep(v.ph[0], inc) * gain * 0.75f).low;
+                // The kick's click: the noise channel, a frame long.
+                if (v.t < 1.0f / 60.0f) {
+                    const float x = 0.5f * v.chip.step(std::min(9000.0f / m_rate, 1.0f), false) * v.env3 * vel;
+                    l[i] += x;
+                    r[i] += x;
+                }
+            } else if (k.log > 0) {
+                // Driven into a tanh that relaxes as it rings: square and
+                // hollow, then round; and a wooden knock near its fourth
+                // harmonic, rung by the stick.
+                const float s = sin01(v.ph[0]);
+                const float bite = 1.0f + 3.5f * v.env2;
+                o = fastTanh(bite * s) / fastTanh(bite) * gain * 0.8f * k.log;
+                const float knock = v.aL.step(v.rng.bipolar() * v.env3).band * 0.35f * k.log * gain;
+                v.env2 *= skinDecay;
+                v.env3 *= stickDecay;
+                l[i] += knock;
+                r[i] += knock;
+            } else if (k.clip > 0) {
+                const float s = sin01(v.ph[0]);
+                o = v.subClip.step(4.5f * s) * gain * 0.62f;
+            } else {
+                const float s = sin01(v.ph[0]);
+                o = fastTanh(push * s + 0.25f * (s * s - 0.5f)) * norm * gain;
+            }
+            if (k.tri <= 0)
+                v.env *= decay;
+            low[i] += o;
+            peak = std::max(peak, 2.0f * std::fabs(o));
+            v.t += dt;
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+        if (v.env < 2e-4f)
+            v.active = false;
+    }
+
+    void renderDown(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
         const int from = startOf(v, n);
         if (from >= n)
             return;
         const DownLook &k = palette(v.set).down;
+        if (k.mode == 1) {
+            renderVox(v, l, r, from, n, b0, bps, h);
+            return;
+        }
         // Four beats from bright to dark; held, it sinks most of the way and
         // waits there for the finger to let go.
         const float len = (4.0f + 2.0f * v.sInt) * k.len;
@@ -2225,10 +4438,54 @@ private:
         const float g0 = v.gain, g1 = gEnd * pressGain(v) * (0.6f + 0.5f * v.sInt) * 0.3f * k.gain;
         v.gain = g1;
         float peak = 0;
+        // A dive-bomb: the chord's root, fifth and octave through the fuzz,
+        // the whammy bar pushed all the way down, the springs shaking as it
+        // gets there; the pick's scrape at the start.
+        float diveInc[6] = {};
+        if (k.mode == 2) {
+            const float shake = 0.35f * c * sin01(v.ph[6]);
+            v.ph[6] += float(n - from) * 7.0f / m_rate;
+            v.ph[6] -= std::floor(v.ph[6]);
+            const float fifth = float(h.tuning.degreeSemis(4) - h.tuning.degreeSemis(0));
+            const float notes[3] = {midi - 12.0f + shake, midi - 12.0f + fifth + shake, midi + shake};
+            for (int j = 0; j < 3; ++j) {
+                diveInc[2 * j] = std::min(midiToHz(notes[j] + 0.06f) / m_rate, 0.45f);
+                diveInc[2 * j + 1] = std::min(midiToHz(notes[j] - 0.06f) / m_rate, 0.45f);
+            }
+            v.note = midi - 12.0f;
+        }
         for (int i = from; i < n; ++i) {
             const float attack = std::min(1.0f, v.t * 200.0f);
             const float g = (g0 + (g1 - g0) * float(i) / float(n)) * attack;
             const float n1 = v.rng.bipolar(), n2 = v.rng.bipolar();
+            if (k.mode == 3) {
+                const float stepped = std::round(midi);
+                const float pinc = std::min(midiToHz(stepped) / m_rate, 0.45f);
+                v.ph[0] += pinc;
+                v.ph[0] -= std::floor(v.ph[0]);
+                const float hiss = 0.6f * v.chip.step(std::min((300.0f + 12000.0f * (1.0f - c)) / m_rate, 1.0f), false);
+                const float x = (k.tone * 0.8f * pulseWave(v.ph[0], pinc, u < 0.5f ? 0.25f : 0.125f) + k.noise * hiss) * g;
+                l[i] += x;
+                r[i] += x;
+                peak = std::max(peak, 2.0f * std::fabs(x));
+                v.t += 1.0f / m_rate;
+                continue;
+            }
+            if (k.mode == 2) {
+                float sl = 0, sr = 0;
+                for (int j = 0; j < 3; ++j) {
+                    sl += v.saw[2 * j].step(diveInc[2 * j]);
+                    sr += v.saw[2 * j + 1].step(diveInc[2 * j + 1]);
+                }
+                const float scrape = k.noise * n1 * std::exp(-v.t / 0.05f);
+                const float L = v.muffL.step(0.2f * sl + scrape, 1.6f) * g * 2.2f;
+                const float R = v.muffR.step(0.2f * sr + scrape, 1.6f) * g * 2.2f;
+                l[i] += L;
+                r[i] += R;
+                peak = std::max(peak, std::fabs(L) + std::fabs(R));
+                v.t += 1.0f / m_rate;
+                continue;
+            }
             const float s1 = v.saw[0].step(inc), s2 = v.saw[1].step(inc2);
             const float L = v.bL.step(v.aL.step(k.noise * n1 + k.tone * s1).low).high * g;
             const float R = v.bR.step(v.aR.step(k.noise * n2 + k.tone * s2).low).high * g;
@@ -2242,6 +4499,260 @@ private:
             v.active = false;
     }
 
+    // A slowed Memphis vocal, as if sampled off a dubbed cassette into an
+    // old sampler and played back slow: a man's voice saying "yeah", "ho",
+    // "ayy", "what", "sheesh" or "yessir". A voice is made here as one is:
+    // the folds' pulses, never quite even (each period a little longer or
+    // shorter, a little louder or softer, the pitch drifting), with breath
+    // in them, through the throat's four resonances moving from sound to
+    // sound; an "h" is breath through the same throat, an "s" or "sh" a
+    // hiss high in the mouth, a "t" a stop and then its burst. The tape is
+    // slowing as it speaks: everything (pitch, throat, hiss) falls by more
+    // than a major sixth over the word, and the word draws out. It wows
+    // and flutters, drops out for a moment now and then, saturates, and
+    // goes through the sampler's crude 11 kHz (slower as the tape slows:
+    // a sample played slow without interpolation), which folds everything
+    // above half of that back down as grit; then the cassette's dull top.
+    // Held, the next word comes on the beat after the last is done, the
+    // tape sagging further.
+    void renderVox(Voice &v, float *l, float *r, int from, int n, double b0, double bps, const Harmony &h) {
+        const float I = v.sInt;
+        const DownLook &k = palette(v.set).down;
+        const float dt = 1.0f / m_rate;
+        const int count = std::clamp(h.chordCount, 1, 4);
+        const int base = int(std::lround(v.sTone * 7.0f));
+        // A sound: voiced (a vowel's first three formants), breath (an "h"
+        // through them), a hiss (its centre in Hz), or a stop and its
+        // burst; and how long it lasts at speed.
+        enum Art : uint8_t { V, H, S, T };
+        struct Sound {
+            Art kind;
+            float f[3];
+            float len;
+        };
+        struct Word {
+            Sound s[4];
+            int count;
+        };
+        static const Word words[6] = {
+            {{{V, {270, 2290, 3010}, 0.06f}, {V, {530, 1840, 2480}, 0.16f}, {V, {640, 1190, 2390}, 0.2f}}, 3},      // yeah
+            {{{H, {570, 840, 2410}, 0.08f}, {V, {570, 840, 2410}, 0.16f}, {V, {450, 800, 2400}, 0.1f},
+              {V, {300, 870, 2240}, 0.12f}}, 4},                                                                     // ho
+            {{{V, {730, 1090, 2440}, 0.18f}, {V, {390, 1990, 2550}, 0.12f}, {V, {270, 2290, 3010}, 0.12f}}, 3},     // ayy
+            {{{V, {300, 870, 2240}, 0.06f}, {V, {640, 1190, 2390}, 0.2f}, {T, {3800, 0, 0}, 0.08f}}, 3},            // what
+            {{{S, {3000, 0, 0}, 0.12f}, {V, {270, 2290, 3010}, 0.22f}, {S, {3000, 0, 0}, 0.16f}}, 3},               // sheesh
+            {{{V, {270, 2290, 3010}, 0.05f}, {V, {530, 1840, 2480}, 0.12f}, {S, {6200, 0, 0}, 0.1f},
+              {V, {490, 1350, 1690}, 0.22f}}, 4},                                                                    // yessir
+        };
+        Svf *throat[4] = {&v.aL, &v.bL, &v.cL, &v.blareL};
+        const float beat = float(60.0 / m_bpm);
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b + 1e-9);
+            // Held, the next word on the first beat after this one is over
+            // (v.lineFrom marks it), so one never cuts the last off.
+            if (v.t == 0 || (v.held && step != v.lastStep && v.lineFrom > 0)) {
+                v.lastStep = step;
+                v.lineFrom = 0;
+                const int j = v.stepCount++;
+                // A chord tone low in a man's voice, already slowed a little.
+                v.line = float(h.midi(h.chordTones[j % count] + base, 0));
+                while (v.line > 56.0f)
+                    v.line -= 12.0f;
+                v.env4 = float((j * 5 + base + 6) % 6); // the word, never twice running
+                v.since = 0;
+                v.glideNote = 0; // where in the word, in its own (tape) time
+                v.ph[3] = 0;     // which sound of it
+                v.oR.set(3800.0f, m_rate);
+                v.bR.set(4600.0f, 0.7f, m_rate);
+                v.fuzzR.set(150.0f, 0.7f, m_rate);
+            }
+            const Word &w = words[int(v.env4)];
+            // The tape slows over the word, more the longer the finger
+            // stays: from 0.92 of speed to 0.52, then on down.
+            const float sag = 0.04f * std::min(4.0f, v.t / beat);
+            const float speed = (0.92f - 0.4f * std::pow(clampf(v.since / 0.75f, 0, 1), 1.3f)) * (1.0f - sag);
+            v.since += dt;
+            v.glideNote += dt * speed;
+            // Where in the word: the sound, and how far through it.
+            int at = int(v.ph[3]);
+            float into = v.glideNote;
+            for (int q = 0; q < at; ++q)
+                into -= w.s[q].len;
+            while (at < w.count - 1 && into > w.s[at].len) {
+                into -= w.s[at].len;
+                ++at;
+            }
+            v.ph[3] = float(at);
+            const Sound &snd = w.s[at];
+            const bool over = at == w.count - 1 && into > snd.len;
+            const float u = clampf(into / snd.len, 0, 1);
+            // Its formants glide from the last voiced sound's in the first
+            // half of this one.
+            if ((i & 7) == 0 || v.since < 1.5f * dt) {
+                const Sound &prev = w.s[std::max(0, at - 1)];
+                const Sound &want = snd.kind == V || snd.kind == H ? snd : prev;
+                const Sound &was = prev.kind == V || prev.kind == H ? prev : want;
+                const float m = smoothstep(2.0f * u);
+                float f[3];
+                for (int q = 0; q < 3; ++q)
+                    f[q] = was.f[q] + (want.f[q] - was.f[q]) * m;
+                setTract(throat, f, speed / 0.92f, m_rate);
+                if (snd.kind == S || snd.kind == T)
+                    v.aR.set(std::min(snd.f[0] * speed, 0.45f * m_rate), snd.kind == S ? 2.2f : 1.2f, m_rate);
+            }
+            // Voicing on in the vowels, off in the rest, never at once.
+            const float voicedWant = snd.kind == V && !over ? 1.0f : 0.0f;
+            v.env += (voicedWant - v.env) * (1.0f - std::exp(-dt / 0.012f));
+            // Intonation: up a little into the word, falling at its end.
+            const float wordPos = clampf(v.glideNote / 0.45f, 0, 1);
+            const float contour = 0.8f * std::sin(3.0f * wordPos) - 1.5f * wordPos * wordPos;
+            // The pitch never sits still: a drift, a wow, a flutter.
+            v.wowPh += 0.6f * dt;
+            v.wowPh -= std::floor(v.wowPh);
+            v.flutterPh += 6.8f * dt;
+            v.flutterPh -= std::floor(v.flutterPh);
+            if (v.rng.unit() < dt * 4.0f)
+                v.pitchEnv = 0.5f * v.rng.bipolar();
+            v.env3 += (v.pitchEnv - v.env3) * (1.0f - std::exp(-dt / 0.08f));
+            const float wander = v.env3 + 0.25f * sin01(v.wowPh) + 0.06f * sin01(v.flutterPh);
+            // This period's jitter and shimmer (1 until the first is drawn).
+            float &jitter = v.modalEnv[0], &shimmer = v.modalEnv[1];
+            if (jitter == 0)
+                jitter = shimmer = 1.0f;
+            const float hz = midiToHz(v.line + contour + wander) * speed / 0.92f * jitter;
+            const float inc = std::min(hz * dt, 0.45f);
+            v.ph[0] += inc;
+            if (v.ph[0] >= 1.0f) {
+                // A new period: a percent or two longer or shorter, a
+                // tenth louder or softer.
+                v.ph[0] -= 1.0f;
+                jitter = 1.0f + 0.018f * v.rng.bipolar();
+                shimmer = 1.0f + 0.12f * v.rng.bipolar();
+            }
+            const float noise = v.rng.bipolar();
+            const float voice = glottal(v.ph[0], inc) * v.env * shimmer;
+            // Breath: always a little in a voice, all of an "h".
+            const float breath = noise * (0.06f + (snd.kind == H ? 0.5f : 0.0f) * std::min(1.0f, 4.0f * (1.0f - u)));
+            float x = tract(throat, voice + breath) * 0.5f;
+            // A hiss or a stop's burst, high in the mouth, not through it.
+            if (snd.kind == S) {
+                const float edge = std::min(1.0f, 6.0f * u) * std::min(1.0f, 4.0f * (1.0f - u));
+                x += 0.5f * v.aR.step(noise).band * edge;
+            } else if (snd.kind == T) {
+                const float burst = u > 0.6f ? std::exp(-(u - 0.6f) * snd.len / 0.012f) : 0.0f;
+                x += 0.8f * v.aR.step(noise).band * burst;
+            }
+            // The cassette saturating it, a dropout now and then (a moment
+            // of a third of the level, the top going with it).
+            x = fastTanh(2.2f * x);
+            if (v.rng.unit() < dt * 2.5f)
+                v.env2 = 0.2f + 0.2f * v.rng.unit();
+            v.env2 += (1.0f - v.env2) * (1.0f - std::exp(-dt / 0.04f));
+            // The sampler: held between its clock's ticks, nothing smoothed.
+            v.ph[4] += 11025.0f * speed / 0.92f * dt;
+            if (v.ph[4] >= 1.0f) {
+                v.ph[4] -= std::floor(v.ph[4]);
+                v.holdL = x;
+            }
+            x = v.fuzzR.step(v.oR.step(v.bR.step(v.holdL).low)).high * v.env2;
+            const float shape = over ? std::max(0.0f, 1.0f - (into - snd.len) / 0.04f) : 1.0f;
+            if (over && into - snd.len > 0.04f)
+                v.lineFrom = 1.0f;
+            const float attack = std::min(1.0f, v.t * 1000.0f);
+            const float o = x * shape * v.vel * 0.9f * (0.8f + 0.4f * I) * attack * k.gain;
+            l[i] += o * 1.05f;
+            r[i] += o * 0.95f;
+            peak = std::max(peak, 2.0f * std::fabs(o));
+            v.note = v.line + 12.0f * std::log2(speed / 0.92f);
+            v.t += dt;
+            if (over && !v.held && (into - snd.len) > 0.05f)
+                v.active = false;
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+    }
+
+    // A sung "ayy", chopped from a vocal as amapiano's producers chop them:
+    // the folds' pulses on a chord tone in a singer's middle register, a
+    // breath of "h" before them, through the throat's resonances turning
+    // from "eh" to "ee"; the pitch lifts into the vowel and falls away at
+    // its end, as a shout does, with a little vibrato if it lasts. Held, it
+    // chops an "ayy" every eighth, up the chord.
+    void renderAyy(Voice &v, float *l, float *r, int from, int n, double b0, double bps, const Harmony &h) {
+        const float I = v.sInt;
+        const ZapLook &k = palette(v.set).zap;
+        const float dt = 1.0f / m_rate;
+        const int count = std::clamp(h.chordCount, 1, 4);
+        const int base = int(std::lround(v.sTone * 7.0f));
+        const float eighth = float(30.0 / m_bpm);
+        Svf *throat[4] = {&v.aL, &v.bL, &v.cL, &v.blareL};
+        static const float eh[3] = {600, 1800, 2500}, ee[3] = {290, 2250, 3000};
+        // A singer's top, recorded: the folds' closing edge rolled off over
+        // 5 kHz by the mic and the chop's own resample, so the voice is
+        // bright without the pulses' corners poking out of it.
+        v.oL.set(5000.0f, m_rate);
+        if (v.t == 0)
+            v.oL.y = 0; // not whatever this voice last played
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b * 2.0 + 1e-9);
+            // Held, a chop begins on an eighth only once the last one has
+            // sung to its end: cutting one off mid-vowel would drop its
+            // voice to nothing in a sample, a click. An eighth that comes
+            // while one is still singing is let go, and the next one takes it.
+            bool chop = v.t == 0;
+            if (!chop && v.held && step != v.lastStep) {
+                v.lastStep = step;
+                chop = v.since >= v.lineFrom;
+            }
+            if (chop) {
+                v.lastStep = step;
+                const int j = v.stepCount++;
+                v.line = float(h.midi(h.chordTones[j % count] + base, 1)) + 12.0f * k.oct;
+                v.note = v.line;
+                v.since = 0;
+                v.env4 = (j & 1) ? 0.3f : -0.3f;
+                v.lineFrom = j == 0 ? 0.3f + 0.12f * I : 0.85f * eighth; // its length
+            }
+            const float len = v.lineFrom;
+            const float u = v.since / len;
+            if ((i & 7) == 0 || v.since < 1.5f * dt) {
+                const float m = smoothstep((u - 0.3f) / 0.5f);
+                float f[3];
+                for (int q = 0; q < 3; ++q)
+                    f[q] = eh[q] + (ee[q] - eh[q]) * m;
+                setTract(throat, f, 1.12f, m_rate); // a higher voice than a man's: a shorter throat
+            }
+            v.since += dt;
+            // The "h": breath for its first 40 ms, the voice coming in under it.
+            const float voiced = smoothstep((v.since - 0.025f) / 0.03f) * smoothstep((1.0f - u) / 0.25f);
+            // The breath comes in over 4 ms, not on one sample.
+            const float aspir = std::max(0.0f, 1.0f - v.since / 0.05f) * std::min(1.0f, v.since / 0.004f);
+            const float contour = 1.0f * std::sin(std::min(1.0f, u) * 2.5f) - 2.5f * std::max(0.0f, u - 0.6f);
+            v.ph[2] += 5.5f * dt;
+            v.ph[2] -= std::floor(v.ph[2]);
+            const float vib = 0.2f * smoothstep((v.since - 0.12f) / 0.1f) * sin01(v.ph[2]);
+            const float hz = midiToHz(v.line + contour + vib + v.bend);
+            const float inc = std::min(hz * dt, 0.45f);
+            v.ph[0] += inc;
+            v.ph[0] -= std::floor(v.ph[0]);
+            const float noise = v.rng.bipolar();
+            const float src = glottal(v.ph[0], inc) * voiced + noise * (0.05f * voiced + 0.4f * aspir);
+            const float s = v.oL.step(tract(throat, src));
+            const float attack = std::min(1.0f, v.t * 1000.0f);
+            const float o = s * v.vel * 0.1f * (0.8f + 0.4f * I) * attack * k.gain;
+            l[i] += o * (1.0f - v.env4);
+            r[i] += o * (1.0f + v.env4);
+            peak = std::max(peak, 2.0f * std::fabs(o));
+            v.t += dt;
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+        if (!v.held && v.since > v.lineFrom + 0.05f)
+            v.active = false;
+    }
+
     void renderZap(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h) {
         const int from = startOf(v, n);
         if (from >= n)
@@ -2249,6 +4760,18 @@ private:
         const ZapLook &k = palette(v.set).zap;
         if (k.mode == 1) {
             renderChop(v, l, r, from, n, b0, bps, h);
+            return;
+        }
+        if (k.mode == 2) {
+            renderCowbell(v, l, r, from, n, b0, bps, h);
+            return;
+        }
+        if (k.mode == 6) {
+            renderAyy(v, l, r, from, n, b0, bps, h);
+            return;
+        }
+        if (k.mode >= 3) {
+            renderStruck(v, l, r, from, n, b0, bps, h);
             return;
         }
         const float I = v.sInt;
@@ -2351,6 +4874,207 @@ private:
         }
         v.level = v.level * 0.8f + 0.2f * peak;
         if (!v.held && v.since > len && v.env < 1e-4f)
+            v.active = false;
+    }
+
+    // An 808 cowbell, phonk's lead: two squares a fifth-and-a-bit apart
+    // through a band an octave over the note, a click of a decay and a
+    // short ring after it. Tapped, one note on a chord tone. Held, it plays
+    // one of phonk's figures round the chord, a bar long, with rests: higher
+    // in the cell picks a busier one. A twist bends every note down as it
+    // rings (the dotted figure always falls a little).
+    void renderCowbell(Voice &v, float *l, float *r, int from, int n, double b0, double bps, const Harmony &h) {
+        const float I = v.sInt;
+        const ZapLook &k = palette(v.set).zap;
+        const int base = int(std::lround(v.sTone * 7.0f));
+        // Sixteen sixteenths each, scale steps over the chord's root, and
+        // rests (R). The 3-3-2; a dotted-eighth fall; the Memphis riff,
+        // pushed off the beat; and a busy one, its rests filled.
+        constexpr int8_t R = -99;
+        static const int8_t figures[4][16] = {
+            {0, R, R, 4, R, R, 2, R, 0, R, R, 4, R, R, 7, R},
+            {7, R, R, 6, R, R, 4, R, R, 2, R, R, 0, R, R, R},
+            {0, R, 0, R, R, 4, R, 3, R, 2, R, R, 0, R, -1, R},
+            {0, 0, R, 4, R, 4, 2, R, 0, R, 7, R, 6, 4, R, 2},
+        };
+        const int figure = std::clamp(int((I - 0.35f) / 0.65f * 4.0f), 0, 3);
+        const float fall = 5.0f * v.sMotion + (figure == 1 ? 1.0f : 0.0f);
+        const float ring = std::exp(-1.0f / ((0.16f + 0.2f * I) * k.decay * m_rate));
+        const float click = std::exp(-1.0f / (0.012f * m_rate));
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b * 4.0 + 1e-9);
+            bool strike = v.t == 0;
+            int deg = 0;
+            if (v.held && step != v.lastStep && v.t > 0.2f) {
+                v.lastStep = step;
+                const int8_t f = figures[figure][int(step - 16.0 * std::floor(step / 16.0))];
+                strike = f != R;
+                deg = f;
+            }
+            if (v.t == 0)
+                v.lastStep = step;
+            if (strike) {
+                const int j = v.stepCount++;
+                const int count = std::clamp(h.chordCount, 1, 4);
+                // Tapped, a chord tone; in a figure, steps of the scale over
+                // the chord's root.
+                const int tone = v.held && v.t > 0.2f ? h.chordTones[0] + deg + base : h.chordTones[j % count] + base;
+                v.line = float(h.midi(tone, 2)) + 12.0f * k.oct;
+                v.note = v.line;
+                v.since = 0;
+                v.env = 1.0f;
+                v.env2 = 1.0f;
+                v.env4 = (j & 1) ? 0.3f : -0.3f;
+                v.aL.set(midiToHz(v.line) * 2.0f, 1.3f, m_rate);
+            }
+            v.since += 1.0f / m_rate;
+            const float midi = v.line - fall * (1.0f - std::exp(-v.since / 0.12f)) + v.bend;
+            if ((i & 7) == 0 || strike)
+                v.glideNote = std::min(midiToHz(midi) / m_rate, 0.3f);
+            const float x = cowbellPair(v.sq[0], v.sq[1], v.glideNote);
+            const float y = v.aL.step(x).band + 0.15f * x;
+            const float e = 0.6f * v.env2 + 0.4f * v.env;
+            v.env *= ring;
+            v.env2 *= click;
+            const float attack = std::min(1.0f, v.t * 2000.0f);
+            const float o = y * e * v.vel * 0.22f * (0.8f + 0.4f * I) * attack * k.gain;
+            l[i] += o * (1.0f - v.env4);
+            r[i] += o * (1.0f + v.env4);
+            peak = std::max(peak, 2.0f * std::fabs(o));
+            v.t += 1.0f / m_rate;
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+        if (!v.held && v.env < 1e-4f)
+            v.active = false;
+    }
+
+    // Struck things for the zap cell: a bonang's kettle gongs, a console's
+    // blip, a guitar's natural harmonic. Tapped, one on a chord tone;
+    // held, a sixteenth at a time up the chord, as a zap is.
+    void renderStruck(Voice &v, float *l, float *r, int from, int n, double b0, double bps, const Harmony &h) {
+        const float I = v.sInt;
+        const Palette &set = palette(v.set);
+        const ZapLook &k = set.zap;
+        const int count = std::clamp(h.chordCount, 1, 4);
+        const int base = int(std::lround(v.sTone * 7.0f));
+        const float dt = 1.0f / m_rate;
+        // A bonang: each kettle a fundamental that dominates and three
+        // partials over it, dying faster the higher they are, the metal
+        // settling a little flat of its strike. Held, it plays as the pair
+        // of bonang do, each note struck and then its octave (gembyang),
+        // the two ringing on together. In slendro.
+        static const float bonRatio[4] = {1.0f, 1.97f, 2.96f, 4.48f}, bonAmp[4] = {1.0f, 0.22f, 0.3f, 0.1f},
+                           bonTau[4] = {1.3f, 0.6f, 0.4f, 0.18f};
+        float bonDecay[4];
+        for (int m = 0; m < 4; ++m)
+            bonDecay[m] = std::exp(-dt / (bonTau[m] * k.decay * (0.7f + 0.6f * I)));
+        // A blip's volume steps down once a frame, sixteen levels.
+        const float framesPerStep = std::max(0.5f, k.decay * (0.6f + 0.8f * I));
+        // A harmonic rings long, and a hand on the whammy bar keeps it
+        // shimmering a few cents either side.
+        const float harmDecay = std::exp(-dt / ((0.5f + 0.8f * I) * k.decay));
+        const float bend = k.mode == 5 ? std::exp2(0.12f * v.wham.step(float(n - from) * dt, v.rng) / 12.0f) : 1.0f;
+        float peak = 0;
+        for (int i = from; i < n; ++i) {
+            const double b = b0 + bps * i;
+            const double step = std::floor(b * 4.0 + 1e-9);
+            if (v.t == 0 || (v.held && step != v.lastStep && v.t > 0.2f)) {
+                v.lastStep = step;
+                const int j = v.stepCount++;
+                const int tone = h.chordTones[(k.mode == 3 ? j / 2 : j) % count] + base;
+                v.since = 0;
+                v.env = 1.0f;
+                v.env2 = 1.0f;
+                v.env4 = (j & 1) ? 0.4f : -0.4f;
+                if (k.mode == 3) {
+                    float m = toSlendro(h, float(h.midi(tone, 2))) + 12.0f * k.oct + 12.0f * float(j & 1);
+                    v.line = m;
+                    // Even strikes ring in the first four modes, odd ones in
+                    // the next four, so the pair overlaps.
+                    const int o = 4 * (j & 1);
+                    for (int q = 0; q < 4; ++q) {
+                        v.modal[o + q] = 0;
+                        v.modalEnv[o + q] = bonAmp[q];
+                    }
+                    v.slotHz[j & 1] = midiToHz(m);
+                } else if (k.mode == 4) {
+                    // The coin: this chord tone, then the next one up.
+                    v.line = float(h.midi(tone, 3)) + 12.0f * k.oct;
+                    float up = float(h.midi(h.chordTones[(j + 1) % count] + base, 3)) + 12.0f * k.oct;
+                    while (up <= v.line)
+                        up += 12.0f;
+                    v.lineFrom = up;
+                } else {
+                    // Odd strikes the twelfth (the seventh fret's harmonic),
+                    // even ones the octave (the twelfth fret's).
+                    v.line = float(h.midi(tone + ((j & 1) ? 4 : 0), 3)) + 12.0f * k.oct - 12.0f;
+                    v.aL.set(3000.0f, 1.0f, m_rate);
+                }
+                v.note = v.line;
+            }
+            v.since += dt;
+            float o = 0;
+            if (k.mode == 3) {
+                for (int s = 0; s < 2; ++s) {
+                    const float glide = 1.0f + 0.008f * std::exp(-v.since / 0.02f);
+                    for (int q = 0; q < 4; ++q) {
+                        float &e = v.modalEnv[4 * s + q];
+                        if (e < 1e-5f)
+                            continue;
+                        float &ph = v.modal[4 * s + q];
+                        ph += std::min(v.slotHz[s] * bonRatio[q] * glide * dt, 0.45f);
+                        ph -= std::floor(ph);
+                        o += e * sin01(ph) * (s ? 0.8f : 1.0f);
+                        e *= bonDecay[q];
+                    }
+                }
+                // The padded beater: two milliseconds of dull knock.
+                o += 0.3f * v.rng.bipolar() * v.env2;
+                v.env2 *= std::exp(-dt / 0.002f);
+                o *= 0.75f;
+                v.env = std::max(v.modalEnv[0], v.modalEnv[4]);
+            } else if (k.mode == 4) {
+                // The pulse channel's sweep unit: the strike starts two of its
+                // ticks (120 a second) under the note, each shortening the
+                // period by an eighth, so it chirps up into it; three frames
+                // on, the coin's second note. Volume in sixteen steps.
+                const float frames = v.since * 60.0f;
+                const int ticks = std::min(2, int(v.since * 120.0f));
+                const bool second = frames >= 3.0f;
+                const float note = second ? v.lineFrom : v.line;
+                const float hz = midiToHz(note) * std::pow(8.0f / 7.0f, float(ticks - 2));
+                v.note = note;
+                const float inc = std::min(hz * dt, 0.45f);
+                v.ph[0] += inc;
+                v.ph[0] -= std::floor(v.ph[0]);
+                const float vol = std::max(0.0f, 15.0f - std::floor(frames / framesPerStep)) / 15.0f;
+                v.env = vol;
+                o = 0.55f * pulseWave(v.ph[0], inc, second ? 0.25f : 0.5f) * vol;
+            } else {
+                const float hz = midiToHz(v.line) * bend;
+                const float inc = std::min(hz * dt, 0.45f);
+                v.ph[0] += inc;
+                v.ph[0] -= std::floor(v.ph[0]);
+                float p2 = 2.0f * v.ph[0];
+                p2 -= std::floor(p2);
+                // A nearly pure tone, the faintest octave over it, and the
+                // pick's tick on the string.
+                o = (sin01(v.ph[0]) + 0.06f * sin01(p2)) * v.env + 0.4f * v.aL.step(v.rng.bipolar()).band * v.env2;
+                v.env *= harmDecay;
+                v.env2 *= std::exp(-dt / 0.003f);
+                o *= 0.8f;
+            }
+            const float attack = std::min(1.0f, v.t * 2000.0f);
+            o *= v.vel * 0.2f * (0.8f + 0.4f * I) * attack * k.gain;
+            l[i] += o * (1.0f - v.env4);
+            r[i] += o * (1.0f + v.env4);
+            peak = std::max(peak, 2.0f * std::fabs(o));
+            v.t += dt;
+        }
+        v.level = v.level * 0.8f + 0.2f * peak;
+        if (!v.held && v.env < 1e-4f)
             v.active = false;
     }
 
@@ -2459,6 +5183,7 @@ private:
     Spring m_spring;
     float m_roomIdle = 0;
     double m_beat = 0, m_bpm = 124, m_lastDrop = -1;
+    float m_lastAlone = 0;
     float m_flash = 0;
     float m_hitFlash[kHits] = {};
     Voice m_voices[kVoices];

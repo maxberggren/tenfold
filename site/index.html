@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tenfold</title>
-<meta name="description" content="An instrument played with all ten fingers on the trackpad. Install it with one command.">
+<meta name="description" content="The trackpad instrument. Build up all the song's components through the trackpad. Space to loop it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700;800&family=Noto+Sans+Mono:wdth,wght@87.5,500;87.5,600;87.5,700&display=swap" rel="stylesheet">
@@ -38,6 +38,15 @@
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
   }
+  /* Scanlines over the page, as the app draws them over its glass (Main.qml). */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0.22) 0, rgba(0,0,0,0.22) 1px, transparent 1px, transparent 3px);
+  }
   .wrap { max-width: 1040px; margin: 0 auto; padding: 28px 16px 48px; }
   .caps { text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
 
@@ -47,10 +56,23 @@
     font-family: var(--wide);
     font-weight: 800;
     font-size: clamp(30px, 6vw, 44px);
-    letter-spacing: 0.32em;
+    letter-spacing: 0.16em;
     color: var(--song);
     margin: 0;
+    display: flex;
   }
+  /* Kerned by eye: a monospace face gives T, F and L as much room as O and
+     D, so the open sides of those three read as holes. Each pair is pulled
+     in by what its letters leave empty, and the last letter carries no
+     tracking, so the word sits on its own width. */
+  .wordmark span { display: inline-block; }
+  .wordmark .k-t { margin-right: -0.07em; }
+  .wordmark .k-e { margin-right: -0.01em; }
+  .wordmark .k-n { margin-right: 0.01em; }
+  .wordmark .k-f { margin-right: -0.08em; }
+  .wordmark .k-o { margin-right: 0.01em; }
+  .wordmark .k-l { margin-right: -0.09em; }
+  .wordmark .k-d { letter-spacing: 0; }
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
   .tab {
     border: 2px solid var(--c);
@@ -213,7 +235,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1 class="wordmark">TENFOLD</h1>
+    <h1 class="wordmark" aria-label="tenfold"><span class="k-t" aria-hidden="true">T</span><span class="k-e" aria-hidden="true">E</span><span class="k-n" aria-hidden="true">N</span><span class="k-f" aria-hidden="true">F</span><span class="k-o" aria-hidden="true">O</span><span class="k-l" aria-hidden="true">L</span><span class="k-d" aria-hidden="true">D</span></h1>
     <nav class="tabs" aria-hidden="true">
       <span class="tab" style="--c: var(--drums)"><b>1</b>Drums</span>
       <span class="tab" style="--c: var(--bass)"><b>2</b>Bass</span>
@@ -228,10 +250,8 @@
   </header>
 
   <section class="hero">
-    <h2>An instrument played with all ten fingers on the trackpad.</h2>
-    <p>Drums, bass, chords, lead, arp, atmosphere, risers and your own voice, each a page of the trackpad,
-      always in key and in time. Play, press Space, and it loops. On the Song page your loops become a track,
-      with builds and drops.</p>
+    <h2>The trackpad instrument</h2>
+    <p>Build up all the song's components through the trackpad. Space to loop it.</p>
   </section>
 
   <section class="panel" id="install" style="--c: var(--arp)">
@@ -273,12 +293,6 @@
           <span class="name">Get</span><span class="key">D</span>
         </a>
       </div>
-      <ul class="notes">
-        <li>Open the disk image and drag tenfold onto Applications.</li>
-        <li>Take the pad and every finger plays: the pointer stops and clicks go to the music until Esc gives the pad back. No permission is needed for that.</li>
-        <li>The Mac's own three- and four-finger swipes still switch spaces. Turn them off under System Settings › Trackpad › More Gestures while you play, or allow tenfold under Privacy & Security › Accessibility and it holds them back while the pad is taken.</li>
-        <li>The Vocal page asks once for the microphone. <a href="https://github.com/maxberggren/tenfold/releases/latest">The release</a> has the image's checksum.</li>
-      </ul>
     </div>
 
     <div id="soonInstall" class="soonbox" hidden>
@@ -290,7 +304,7 @@
   </section>
 
   <section class="panel shot">
-    <div class="title caps">Every page, mid-performance</div>
+    <div class="title caps">Screenshots</div>
     <img src="screenshot.png" alt="tenfold's pages side by side: drum pads, a bass line, a chord grid, a lead melody, an arpeggio, atmosphere voices, risers and the Song page with its lanes and sections" width="1440" height="1880" loading="lazy">
   </section>
 

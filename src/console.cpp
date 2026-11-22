@@ -410,12 +410,34 @@ void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringLi
     const int n = int(labels.size());
     if (n == 0)
         return;
-    const double w = (r.width() + gap) / n;
-    for (int i = 0; i < n; ++i) {
+    // As many as fit with their names whole. More than that, and the row
+    // becomes a window onto them that follows the lit one, the chip at
+    // each end faded where there are more beyond it (still clickable: a
+    // click there moves the window along).
+    const QFont f = font(int(std::clamp(r.height() * 0.42, 9.0, 13.0)), true);
+    double need = 0;
+    for (const QString &l : labels)
+        need = std::max(need, textWidth(f, keyNames(l)) + 14);
+    const int fits = std::max(3, int((r.width() + gap) / (need + gap)));
+    int first = 0, shown = n;
+    if (n > fits) {
+        shown = fits;
+        first = std::clamp((lit < 0 ? 0 : lit) - shown / 2, 0, n - shown);
+    }
+    const double w = (r.width() + gap) / shown;
+    for (int k = 0; k < shown; ++k) {
+        const int i = first + k;
         if (labels[i].isEmpty())
             continue;
-        const QRectF cell(r.left() + i * w, r.top(), w - gap, r.height());
+        const bool more = (k == 0 && first > 0) || (k == shown - 1 && i < n - 1);
+        if (more) {
+            p.save();
+            p.setOpacity(0.3);
+        }
+        const QRectF cell(r.left() + k * w, r.top(), w - gap, r.height());
         chip(p, pc, cell, labels[i], i == lit, spots, idBase + i);
+        if (more)
+            p.restore();
     }
 }
 

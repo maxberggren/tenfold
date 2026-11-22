@@ -322,7 +322,6 @@ private slots:
                         QVERIFY(b.share(1, 3, {B}) > 0.05);
                     }
                     if (family == Pad && style == CityPop) {
-                        const auto ch = b.chroma(1, 3);
                         QString shares;
                         for (int k = 0; k < 12; ++k)
                             shares += QStringLiteral(" %1").arg(b.share(1, 3, {k}), 0, 'f', 3);

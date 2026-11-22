@@ -14,6 +14,7 @@
 #include <QUrl>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -28,6 +29,7 @@
 #include "surface.h"
 #include "theme.h"
 #include "translator.h"
+#include "visualizer.h"
 
 // A song file opened from the Finder (or dropped on the Dock icon) comes
 // as an event, not an argument.
@@ -57,9 +59,14 @@ static void usage(FILE *out) {
                "  tenfold latency [--json]                measure the microphone's trip to the ears\n"
                "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
                "                     [--tutorial STEP]\n"
-               "                                          draw the window mid-performance (page 1-7, 0 arrange),\n"
+               "                                          draw the window mid-performance (page 1-8, 0 arrange, 9 visual),\n"
                "                                          with the tutorial on that step (from 1) if asked\n"
-               "  tenfold check <song.tenfold>            say whether a song file opens, and what is in it\n",
+               "  tenfold check <song.tenfold>            say whether a song file opens, and what is in it\n"
+               "  tenfold visualize <script.tf> <out.mp4|out.png> [--at SECONDS] [--from S] [--to S]\n"
+               "                    [--fps N] [--size WxH] [--quality 0-3]\n"
+               "                                          the visualizer drawn as the script plays: a video with\n"
+               "                                          its sound (needs ffmpeg), or the frame at --at (needs a\n"
+               "                                          display with OpenGL, Vulkan or Metal)\n",
                out);
 }
 
@@ -101,6 +108,7 @@ static int screenshot(int argc, char **argv) {
     app.installTranslator(&translator);
     qmlRegisterType<Surface>("Tenfold", 1, 0, "Surface");
     qmlRegisterUncreatableType<Backend>("Tenfold", 1, 0, "Backend", "provided by the app");
+    qmlRegisterType<VisualData>("Tenfold", 1, 0, "VisualData");
     // The default accent, so the picture doesn't depend on the current theme.
     Theme theme(QDir::tempPath() + "/tenfold-no-theme");
     Backend backend(false);
@@ -118,10 +126,14 @@ static int screenshot(int argc, char **argv) {
         std::fprintf(stderr, "tenfold: %s\n", error.c_str());
         return 1;
     }
+    // The visual page's picture needs a GPU, which the offscreen platform
+    // hasn't: it stays black here (tenfold visualize draws it).
+    Visualizer visual(backend.session());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("translator", &translator);
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("visual", &visual);
     engine.addImageProvider(QStringLiteral("icon"), new IconProvider);
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
@@ -138,7 +150,8 @@ static int screenshot(int argc, char **argv) {
     }
     if (const char *page = option(argc, argv, "--page")) {
         const int n = std::atoi(page);
-        backend.setPage(n == 0 ? backend.pageCount() - 1 : n - 1);
+        tf::Session &s = *backend.session();
+        backend.setPage(n == 0 ? s.arrangePage() : n == 9 ? s.visualPage() : n - 1);
     }
     if (hasFlag(argc, argv, "--help-page"))
         window->setProperty("helpVisible", true);
@@ -205,6 +218,27 @@ int main(int argc, char *argv[]) {
         return screenshot(argc, argv);
     if (argc == 3 && std::strcmp(argv[1], "check") == 0)
         return check(argc, argv);
+    if (argc >= 4 && std::strcmp(argv[1], "visualize") == 0) {
+        QGuiApplication app(argc, argv);
+        app.setApplicationName("tenfold");
+        qmlRegisterType<VisualData>("Tenfold", 1, 0, "VisualData");
+        tf::VisualizeOptions o;
+        o.script = argv[2];
+        o.out = argv[3];
+        if (const char *v = option(argc, argv, "--at"))
+            o.at = std::atof(v);
+        if (const char *v = option(argc, argv, "--from"))
+            o.from = std::atof(v);
+        if (const char *v = option(argc, argv, "--to"))
+            o.to = std::atof(v);
+        if (const char *v = option(argc, argv, "--fps"))
+            o.fps = std::clamp(std::atoi(v), 1, 120);
+        if (const char *v = option(argc, argv, "--size"))
+            std::sscanf(v, "%dx%d", &o.width, &o.height);
+        if (const char *v = option(argc, argv, "--quality"))
+            o.quality = std::atoi(v);
+        return tf::visualize(o);
+    }
     if (argc >= 2 && std::strcmp(argv[1], "latency") == 0) {
         QCoreApplication app(argc, argv);
         return tf::platform::measureLatency(json);
@@ -232,9 +266,11 @@ int main(int argc, char *argv[]) {
 
     qmlRegisterType<Surface>("Tenfold", 1, 0, "Surface");
     qmlRegisterUncreatableType<Backend>("Tenfold", 1, 0, "Backend", "provided by the app");
+    qmlRegisterType<VisualData>("Tenfold", 1, 0, "VisualData");
 
     Theme theme;
     Backend backend;
+    Visualizer visual(backend.session());
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::shutdown);
     SongOpener opener(&backend);
     app.installEventFilter(&opener);
@@ -244,6 +280,8 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("translator", &translator);
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("visual", &visual);
+    backend.setVisualizer(&visual, &engine);
     engine.addImageProvider(QStringLiteral("icon"), new IconProvider);
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())

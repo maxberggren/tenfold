@@ -15,7 +15,7 @@
 // The script language, one event per line (times in seconds, positions 0..1
 // with y up, twist in degrees; # starts a comment):
 //
-//   page  T N                                         show page N (1–8, 0 arrange)
+//   page  T N                                         show page N (1–8, 0 arrange, 9 visual)
 //   down  T ID X Y [p=0.5] [size=1] [twist=0]
 //   move  T ID X Y [p=…] [size=…] [twist=…]           jump there
 //   glide T1 T2 ID X Y [p=…] [size=…] [twist=…]       move there smoothly

@@ -144,7 +144,15 @@ public:
 
     // Recording tap: a ring of interleaved stereo a recorder thread drains.
     static constexpr size_t kRecordFrames = 1 << 19;
-    void setRecording(bool on) { m_recording.store(on, std::memory_order_release); }
+    void setRecording(bool on) {
+        // Nothing is written while it is off, so the head stands still here.
+        if (on)
+            m_recordBase = m_recordHead.load(std::memory_order_acquire);
+        m_recording.store(on, std::memory_order_release);
+    }
+    // Frames recorded since the last setRecording(true): the recording's
+    // length so far, which the video recorder keeps its frames in step with.
+    uint64_t recordedFrames() const { return m_recordHead.load(std::memory_order_acquire) - m_recordBase; }
     bool recording() const { return m_recording.load(std::memory_order_acquire); }
     size_t drainRecording(float *out, size_t maxFrames);
 
@@ -208,6 +216,7 @@ private:
     std::atomic<bool> m_recording{false};
     std::vector<float> m_record;
     std::atomic<size_t> m_recordHead{0}, m_recordTail{0};
+    size_t m_recordBase = 0;
 };
 
 }

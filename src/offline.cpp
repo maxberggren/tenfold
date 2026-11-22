@@ -460,7 +460,7 @@ void ScriptPlayer::tick(double t, Session &session) {
             break;
         }
         case Event::Page:
-            session.setPage(e.id == 0 ? session.arrangePage() : e.id - 1);
+            session.setPage(e.id == 0 ? session.arrangePage() : e.id == 9 ? session.visualPage() : e.id - 1);
             break;
         case Event::Tempo:
             session.shiftTempo(std::round(e.x) - std::round(session.view().bpm));

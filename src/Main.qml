@@ -32,7 +32,12 @@ ApplicationWindow {
     readonly property bool playing: backend.padState === Backend.Playing
     readonly property color pageColor: backend.pageColors[backend.page]
 
-    onActiveChanged: backend.windowActive(active)
+    // The pad stays taken while any of tenfold's windows is in front (the
+    // second window of the visualizer too), and is given back when none is.
+    Connections {
+        target: Qt.application
+        function onStateChanged() { backend.windowActive(Qt.application.state === Qt.ApplicationActive) }
+    }
 
     function quit() {
         if (backend.recording)
@@ -46,31 +51,42 @@ ApplicationWindow {
             quitDialog.open()
         }
     }
-    // The number a page answers to: 1–7 for the parts, 0 for arrange.
-    function pageKey(i) { return i === backend.pageCount - 1 ? "0" : String(i + 1) }
+    // The number a page answers to: 1–8 for the parts, 0 for the Song page,
+    // 9 for the visualizer.
+    function pageKey(i) { return i === backend.arrangePage ? "0" : i === backend.visualPage ? "9" : String(i + 1) }
+    // Esc closes what is open first: a right-click menu, the guide, then
+    // the tutorial; then it gives the trackpad back.
+    function back() {
+        backend.closeMenu() ? undefined
+            : win.helpVisible ? win.helpVisible = false
+            : backend.tutorialActive ? backend.toggleTutorial() : backend.giveBack()
+    }
+    // Record, and Shift+Record: the visualizer's picture with the sound.
+    function record(modifiers) {
+        if (modifiers & Qt.ShiftModifier)
+            backend.toggleVideoRecording()
+        else
+            backend.toggleRecording()
+    }
     function barsText(beats) {
         if (beats % 4 !== 0)
             return beats === 1 ? qsTr("→ 1 beat") : qsTr("→ %1 beats").arg(beats)
         return beats === 4 ? qsTr("→ 1 bar") : qsTr("→ %1 bars").arg(beats / 4)
     }
 
-    Shortcut {
-        sequence: "Esc"; context: Qt.ApplicationShortcut
-        // Closes what is open first: a right-click menu, the guide, then
-        // the tutorial; then it gives the trackpad back.
-        onActivated: backend.closeMenu() ? undefined
-                   : win.helpVisible ? win.helpVisible = false
-                   : backend.tutorialActive ? backend.toggleTutorial() : backend.giveBack()
-    }
+    // This window's own: the visualizer's window has its Esc (leave full
+    // screen) and F11.
+    Shortcut { sequence: "Esc"; context: Qt.WindowShortcut; onActivated: win.back() }
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
     Shortcut { sequence: "Ctrl+R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleRecording() }
+    Shortcut { sequence: "Ctrl+Shift+R"; context: Qt.ApplicationShortcut; onActivated: backend.toggleVideoRecording() }
     Shortcut { sequence: "Ctrl+S"; context: Qt.ApplicationShortcut; onActivated: backend.saveSong() }
     Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: backend.saveSongAs() }
     Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: backend.openSong() }
     Shortcut { sequence: "Ctrl+Shift+O"; context: Qt.ApplicationShortcut; onActivated: backend.reopenLastSong() }
     Shortcut {
-        sequence: "F11"; context: Qt.ApplicationShortcut
+        sequence: "F11"; context: Qt.WindowShortcut
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
     }
 
@@ -198,6 +214,18 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     app: backend
+
+                    // The Visual page's picture, in the pad's place, under
+                    // what the page draws (its frame, the fingers, its band).
+                    Visualizer {
+                        z: -1
+                        x: surface.pad.x
+                        y: surface.pad.y
+                        width: surface.pad.width
+                        height: surface.pad.height
+                        visible: visual.showing
+                        crt: 0.45
+                    }
                 }
 
                 // The right-hand column: the clock and key every part shares,
@@ -322,11 +350,13 @@ ApplicationWindow {
                         PanelButton {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                             label: backend.recording
-                                   ? qsTr("Rec %1").arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
+                                   ? (backend.recordingVideo ? qsTr("Video %1") : qsTr("Rec %1"))
+                                     .arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
                                    : qsTr("Record")
-                            key: "Ctrl R"; color: win.red; active: backend.recording
+                            // Shift+click (Ctrl+Shift+R): the picture too.
+                            key: backend.recording ? "Ctrl R" : "Ctrl R · ⇧ video"; color: win.red; active: backend.recording
                             hint: backend.tutorialActive && backend.tutorialButton === "record"
-                            onClicked: backend.toggleRecording()
+                            onClicked: modifiers => win.record(modifiers)
                         }
                         PanelButton {
                             // The whole row: the transport. Every loop stops at once, remembered;
@@ -543,7 +573,7 @@ ApplicationWindow {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects, 8 vocal. Play, then Space loops what you just played on any page; turn the loops into a track on 0, the Song page. ? shows what the fingers do on the page you're on.")
+                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects, 8 vocal, and 9 shows it all as a picture. Play, then Space loops what you just played on any page; turn the loops into a track on 0, the Song page. ? shows what the fingers do on the page you're on.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14
@@ -638,6 +668,25 @@ ApplicationWindow {
             ctx.fillStyle = "#000000"
             for (let y = 0; y < height; y += 3)
                 ctx.fillRect(0, y, width, 1)
+        }
+    }
+
+    // The visualizer's own window: Return on the Visual page, or its button.
+    Loader {
+        id: visualWindow
+        active: false
+        sourceComponent: VisualWindow {
+            visible: true
+            onClosing: visualWindow.active = false
+            onBack: win.back()
+        }
+    }
+    Connections {
+        target: visual
+        function onWindowAsked() { visualWindow.active = !visualWindow.active }
+        function onFullScreenAsked() {
+            visualWindow.active = true
+            visualWindow.item.toggleFullScreen(win.screen)
         }
     }
 

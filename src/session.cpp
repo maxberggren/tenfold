@@ -15,6 +15,7 @@
 
 #include "parts.h"
 #include "songfile.h"
+#include "visual.h"
 
 namespace tf {
 
@@ -246,6 +247,13 @@ Session::Session(Studio *studio) : m_studio(studio) {
     arrange->part = -1;
     arrange->ctx = std::make_unique<Context>(this, -1);
     m_pages.push_back(std::move(arrange));
+    auto shown = std::make_unique<Page>();
+    shown->spec = visual::makeVisual();
+    shown->part = -1;
+    shown->followsChords = false;
+    shown->ctx = std::make_unique<Context>(this, -1);
+    m_visual = static_cast<visual::VisualPage *>(shown->spec.control.get());
+    m_pages.push_back(std::move(shown));
     m_view.partCount = m_partCount;
     for (int i = 0; i < m_partCount && i < kMaxParts; ++i)
         for (int c = 0; c < ChannelCount; ++c)
@@ -558,6 +566,8 @@ bool Session::key(const KeyEvent &k) {
             const int page = k.key - Qt::Key_1;
             if (page < m_partCount)
                 setPage(page);
+            else if (k.key == Qt::Key_9)
+                setPage(visualPage());
             return true;
         }
         if (k.key == Qt::Key_0) {
@@ -1728,6 +1738,9 @@ QJsonObject Session::saveSong(QString *error) {
     QJsonObject song;
     m_pages[size_t(arrangePage())]->spec.control->save(song);
     doc[QStringLiteral("song")] = song;
+    QJsonObject shown;
+    m_pages[size_t(visualPage())]->spec.control->save(shown);
+    doc[QStringLiteral("visual")] = shown;
     return doc;
 }
 
@@ -1875,6 +1888,12 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
     }
     Page &arrange = *m_pages[size_t(arrangePage())];
     arrange.spec.control->load(doc.value(QStringLiteral("song")).toObject(), *arrange.ctx);
+    // The visualizer's look, when the file has one (an older song opens on
+    // the look a new song starts with).
+    if (doc.value(QStringLiteral("visual")).isObject()) {
+        Page &shown = *m_pages[size_t(visualPage())];
+        shown.spec.control->load(doc.value(QStringLiteral("visual")).toObject(), *shown.ctx);
+    }
     // What was playing plays again, every part from the same bar line.
     for (const PartIn &in : partsIn)
         if (in.playing >= 0)

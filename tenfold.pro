@@ -1,4 +1,7 @@
 QT += core gui qml quick quickcontrols2
+# QRhi (rhi/qrhi.h), for reading the visualizer's offscreen frames back:
+# Qt ships its headers with the private ones.
+QT += gui-private
 
 CONFIG += c++20 release
 TARGET = tenfold
@@ -38,6 +41,9 @@ HEADERS += \
     src/theme.h \
     src/touch.h \
     src/vocal.h \
+    src/visual.h \
+    src/visualizer.h \
+    src/recorder.h \
     src/translator.h \
     src/tuning.h \
     src/tutorial.h \
@@ -70,6 +76,9 @@ SOURCES += \
     src/translator.cpp \
     src/tuning.cpp \
     src/tutorial.cpp \
+    src/visual.cpp \
+    src/visualizer.cpp \
+    src/recorder.cpp \
     $$PARTS
 
 # Part headers are not all listed above; this makes edits to them rebuild.

@@ -178,6 +178,8 @@ public:
     Q_INVOKABLE void saveSong() { m_songs->save(); }
     Q_INVOKABLE void saveSongAs() { m_songs->saveAs(); }
     Q_INVOKABLE void openSong() { m_songs->open(); }
+    // A song the system hands over (a song file opened from the Finder).
+    void openSongFile(const QString &path) { m_songs->openFrom(path); }
     Q_INVOKABLE void reopenLastSong() { m_songs->reopenLast(); }
     Q_INVOKABLE void toggleTutorial();
     Q_INVOKABLE void tutorialNext();

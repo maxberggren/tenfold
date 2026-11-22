@@ -12,6 +12,6 @@ if [ -n "${TENFOLD_PORTABLE:-}" ]; then
 else
     "${QMAKE:-qmake6}" "$ROOT/tenfold.pro"
 fi
-make -j"$(nproc)"
+make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 echo "Built $ROOT/build/tenfold"

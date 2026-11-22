@@ -13,8 +13,8 @@ TEMPLATE = app
 QMAKE_CXXFLAGS_RELEASE -= -O2
 QMAKE_CXXFLAGS_RELEASE += -O3 -ffast-math -fno-finite-math-only
 portable {
-    contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=x86-64-v2 -mtune=generic
-} else {
+    linux:contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=x86-64-v2 -mtune=generic
+} else:!macx {
     contains(QT_ARCH, arm64): QMAKE_CXXFLAGS_RELEASE += -mcpu=native
     contains(QT_ARCH, x86_64): QMAKE_CXXFLAGS_RELEASE += -march=native
 }
@@ -22,6 +22,7 @@ portable {
 HEADERS += \
     src/backend.h \
     src/console.h \
+    src/contacts.h \
     src/dsp.h \
     src/electro.h \
     src/fx.h \
@@ -58,6 +59,7 @@ SOURCES += \
     src/main.cpp \
     src/backend.cpp \
     src/console.cpp \
+    src/contacts.cpp \
     src/offline.cpp \
     src/parts.cpp \
     src/session.cpp \
@@ -96,6 +98,27 @@ linux {
         src/linux/portalfilepicker.cpp \
         src/linux/touchpads.cpp \
         src/linux/touchsource.cpp
+} else:macx {
+    # An app bundle for macOS 12 and later, for Apple silicon and Intel
+    # alike when Qt is (CONFIG+=portable builds both).
+    INCLUDEPATH += src/macos
+    HEADERS += \
+        src/macos/coreaudio.h \
+        src/macos/filepicker.h \
+        src/macos/microphone.h \
+        src/macos/trackpad.h
+    SOURCES += src/macos/coreaudio.cpp
+    OBJECTIVE_SOURCES += \
+        src/macos/platform.mm \
+        src/macos/trackpad.mm
+    QMAKE_OBJECTIVE_CFLAGS += -fobjc-arc
+    LIBS += -framework CoreAudio -framework AudioToolbox -framework CoreFoundation \
+        -framework ApplicationServices -framework AppKit -framework AVFoundation \
+        -framework UniformTypeIdentifiers
+    QMAKE_INFO_PLIST = src/macos/Info.plist
+    ICON = src/macos/tenfold.icns
+    QMAKE_MACOSX_DEPLOYMENT_TARGET = 12.0
+    portable: QMAKE_APPLE_DEVICE_ARCHS = x86_64 arm64
 } else {
-    error("tenfold runs on Linux so far. A port implements src/platform.h in a folder of its own (see the README).")
+    error("tenfold runs on Linux and macOS so far. A port implements src/platform.h in a folder of its own (see the README).")
 }

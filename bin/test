@@ -9,7 +9,7 @@
 #   bin/test -h                    this help
 #
 # The full run starts the tests in parallel, the slowest first (by how long
-# each took last time), on as many cores as nproc says, or TENFOLD_JOBS.
+# each took last time), on as many cores as there are, or TENFOLD_JOBS.
 # The tests that time the studio against the clock run afterwards, one at a
 # time, so the others don't eat into the budget they measure. Only the
 # failures' output is shown; every test's is in build/tests/out.
@@ -27,7 +27,8 @@ mkdir -p "$ROOT/build/tests"
 cd "$ROOT/build/tests"
 
 "${QMAKE:-qmake6}" "$ROOT/tests/tenfold_tests.pro"
-make -j"$(nproc)"
+cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+make -j"$cores"
 export QT_QPA_PLATFORM=offscreen
 
 # One suite, or one test of it: "DrumsTests someTest", or
@@ -42,7 +43,15 @@ if [ $# -gt 0 ]; then
     TENFOLD_TESTS=$suite exec ./tenfold_tests "$@"
 fi
 
-start=$(date +%s%N)
+# Nanoseconds now; macOS's date has no %N, so whole seconds there.
+now() {
+    t=$(date +%s%N)
+    case $t in
+    *N) echo "${t%N}000000000" ;;
+    *) echo "$t" ;;
+    esac
+}
+start=$(now)
 out="$PWD/out"
 rm -rf "$out"
 mkdir -p "$out"
@@ -82,10 +91,10 @@ if TENFOLD_TESTS=$suite ./tenfold_tests -o "$out/$name.txt,txt" -o "$out/$name.x
 RUN
 chmod +x "$out/run"
 
-jobs=${TENFOLD_JOBS:-$(nproc)}
+jobs=${TENFOLD_JOBS:-$cores}
 count=$(awk '{ n += NF - 2 } END { print n }' "$out/list")
 echo "Running $count tests on $jobs cores…"
-order parallel | xargs -d '\n' -n 1 -P "$jobs" "$out/run" "$out"
+order parallel | tr '\n' '\0' | xargs -0 -n 1 -P "$jobs" "$out/run" "$out"
 order alone | while IFS= read -r line; do "$out/run" "$out" "$line"; done
 
 # Seconds per test, for the next run.
@@ -114,6 +123,6 @@ passed=$(printf '%s\n' "$results" | grep '^PASS   :' | sed 's/(.*//' | sort -u |
 skipped=$(printf '%s\n' "$results" | grep -c '^SKIP   :' || true)
 echo
 printf '%s\n' "$results" | grep '^SKIP   :' || true
-took=$((($(date +%s%N) - start) / 100000000))
+took=$((($(now) - start) / 100000000))
 echo "$passed passed, $fails failed, $skipped skipped in $((took / 10)).$((took % 10)) s"
 [ "$fails" -eq 0 ]

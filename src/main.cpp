@@ -8,6 +8,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QDir>
+#include <QFileOpenEvent>
 #include <QQuickWindow>
 #include <QThread>
 #include <QUrl>
@@ -27,6 +28,25 @@
 #include "surface.h"
 #include "theme.h"
 #include "translator.h"
+
+// A song file opened from the Finder (or dropped on the Dock icon) comes
+// as an event, not an argument.
+class SongOpener : public QObject {
+public:
+    explicit SongOpener(Backend *backend) : m_backend(backend) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (event->type() == QEvent::FileOpen) {
+            m_backend->openSongFile(static_cast<QFileOpenEvent *>(event)->file());
+            return true;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    Backend *m_backend;
+};
 
 static void usage(FILE *out) {
     std::fputs("Usage:\n"
@@ -193,7 +213,8 @@ int main(int argc, char *argv[]) {
         usage(stdout);
         return 0;
     }
-    if (argc >= 2 && std::strcmp(argv[1], "open") != 0) {
+    // Launched from the Finder, older macOS adds -psn_… for the process.
+    if (argc >= 2 && std::strcmp(argv[1], "open") != 0 && std::strncmp(argv[1], "-psn_", 5) != 0) {
         usage(stderr);
         return 1;
     }
@@ -215,6 +236,8 @@ int main(int argc, char *argv[]) {
     Theme theme;
     Backend backend;
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::shutdown);
+    SongOpener opener(&backend);
+    app.installEventFilter(&opener);
 
     QQmlApplicationEngine engine;
     QObject::connect(&translator, &Translator::changed, &engine, &QQmlEngine::retranslate);

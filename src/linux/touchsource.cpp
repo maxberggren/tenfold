@@ -198,6 +198,7 @@ void TouchSource::handle(char *line) {
         f.t = double(std::strtoll(p, &p, 10)) * 1e-6;
         f.button = std::strtol(p, &p, 10) != 0;
         const float xr = float(std::max(1, m_xmax - m_xmin)), yr = float(std::max(1, m_ymax - m_ymin));
+        m_contacts.beginFrame();
         while (*p == ' ' && f.count < int(f.touches.size())) {
             ++p;
             int v[7];
@@ -206,55 +207,15 @@ void TouchSource::handle(char *line) {
                 if (*p == ',')
                     ++p;
             }
-            Touch &t = f.touches[f.count++];
-            t.id = v[0];
-            t.x = std::clamp((float(v[1]) - float(m_xmin)) / xr, 0.0f, 1.0f);
-            t.y = 1.0f - std::clamp((float(v[2]) - float(m_ymin)) / yr, 0.0f, 1.0f);
-            const float major = float(std::max(v[3], v[4])), minor = float(std::min(v[3], v[4]));
-            // Contact size relative to this player's own fingertip, learned as
-            // they play, so a palm is "much bigger than your finger" on any pad.
-            // A contact is smallest on its first frames, while the finger is
-            // still arriving, so only settled contacts (their fourth frame
-            // on) teach the fingertip size, averaged over many touches; until
-            // a few have, nothing counts as big.
-            int &age = m_contactAge[t.id & 255];
-            age = m_lastSeen[t.id & 255] + 1 == m_frames.load() ? age + 1 : 1;
-            m_lastSeen[t.id & 255] = m_frames.load();
-            if (major > 0 && age == 4) {
-                if (m_learned == 0)
-                    m_fingerSize = major;
-                else if (major < m_fingerSize * 2.0f)
-                    m_fingerSize += (major - m_fingerSize) * (m_learned < 10 ? 0.3f : 0.08f);
-                ++m_learned;
-                m_fingerSize = std::max(m_fingerSize, float(std::max(1, m_majorMax)) * 0.04f);
-            }
-            t.size = major > 0 && m_learned >= 3 ? major / m_fingerSize : 1.0f;
-            t.eccentricity = major > 0 && minor > 0 ? 1.0f - minor / major : 0.0f;
+            const float x = (float(v[1]) - float(m_xmin)) / xr;
+            const float y = 1.0f - std::clamp((float(v[2]) - float(m_ymin)) / yr, 0.0f, 1.0f);
+            float angle = 0;
             if (m_omax > m_omin) {
                 const float mid = 0.5f * float(m_omin + m_omax), half = 0.5f * float(m_omax - m_omin);
-                t.angle = (float(v[5]) - mid) / half * 1.5707963f;
+                angle = (float(v[5]) - mid) / half * 1.5707963f;
             }
-            if (m_pmax > m_pmin) {
-                const float raw = float(v[6] - m_pmin);
-                // Pressure relative to how this player usually touches, so an
-                // ordinary tap reads about a half whatever the hardware's
-                // scale. Pads report ranges far beyond what fingers reach
-                // (and one hard click must not make every later tap read as
-                // nothing), so the reference is learned from contacts a few
-                // frames in, like the fingertip size.
-                if (age == 6 && raw > 0) {
-                    m_pressureTypical = m_pressureTypical <= 0
-                                            ? raw
-                                            : m_pressureTypical + (raw - m_pressureTypical) * 0.1f;
-                    if (std::getenv("TENFOLD_DEBUG") && m_learned % 20 == 0)
-                        std::fprintf(stderr, "tenfold: pressure %.0f of %d, typical %.0f\n", raw,
-                                     m_pmax - m_pmin, m_pressureTypical);
-                }
-                const float ref = std::max(2.0f * m_pressureTypical, 0.002f * float(m_pmax - m_pmin) + 1.0f);
-                t.pressure = m_pressureTypical > 0 ? std::clamp(raw / ref, 0.0f, 1.0f) : 0.5f;
-            } else {
-                t.pressure = std::clamp((t.size - 0.6f) / 0.8f, 0.0f, 1.0f);
-            }
+            f.touches[f.count++] =
+                m_contacts.touch(v[0], x, y, float(v[3]), float(v[4]), angle, float(v[6] - m_pmin));
         }
         ++m_frames;
         // Only a grabbed pad is an instrument. Given back, it's a pointer
@@ -282,6 +243,7 @@ void TouchSource::handle(char *line) {
         m_omax = v[8];
         m_pmin = v[9];
         m_pmax = v[10];
+        m_contacts.setScale(float(m_majorMax), m_pmax > m_pmin ? float(m_pmax - m_pmin) : 0.0f);
         const float w = float(m_xmax - m_xmin) / float(v[5] > 0 ? v[5] : 1);
         const float h = float(m_ymax - m_ymin) / float(v[6] > 0 ? v[6] : 1);
         const float aspect = h > 0 ? w / h : 1.6f;

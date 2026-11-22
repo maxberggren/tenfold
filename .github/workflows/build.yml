@@ -7,6 +7,8 @@
 #   try      the bundle installed by site/install.sh on other distributions,
 #            then run: a render, a song check and a screenshot of the window
 #   nix      the flake, for NixOS
+#   macos    tenfold.app in a disk image, for Apple silicon and Intel Macs,
+#            signed and notarized when the repository has the keys
 #
 # A version tag (v0.2.0) also publishes a release with the packages, the
 # bundles and their checksums, which the install script fetches.
@@ -235,9 +237,94 @@ jobs:
           ./result/bin/tenfold --help
           ./result/bin/tenfold render docs/parts/arp/ten-sounds.tf out.wav --json
 
+  macos:
+    name: macos
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      QT_VERSION: 6.8.3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        run: |
+          python3 -m venv /tmp/aqt
+          /tmp/aqt/bin/pip install -q aqtinstall
+          /tmp/aqt/bin/aqt install-qt -O "$HOME/qt" mac desktop $QT_VERSION clang_64
+          qmake=$(find "$HOME/qt/$QT_VERSION" -path '*/bin/qmake' | head -n 1)
+          echo "QMAKE=$qmake" >>"$GITHUB_ENV"
+
+      - name: Test
+        run: bin/test
+
+      # The Developer ID certificate into a keychain of the job's own, and
+      # the notary key beside it, when the repository has them.
+      - name: Signing keys
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          if [ -z "$MACOS_CERT_P12" ]; then echo "No signing certificate: the app is signed ad hoc"; exit 0; fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode >"$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "MACOS_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >>"$GITHUB_ENV"
+          if [ -n "$NOTARY_KEY_P8" ]; then
+            printf '%s' "$NOTARY_KEY_P8" | base64 --decode >"$RUNNER_TEMP/notary.p8"
+            echo "NOTARY_KEY=$RUNNER_TEMP/notary.p8" >>"$GITHUB_ENV"
+            echo "NOTARY_KEY_ID=$NOTARY_KEY_ID" >>"$GITHUB_ENV"
+            echo "NOTARY_ISSUER=$NOTARY_ISSUER" >>"$GITHUB_ENV"
+          fi
+
+      - name: Bundle
+        run: |
+          case "$GITHUB_REF" in
+          refs/tags/v*) version=${GITHUB_REF_NAME#v} ;;
+          *) version=dev ;;
+          esac
+          bin/bundle-macos "$version"
+
+      # Opened the way a download is: from the image, the app's own binary
+      # rendering a performance and drawing the window.
+      - name: Run it
+        run: |
+          mount=$(hdiutil attach -nobrowse -readonly build/tenfold-macos.dmg | tail -n 1 | cut -f 3-)
+          app="$mount/tenfold.app"
+          ls "$mount"
+          codesign --verify --deep --strict -v "$app"
+          spctl --assess --type execute -v "$app" || echo "(not notarized: Gatekeeper asks before the first start)"
+          "$app/Contents/MacOS/tenfold" --help
+          "$app/Contents/MacOS/tenfold" render docs/parts/arp/ten-sounds.tf out.wav --json
+          "$app/Contents/MacOS/tenfold" screenshot shot.png docs/parts/lead/anthem.tf --page 4 --at 10
+          "$app/Contents/MacOS/tenfold" latency || true
+          test -s shot.png
+          hdiutil detach "$mount"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenfold-macos
+          path: build/tenfold-macos.dmg
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shot-macos
+          path: shot.png
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [arch, bundle, try]
+    needs: [arch, bundle, try, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -251,7 +338,7 @@ jobs:
       # A checksum beside each package, which the install script checks.
       - name: Checksums
         working-directory: dist
-        run: for f in *.pkg.tar.zst *.tar.gz; do sha256sum "$f" >"$f.sha256"; done
+        run: for f in *.pkg.tar.zst *.tar.gz *.dmg; do sha256sum "$f" >"$f.sha256"; done
 
       - name: Publish the release
         env:

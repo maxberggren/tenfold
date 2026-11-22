@@ -1,0 +1,90 @@
+#!/bin/sh
+# Makes build/tenfold-macos.dmg: tenfold.app with its own Qt, for Apple
+# silicon and Intel Macs on macOS 12 or later, in a disk image to drag to
+# Applications.
+#
+#   bin/bundle-macos [version]
+#
+# QMAKE names the Qt to bundle (default: qmake6 on PATH). Signing and
+# notarizing need, from the environment:
+#
+#   MACOS_SIGN_IDENTITY   "Developer ID Application: …" in the keychain
+#   NOTARY_KEY            path to an App Store Connect API key (.p8)
+#   NOTARY_KEY_ID         its key ID
+#   NOTARY_ISSUER         its issuer ID
+#
+# Without an identity the app is signed ad hoc: it runs, but macOS asks the
+# player to allow it in System Settings > Privacy & Security first. Without
+# the notary key it is signed but not notarized, and macOS asks the same.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+version="${1:-dev}"
+qmake="${QMAKE:-qmake6}"
+identity="${MACOS_SIGN_IDENTITY:-}"
+entitlements="$ROOT/src/macos/tenfold.entitlements"
+
+TENFOLD_PORTABLE=1 QMAKE="$qmake" "$ROOT/bin/build"
+
+out="$ROOT/build/macos"
+app="$out/tenfold.app"
+rm -rf "$out"
+mkdir -p "$out"
+cp -R "$ROOT/build/tenfold.app" "$app"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" -c "Set :CFBundleVersion $version" \
+    "$app/Contents/Info.plist" 2>/dev/null || true
+
+# Qt's frameworks, plugins and the QML the window imports, into the bundle.
+qtbin="$(dirname "$(command -v "$qmake")")"
+"$qtbin/macdeployqt" "$app" -qmldir="$ROOT/src" -always-overwrite
+# The commands without a display (screenshot, check) run on the offscreen
+# platform, which macdeployqt leaves out.
+qtplugins="$("$qmake" -query QT_INSTALL_PLUGINS)"
+if [ ! -e "$app/Contents/PlugIns/platforms/libqoffscreen.dylib" ] && [ -e "$qtplugins/platforms/libqoffscreen.dylib" ]; then
+    cp "$qtplugins/platforms/libqoffscreen.dylib" "$app/Contents/PlugIns/platforms/"
+fi
+
+# Signed from the inside out: every library and framework, then the app,
+# under the hardened runtime notarization asks for.
+if [ -n "$identity" ]; then
+    sign() { codesign --force --timestamp --options runtime --sign "$identity" "$@"; }
+else
+    sign() { codesign --force --sign - "$@"; }
+fi
+find "$app/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) | while IFS= read -r lib; do sign "$lib"; done
+find "$app/Contents/Frameworks" -maxdepth 1 -name '*.framework' | while IFS= read -r fw; do sign "$fw"; done
+sign --entitlements "$entitlements" "$app"
+codesign --verify --deep --strict "$app"
+
+notarize() {
+    xcrun notarytool submit "$1" --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
+        --wait --timeout 30m
+}
+can_notarize() { [ -n "$identity" ] && [ -n "${NOTARY_KEY:-}" ] && [ -n "${NOTARY_KEY_ID:-}" ] && [ -n "${NOTARY_ISSUER:-}" ]; }
+
+# The app notarized and stapled on its own first, so it opens without a
+# network check once it's been dragged out of the image.
+if can_notarize; then
+    ditto -c -k --keepParent "$app" "$out/tenfold.zip"
+    notarize "$out/tenfold.zip"
+    xcrun stapler staple "$app"
+    rm "$out/tenfold.zip"
+fi
+
+# The image: the app and a link to Applications to drag it onto.
+stage="$out/dmg"
+mkdir -p "$stage"
+cp -R "$app" "$stage/"
+ln -s /Applications "$stage/Applications"
+dmg="$ROOT/build/tenfold-macos.dmg"
+rm -f "$dmg"
+hdiutil create -volname "tenfold $version" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+if [ -n "$identity" ]; then
+    codesign --force --timestamp --sign "$identity" "$dmg"
+fi
+if can_notarize; then
+    notarize "$dmg"
+    xcrun stapler staple "$dmg"
+    spctl --assess --type open --context context:primary-signature -v "$dmg"
+fi
+echo "Bundled $dmg ($(du -h "$dmg" | cut -f1))"

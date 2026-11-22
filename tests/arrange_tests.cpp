@@ -1281,7 +1281,10 @@ private slots:
         QCOMPARE(b[3].toObject()[QStringLiteral("play")].toObject(), (QJsonObject{{"Drums", 0}}));
         const QJsonObject drums = back[QStringLiteral("channels")][QStringLiteral("Drums")].toObject();
         QCOMPARE(drums[QStringLiteral("gain")].toArray(), (QJsonArray{QJsonArray{0, 1}, QJsonArray{16, 0.4}}));
-        QCOMPARE(drums[QStringLiteral("mute")].toArray(), (QJsonArray{QJsonArray{0, 0}}));
+        // An array holding one array; braces alone read as a copy of the inner one under Clang.
+        QJsonArray mute;
+        mute.append(QJsonArray{0, 0});
+        QCOMPARE(drums[QStringLiteral("mute")].toArray(), mute);
         QVERIFY(!back[QStringLiteral("channels")].toObject().contains(QStringLiteral("Nobody")));
         QCOMPARE(back[QStringLiteral("tension")].toArray(), (QJsonArray{QJsonArray{0, -1}, QJsonArray{10, 1}}));
         const QJsonArray moves = back[QStringLiteral("moves")].toArray();

@@ -2460,7 +2460,6 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     // stepper whose two ends are those keys; a switch is a chip lit when
     // on, showing its key.
     m_spots.clear();
-    const QFontMetricsF chipFont(c::font(12, true)), nameFont(c::font(11, true));
     // Shares a row out between items in proportion to the room each
     // wants, so the longest names keep their letters on a narrow window.
     auto lay = [](const QRectF &row, const std::vector<qreal> &want, qreal gap) {
@@ -2519,7 +2518,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         const qreal end = chipWant(QStringLiteral("⇧↓"));
         std::vector<qreal> want;
         for (const auto &st : steppers)
-            want.push_back(2 * end + std::max(nameFont.horizontalAdvance(QStringLiteral("GLIDE")),
+            want.push_back(2 * end + std::max(console::textWidth(c::font(11, true), QStringLiteral("GLIDE")),
                                               console::textWidth(c::font(11, true), st.name)) + 4);
         for (const auto &sw : switches)
             want.push_back(chipWant(sw.label));

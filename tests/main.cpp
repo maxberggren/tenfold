@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "console.h"
+#include "dsp.h"
 #include "testkit.h"
 
 int main(int argc, char **argv) {
@@ -15,6 +16,10 @@ int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     tf::console::loadFonts();
+    // The tests render on this thread, which flushes denormals as the audio
+    // thread does (GCC's fast maths does it for the whole program, Clang's
+    // doesn't).
+    tf::flushDenormals();
     int failed = 0;
     for (auto &suite : testkit::registry())
         failed += suite.run(argc, argv) != 0;

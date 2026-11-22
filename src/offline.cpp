@@ -529,6 +529,9 @@ void ScriptPlayer::tick(double t, Session &session) {
 }
 
 RenderStats renderScript(const std::string &script, const std::string &wavPath) {
+    // Rendered on this thread, as the audio thread renders live. (GCC's
+    // fast maths flushes denormals for the whole program; Clang's doesn't.)
+    flushDenormals();
     RenderStats st;
     ScriptPlayer player;
     if (!player.load(script, &st.error))
@@ -624,6 +627,7 @@ RenderStats renderScript(const std::string &script, const std::string &wavPath) 
 }
 
 RenderStats runBench(double seconds) {
+    flushDenormals();
     // A recorded loop on every part (Space, eight hits, Space), then ten
     // fingers held on the lead page.
     std::ostringstream s;

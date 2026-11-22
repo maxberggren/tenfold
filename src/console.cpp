@@ -37,10 +37,32 @@ bool isIcon(QChar c) {
     }
 }
 
+// The console font's measurements, from its design rather than asked of
+// the system: Noto Sans Mono's letters are all 600 thousandths of an em
+// wide, its capitals 714 high. Every page lays its buttons out by these, so
+// asking each system's rasterizer (which rounds its own way) would put them
+// in different places on Linux and macOS.
+static bool isConsoleFont(const QFont &f) {
+    return f.pixelSize() > 0 && f.family() == QLatin1String("Noto Sans Mono");
+}
+static qreal letterAdvance(const QFont &f) {
+    const int stretch = f.stretch() > 0 ? f.stretch() : 100;
+    return 0.6 * f.pixelSize() * stretch / 100.0;
+}
+static qreal spacing(const QFont &f) {
+    return f.letterSpacingType() == QFont::AbsoluteSpacing ? f.letterSpacing() : 0.0;
+}
+static qreal capHeight(const QFont &f) {
+    return isConsoleFont(f) ? 0.714 * f.pixelSize() : QFontMetricsF(f).capHeight();
+}
+
 // An icon's box is as wide as it is tall, the height of a capital: it sits
 // on the line like a letter.
-static qreal iconSize(const QFont &f) { return QFontMetricsF(f).capHeight() * 1.18; }
-static qreal iconAdvance(const QFont &f) { return iconSize(f) + QFontMetricsF(f).horizontalAdvance(QLatin1Char(' ')) * 0.35; }
+static qreal iconSize(const QFont &f) { return capHeight(f) * 1.18; }
+static qreal iconAdvance(const QFont &f) {
+    const qreal space = isConsoleFont(f) ? letterAdvance(f) : QFontMetricsF(f).horizontalAdvance(QLatin1Char(' '));
+    return iconSize(f) + space * 0.35;
+}
 
 void drawIcon(QPainter &p, QChar c, const QRectF &box, QColor color) {
     const qreal s = std::min(box.width(), box.height());
@@ -113,12 +135,17 @@ void drawIcon(QPainter &p, QChar c, const QRectF &box, QColor color) {
 
 qreal textWidth(const QFont &f, const QString &s) {
     const QFontMetricsF m(f);
+    const bool mono = isConsoleFont(f);
+    const qreal step = mono ? letterAdvance(f) + spacing(f) : 0;
     qreal w = 0;
     QString run;
     for (const QChar c : s) {
         if (isIcon(c)) {
             w += m.horizontalAdvance(run) + iconAdvance(f);
             run.clear();
+        } else if (mono && m.inFont(c)) {
+            // A letter of the console font: one advance and its spacing.
+            w += step;
         } else {
             run += c;
         }

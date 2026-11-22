@@ -78,7 +78,14 @@ cp -R "$app" "$stage/"
 ln -s /Applications "$stage/Applications"
 dmg="$ROOT/build/tenfold-macos.dmg"
 rm -f "$dmg"
-hdiutil create -volname "tenfold $version" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
+# hdiutil now and then finds the disk-image helper busy ("Resource busy") on
+# a fresh machine, so it gets a few tries.
+tries=0
+until hdiutil create -volname "tenfold $version" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 5 ] || exit 1
+    sleep $((tries * 5))
+done
 if [ -n "$identity" ]; then
     codesign --force --timestamp --sign "$identity" "$dmg"
 fi

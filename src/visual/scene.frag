@@ -147,7 +147,8 @@ float tunnel(vec3 p, out float trap) {
     vec2 id = floor(cell);
     vec2 f = fract(cell) - 0.5;
     float h = hash2(id + floor(seed * 3.0));
-    float inset = 0.12 + 0.55 * ubuf.morph0.y * h;
+    // Hats open the panels: each hit punches them deeper.
+    float inset = 0.12 + (0.55 * ubuf.morph0.y + 0.4 * ubuf.drums.z) * h;
     float panel = smoothstep(0.42, 0.36, max(abs(f.x), abs(f.y)));
     trap = h;
     return (R - r - inset * panel) * 0.6;
@@ -200,7 +201,7 @@ float sponge(vec3 p, out float trap) {
     float t = 0.0;
     mat2 r = rot(0.12 * sin(seed * 0.9));
     for (int m = 0; m < 4; m++) {
-        vec3 a = mod(p * s + vec3(0.0, 0.0, 0.3 * ubuf.morph0.y * float(m)), 2.0) - 1.0;
+        vec3 a = mod(p * s + vec3(0.0, 0.0, (0.3 * ubuf.morph0.y + 0.25 * ubuf.bass.w) * float(m)), 2.0) - 1.0;
         s *= 3.0;
         vec3 q = abs(1.0 - 3.0 * abs(a));
         float da = max(q.x, q.y), db = max(q.y, q.z), dc = max(q.z, q.x);
@@ -259,7 +260,7 @@ float bend(inout vec3 q) {
     q.xy *= 1.0 + 0.5 * ubuf.drums.x * ubuf.drums.x;
     float slab = floor(q.z * 1.3);
     float jump = step(0.55, hash1(slab + ubuf.drums2.y * 7.31));
-    q.xy += jump * ubuf.drums.y * 0.5 * (vec2(hash1(slab * 3.1), hash1(slab * 5.7)) - 0.5);
+    q.xy += jump * ubuf.drums.y * 0.3 * (vec2(hash1(slab * 3.1), hash1(slab * 5.7)) - 0.5);
     // Two fingers' pinch scales the world itself.
     float s = exp2(-ubuf.morph1.w);
     q *= s;
@@ -402,8 +403,10 @@ void main() {
     float harmony = clamp(ubuf.levels0.y + ubuf.levels0.z + ubuf.levels1.y + 0.6 * ubuf.levels0.w + 0.5 * ubuf.levels1.x +
                           ubuf.levels1.w, 0.0, 1.0);
     float ambient = 0.2 + 0.8 * harmony;
-    vec3 hue = palette(0.0);
-    vec3 complement = palette(0.5);
+    // Each world its own base hue, turned by the chord; the second tone a
+    // split complement, lighter and paler, for the rims and cavities.
+    vec3 hue = palette(0.17 * ubuf.morph0.x);
+    vec3 complement = mix(palette(0.17 * ubuf.morph0.x + 0.42), vec3(0.75), 0.45);
 
     vec3 col = vec3(0.0);
     // Fog to black, with a faint band of the complement in the distance:
@@ -430,8 +433,9 @@ void main() {
         float spec = pow(max(dot(refl, l1), 0.0), 32.0);
         float fres = pow(1.0 - max(dot(n, -rd), 0.0), 4.0);
         // Value, not just hue: buried and far is near black.
-        float shade = ao * ao * exp(-t * 0.06);
-        col = base * (0.02 + 0.9 * dif + 0.35 * dif3) * ambient * shade;
+        float fall = exp(-t * 0.05);
+        col = base * (0.06 * ao * ao + (1.2 * dif + 0.45 * dif3) * ao) * ambient * fall;
+        float shade = ao * fall;
         // The complement in what is buried.
         col += complement * complement * 0.05 * (1.0 - ao) * ambient;
         // The crystals are glass: hard highlights and a bright rim.
@@ -439,7 +443,7 @@ void main() {
         col += hue * spec * (0.25 + 2.0 * crystalW) * ambient * shade;
         col += complement * fres * crystalW * 0.8 * ambient;
         col += complement * fres * (0.35 * ambient + 1.2 * ubuf.chord.y) * ao;
-        col += C_LEAD * fres * 0.6 * ubuf.lead.x * ao;
+        col += C_LEAD * fres * 0.25 * ubuf.lead.x * ao;
         // The sponge's cavities in the complement.
         float spongeW = 1.0 - clamp(abs(ubuf.morph0.x - 3.0), 0.0, 1.0);
         col = mix(col, complement * complement * 0.3 * ambient * ao, spongeW * step(0.6, trap));
@@ -465,6 +469,9 @@ void main() {
         float g = hash3(floor(p * 18.0) + floor(time * 30.0));
         col += vec3(1.0) * ubuf.drums.z * step(0.992 - 0.03 * fres, g) * 3.0 * exp(-t * 0.25);
         // The fog swallows what is far.
+        // The city's street glows warm between the towers.
+        float cityG = 1.0 - clamp(min(abs(ubuf.morph0.x), abs(ubuf.morph0.x - 5.0)), 0.0, 1.0);
+        col += vec3(1.0, 0.55, 0.25) * exp(-(p.y + 1.6) * 2.5) * 0.12 * cityG * (0.4 + ambient);
         float fog = 1.0 - exp(-t * (0.04 + 0.08 * ubuf.atmos.x));
         col = mix(col, fogCol, fog);
     } else {
@@ -475,9 +482,10 @@ void main() {
     col += emit;
     // A build climbs: its edges burn white, the frame whitens, and near the
     // top every other sixteenth cuts to black.
+    // A build burns its edges white (the glass whitens it, post.frag).
     col += glow * vec3(1.0) * 12.0 * build * build;
-    col = mix(col, vec3(dot(col, vec3(0.33))), build * 0.4) * (1.0 + 2.5 * build) + build * build * 0.15;
-    float off = step(0.5, fract(ubuf.res.w * 4.0)) * smoothstep(0.55, 0.9, build);
-    col *= 1.0 - 0.9 * off;
-    fragColor = vec4(col, 1.0) * ubuf.qt_Opacity;
+    // Alpha marks what is lit by itself (the lead, the voice, the orbs): the
+    // echoes leave it out, so it never ghosts into stripes.
+    float own = clamp(dot(emit, vec3(0.4)) * 3.0, 0.0, 1.0);
+    fragColor = vec4(col, 1.0 - own) * ubuf.qt_Opacity;
 }

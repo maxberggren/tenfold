@@ -122,7 +122,11 @@ void main() {
     keep *= 1.0 - step(0.75, ubuf.fx.y);
     old = max(old * clamp(keep, 0.0, 0.95) - 0.004, 0.0);
 
-    vec3 now = texture(scene, uv).rgb;
+    vec4 sceneNow = texture(scene, uv);
+    vec3 now = sceneNow.rgb;
+    // Where the world lights itself (alpha under 1), no echoes: they would
+    // ghost the lead's ribbon into stripes.
+    float echoes = sceneNow.a;
     float lum = dot(now, vec3(0.3, 0.5, 0.2));
     // The marks of this frame, added to the world before it meets the
     // echoes: added after, a mark drawn every frame would pile up to many
@@ -150,7 +154,7 @@ void main() {
     now += col;
     // The echoes only where this frame is dark: they fill the black between
     // things and never muddy the things themselves.
-    col = max(now, old * (1.0 - smoothstep(0.03, 0.35, lum)));
+    col = max(now, old * (1.0 - smoothstep(0.03, 0.35, lum)) * echoes);
     if (ubuf.debug.x == 3.0) col = now;
     if (ubuf.debug.x == 4.0) col = old;
     fragColor = vec4(min(col, vec3(8.0)), 1.0) * ubuf.qt_Opacity;

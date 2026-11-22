@@ -91,9 +91,9 @@ void main() {
     float drop = ubuf.fx.y;
     col *= 1.0 - 0.85 * smoothstep(0.3, 0.85, drop);
 
-    // Filmic: a black level (the echoes and the glow lift it), a soft
-    // shoulder, a touch more colour.
-    col = max(col - 0.025, 0.0) * 1.03;
+    // Filmic: a black level (the echoes and the glow lift it), half a stop
+    // up, a soft shoulder, a touch more colour.
+    col = max(col - 0.02, 0.0) * 1.5;
     col = col * (2.51 * col + 0.03) / (col * (2.43 * col + 0.59) + 0.14);
     col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 1.25);
     col = mix(col, vec3(1.0), step(0.85, drop));
@@ -105,6 +105,13 @@ void main() {
     col *= 1.0 - (0.25 + 0.3 * crt) * dot(d, d) * 1.6;
     col += (hash2(qt_TexCoord0 * ubuf.res.xy + fract(time * 7.13) * 91.0) - 0.5) * (0.01 + 0.02 * crt + 0.04 * ubuf.drums.z);
     col *= inside;
+    // A build, after the tone curve so nothing swallows it: the glass
+    // whitens as it climbs, and near the top the end of every sixteenth cuts to
+    // black.
+    float build = ubuf.fx.x;
+    col = mix(col, vec3(1.0), 0.55 * build * build);
+    col *= 1.0 - 0.92 * step(0.75, fract(ubuf.res.w * 4.0)) * smoothstep(0.6, 0.9, build);
+
     // Dither, so dark gradients don't band (in a video least of all).
     col += (hash2(qt_TexCoord0 * ubuf.res.xy + 17.0) - 0.5) / 128.0;
     fragColor = vec4(clamp(col, 0.0, 1.0), 1.0) * ubuf.qt_Opacity;

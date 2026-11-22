@@ -866,7 +866,8 @@ std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand 
         {"morph0", {world, std::min(1.0f, l.fold + 0.4f * h.extreme), std::max(l.symmetry, 0.6f * h.extreme),
                     l.seed + d.seedShift}},
         {"morph1", {l.yaw, l.pitch, l.twist + 2.0f * h.extreme, l.zoom}},
-        {"morph2", {float(d.travel), std::max(l.warp, 0.85f * h.extreme), l.hue, h.chaos}},
+        // A drop passes through the inverted bubble for a moment, too.
+        {"morph2", {float(d.travel), std::max({l.warp, 0.85f * h.extreme, 0.9f * s.drop}), l.hue, h.chaos}},
         {"morph3", {float(marchSteps(set.quality)), clamp01(h.pressure * float(h.count > 0)), d.pace, float(h.count)}},
         {"roll", {d.roll, l.trails, set.markers ? 1.0f : 0.0f, crt}},
     };

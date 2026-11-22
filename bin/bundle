@@ -1,0 +1,67 @@
+#!/bin/sh
+# Makes build/tenfold-<version>-<arch>-linux.tar.gz: tenfold with its own Qt,
+# for Linux systems that aren't Arch. It unpacks anywhere and runs from
+# there (the install script puts it in ~/.local/share/tenfold); what it
+# still takes from the system is what every desktop has (glibc, OpenGL,
+# fontconfig, D-Bus, Wayland or X11) and PipeWire, which must match the
+# system's own sound server, so it is never bundled.
+#
+#   bin/bundle [version]
+#
+# QMAKE names the Qt to bundle (default: qmake6 on PATH). linuxdeploy and
+# its Qt plugin are fetched into build/tools the first time.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+version="${1:-dev}"
+arch="$(uname -m)"
+tools="$ROOT/build/tools"
+qmake="${QMAKE:-qmake6}"
+
+mkdir -p "$tools"
+for tool in linuxdeploy linuxdeploy-plugin-qt; do
+    if [ ! -x "$tools/$tool" ]; then
+        url="https://github.com/linuxdeploy/$tool/releases/download/continuous/$tool-$arch.AppImage"
+        echo "Fetching $tool"
+        curl -fsSL -o "$tools/$tool" "$url"
+        chmod +x "$tools/$tool"
+    fi
+done
+# The tools are AppImages: unpacked as they run, so no FUSE is needed.
+export APPIMAGE_EXTRACT_AND_RUN=1
+export PATH="$tools:$PATH"
+
+TENFOLD_PORTABLE=1 QMAKE="$qmake" "$ROOT/bin/build"
+
+out="$ROOT/build/bundle"
+appdir="$out/tenfold"
+rm -rf "$out"
+mkdir -p "$appdir"
+
+# The Qt plugin finds Qt through QMAKE and the QML the window imports
+# through its sources. Wayland comes first; X11 is there for the rest.
+export QMAKE="$(command -v "$qmake")"
+export QML_SOURCES_PATHS="$ROOT/src"
+export EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so"
+export EXTRA_QT_MODULES="waylandclient"
+export NO_STRIP=1
+linuxdeploy --appdir "$appdir" \
+    --executable "$ROOT/build/tenfold" \
+    --desktop-file "$ROOT/pkgbuild/tenfold.desktop" \
+    --icon-file "$ROOT/pkgbuild/tenfold.svg" \
+    --exclude-library 'libpipewire-0.3.so*' \
+    --plugin qt
+
+# The helper runs as root through pkexec, without the environment: the
+# binary has to find its Qt by itself (linuxdeploy's rpath) and nothing
+# above may depend on AppRun's environment.
+readelf -d "$appdir/usr/bin/tenfold" | grep -q 'R.*PATH.*\$ORIGIN' ||
+    { echo "bin/bundle: tenfold has no \$ORIGIN rpath" >&2; exit 1; }
+
+install -Dm644 "$ROOT/LICENSE" "$appdir/LICENSE"
+install -Dm644 "$ROOT/extras/70-tenfold.rules" "$appdir/extras/70-tenfold.rules"
+printf '%s\n' "$version" >"$appdir/VERSION"
+
+tarball="$ROOT/build/tenfold-$version-$arch-linux.tar.gz"
+tar -C "$out" -czf "$tarball" tenfold
+echo "Bundled $tarball ($(du -h "$tarball" | cut -f1))"

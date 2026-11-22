@@ -8,6 +8,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QDir>
+#include <QFontDatabase>
 #include <QQuickWindow>
 #include <QThread>
 #include <QUrl>
@@ -68,11 +69,20 @@ static const char *option(int argc, char **argv, const char *name) {
     return nullptr;
 }
 
+// Noto Sans Mono, the window's one typeface, is compiled in (src/fonts,
+// under the OFL), so tenfold looks the same on any system whether or not
+// the font is installed.
+static void loadFonts() {
+    for (const char *weight : {"Regular", "Medium", "Bold", "Black"})
+        QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/NotoSansMono-%1.ttf").arg(QLatin1String(weight)));
+}
+
 // Renders the real window offscreen, mid-performance: for the README, and for
 // checking the screen without a trackpad or a display.
 static int screenshot(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
+    loadFonts();
     app.setApplicationName("tenfold");
     QQuickStyle::setStyle("Material");
     Translator translator;
@@ -197,6 +207,7 @@ int main(int argc, char *argv[]) {
     }
 
     QGuiApplication app(argc, argv);
+    loadFonts();
     app.setApplicationName("tenfold");
     app.setApplicationVersion("0.1.0");
     app.setDesktopFileName("tenfold");

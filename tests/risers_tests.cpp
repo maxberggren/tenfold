@@ -926,7 +926,7 @@ private slots:
         const float *d = after.parts[kFx].data;
         for (int k = 0; k < risers::pub::MaxVoices; ++k) {
             const float *o = d + risers::pub::Voices + risers::pub::Stride * k;
-            replayed |= o[risers::pub::VKind] == risers::Noise && o[risers::pub::VWho] > 1.5f;
+            replayed |= int(o[risers::pub::VKind]) == int(risers::Noise) && o[risers::pub::VWho] > 1.5f;
         }
         QVERIFY(replayed);
         QVERIFY(d[risers::pub::Drop] > 0);

@@ -600,6 +600,10 @@ ApplicationWindow {
                 font.letterSpacing: 1 // fixed pixels: kept small so a shrunk line still fits
                 font.capitalization: Font.AllUppercase
                 color: win.pageColor
+                // A thin dark edge round each letter, so the words read over
+                // whatever the pad is lighting up under them.
+                style: Text.Outline
+                styleColor: "#d0000000"
             }
             Connections {
                 target: backend

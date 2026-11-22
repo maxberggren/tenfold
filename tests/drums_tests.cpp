@@ -331,7 +331,12 @@ private slots:
                 Ctx ctx;
                 drums::Engine e;
                 e.init(kRate);
-                const Dry d = strike(pad, kit, 1.0f, 9.0, ctx, &e);
+                // The gong ageng, the slenthem, the kenong and the tanpura
+                // ring longest.
+                const bool longest = (kit == drums::Tabla && pad == drums::Crash) ||
+                                     (kit == drums::Gamelan &&
+                                      (pad == drums::Crash || pad == drums::Shaker || pad == drums::Open));
+                const Dry d = strike(pad, kit, 1.0f, longest ? 16.0 : 9.0, ctx, &e);
                 QVERIFY2(d.finite(), drums::padName(pad));
                 QVERIFY2(d.peak() > 0.01f, drums::padName(pad));
                 QVERIFY2(d.peak() < 0.6f, drums::padName(pad));
@@ -739,20 +744,24 @@ private slots:
         }
     }
 
-    // The mouse reaches what the keys do: a click on TECHNO or BRUSHES under
-    // the pad changes the kit, swing's + adds swing, a filled clip slot
-    // launches.
+    // The mouse reaches what the keys do: a click on TECHNO or TABLA under
+    // the pad changes the kit, the arrow at the drum kits' end shows the
+    // ones past it, swing's + adds swing, a filled clip slot launches.
     void theBandUnderThePadIsClickable() {
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
         // is 0.048 of it under the pad, row 1 0.119. The kits fill both rows
-        // from 0.57 of the width, five across (row 0 the first eight, row 1
-        // the rest, each a window onto its kits); row 1's left 0.55 holds
-        // swing −, the swing, swing + (0.14..0.19), loop −, loop +, overdub and back.
-        testkit::play("page 0 1\nbutton 0.2 0.70 -0.048\nend 0.5\n", [](Session &s) {
+        // from 0.57 of the width: row 0 a window of four of the ten drum
+        // kits between two arrows, row 1 the five from the world's music;
+        // row 1's left 0.55 holds swing −, the swing, swing + (0.14..0.19),
+        // loop −, loop +, overdub and back.
+        testkit::play("page 0 1\nbutton 0.2 0.72 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.119\nend 0.5\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("brushes"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("tabla"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+        });
+        testkit::play("page 0 1\nbutton 0.2 0.985 -0.048\nbutton 0.4 0.72 -0.048\nend 0.6\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("boom bap"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
         testkit::play("page 0 1\nbutton 0.2 0.162 -0.119\nbutton 0.3 0.162 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
@@ -1157,7 +1166,9 @@ private slots:
     void swingLeavesThirtySecondsEven() {
         // The brushes swing a full triplet (66%), but a cross-stick rolling
         // in thirty-seconds stays even.
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\n"
+        // Brushes is the tenth kit: six to the left of house.
+        const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\nkey 0.12 Left\nkey 0.13 Left\n"
+                                        "key 0.14 Left\nkey 0.15 Left\n"
                                         "down 1.0 1 0.38 0.27 p=0.6\nglide 1.3 1.4 1 0.38 0.56\nup 4.0 1\nend 4.5\n");
         const auto on = onsets(take, 2.0, 3.9, 0.02);
         QVERIFY(on.size() >= 25);
@@ -1551,18 +1562,21 @@ private slots:
         // puts them on, measured below their overtones once the strike has
         // passed: the log drum on A1 (after dropping from an octave up), the
         // tabla tarang's low drum on A3 (its na rings the harmonics, the
-        // fundamental under them), the saron on A4 (its ombak twin only a
-        // few hertz off), the chip's blip on E5, the agogô's low bell on E5,
-        // the pan flute on A5, the sitar on A4 and the tanpura's drone on A2.
+        // fundamental under them), the saron and the kenong on A4 (each
+        // ombak twin only a few hertz off), the chip's blip on E5, the
+        // marimba on E5, the sitar on A4, the krin on E4, the kora on A4
+        // and the djembe's bass on E2 (the fifth, where A is too far from
+        // where a bass lives).
         struct Case {
             int pad, kit;
             double hz, from, to;
         };
         const Case cases[] = {
             {drums::Sub, drums::Amapiano, 55.0, 0.12, 0.3},   {drums::TomLo, drums::Tabla, 220.0, 0.05, 0.3},
-            {drums::TomLo, drums::Gamelan, 440.0, 0.05, 0.4}, {drums::Perc, drums::Chip, 659.26, 0.02, 0.08},
-            {drums::Bell, drums::Baile, 659.26, 0.01, 0.15},  {drums::Zap, drums::Amapiano, 880.0, 0.08, 0.3},
-            {drums::Zap, drums::Tabla, 440.0, 0.1, 0.4},      {drums::Crash, drums::Tabla, 110.0, 0.2, 0.8},
+            {drums::TomLo, drums::Gamelan, 440.0, 0.05, 0.4}, {drums::Open, drums::Gamelan, 440.0, 0.1, 0.6},
+            {drums::Perc, drums::Chip, 659.26, 0.02, 0.08},   {drums::Bell, drums::Amapiano, 659.26, 0.02, 0.3},
+            {drums::Zap, drums::Tabla, 440.0, 0.1, 0.4},      {drums::Bell, drums::Djembe, 329.63, 0.01, 0.15},
+            {drums::Zap, drums::Djembe, 440.0, 0.05, 0.3},    {drums::Kick, drums::Djembe, 82.41, 0.04, 0.2},
         };
         for (const Case &c : cases) {
             Ctx ctx;
@@ -1580,11 +1594,195 @@ private slots:
                                     .arg(c.hz)));
         }
         // The bayan's ge rises onto its note as the heel presses, where a
-        // kick falls onto it.
+        // kick falls onto it; struck further up the pad, it rises further.
         Ctx ctx;
         Dry ge = strike(drums::Kick, drums::Tabla, 1.0f, 0.4, ctx);
         const double early = settledHz(ge.l, 0.01, 0.06), late = settledHz(ge.l, 0.2, 0.35);
         QVERIFY2(early < late * 0.95, qPrintable(QStringLiteral("%1 then %2").arg(early).arg(late)));
+        drums::Engine e;
+        e.init(kRate);
+        drums::Strike far;
+        far.pad = drums::Kick;
+        far.kit = drums::Tabla;
+        far.sy = 0.95f;
+        e.strike(far, ctx.h);
+        Dry high;
+        float l[kBlock], r[kBlock];
+        for (int b = 0; b < int(0.4 * kRate) / kBlock; ++b) {
+            std::fill(l, l + kBlock, 0.0f);
+            std::fill(r, r + kBlock, 0.0f);
+            e.render(l, r, kBlock, ctx);
+            high.l.insert(high.l.end(), l, l + kBlock);
+        }
+        const double rise = std::log2(settledHz(high.l, 0.2, 0.35) / late) * 12.0;
+        QVERIFY2(rise > 1.0, qPrintable(QStringLiteral("%1 semitones further").arg(rise)));
+    }
+
+    void theGamelanPlaysInItsOwnTuning() {
+        // The saron's middle bar in A minor is pelog's third note, 270 cents
+        // over A (514 Hz), and in A major slendro's, 474 cents over it (579
+        // Hz): neither is a note of the piano.
+        for (const bool major : {false, true}) {
+            Ctx ctx;
+            ctx.h.tuning.set(9, 0, major ? 1 : 4, false);
+            QCOMPARE(drums::gamelanPelog(ctx.h.tuning), !major);
+            Dry d = strike(drums::TomMid, drums::Gamelan, 1.0f, 0.45, ctx);
+            Svf lp, lp2;
+            lp.set(700.0f, 0.7f, kRate);
+            lp2.set(700.0f, 0.7f, kRate);
+            for (float &x : d.l)
+                x = lp2.step(lp.step(x).low).low;
+            const double want = 440.0 * std::exp2((major ? 474.0 : 270.0) / 1200.0);
+            const double got = settledHz(d.l, 0.05, 0.4);
+            QVERIFY2(std::fabs(got / want - 1.0) < 0.01, qPrintable(QStringLiteral("%1 Hz, not %2").arg(got).arg(want)));
+            const double semis = 12.0 * std::log2(got / 440.0);
+            QVERIFY2(std::fabs(semis - std::round(semis)) > 0.2, qPrintable(QStringLiteral("%1 semitones").arg(semis)));
+        }
+        // The great gong sits on the root near 50 Hz (A1), and rings: ten
+        // seconds on, it is still there.
+        {
+            Ctx ctx;
+            Dry d = strike(drums::Crash, drums::Gamelan, 1.0f, 11.0, ctx);
+            Svf lp[4];
+            for (Svf &f : lp)
+                f.set(62.0f, 0.6f, kRate);
+            std::vector<float> low = d.l;
+            for (float &x : low)
+                for (Svf &f : lp)
+                    x = f.step(x).low;
+            const double hz = settledHz(low, 1.0, 4.0);
+            QVERIFY2(std::fabs(hz / 55.0 - 1.0) < 0.03, qPrintable(QStringLiteral("%1 Hz").arg(hz)));
+            float tail = 0;
+            for (size_t i = size_t(10.0 * kRate); i < d.l.size(); ++i)
+                tail = std::max(tail, std::fabs(d.l[i]));
+            QVERIFY2(tail > d.peak() * 0.005f, qPrintable(QStringLiteral("%1 of %2").arg(tail).arg(d.peak())));
+        }
+        // Octaves are counted in the gamelan's own notes, negative ones too.
+        Ctx ctx;
+        QVERIFY(std::fabs(drums::gamelanHz(ctx.h, 7, 440.0f) / drums::gamelanHz(ctx.h, 0, 440.0f) -
+                          std::exp2(1212.0 / 1200.0)) < 1e-3);
+        QVERIFY(std::fabs(drums::gamelanHz(ctx.h, -1, 440.0f) / drums::gamelanHz(ctx.h, 6, 440.0f) -
+                          std::exp2(-1212.0 / 1200.0)) < 1e-3);
+    }
+
+    void theWorldKitsSustainWhatIsHeld() {
+        // A roll on the angklung keeps the one sounding shaking, and a roll
+        // on the tanpura its strings plucked, rather than starting more:
+        // after two seconds of steps, still one voice, still sounding.
+        for (const int pad : {drums::Zap, drums::Crash}) {
+            const int kit = pad == drums::Zap ? drums::Gamelan : drums::Tabla;
+            Ctx ctx;
+            drums::Engine e;
+            e.init(kRate);
+            Command k;
+            k.type = Command::Param;
+            k.i[0] = drums::ParamKit;
+            k.i[1] = kit;
+            e.command(k, ctx);
+            float l[kBlock], r[kBlock];
+            double late = 0;
+            int most = 0;
+            const int blocks = int(4.0 * kRate) / kBlock;
+            for (int b = 0; b < blocks; ++b) {
+                const double t = double(b * kBlock) / kRate;
+                if (b % int(0.25 * kRate / kBlock) == 0 && t < 2.0) {
+                    Command c;
+                    c.type = drums::Hit;
+                    c.i[0] = pad;
+                    c.f[0] = 0.8f;
+                    c.f[1] = c.f[2] = 0.5f;
+                    e.command(c, ctx);
+                }
+                std::fill(l, l + kBlock, 0.0f);
+                std::fill(r, r + kBlock, 0.0f);
+                e.render(l, r, kBlock, ctx);
+                most = std::max(most, e.voices());
+                if (t > 2.2 && t < 2.5)
+                    for (float x : l)
+                        late = std::max(late, double(std::fabs(x)));
+            }
+            QVERIFY2(most == 1, qPrintable(QStringLiteral("%1: %2 voices").arg(drums::padName(pad, kit)).arg(most)));
+            QVERIFY2(late > 0.005, qPrintable(QStringLiteral("%1: %2").arg(drums::padName(pad, kit)).arg(late)));
+        }
+        // A single tanpura pluck cycle drones on for seconds.
+        Ctx ctx;
+        const Dry d = strike(drums::Crash, drums::Tabla, 0.8f, 7.0, ctx);
+        float tail = 0;
+        for (size_t i = size_t(6.0 * kRate); i < d.l.size(); ++i)
+            tail = std::max(tail, std::fabs(d.l[i]));
+        QVERIFY2(tail > d.peak() * 0.03f, qPrintable(QStringLiteral("%1 of %2").arg(tail).arg(d.peak())));
+    }
+
+    void theCengCengIsWide() {
+        // Two players, one in each ear: what differs between the ears is
+        // as loud as what they share.
+        Ctx ctx;
+        const Dry d = strike(drums::Clap, drums::Gamelan, 1.0f, 0.5, ctx);
+        double side = 0, mid = 0;
+        for (size_t i = 0; i < d.l.size(); ++i) {
+            side += double(d.l[i] - d.r[i]) * double(d.l[i] - d.r[i]);
+            mid += double(d.l[i] + d.r[i]) * double(d.l[i] + d.r[i]);
+        }
+        QVERIFY2(side > 0.4 * mid, qPrintable(QStringLiteral("side/mid %1").arg(side / mid)));
+    }
+
+    void theLogDrumSlidesFromNoteToNote() {
+        // A note while the last still sounds slides into it: between the
+        // two, the log drum passes through the pitches in between.
+        Ctx ctx;
+        drums::Engine e;
+        e.init(kRate);
+        drums::Strike s;
+        s.pad = drums::Sub;
+        s.kit = drums::Amapiano;
+        s.hold = 0.6f;
+        e.strike(s, ctx.h);
+        Dry d;
+        float l[kBlock], r[kBlock];
+        for (int b = 0; b < int(0.7 * kRate) / kBlock; ++b) {
+            if (b == int(0.25 * kRate) / kBlock) {
+                s.degrees = 4;
+                e.strike(s, ctx.h);
+            }
+            std::fill(l, l + kBlock, 0.0f);
+            std::fill(r, r + kBlock, 0.0f);
+            e.render(l, r, kBlock, ctx);
+            d.l.insert(d.l.end(), l, l + kBlock);
+        }
+        Svf lp, lp2;
+        lp.set(100.0f, 0.7f, kRate);
+        lp2.set(100.0f, 0.7f, kRate);
+        for (float &x : d.l)
+            x = lp2.step(lp.step(x).low).low;
+        const double before = settledHz(d.l, 0.12, 0.24), during = settledHz(d.l, 0.26, 0.3),
+                     after = settledHz(d.l, 0.5, 0.68);
+        QVERIFY2(std::fabs(before / 55.0 - 1.0) < 0.02 && std::fabs(after / 82.41 - 1.0) < 0.02,
+                 qPrintable(QStringLiteral("%1 then %2").arg(before).arg(after)));
+        QVERIFY2(during > before * 1.03 && during < after * 0.97,
+                 qPrintable(QStringLiteral("%1, %2, %3").arg(before).arg(during).arg(after)));
+    }
+
+    void theChipsNoiseClocksAsTheChipDoes() {
+        // The noise channel's clock: 524288 Hz over the divisor (half for a
+        // divisor of 0), over two to the shift plus one.
+        QCOMPARE(drums::ChipVoice::noiseClock(0, 0), 524288.0f);
+        QCOMPARE(drums::ChipVoice::noiseClock(1, 0), 262144.0f);
+        QCOMPARE(drums::ChipVoice::noiseClock(4, 6), 1024.0f);
+        // At a low clock the noise holds each bit for many samples: it
+        // steps.
+        drums::ChipVoice v;
+        v.reset(kRate);
+        v.noiseVol = 1;
+        v.setNoise(7, 9);
+        int changes = 0;
+        float last = 0;
+        for (int i = 0; i < int(kRate); ++i) {
+            const float x = v.step();
+            if (i > 100 && std::fabs(x - last) > 0.05f)
+                ++changes;
+            last = x;
+        }
+        QVERIFY2(changes < 200, qPrintable(QString::number(changes)));
     }
 
     void theWorldKitsStayUnderFullScale() {
@@ -1624,6 +1822,11 @@ private slots:
                 QCOMPARE(saved[QStringLiteral("kit")].toString(), QString::fromLatin1(drums::kitName(kit)));
                 QCOMPARE(int(opened.view().parts[0].data[34]), kit);
                 QVERIFY(opened.pageStatus(0).contains(QString::fromLatin1(drums::kitName(kit)), Qt::CaseInsensitive));
+                // The status says what the kit is: the gamelan's tuning in
+                // the song's A minor, pelog.
+                QVERIFY2(opened.pageStatus(0).contains(QString::fromLatin1(drums::kitCharacter(kit, true)),
+                                                       Qt::CaseInsensitive),
+                         qPrintable(opened.pageStatus(0)));
                 checked = true;
             });
             QVERIFY2(checked, drums::kitName(kit));
@@ -1637,10 +1840,16 @@ private slots:
                 t.push_back(p.steps[i].tick);
             return t;
         };
-        // Amapiano's log drum plays a riff that walks the scale.
+        // Amapiano's log drum plays a riff in three, three and two that
+        // walks the scale.
         const auto log = drums::groovePattern(drums::Sub, drums::Amapiano, 1, 0);
-        QCOMPARE(ticks(log), (std::vector<int>{0, 18, 42, 60, 84}));
-        QCOMPARE(int(log.steps[2].degree), 4);
+        QCOMPARE(ticks(log), (std::vector<int>{0, 18, 36, 48, 66, 84}));
+        QCOMPARE(int(log.steps[2].degree), 2);
+        // And there is no backbeat in it: nothing on two and four from the
+        // woodrim or the vox at its sparest.
+        for (const int pad : {drums::Snare, drums::Clap})
+            for (int t : ticks(drums::groovePattern(pad, drums::Amapiano, 0, 0)))
+                QVERIFY2(t != 24 && t != 72, drums::padName(pad, drums::Amapiano));
         // The tabla plays kaharwa: ge on dha, ge and dhi, ka on its own.
         QCOMPARE(ticks(drums::groovePattern(drums::Kick, drums::Tabla, 1, 0)), (std::vector<int>{0, 12, 72}));
         QCOMPARE(ticks(drums::groovePattern(drums::Clap, drums::Tabla, 1, 0)), (std::vector<int>{60}));
@@ -1648,8 +1857,9 @@ private slots:
         const auto chip = drums::groovePattern(drums::Sub, drums::Chip, 1, 0);
         QCOMPARE(chip.count, 8);
         QCOMPARE(int(chip.steps[1].degree), 7);
-        // The atabaque plays the tamborzão's three, three and two.
-        QCOMPARE(ticks(drums::groovePattern(drums::Perc, drums::Baile, 0, 0)), (std::vector<int>{0, 18, 36}));
+        // The kenkeni plays the offbeat eighths, the dununba answers itself.
+        QCOMPARE(ticks(drums::groovePattern(drums::TomHi, drums::Djembe, 0, 0)), (std::vector<int>{12, 36, 60, 84}));
+        QCOMPARE(ticks(drums::groovePattern(drums::TomLo, drums::Djembe, 0, 0)), (std::vector<int>{0, 48}));
         // Shifted, a riff keeps its notes and moves a sixteenth.
         const auto moved = drums::groovePattern(drums::Sub, drums::Gamelan, 1, 1);
         QCOMPARE(ticks(moved), (std::vector<int>{6, 54}));

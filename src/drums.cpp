@@ -205,6 +205,16 @@ public:
             clearMutes(pv.recording, ctx);
         m_playing = pv.playing;
         m_recording = pv.recording;
+        // The gamelan's laras follows the song's scale; worked out again
+        // only when the scale changes.
+        const StudioView &sv = ctx.studio();
+        const int scale = sv.root | sv.family << 4 | sv.brightness << 12 | int(sv.just) << 20;
+        if (scale != m_scale) {
+            m_scale = scale;
+            Tuning tuning;
+            tuning.set(sv.root, sv.family, sv.brightness, sv.just);
+            m_pelog = gamelanPelog(tuning);
+        }
         schedule(t, ctx);
     }
 
@@ -469,6 +479,7 @@ public:
     // --- drawing -------------------------------------------------------------
 
     void paint(QPainter &p, const PaintContext &pc) override;
+    void paintKits(QPainter &p, const PaintContext &pc, const QRectF &row, int first, int last);
 
     QString help() const override {
         return QStringLiteral(
@@ -485,16 +496,22 @@ public:
             "click a pad you just touched, drag\twith nothing rolling, shape that drum: sideways tunes, up lengthens, "
             "twist changes its tone\n"
             "run a finger fast across pads\tplays each one it crosses: a fill\n"
-            "hold the 808\tsustains; slide sideways to glide through the scale\n"
+            "hold the 808\tsustains; slide sideways to glide through the scale (the tabla's bayan: slide up to press "
+            "the heel in and bend it, the gumki)\n"
+            "hold the angklung or the tanpura\tit goes on shaking, or plucking its strings, for as long as it is held\n"
             "Z X C V · A S D F · Q W E R · U I O P\tthe pads, row by row from the bottom (M , . / and J K L ; too); "
             "hold to roll, Shift for an accent, hold several together for a groove\n"
             "Up / Down\tthe loop longer or shorter, any time (as the Loop longer / shorter buttons: the loop Space "
             "last made here, in whole bars); with keys held rolling, their roll faster or slower\n"
-            "Left / Right\tthe kit: house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, "
-            "amapiano (log drum, wood, flute), tabla (its bols, tarang, tanpura, sitar), gamelan (saron, bonang, "
-            "gong, angklung), chiptune (a Game Boy's channels) and baile funk (atabaque, agogô, apito)\n"
+            "Left / Right\tthe kit: house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, then "
+            "the world's: amapiano (log drum, woodrim, vox, click, shaker, marimba, keys), tabla (its bols, ghungroo, "
+            "chimta, tarang, tanpura, sitar), gamelan (in pelog over a minor scale, slendro over a major one: saron, "
+            "bonang, kenong, slenthem, ketuk, kecrek, ceng-ceng, the gong ageng, angklung), chiptune (a Game Boy's "
+            "channels) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
+            "karinyan, sesse, krin, kora, balafon)\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
-            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, the loop shorter or longer, "
+            "under the pad, with the mouse\tthe clips (click: launch or stop), the kits (the drum kits in the first row, "
+            "‹ and › there show the rest; the world's five in the second), swing, the loop shorter or longer, "
             "overdub, sounds back\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
             "Shift+Enter\toverdub on or off: what you play joins the loop\n"
@@ -519,7 +536,7 @@ public:
                 break;
             case Mode::Groove: groove << name; break;
             case Mode::Edit: parts << QStringLiteral("shaping %1").arg(name); break;
-            case Mode::Bass: parts << QStringLiteral("808 held"); break;
+            case Mode::Bass: parts << QStringLiteral("%1 held").arg(name); break;
             case Mode::Sweep: parts << QStringLiteral("fill"); break;
             default: break;
             }
@@ -539,9 +556,7 @@ public:
                     out << QString::fromUtf8(padName(p, m_kit)).toUpper();
             parts << QStringLiteral("%1 out of loop %2").arg(out.join('+')).arg(m_playing + 1);
         }
-        parts << QStringLiteral("%1 kit, swing %2%")
-                     .arg(QString::fromUtf8(kitName(m_kit)))
-                     .arg(int(std::lround(m_swing * 100)));
+        parts << QStringLiteral("%1, swing %2%").arg(kitTitle(m_kit, false)).arg(int(std::lround(m_swing * 100)));
         return parts.join(QStringLiteral(" · "));
     }
 
@@ -598,6 +613,7 @@ private:
         int rate = 0, density = 1;
         int lastCell = 0;
         int degree = 0; // the 808's glide, in degrees
+        float bend = 0; // the tabla's bayan: its heel pressed in, semitones
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
         double seen = 0; // the time of the last frame it was in
@@ -865,14 +881,21 @@ private:
             break;
         case Mode::Bass: {
             const int deg = std::clamp(int(std::lround((h.x - h.x0) * 20.0f)), -7, 7);
-            if (deg != h.degree) {
+            // The tabla's bayan: up the pad, the heel presses into the
+            // skin and the note bends up (the gumki), as far as five
+            // semitones a fifth of the pad up, in tenths of a semitone.
+            const float bend =
+                m_kit == Tabla ? std::round(clampf((h.y - h.y0) * 25.0f, 0.0f, 5.0f) * 10.0f) * 0.1f : 0.0f;
+            if (deg != h.degree || bend != h.bend) {
                 h.degree = deg;
+                h.bend = bend;
                 Command mv;
                 mv.type = Command::Move;
                 mv.id = h.src & 0xFFFFFF;
                 mv.t = now;
                 mv.i[0] = Sub;
                 mv.i[1] = deg + int(std::lround(m_edit[Sub].tune));
+                mv.f[0] = bend;
                 ctx.send(mv);
             }
             break;
@@ -1321,9 +1344,11 @@ private:
         c.f[3] = g.semis;
         c.f[4] = g.decay;
         // A groove's 808 rings a little over a sixteenth; the upright
-        // holds each walking note nearly to the next, so they join.
+        // holds each walking note nearly to the next, so they join; the
+        // log drum holds into its next note, so it slides there.
         if (g.pad == Sub)
-            c.f[5] = float((m_kit == Brushes || m_kit == Cr78 ? 0.95 : 0.4) * 60.0 / std::max(40.0, ctx.studio().bpm));
+            c.f[5] = float((m_kit == Brushes || m_kit == Cr78 ? 0.95 : m_kit == Amapiano ? 0.8 : 0.4) * 60.0 /
+                           std::max(40.0, ctx.studio().bpm));
         stamp(c);
         ctx.send(c);
         if (!g.preview) {
@@ -1477,7 +1502,17 @@ private:
     }
 
     // The mouse on the band under the pad.
-    enum Spot { SpotKit = 100, SpotSwingDown = 200, SpotSwingUp, SpotOverdub, SpotReset, SpotLoopShorter, SpotLoopLonger };
+    enum Spot {
+        SpotKit = 100,
+        SpotSwingDown = 200,
+        SpotSwingUp,
+        SpotOverdub,
+        SpotReset,
+        SpotLoopShorter,
+        SpotLoopLonger,
+        SpotKitsBack, // the drum kits' window, back and on
+        SpotKitsOn
+    };
     bool click(QPointF at, ControlContext &ctx) override {
         const int id = m_spots.at(at);
         if (id < 0)
@@ -1490,6 +1525,8 @@ private:
             return true;
         }
         switch (id) {
+        case SpotKitsBack: m_kitView -= m_kitShown; return true;
+        case SpotKitsOn: m_kitView += m_kitShown; return true;
         case SpotSwingDown: shiftSwing(-1, ctx); return true;
         case SpotSwingUp: shiftSwing(1, ctx); return true;
         case SpotOverdub: toggleOverdub(ctx); return true;
@@ -1515,9 +1552,17 @@ private:
             if (g.active && g.groove)
                 g.setPattern(groovePattern(g.pad, m_kit, g.density, g.shift));
         if (say)
-            ctx.notice(QStringLiteral("%1 kit, swing %2%")
-                           .arg(QString::fromUtf8(kitName(kit)).toUpper())
-                           .arg(int(std::lround(m_swing * 100))));
+            ctx.notice(QStringLiteral("%1, swing %2%").arg(kitTitle(kit, true)).arg(int(std::lround(m_swing * 100))));
+    }
+
+    // A kit as the status line names it: "amapiano kit", and for the kits
+    // from the world's music what they are, "gamelan kit (pelog)".
+    QString kitTitle(int kit, bool upper) const {
+        QString s = QStringLiteral("%1 kit").arg(QString::fromUtf8(kitName(kit)));
+        const char *what = kitCharacter(kit, m_pelog);
+        if (*what)
+            s += QStringLiteral(" (%1)").arg(QString::fromUtf8(what));
+        return upper ? s.toUpper() : s;
     }
 
     int freeSlot(ControlContext &ctx) const {
@@ -1534,6 +1579,11 @@ private:
 
     int m_kit = House;
     float m_swing = 0.54f;
+    int m_scale = -1;     // the song's scale, as last seen
+    bool m_pelog = true;  // whether the gamelan plays pelog in it (else slendro)
+    int m_kitView = 0;    // the first of the drum kits the band under the pad shows
+    int m_kitSeen = -1;   // the kit the band last followed
+    int m_kitShown = 1;   // how many of them fit
     console::Hotspots m_spots; // what paint() drew to be clicked
     int m_keyRate = 0;
     Edit m_edit[PadCount];
@@ -1756,7 +1806,11 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 glow = 0.5f;
                 break;
             }
-            case Mode::Bass: what = QStringLiteral("808"); break;
+            case Mode::Bass:
+                what = QString::fromUtf8(padName(Sub, m_kit)).toUpper();
+                if (h.bend > 0.05f)
+                    what += QStringLiteral(" +%1").arg(double(h.bend), 0, 'f', 1);
+                break;
             case Mode::Sweep: what = QStringLiteral("FILL"); break;
             case Mode::Loop: what = QStringLiteral("LOOP"); break;
             case Mode::Kept: what = QStringLiteral("KEPT"); break;
@@ -1793,20 +1847,12 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::beats(p, pc, col);
     // Below the pad, every one clickable: the clips, the swing, the loop's
     // length (↑ ↓), overdub and the drums' own sounds back on the left; the
-    // kits on the right in two rows, the first eight over the rest. A row
-    // with more kits than fit shows a window onto them that follows the
-    // kit chosen, its ends faded where there are more.
+    // kits on the right, the ten drum kits in the first row and the five
+    // from the world's music in the second, which hold them exactly.
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
-    constexpr int kFirstRow = 8;
-    for (int r = 0; r < 2; ++r) {
-        const int first = r ? kFirstRow : 0, last = r ? int(KitCount) : kFirstRow;
-        QStringList kits;
-        for (int k = first; k < last; ++k)
-            kits << QString::fromUtf8(kitName(k)).toUpper();
-        const int lit = m_kit >= first && m_kit < last ? m_kit - first : -1;
-        c::chips(p, pc, c::bandRow(pc, r, 0.57, 1), kits, lit, &m_spots, SpotKit + first);
-    }
+    paintKits(p, pc, c::bandRow(pc, 0, 0.57, 1), 0, Amapiano);
+    paintKits(p, pc, c::bandRow(pc, 1, 0.57, 1), Amapiano, KitCount);
     // Swing's − and + flank its gauge, which names it, so they fit in the
     // row with overdub and sounds back.
     const QRectF row = c::bandRow(pc, 1, 0, 0.55);
@@ -1828,6 +1874,52 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::chip(p, pc, cell(6), QStringLiteral("BACK DEL"), false, &m_spots, SpotReset);
 }
 
+}
+
+// A row of kits, first..last. When they don't all fit with their names
+// whole, the row is a window onto them, with an arrow chip at each end that
+// says how many more kits lie that way (and moves the window on a click);
+// the window follows the kit chosen whenever it changes.
+void DrumsControl::paintKits(QPainter &p, const PaintContext &pc, const QRectF &row, int first, int last) {
+    namespace c = console;
+    const int n = last - first;
+    QStringList names;
+    for (int k = first; k < last; ++k)
+        names << QString::fromUtf8(kitName(k)).toUpper();
+    constexpr double gap = 4;
+    const QFont f = c::font(int(std::clamp(row.height() * 0.42, 9.0, 13.0)), true);
+    double need = 0;
+    for (const QString &l : names)
+        need = std::max(need, c::textWidth(f, c::keyNames(l)) + 14);
+    if (int((row.width() + gap) / (need + gap)) >= n) {
+        const int lit = m_kit >= first && m_kit < last ? m_kit - first : -1;
+        c::chips(p, pc, row, names, lit, &m_spots, SpotKit + first);
+        return;
+    }
+    const double arrow = std::max(30.0, c::textWidth(f, QStringLiteral("‹ 99")) + 10);
+    const int shown = std::max(1, int((row.width() - 2 * (arrow + gap) + gap) / (need + gap)));
+    if (m_kit != m_kitSeen) {
+        m_kitSeen = m_kit;
+        if (m_kit >= first && m_kit < last) {
+            const int at = m_kit - first;
+            if (at < m_kitView)
+                m_kitView = at;
+            else if (at >= m_kitView + shown)
+                m_kitView = at - shown + 1;
+        }
+    }
+    m_kitView = std::clamp(m_kitView, 0, n - shown);
+    m_kitShown = shown;
+    const int before = m_kitView, after = n - shown - m_kitView;
+    const QRectF left(row.left(), row.top(), arrow, row.height());
+    const QRectF right(row.right() - arrow, row.top(), arrow, row.height());
+    if (before > 0)
+        c::chip(p, pc, left, QStringLiteral("‹ %1").arg(before), false, &m_spots, SpotKitsBack);
+    if (after > 0)
+        c::chip(p, pc, right, QStringLiteral("%1 ›").arg(after), false, &m_spots, SpotKitsOn);
+    const QRectF middle = row.adjusted(arrow + gap, 0, -(arrow + gap), 0);
+    const int lit = m_kit >= first + m_kitView && m_kit < first + m_kitView + shown ? m_kit - first - m_kitView : -1;
+    c::chips(p, pc, middle, names.mid(m_kitView, shown), lit, &m_spots, SpotKit + first + m_kitView);
 }
 
 PartSpec makeDrums() {

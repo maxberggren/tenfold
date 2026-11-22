@@ -549,10 +549,17 @@ public:
         m_theta = threshold;
     }
     // The mizrab: the wire plectrum's stroke, a sharp push of the string
-    // and the scrape of the wire on it, a few milliseconds long.
-    void pluck(float amp) {
+    // and the scrape of the wire on it, a few milliseconds long. `bright`
+    // is the stroke's direction: 1 da, the stroke inwards, with the finger's
+    // weight behind it (a short, hard push and the wire's full scrape); 0
+    // ra, the stroke back out, lighter (a push twice as long, so softer at
+    // the top, and half the scrape).
+    void pluck(float amp, float bright = 1.0f) {
         m_exc = amp;
         m_excN = 0;
+        bright = clampf(bright, 0.0f, 1.0f);
+        m_pushN = 32.0f - 16.0f * bright;
+        m_scrapeAmt = 0.25f + 0.3f * bright;
     }
     inline float step(Rng &rng) {
         const float len = m_len.step(m_want);
@@ -584,12 +591,13 @@ public:
         float e = 0;
         if (m_excN < kPluck) {
             const float t = float(m_excN);
-            // A half-sine push 0.4 ms long, then the wire's scrape.
-            const float push = m_excN < 20 ? std::sin(kPi * t / 20.0f) : 0.0f;
+            // A half-sine push a third to two thirds of a millisecond long,
+            // then the wire's scrape.
+            const float push = t < m_pushN ? std::sin(kPi * t / m_pushN) : 0.0f;
             // (Its noise smoothed a little: white noise in a lossless loop
             // would keep its top octave, the hiss of a sampler, not a wire.)
             m_scr += (rng.bipolar() - m_scr) * 0.45f;
-            const float scrape = m_scr * std::exp(-t / 40.0f) * 0.5f;
+            const float scrape = m_scr * std::exp(-t / 40.0f) * m_scrapeAmt;
             e = m_exc * (push + scrape);
             ++m_excN;
         }
@@ -611,6 +619,7 @@ private:
     float m_rate = 48000, m_want = 200, m_fb = 0.999f, m_t60 = 3.0f;
     float m_apX = 0, m_apY = 0, m_z1 = 0, m_z2 = 0, m_exc = 0, m_brS = 0;
     float m_reach = 0.6f, m_theta = 0.04f, m_side = 0.008f, m_swing = 0, m_swingA = 0.15f, m_buzz = 0, m_scr = 0;
+    float m_pushN = 20.0f, m_scrapeAmt = 0.5f;
 };
 
 // A sitar's tarafs: strings no one plucks, tuned to the raga's notes,
@@ -747,7 +756,11 @@ struct Onsets {
 // of a long decay and a short one). As a player does with the off hand, a
 // new strike damps what came before it, all but the last `keep` notes.
 // The same machine strikes the gongs, with a gong's modes, a slow pair
-// beat, and a bloom in place of the tube.
+// beat, and a bloom in place of the tube. A big gong struck hard rings
+// sharp and sinks a few cents as it dies (its metal stiffer the further it
+// swings): `sag`. And its pair's beat is heard in each ear, not only
+// between them (`blend`: how much of each side's partner it has), so the
+// gong ageng throbs as one does in a room.
 //
 // Twelve strikes ring at once: kotekan strikes six times a second and a
 // bar rings for well over a second and a half, so a free one is nearly
@@ -763,6 +776,8 @@ public:
         float tube = 0, tubeT60 = 6, swellT60 = 0.2f; // the resonator: level, ring, how slowly it fills
         float knock = 0.35f;              // the mallet's knock
         int keep = 1;                     // strikes left ringing by a new one
+        float sag = 0, sagT = 2.0f;       // cents sharp at the strike, and how long it takes to sink (s)
+        float blend = 0;                  // each side's partner in it, 0..1
     };
 
     void init(float rate, float knockHz = 3200.0f) {
@@ -804,7 +819,21 @@ public:
     inline void step(Rng &rng, float &outL, float &outR) {
         float l = 0, r = 0;
         static const float dampR = 0.99952f; // a 0.3 s T60 at 48 kHz, on top of the mode's own
+        // A sagging strike's modes retuned every 64 samples: a few cents
+        // over seconds moves far less than a hertz a step, and the
+        // phasors themselves are kept, so nothing clicks.
+        const bool retune = (m_tick++ & 63) == 0;
         for (auto &s : m_s) {
+            if (retune && s.live && s.bend > 0.01f) {
+                s.bend *= s.bendR;
+                const float f = std::exp2(s.bend / 1200.0f);
+                for (int side = 0; side < 2; ++side)
+                    for (int m = 0; m < kModes; ++m) {
+                        Mode &md = s.mode[side][m];
+                        md.cr = md.r * std::cos(md.w * f);
+                        md.ci = md.r * std::sin(md.w * f);
+                    }
+            }
             if (s.fade > 0) {
                 // A stolen strike going: 60 dB down over the fade, then the
                 // strike that took it.
@@ -820,6 +849,7 @@ public:
             }
             if (!s.live)
                 continue;
+            float sums[2];
             for (int side = 0; side < 2; ++side) {
                 float sum = 0;
                 for (auto &md : s.mode[side]) {
@@ -829,8 +859,10 @@ public:
                     md.im = im;
                     sum += re;
                 }
-                (side ? r : l) += sum;
+                sums[side] = sum;
             }
+            l += sums[0] + s.blend * sums[1];
+            r += sums[1] + s.blend * sums[0];
             s.level *= s.damp ? dampR * 0.99998f : 0.99998f;
             if (s.damp)
                 for (auto &side : s.mode)
@@ -866,7 +898,7 @@ private:
     static constexpr int kFade = 192;          // 4 ms at 48 kHz
     static constexpr float kFadeR = 0.96466f;  // 0.001^(1/192)
     struct Mode {
-        float re = 0, im = 0, cr = 1, ci = 0;
+        float re = 0, im = 0, cr = 1, ci = 0, w = 0, r = 1;
     };
     struct Next {
         float midi = 0, velocity = 0;
@@ -875,7 +907,7 @@ private:
     struct Strike {
         Mode mode[2][kModes];
         bool live = false, damp = false, queued = false;
-        float level = 0;
+        float level = 0, bend = 0, bendR = 1, blend = 0;
         int order = 0, fade = 0;
         Next next;
     };
@@ -903,8 +935,11 @@ private:
                     a = 0;
                 const float r = std::pow(10.0f, -3.0f / (t60 * m_rate));
                 const float w = kTwoPi * f / m_rate;
-                md.cr = r * std::cos(w);
-                md.ci = r * std::sin(w);
+                const float bent = w * std::exp2(sp.sag * v / 1200.0f);
+                md.w = w;
+                md.r = r;
+                md.cr = r * std::cos(bent);
+                md.ci = r * std::sin(bent);
                 // Starting on the sine's zero: the bar's own swing, no step.
                 md.re = 0;
                 md.im = -a * v;
@@ -913,11 +948,16 @@ private:
         s->live = true;
         s->damp = false;
         s->level = v;
+        // (Struck harder, sharper: the sag is the velocity's share of it.)
+        s->bend = sp.sag * v;
+        s->bendR = std::exp(-64.0f / (std::max(0.05f, sp.sagT) * m_rate));
+        s->blend = sp.blend;
         s->order = m_order++;
         m_tock += sp.knock * v;
     }
     Strike m_s[kStrikes];
     int m_order = 0;
+    uint32_t m_tick = 0;
     float m_rate = 48000, m_tock = 0;
     Svf m_click;
 };

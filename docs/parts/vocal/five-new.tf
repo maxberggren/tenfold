@@ -6,22 +6,29 @@
 #             line low down, the synth sliding and scooping, a sub under it;
 #             two fingers add harmonies that move with it as one hand. Then
 #             B for KEYS: the lanes are the keyboard, played legato (the
-#             synth glides from key to key), the voice only says the words
-#   THROAT    Tuvan khoomei: a long A drone growling with kargyraa's period
-#             doubling, the pinned whistle singing its two-bar figure on the
-#             overtones in the key, home on the root every bar; then a
-#             finger picks the overtone, lane by lane
-#   SITAR     the voice plays a sitar: syllables pluck the string, sung
+#             synth glides from key to key, each key pressed harder or
+#             lighter, so the synth's filter opens and closes), the voice
+#             only says the words
+#   THROAT    Tuvan throat singing. SYGYT: a long A drone, pressed, the
+#             whistle (its own overtone, pinned) walking a four-bar figure on
+#             the overtones in the key, home on the root every bar; then a
+#             finger picks the overtone, lane by lane. B: KARGYRAA, the
+#             growl, the subharmonic an octave under the voice leading and a
+#             vowel walking its overtones. B again: KHOOMEI, softer
+#   SITAR     the voice plays a sitar: syllables pluck the string (da and
+#             ra in turn, the chikari striking da ra dir da), sung
 #             slides bend it (meend), a held note keeps only a little of the
 #             vibrato (gamak), the jawari buzzes, tarafs ring; a finger
 #             plucks a fifth over the long note
 #   GAMELAN   syllables strike bronze bars in pelog, the voice drawn into
-#             pelog under them; the gongs mark the cycle; a finger plays the
-#             kotekan, two parts interlocking on the sixteenths
+#             pelog under them; the kenong and kempul strike the note sung,
+#             the gong ageng throbs and sinks; a finger plays the kotekan,
+#             nyog cag, then norot over it, landing on the note sung
 #   SCREWED   the voice on slowed tape a fourth down, dragging further
-#             behind through a long phrase until it stops and drops onto
-#             the voice; a finger chops the last word, the lowest lane spins
-#             it back; then B: a fifth down
+#             behind through a long phrase; a finger cuts to the second deck
+#             a beat behind and back (the chop), the lowest lane spins it
+#             back; then B: a fifth down, the next phrase dropping onto the
+#             beat
 #
 # Render: build/tenfold render docs/parts/vocal/five-new.tf five-new.wav
 page 0 8
@@ -67,25 +74,27 @@ voice 12.30 0.28 hz=220.0 vowel=a level=0.3
 voice 12.63 0.28 hz=220.0 vowel=e level=0.3
 voice 12.96 0.28 hz=220.0 vowel=o level=0.3
 voice 13.29 0.28 hz=220.0 vowel=a level=0.3
-down 8.95 10 0.500 0.60 p=0.6
+down 8.95 10 0.500 0.60 p=0.3
 up 9.66 10
-down 9.60 11 0.611 0.60 p=0.6
+down 9.60 11 0.611 0.60 p=0.45
 up 10.01 11
 down 9.95 12 0.666 0.60 p=0.6
 up 10.36 12
-down 10.30 13 0.721 0.60 p=0.6
+down 10.30 13 0.721 0.60 p=0.8
 up 11.01 13
-down 10.95 14 0.666 0.60 p=0.6
+down 10.95 14 0.666 0.60 p=1.0
 up 11.36 14
-down 11.30 15 0.611 0.60 p=0.6
+down 11.30 15 0.611 0.60 p=0.8
 up 12.01 15
-down 11.95 16 0.500 0.60 p=0.6
+down 11.95 16 0.500 0.60 p=0.5
 up 12.66 16
-down 12.60 17 0.445 0.60 p=0.6
+down 12.60 17 0.445 0.60 p=0.35
 up 13.01 17
-down 12.95 18 0.500 0.60 p=0.6
+down 12.95 18 0.500 0.60 p=0.9
 up 13.70 18
-# THROAT: Right once more.
+# THROAT: Right once more. SYGYT first: the whistle walks its figure alone,
+# then three lanes pick overtones; B for KARGYRAA, the growl an octave down
+# with its vowel melody; B again for KHOOMEI.
 key 14.10 Right
 voice 14.70 5.6 hz=110.0 vowel=o level=0.32
 voice 20.50 3.4 hz=110.0 vowel=o level=0.32
@@ -95,73 +104,87 @@ down 21.70 2 0.74 0.6 p=0.6
 up 22.50 2
 down 22.50 3 0.86 0.6 p=0.6
 up 23.30 3
+key 24.10 B
+voice 24.40 5.0 hz=98.0 vowel=a level=0.32
+down 27.20 4 0.38 0.6 p=0.6
+up 28.20 4
+down 28.20 5 0.62 0.6 p=0.6
+up 29.20 5
+key 29.80 B
+voice 30.10 4.4 hz=110.0 vowel=u level=0.32
 # SITAR: Right once more.
-key 24.50 Right
-voice 25.10 0.6 hz=220.0 vowel=a level=0.3
-voice 25.80 1.3 hz=261.63 to=293.66 vowel=a level=0.3
-voice 27.20 0.4 hz=329.63 vowel=o level=0.3
-voice 27.70 0.35 hz=293.66 vowel=a level=0.3
-voice 28.15 1.4 hz=261.63 to=246.94 vowel=a level=0.3
-voice 29.70 0.35 hz=220.0 vowel=e level=0.3
-voice 30.15 0.35 hz=261.63 vowel=a level=0.3
-voice 30.60 2.2 hz=329.63 vowel=a level=0.3
-down 30.55 1 0.62 0.60 p=0.6
-up 32.50 1
+key 34.90 Right
+voice 35.50 0.6 hz=220.0 vowel=a level=0.3
+voice 36.20 1.3 hz=261.63 to=293.66 vowel=a level=0.3
+voice 37.60 0.4 hz=329.63 vowel=o level=0.3
+voice 38.10 0.35 hz=293.66 vowel=a level=0.3
+voice 38.55 1.4 hz=261.63 to=246.94 vowel=a level=0.3
+voice 40.10 0.35 hz=220.0 vowel=e level=0.3
+voice 40.55 0.35 hz=261.63 vowel=a level=0.3
+voice 41.00 2.2 hz=329.63 vowel=a level=0.3
+down 40.95 1 0.62 0.60 p=0.6
+up 42.90 1
 # GAMELAN: Right once more.
-key 34.70 Right
-voice 35.30 0.16 hz=220.0 vowel=a level=0.3
-voice 35.63 0.16 hz=329.63 vowel=o level=0.3
-voice 35.95 0.16 hz=261.63 vowel=a level=0.3
-voice 36.28 0.16 hz=293.66 vowel=o level=0.3
-voice 36.60 0.16 hz=293.66 vowel=a level=0.3
-voice 36.93 0.16 hz=261.63 vowel=o level=0.3
-voice 37.26 0.16 hz=329.63 vowel=a level=0.3
-voice 37.91 0.16 hz=293.66 vowel=a level=0.3
-voice 38.23 0.16 hz=196.0 vowel=o level=0.3
-voice 38.56 0.16 hz=261.63 vowel=a level=0.3
-voice 38.89 0.16 hz=220.0 vowel=o level=0.3
-voice 39.21 0.16 hz=220.0 vowel=a level=0.3
-voice 39.54 0.16 hz=261.63 vowel=o level=0.3
-voice 39.86 0.16 hz=196.0 vowel=a level=0.3
-voice 40.52 0.16 hz=220.0 vowel=a level=0.3
-voice 40.84 0.16 hz=329.63 vowel=o level=0.3
-voice 41.17 0.16 hz=261.63 vowel=a level=0.3
-voice 41.49 0.16 hz=293.66 vowel=o level=0.3
-voice 41.82 0.16 hz=293.66 vowel=a level=0.3
-voice 42.15 0.16 hz=261.63 vowel=o level=0.3
-voice 42.47 0.16 hz=329.63 vowel=a level=0.3
-voice 43.12 0.16 hz=293.66 vowel=a level=0.3
-voice 43.45 0.16 hz=196.0 vowel=o level=0.3
-voice 43.78 0.16 hz=261.63 vowel=a level=0.3
-voice 44.10 0.16 hz=220.0 vowel=o level=0.3
-voice 44.43 0.16 hz=220.0 vowel=a level=0.3
-voice 44.75 0.16 hz=261.63 vowel=o level=0.3
-voice 45.08 0.16 hz=196.0 vowel=a level=0.3
-down 37.91 1 0.50 0.62 p=0.6
-up 43.12 1
+key 45.10 Right
+voice 45.70 0.16 hz=220.0 vowel=a level=0.3
+voice 46.03 0.16 hz=329.63 vowel=o level=0.3
+voice 46.35 0.16 hz=261.63 vowel=a level=0.3
+voice 46.68 0.16 hz=293.66 vowel=o level=0.3
+voice 47.00 0.16 hz=293.66 vowel=a level=0.3
+voice 47.33 0.16 hz=261.63 vowel=o level=0.3
+voice 47.66 0.16 hz=329.63 vowel=a level=0.3
+voice 48.31 0.16 hz=293.66 vowel=a level=0.3
+voice 48.63 0.16 hz=196.0 vowel=o level=0.3
+voice 48.96 0.16 hz=261.63 vowel=a level=0.3
+voice 49.29 0.16 hz=220.0 vowel=o level=0.3
+voice 49.61 0.16 hz=220.0 vowel=a level=0.3
+voice 49.94 0.16 hz=261.63 vowel=o level=0.3
+voice 50.26 0.16 hz=196.0 vowel=a level=0.3
+voice 50.92 0.16 hz=220.0 vowel=a level=0.3
+voice 51.24 0.16 hz=329.63 vowel=o level=0.3
+voice 51.57 0.16 hz=261.63 vowel=a level=0.3
+voice 51.89 0.16 hz=293.66 vowel=o level=0.3
+voice 52.22 0.16 hz=293.66 vowel=a level=0.3
+voice 52.55 0.16 hz=261.63 vowel=o level=0.3
+voice 52.87 0.16 hz=329.63 vowel=a level=0.3
+voice 53.52 0.16 hz=293.66 vowel=a level=0.3
+voice 53.85 0.16 hz=196.0 vowel=o level=0.3
+voice 54.18 0.16 hz=261.63 vowel=a level=0.3
+voice 54.50 0.16 hz=220.0 vowel=o level=0.3
+voice 54.83 0.16 hz=220.0 vowel=a level=0.3
+voice 55.15 0.16 hz=261.63 vowel=o level=0.3
+voice 55.48 0.16 hz=196.0 vowel=a level=0.3
+down 48.31 1 0.38 0.62 p=0.6
+down 51.00 2 0.14 0.62 p=0.6
+up 53.52 2
+up 53.52 1
 # SCREWED: Right once more.
-key 46.80 Right
-voice 47.40 0.25 hz=329.63 vowel=a level=0.3
-voice 47.73 0.25 hz=329.63 vowel=o level=0.3
-voice 48.06 0.3 hz=293.66 vowel=a level=0.3
-voice 48.40 0.6 hz=261.63 vowel=o level=0.3
-voice 49.05 0.3 hz=220.0 vowel=e level=0.3
-voice 49.40 0.5 hz=261.63 vowel=a level=0.3
-voice 49.95 0.25 hz=329.63 vowel=a level=0.3
-voice 50.25 0.25 hz=392.0 vowel=o level=0.3
-voice 50.55 0.3 hz=329.63 vowel=a level=0.3
-voice 50.90 0.5 hz=293.66 vowel=o level=0.3
-voice 51.45 0.3 hz=261.63 vowel=e level=0.3
-voice 51.80 0.5 hz=293.66 vowel=a level=0.3
-voice 52.35 0.3 hz=329.63 vowel=o level=0.3
-voice 52.70 0.3 hz=293.66 vowel=a level=0.3
-voice 53.05 1.4 hz=220.0 vowel=a level=0.3
-down 56.00 1 0.50 0.60 p=0.6
-up 57.30 1
-down 57.50 2 0.144 0.60 p=0.6
-up 58.30 2
-key 58.80 B
-voice 59.00 0.3 hz=329.63 vowel=a level=0.3
-voice 59.35 0.3 hz=293.66 vowel=o level=0.3
-voice 59.70 1.2 hz=261.63 vowel=a level=0.3
-end 63.7
+key 57.20 Right
+voice 57.80 0.25 hz=329.63 vowel=a level=0.3
+voice 58.13 0.25 hz=329.63 vowel=o level=0.3
+voice 58.46 0.3 hz=293.66 vowel=a level=0.3
+voice 58.80 0.6 hz=261.63 vowel=o level=0.3
+voice 59.45 0.3 hz=220.0 vowel=e level=0.3
+voice 59.80 0.5 hz=261.63 vowel=a level=0.3
+voice 60.35 0.25 hz=329.63 vowel=a level=0.3
+voice 60.65 0.25 hz=392.0 vowel=o level=0.3
+voice 60.95 0.3 hz=329.63 vowel=a level=0.3
+voice 61.30 0.5 hz=293.66 vowel=o level=0.3
+voice 61.85 0.3 hz=261.63 vowel=e level=0.3
+voice 62.20 0.5 hz=293.66 vowel=a level=0.3
+voice 62.75 0.3 hz=329.63 vowel=o level=0.3
+voice 63.10 0.3 hz=293.66 vowel=a level=0.3
+voice 63.45 1.4 hz=220.0 vowel=a level=0.3
+down 61.95 1 0.50 0.60 p=0.6
+up 62.45 1
+down 62.95 3 0.80 0.60 p=0.6
+up 63.30 3
+down 63.80 1 0.50 0.60 p=0.6
+up 64.30 1
+down 67.90 2 0.144 0.60 p=0.6
+up 68.70 2
+key 69.20 B
+voice 69.40 0.3 hz=329.63 vowel=a level=0.3
+voice 69.75 0.3 hz=293.66 vowel=o level=0.3
+voice 70.10 1.2 hz=261.63 vowel=a level=0.3
+end 76.1

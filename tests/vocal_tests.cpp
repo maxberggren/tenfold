@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <cmath>
 #include <numeric>
+#include <set>
 
 #include "dsp.h"
 #include "songfile.h"
@@ -730,6 +731,37 @@ private slots:
         }
         qInfo("sitar: the chikari %.1f dB louder just after the beat", 10 * std::log10(after / std::max(1e-12, before)));
         QVERIFY2(after > 2 * before, "no drone strokes on the beat");
+        // And between the beats: the ra half way through every other beat
+        // (da ra dir da), not only straight quarter notes.
+        double raAfter = 0, raBefore = 0;
+        for (int b = 2; b <= 4; b += 2) {
+            const double t = b * 0.5 + 0.25;
+            raAfter += power(take, 880, t + 0.01, t + 0.1);
+            raBefore += power(take, 880, t - 0.1, t - 0.01);
+        }
+        qInfo("sitar: the ra stroke %.1f dB over what rang before it", 10 * std::log10(raAfter / std::max(1e-12, raBefore)));
+        QVERIFY2(raAfter > 1.5 * raBefore, "no stroke between the beats");
+    }
+
+    void theSitarsStrokesAlternateDaAndRa() {
+        // Four syllables on one note: the first and third (da, the stroke
+        // in) are brighter at the pluck than the second and fourth (ra).
+        std::string s;
+        for (int k = 0; k < 4; ++k)
+            s += "voice " + std::to_string(0.5 + 0.6 * k) + " 0.45 hz=220 vowel=a level=0.3\n";
+        const auto take = playStyle(Sitar, s + "end 3.2\n");
+        auto bright = [&](int k) {
+            const double t = onsetAfter(take, 0.45 + 0.6 * k, 0.03);
+            double hi = 0, lo = 0;
+            for (double hz = 3000; hz < 7000; hz += 173)
+                hi += power(take, hz, t, t + 0.03);
+            for (double hz = 200; hz < 700; hz += 37)
+                lo += power(take, hz, t, t + 0.03);
+            return hi / std::max(1e-12, lo);
+        };
+        const double da = bright(0) + bright(2), ra = bright(1) + bright(3);
+        qInfo("sitar: da %.1f dB brighter than ra", 10 * std::log10(da / std::max(1e-12, ra)));
+        QVERIFY2(da > 1.4 * ra, "da and ra sound alike");
     }
 
     void theGamelanStrikesBronzeInPelog() {
@@ -801,6 +833,108 @@ private slots:
         QVERIFY2(diff > 0.15 * sum, "the parts aren't apart");
     }
 
+    void theKenongAndKempulStrikeTheNoteSung() {
+        // C5 sung through five bars in pelog: the balungan is pelog's tone
+        // 270 cents over A. The kenong rings it (257.6 Hz) and the kempul an
+        // octave under (128.8 Hz), not the fixed A3 and E3 they used to.
+        std::string s = "tempo 0.01 120\n";
+        for (int k = 0; k < 18; ++k)
+            s += "voice " + std::to_string(0.3 + k * 0.5) + " 0.4 hz=523 vowel=a level=0.3\n";
+        const auto take = playStyle(Gamelan, s + "end 9.6\n");
+        const double kenong = power(take, 257.6, 2.0, 9.0), a3 = power(take, 220.0, 2.0, 9.0);
+        const double kempul = power(take, 128.8, 2.0, 9.0), e3 = power(take, 164.8, 2.0, 9.0);
+        qInfo("gamelan: kenong on the sung tone %.1f dB over A3; kempul %.1f dB over E3",
+              10 * std::log10(kenong / std::max(1e-12, a3)), 10 * std::log10(kempul / std::max(1e-12, e3)));
+        QVERIFY2(kenong > 10 * a3, "the kenong isn't on the note sung");
+        QVERIFY2(kempul > 10 * e3, "the kempul isn't on the note sung");
+    }
+
+    void theGongSinksAndThrobs() {
+        // The gong ageng, struck alone: in each ear its level throbs (the
+        // pair's 0.7 Hz beat, deep), and its pitch sinks a few cents as it
+        // rings.
+        vocal::Bronze b;
+        b.init(48000, 220.0f);
+        vocal::Bronze::Spec gong = {{1.0f, 2.01f, 2.98f, 4.15f}, {1.0f, 0.4f, 0.2f, 0.08f}, {9.0f, 5.0f, 3.0f, 1.5f},
+                                    0.7f, 0.7f, 10.0f, 0.35f, 0.12f, 8, 12.0f, 3.0f, 0.9f};
+        Rng rng;
+        std::vector<float> left;
+        b.strike(33, 0.9f, gong);
+        for (int i = 0; i < 48000 * 6; ++i) {
+            float l, r;
+            b.step(rng, l, r);
+            left.push_back(l);
+        }
+        float lo = 1e9f, hi = 0;
+        for (size_t a = 48000; a + 2400 <= size_t(48000 * 5); a += 2400) {
+            double e = 0;
+            for (size_t i = a; i < a + 2400; ++i)
+                e += double(left[i]) * left[i];
+            lo = std::min(lo, float(e));
+            hi = std::max(hi, float(e));
+        }
+        qInfo("gong: its level in one ear throbs over %.1f dB", 10 * std::log10(hi / std::max(1e-12f, lo)));
+        QVERIFY2(hi > 4 * lo, "no beat in one ear");
+        // Its pitch, with no partner to beat with: the fundamental alone.
+        vocal::Bronze one;
+        one.init(48000, 220.0f);
+        gong.ombak = 0;
+        gong.blend = 0;
+        gong.amp[1] = gong.amp[2] = gong.amp[3] = 0;
+        gong.tube = 0;
+        gong.knock = 0;
+        one.strike(33, 0.9f, gong);
+        std::vector<float> x;
+        for (int i = 0; i < 48000 * 6; ++i) {
+            float l, r;
+            one.step(rng, l, r);
+            x.push_back(l);
+        }
+        auto hzBetween = [&](double t0, double t1) {
+            double first = -1, lastT = -1;
+            int n = 0;
+            for (size_t i = size_t(t0 * 48000) + 1; i < size_t(t1 * 48000); ++i)
+                if (x[i - 1] < 0 && x[i] >= 0) {
+                    const double at = (double(i) - 1 + x[i - 1] / (x[i - 1] - x[i])) / 48000.0;
+                    if (first < 0)
+                        first = at;
+                    lastT = at;
+                    ++n;
+                }
+            return (n - 1) / (lastT - first);
+        };
+        const double early = hzBetween(0.2, 1.2), late = hzBetween(4.5, 5.5);
+        qInfo("gong: %.3f Hz after the stroke, %.3f Hz later (%.1f cents down)", early, late,
+              1200 * std::log2(early / late));
+        QVERIFY2(1200 * std::log2(early / late) > 3, "the gong doesn't sink");
+        QVERIFY2(1200 * std::log2(early / late) < 20, "the gong sinks too far");
+    }
+
+    void theKotekanLandsOnTheNoteSung() {
+        // Norot (the lowest lane) over A3 then C4 sung: its bronze is on A
+        // two octaves up (880 Hz) while A3 is sung, and moves to pelog's
+        // tone over C (1030 Hz) once C4 is.
+        const std::string sing = "tempo 0.01 120\nvoice 0.3 1.1 hz=220 vowel=a level=0.3\n"
+                                 "voice 1.5 1.3 hz=261.6 vowel=a level=0.3\n";
+        const auto take = playStyle(Gamelan, sing + "down 0.4 1 0.14 0.6 p=0.6\nup 3.0 1\nend 3.2\n");
+        const double tone3 = 880.0 * std::exp2(270.0 / 1200.0);
+        const double aFirst = power(take, 880, 0.8, 1.4), cFirst = power(take, tone3, 0.8, 1.4);
+        const double aThen = power(take, 880, 2.1, 2.8), cThen = power(take, tone3, 2.1, 2.8);
+        qInfo("gamelan: norot on A %.1f dB over tone 3 while A is sung; tone 3 %.1f dB over A once C is",
+              10 * std::log10(aFirst / std::max(1e-12, cFirst)), 10 * std::log10(cThen / std::max(1e-12, aThen)));
+        QVERIFY2(aFirst > 4 * cFirst, "norot isn't on the note sung");
+        QVERIFY2(cThen > 4 * aThen, "norot didn't move to the new note");
+        // Nyog cag (the third lane) is a figure of its own: it reaches the
+        // tone a fourth over the note (pelog's 540 cents), which norot never
+        // plays.
+        const auto nyog = playStyle(Gamelan, "tempo 0.01 120\nvoice 0.3 2.0 hz=220 vowel=a level=0.3\n"
+                                             "down 0.4 1 0.38 0.6 p=0.6\nup 2.3 1\nend 2.5\n");
+        const double fourth = 880.0 * std::exp2(540.0 / 1200.0);
+        qInfo("gamelan: nyog cag's fourth %.1f dB over norot's", 10 * std::log10(power(nyog, fourth, 0.9, 2.0) /
+                                                                                std::max(1e-12, power(take, fourth, 0.8, 1.4))));
+        QVERIFY2(power(nyog, fourth, 0.9, 2.0) > 10 * power(take, fourth, 0.8, 1.4), "nyog cag is norot again");
+    }
+
     void screwedIsSlowedTape() {
         // A3 sung: slowed tape plays it a fourth down (E3, 164.8 Hz), not
         // snapped to anything; and slowed, a word comes out longer than it
@@ -820,16 +954,44 @@ private slots:
                  "the word isn't slowed");
     }
 
-    void screwedChopsAWordWithAFinger() {
-        // A word sung, then a finger held after it: the word comes round
-        // again and again (a beat of it at 120 bpm) where, without the
-        // finger, there is only silence.
-        const std::string sing = "tempo 0.01 120\nvoice 0.3 0.5 hz=220 vowel=a level=0.3\n";
-        const auto with = playStyle(Screwed, sing + "down 1.0 1 0.5 0.6 p=0.6\nup 2.6 1\nend 2.8\n");
-        const auto without = playStyle(Screwed, sing + "end 2.8\n");
-        qInfo("screwed: with a finger %.1f dBFS, without %.1f", 20 * std::log10(with.rms(1.6, 2.5) + 1e-12),
-              20 * std::log10(without.rms(1.6, 2.5) + 1e-12));
-        QVERIFY2(with.rms(1.6, 2.5) > 0.02 && with.rms(1.6, 2.5) > 10 * without.rms(1.6, 2.5), "no chop");
+    void screwedChopsToTheDeckBehind() {
+        // A3 sung, then C4 (slowed: E3 then G3). A finger held while the
+        // tape plays G3 cuts to the second deck, a beat (half a second at
+        // 120 bpm) behind: E3 comes again off it, where without the finger
+        // the tape is on G3. Let go, it is back on the first deck.
+        const std::string sing = "tempo 0.01 120\nvoice 0.3 0.6 hz=220 vowel=a level=0.3\n"
+                                 "voice 0.9 0.9 hz=261.6 vowel=a level=0.3\n";
+        const auto with = playStyle(Screwed, sing + "down 1.35 1 0.5 0.6 p=0.6\nup 1.7 1\nend 2.4\n");
+        const auto without = playStyle(Screwed, sing + "end 2.4\n");
+        // (Deck A is on G3 from about 1.06 s, so deck B is from 1.56 s.)
+        const double e3 = power(with, 164.8, 1.38, 1.52), g3 = power(with, 196.0, 1.38, 1.52);
+        const double e3plain = power(without, 164.8, 1.38, 1.52), g3plain = power(without, 196.0, 1.38, 1.52);
+        qInfo("screwed: on deck B, E3 %.1f dB over G3 (deck A alone: %.1f)", 10 * std::log10(e3 / std::max(1e-12, g3)),
+              10 * std::log10(e3plain / std::max(1e-12, g3plain)));
+        QVERIFY2(e3 > 4 * g3, "the word doesn't come again off the second deck");
+        QVERIFY2(g3plain > 4 * e3plain, "deck A wasn't on the second word");
+        // Let go: deck A again, on G3.
+        QVERIFY2(power(with, 196.0, 1.8, 2.1) > 4 * power(with, 164.8, 1.8, 2.1), "still on deck B");
+    }
+
+    void screwedReentersOnTheBeat() {
+        // A phrase, a rest, and the next phrase begun off the beat: the tape
+        // drops onto its first word on the next beat, not where it was sung.
+        double beatAfter = -1, last = -1;
+        const std::string script = std::string(kPage) + rights(Screwed) +
+                                   "tempo 0.01 120\nvoice 0.3 0.6 hz=220 vowel=a level=0.3\n"
+                                   "voice 2.78 0.6 hz=220 vowel=a level=0.3\nend 3.8\n";
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            const double b = std::floor(s.view().beat);
+            if (t > 2.8 && beatAfter < 0 && last >= 0 && b != last)
+                beatAfter = t;
+            last = b;
+        });
+        const double sung = onsetAfter(take, 2.2, 0.03);
+        qInfo("screwed: the second phrase sung at 2.78 s comes back at %.3f s; the next beat at %.3f s", sung,
+              beatAfter);
+        QVERIFY(beatAfter > 2.8 && beatAfter < 3.4);
+        QVERIFY2(std::fabs(sung - beatAfter) < 0.04, qPrintable(QString("%1 s").arg(sung)));
     }
 
     void theNewStylesComeBackByName() {
@@ -850,6 +1012,8 @@ private slots:
         QCOMPARE(talk.settings[QStringLiteral("talkboxSub")].toBool(true), false);
         const auto screw = reopenVocal(std::string(kPage) + rights(Screwed) + "key 0.5 B\nend 0.8\n", 0.5);
         QCOMPARE(screw.settings[QStringLiteral("screwedSpeed")].toString(), QStringLiteral("fifth"));
+        const auto throat = reopenVocal(std::string(kPage) + rights(Throat) + "key 0.5 B\nend 0.8\n", 0.5);
+        QCOMPARE(throat.settings[QStringLiteral("throatStyle")].toString(), QStringLiteral("kargyraa"));
     }
 
     // --- the five styles, round three ---------------------------------------------
@@ -890,6 +1054,27 @@ private slots:
         QVERIFY2(std::fabs(fresh - 329.6) < 12, qPrintable(QString("%1 Hz: a fresh key slid").arg(fresh)));
     }
 
+    void theTalkBoxsKeysOpenWithPressure() {
+        // KEYS: the same key pressed lightly and hard. Hard, the synth's
+        // filter opens: far more of the sound between 2 and 6 kHz, against
+        // what is under 1 kHz.
+        auto press = [&](const char *p) {
+            const auto t = playStyle(Talk, std::string("key 0.45 B\nvoice 0.5 2.0 hz=220 vowel=a level=0.3\n"
+                                                       "down 0.6 1 0.5 0.6 p=") +
+                                               p + "\nup 2.4 1\nend 2.6\n");
+            double hi = 0, lo = 0;
+            for (double hz = 2000; hz < 6000; hz += 131)
+                hi += power(t, hz, 1.3, 2.3);
+            for (double hz = 150; hz < 1000; hz += 37)
+                lo += power(t, hz, 1.3, 2.3);
+            return std::make_pair(hi / std::max(1e-12, lo), t.status);
+        };
+        const auto light = press("0.15"), hard = press("1.0");
+        qInfo("talk box keys: pressed hard, %.1f dB brighter", 10 * std::log10(hard.first / std::max(1e-12, light.first)));
+        QVERIFY2(hard.first > 3 * light.first, "pressure doesn't open the filter");
+        QVERIFY2(hard.second.contains(QLatin1String("TALK BOX (keys, B)")), qPrintable(hard.second));
+    }
+
     void theTalkBoxHasNoPeaksBetweenSamples() {
         // Sung with two harmony fingers: the true peak (4× oversampled) is
         // within half a dB of the samples' own peak.
@@ -921,21 +1106,104 @@ private slots:
     }
 
     void theThroatsGrowlDoublesThePeriod() {
-        // Kargyraa: every other cycle weaker, so there are partials half way
-        // between the voice's harmonics (A3's: 330, 550 Hz) that the voice
-        // alone doesn't have.
+        // Kargyraa (B): every other cycle weaker and the voice moved down
+        // half its pitch, so there are partials half way between the
+        // voice's harmonics (A3's: 330, 550 Hz) that the voice alone
+        // doesn't have, and the subharmonic an octave under the note sung
+        // (110 Hz) leads: louder than the note's own fundamental. Sygyt,
+        // the default, has no growl.
         const std::string sing = "voice 0.3 2.0 hz=220 vowel=a level=0.3\nend 2.6\n";
-        const auto take = playStyle(Throat, sing);
+        const auto take = playStyle(Throat, "key 0.4 B\n" + sing);
+        QVERIFY2(take.status.contains(QLatin1String("THROAT (kargyraa, B)")), qPrintable(take.status));
+        const auto sygyt = playStyle(Throat, sing);
         const auto natural = testkit::play(std::string(kPage) + sing);
-        const double sub = power(take, 330, 1.0, 2.0) + power(take, 550, 1.0, 2.0);
-        const double plain = power(natural, 330, 1.0, 2.0) + power(natural, 550, 1.0, 2.0);
-        qInfo("throat: subharmonics %.1f dB over the voice's", 10 * std::log10(sub / std::max(1e-12, plain)));
+        auto between = [&](const testkit::Take &t) { return power(t, 330, 1.0, 2.0) + power(t, 550, 1.0, 2.0); };
+        const double sub = between(take), plain = between(natural), smooth = between(sygyt);
+        const double under = power(take, 110, 1.0, 2.0), note = power(take, 220, 1.0, 2.0);
+        qInfo("throat: kargyraa's half-harmonics %.1f dB over the voice's (sygyt's %.1f); the subharmonic %.1f dB "
+              "over the note's fundamental",
+              10 * std::log10(sub / std::max(1e-12, plain)), 10 * std::log10(smooth / std::max(1e-12, plain)),
+              10 * std::log10(under / std::max(1e-12, note)));
         QVERIFY2(sub > 10 * plain, "no period doubling");
+        QVERIFY2(under > note, "the subharmonic doesn't lead");
+        QVERIFY2(smooth < 3 * plain, "sygyt growls");
+    }
+
+    void theThroatsLanesWalkDifferentOvertones() {
+        // A 110 Hz drone and the seven lanes one after another: their
+        // whistles stand on at least five different harmonics of it, each
+        // within 50 cents of its lane's note (A minor, from A2: A1 D2 F2
+        // C3 E3 F3 A3), folded by octaves.
+        std::string s = "tempo 0.01 72\nvoice 0.5 15.5 hz=110 vowel=o level=0.3\n";
+        const char *keys = "ASDFGHJ";
+        for (int k = 0; k < 7; ++k)
+            s += "key " + std::to_string(1.5 + 2.0 * k) + " " + keys[k] + " down\nkey " + std::to_string(3.3 + 2.0 * k) +
+                 " " + keys[k] + " up\n";
+        const auto take = playStyle(Throat, s + "end 16.2\n");
+        static const double lane[7] = {33, 38, 41, 48, 52, 53, 57}; // MIDI
+        std::set<int> harmonics;
+        for (int k = 0; k < 7; ++k) {
+            const double a = 2.2 + 2.0 * k;
+            const double hz = strongestHz(take, a, a + 0.9, 1000, 3400);
+            const int h = int(std::lround(hz / 110.0));
+            const double cents = 1200.0 * std::log2(hz / 440.0) + 6900.0 - 100.0 * lane[k];
+            const double off = std::fabs(cents - 1200.0 * std::round(cents / 1200.0));
+            qInfo("throat: lane %c on %.0f Hz, harmonic %d, %.0f cents from its note", keys[k], hz, h, off);
+            QVERIFY2(std::fabs(hz / 110.0 - h) < 0.02, qPrintable(QString("%1 Hz is no harmonic").arg(hz)));
+            QVERIFY2(off < 50, qPrintable(QString("lane %1: %2 cents off").arg(keys[k]).arg(off)));
+            harmonics.insert(h);
+        }
+        QVERIFY2(harmonics.size() >= 5, qPrintable(QString("only %1 harmonics").arg(harmonics.size())));
+    }
+
+    void theThroatStaysUnderTheLimiter() {
+        // A 110 Hz drone at the level a singer would give it, in each of the
+        // three styles: under 5% of its 50 ms windows reach −3.3 dBFS (where
+        // the studio's limiter would take it), and it is about as loud as the
+        // natural voice singing the same.
+        const std::string sing = "tempo 0.01 72\nvoice 0.5 4.0 hz=110 vowel=o level=0.32\n"
+                                 "voice 4.7 3.5 hz=110 vowel=a level=0.32\nend 8.6\n";
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        for (int style = 0; style < 3; ++style) {
+            std::string bs;
+            for (int b = 0; b < style; ++b)
+                bs += "key " + std::to_string(0.4 + 0.05 * b) + " B\n";
+            const auto take = playStyle(Throat, bs + sing);
+            int hot = 0, active = 0;
+            for (size_t a = 0; a + 2400 <= take.left.size(); a += 2400) {
+                float m = 0;
+                for (size_t i = a; i < a + 2400; ++i)
+                    m = std::max({m, std::fabs(take.left[i]), std::fabs(take.right[i])});
+                active += m > 0.01f;
+                hot += m > 0.684f;
+            }
+            const double db = 20 * std::log10(take.rms(1.0, 8.0) / natural.rms(1.0, 8.0));
+            qInfo("throat style %d: %d of %d windows at the limiter; %.1f dB from the natural voice", style, hot,
+                  active, db);
+            QVERIFY2(hot * 20 < active, qPrintable(QString("%1 of %2 hot").arg(hot).arg(active)));
+            QVERIFY2(std::fabs(db) < 2.0, qPrintable(QString("%1 dB").arg(db)));
+        }
+    }
+
+    void khoomeisOvertonesSitLower() {
+        // Khoomei (B twice): the overtone stands lifted between 650 Hz and
+        // 2 kHz, not up in sygyt's whistle.
+        const std::string sing = "voice 0.3 2.2 hz=220 vowel=o level=0.3\nend 2.8\n";
+        const auto take = playStyle(Throat, "key 0.4 B\nkey 0.45 B\n" + sing);
+        QVERIFY2(take.status.contains(QLatin1String("khoomei")), qPrintable(take.status));
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        const double hz = strongestHz(take, 1.2, 1.4, 650, 2000);
+        const double lift = power(take, hz, 1.2, 1.4) / std::max(1e-12, power(natural, hz, 1.2, 1.4));
+        qInfo("khoomei: the overtone on %.0f Hz (harmonic %.2f), %.1f dB over the plain voice's", hz, hz / 220.0,
+              10 * std::log10(lift));
+        QVERIFY2(std::fabs(hz / 220.0 / std::round(hz / 220.0) - 1) < 0.015, qPrintable(QString("%1 Hz").arg(hz)));
+        QVERIFY2(lift > 4, qPrintable(QString("only %1x").arg(lift)));
     }
 
     void theThroatsFigureComesHomeOnTheBar() {
-        // Alone, at 120 bpm over a held A3: the whistle holds the key's
-        // root overtone (harmonic 8, A6) for the first two beats of a bar.
+        // Alone, at 120 bpm over a held A3: the whistle is on the key's
+        // root overtone (harmonic 8, A6) on the first beat of a bar, and
+        // off it on the next.
         double bar = -1, lastBar = -1;
         const auto take = testkit::watch(std::string(kPage) + rights(Throat) +
                                              "tempo 0.01 120\nvoice 0.3 4.6 hz=220 vowel=a level=0.3\nend 5.0\n",
@@ -946,9 +1214,9 @@ private slots:
                                              lastBar = b;
                                          });
         QVERIFY(bar > 0 && bar < 3.5);
-        const double hz = strongestHz(take, bar + 0.15, bar + 0.9, 1000, 3400);
-        const double later = strongestHz(take, bar + 1.1, bar + 1.9, 1000, 3400);
-        qInfo("throat: the bar at %.2f s: its first two beats on %.0f Hz, the next two %.0f", bar, hz, later);
+        const double hz = strongestHz(take, bar + 0.12, bar + 0.45, 1000, 3400);
+        const double later = strongestHz(take, bar + 0.62, bar + 0.95, 1000, 3400);
+        qInfo("throat: the bar at %.2f s: its first beat on %.0f Hz, the next %.0f", bar, hz, later);
         QVERIFY2(std::fabs(hz - 1760) < 15, qPrintable(QString("%1 Hz").arg(hz)));
         QVERIFY2(std::fabs(later - 1760) > 50, "the figure doesn't move off the root");
     }

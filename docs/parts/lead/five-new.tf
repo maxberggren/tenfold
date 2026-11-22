@@ -1,195 +1,362 @@
-# Five new sounds, from beyond EDM, each played the way its music wants it:
-# Sitar (raga, raga rock), Steel pan (calypso, soca), Sync (Italo disco,
-# synth-pop), Erhu (Chinese fiddle), Accordion (cumbia's musette). → steps
-# from one to the next; the key is A minor, the tempo 100.
+# Five sounds from beyond EDM, each in its own idiom, one after another:
+# Sitar (raga), Steel pan (calypso), Sync (Italo disco), Erhu (a Chinese
+# fiddle's cadence), Accordion (cumbia, tango). Each also has a demo of its own
+# (sitar-raga.tf, steel-pan-calypso.tf, sync-italo.tf, erhu-cadence.tf,
+# accordion-cumbia.tf). The key is A minor.
 # Render: build/tenfold render docs/parts/lead/five-new.tf five.wav
 page 0 4
-tempo 0.01 100
-
+tempo 0.010 72
+# Sitar: a raga phrase. Alap with the jawari's sweep, meend, the chikari, a taan and a tihai, the taraf ringing on.
+key 0.100 Right
+key 0.120 Right
+key 0.140 Right
+key 0.160 Right
+key 0.180 Right
 key 0.200 Right
 key 0.220 Right
 key 0.240 Right
 key 0.260 Right
 key 0.280 Right
-key 0.300 Right
-key 0.320 Right
-key 0.340 Right
-key 0.360 Right
-key 0.380 Right
-# Sitar: an alap, then a taan. Each stroke buzzes on the bridge and sweetens;
-# a second finger while one is held is meend, the string bent up to it.
-down 0.600 1 0.6100 0.70 p=0.70
-up 1.900 1
-down 2.100 2 0.5580 0.70 p=0.60
-down 2.450 3 0.6100 0.70 p=0.60
-up 3.500 3
-up 3.500 2
-down 3.700 4 0.7140 0.70 p=0.65
-down 4.150 5 0.7660 0.70 p=0.65
-up 4.800 5
-up 5.400 4
-down 5.600 6 0.8180 0.75 p=0.70
-up 5.730 6
-down 5.750 7 0.7660 0.75 p=0.70
-up 5.880 7
-down 5.900 8 0.7140 0.75 p=0.70
-up 6.030 8
-down 6.050 9 0.6620 0.75 p=0.70
-up 6.180 9
-down 6.200 10 0.6100 0.75 p=0.70
-up 6.330 10
-down 6.350 11 0.5580 0.75 p=0.70
-up 6.480 11
-down 6.500 12 0.6100 0.70 p=0.70
-down 7.000 13 0.7140 0.70 p=0.70
-up 7.400 13
-up 8.500 12
-
-key 9.100 Right
-# Steel pan: a calypso line in short strokes, then a held note, rolled
-# (pressed harder, rolled harder).
-down 9.500 14 0.8180 0.65 p=0.60
-up 9.640 14
-down 9.950 15 0.8180 0.65 p=0.60
-up 10.090 15
-down 10.400 16 0.7660 0.65 p=0.60
-up 10.540 16
-down 10.700 17 0.7140 0.65 p=0.60
-up 10.840 17
-down 11.000 18 0.7660 0.65 p=0.60
-up 11.140 18
-down 11.450 19 0.8180 0.65 p=0.60
-up 11.590 19
-down 11.900 20 0.7140 0.65 p=0.60
-up 12.040 20
-down 12.200 21 0.6100 0.65 p=0.60
-up 12.340 21
-down 12.500 22 0.7140 0.65 p=0.60
-up 12.640 22
-down 12.950 23 0.7660 0.65 p=0.60
-up 13.090 23
-down 13.400 24 0.7140 0.65 p=0.60
-up 13.540 24
-down 13.700 25 0.6620 0.65 p=0.60
-up 13.840 25
-down 14.300 26 0.6100 0.60 p=0.55
-glide 14.600 15.900 26 0.6100 0.60 p=0.85
-up 16.300 26
-
-key 17.100 Right
-# Sync: an Italo disco riff in staccato eighths, every note opening with its
-# swept yow, then a held note high on the pad, pressed into the sweep.
-down 17.500 27 0.6100 0.55 p=0.65
-up 17.670 27
-down 17.800 28 0.8180 0.55 p=0.65
-up 17.970 28
-down 18.100 29 0.9740 0.55 p=0.65
-up 18.270 29
-down 18.400 30 0.8180 0.55 p=0.65
-up 18.570 30
-down 18.700 31 0.5580 0.55 p=0.65
-up 18.870 31
-down 19.000 32 0.7660 0.55 p=0.65
-up 19.170 32
-down 19.300 33 0.9220 0.55 p=0.65
-up 19.470 33
-down 19.600 34 0.7660 0.55 p=0.65
-up 19.770 34
-down 19.900 35 0.5060 0.55 p=0.65
-up 20.070 35
-down 20.200 36 0.7140 0.55 p=0.65
-up 20.370 36
-down 20.500 37 0.8700 0.55 p=0.65
-up 20.670 37
-down 20.800 38 0.7140 0.55 p=0.65
-up 20.970 38
-down 21.100 39 0.4540 0.55 p=0.65
-up 21.270 39
-down 21.400 40 0.6620 0.55 p=0.65
-up 21.570 40
-down 21.700 41 0.8180 0.55 p=0.65
-up 21.870 41
-down 22.000 42 0.6620 0.55 p=0.65
-up 22.170 42
-down 22.300 43 0.8180 0.85 p=0.70
-glide 22.900 23.900 43 0.8180 0.60 p=0.90
-up 24.500 43
-
-key 25.300 Right
-# Erhu: a slow pentatonic song, sliding into notes and between them, its
-# deep vibrato growing on the held ones.
-down 25.700 44 0.4540 0.60 p=0.60
-up 26.700 44
-down 26.800 45 0.5580 0.60 p=0.60
-glide 27.300 27.600 45 0.6100 0.65 p=0.70
-up 28.800 45
-down 29.000 46 0.7140 0.65 p=0.60
-up 29.450 46
-down 29.500 47 0.7660 0.70 p=0.70
-glide 30.200 30.500 47 0.7140 0.60 p=0.60
-up 30.800 47
-down 30.900 48 0.6100 0.60 p=0.60
-down 31.400 49 0.5580 0.60 p=0.60
-up 31.800 49
-up 33.500 48
-
-key 34.100 Right
-# Accordion: a cumbia line in thirds (the left hand on the 3RD row), the
-# musette shimmering at one speed all the way up, then a held A.
-down 34.400 50 0.0800 0.58 p=0.60
-down 34.500 51 0.8180 0.60 p=0.65
-up 34.740 51
-down 34.800 52 0.7660 0.60 p=0.65
-up 35.040 52
-down 35.100 53 0.7140 0.60 p=0.65
-up 35.340 53
-down 35.400 54 0.7660 0.60 p=0.65
-up 35.640 54
-down 35.700 55 0.8180 0.60 p=0.65
-up 35.940 55
-down 36.000 56 0.8180 0.60 p=0.65
-up 36.240 56
-down 36.300 57 0.8180 0.60 p=0.65
-up 36.780 57
-down 36.900 58 0.7660 0.60 p=0.65
-up 37.140 58
-down 37.200 59 0.7660 0.60 p=0.65
-up 37.440 59
-down 37.500 60 0.7660 0.60 p=0.65
-up 37.980 60
-down 38.100 61 0.8180 0.60 p=0.65
-up 38.340 61
-down 38.400 62 0.9220 0.60 p=0.65
-up 38.640 62
-down 38.700 63 0.9220 0.60 p=0.65
-up 39.180 63
-down 39.300 64 0.8180 0.60 p=0.65
-up 39.540 64
-down 39.600 65 0.7660 0.60 p=0.65
-up 39.840 65
-down 39.900 66 0.7140 0.60 p=0.65
-up 40.140 66
-down 40.200 67 0.7660 0.60 p=0.65
-up 40.440 67
-down 40.500 68 0.8180 0.60 p=0.65
-up 40.740 68
-down 40.800 69 0.8180 0.60 p=0.65
-up 41.040 69
-down 41.100 70 0.8180 0.60 p=0.65
-up 41.340 70
-down 41.400 71 0.8180 0.60 p=0.65
-up 41.640 71
-down 41.700 72 0.7660 0.60 p=0.65
-up 41.940 72
-down 42.000 73 0.7660 0.60 p=0.65
-up 42.240 73
-down 42.300 74 0.8180 0.60 p=0.65
-up 42.540 74
-down 42.600 75 0.7660 0.60 p=0.65
-up 42.840 75
-down 42.900 76 0.7140 0.60 p=0.65
-up 43.620 76
-up 43.800 50
-down 44.000 77 0.6100 0.60 p=0.70
-up 45.600 77
-end 47.300
+# Alap: Sa, held, its jawari sliding down through the harmonics and the taraf answering.
+down 0.600 2 0.6100 0.70 p=0.70
+up 3.517 2
+# Meend: Pa held, a second finger bends the string slowly up to the flat sixth and back.
+down 3.933 3 0.8180 0.68 p=0.65
+down 4.933 4 0.8700 0.68 p=0.60
+up 6.100 4
+up 6.767 3
+# The chikari: a second finger tapped high on the pad strikes the high drone strings between the melody's notes.
+down 7.100 5 0.7140 0.66 p=0.65
+down 7.600 6 0.7140 0.90 p=0.70
+up 7.683 6
+down 8.017 7 0.7140 0.90 p=0.70
+up 8.100 7
+down 8.433 8 0.7140 0.90 p=0.70
+up 8.517 8
+up 8.933 5
+# Ga, ma, a meend from re up to ga, Sa.
+down 9.100 9 0.7660 0.66 p=0.60
+up 9.933 9
+down 9.933 10 0.6620 0.66 p=0.60
+down 10.433 11 0.7140 0.66 p=0.60
+up 11.267 11
+up 11.350 10
+down 11.433 12 0.6100 0.68 p=0.65
+up 12.683 12
+# Taan: a fast run down from the upper Sa, every stroke buzzing.
+down 13.100 13 0.9740 0.72 p=0.70
+up 13.267 13
+down 13.308 14 0.9220 0.72 p=0.70
+up 13.475 14
+down 13.517 15 0.8700 0.72 p=0.70
+up 13.683 15
+down 13.725 16 0.8180 0.72 p=0.70
+up 13.892 16
+down 13.933 17 0.7660 0.72 p=0.70
+up 14.100 17
+down 14.142 18 0.7140 0.72 p=0.70
+up 14.308 18
+down 14.350 19 0.6620 0.72 p=0.70
+up 14.517 19
+down 14.558 20 0.6100 0.72 p=0.70
+up 14.725 20
+down 14.767 21 0.6620 0.72 p=0.70
+up 14.933 21
+down 14.975 22 0.7140 0.72 p=0.70
+up 15.142 22
+down 15.183 23 0.7660 0.72 p=0.70
+up 15.350 23
+down 15.392 24 0.8180 0.72 p=0.70
+up 15.558 24
+down 15.600 25 0.7660 0.72 p=0.70
+up 15.767 25
+down 15.808 26 0.7140 0.72 p=0.70
+up 15.975 26
+down 16.017 27 0.6620 0.72 p=0.70
+up 16.183 27
+down 16.225 28 0.6100 0.72 p=0.70
+up 16.392 28
+# Tihai: the last Sa three times, the chikari on the last, and the taraf left ringing.
+down 16.433 29 0.6100 0.72 p=0.80
+up 16.933 29
+down 17.058 30 0.6100 0.72 p=0.80
+up 17.558 30
+down 17.683 31 0.6100 0.72 p=0.80
+down 18.100 32 0.6100 0.92 p=0.80
+up 18.183 32
+up 20.183 31
+tempo 23.793 112
+# Steel pan: a calypso line in single strokes, a rolled sustain, and the cello pan's low notes.
+key 23.883 Right
+# A calypso line: single strokes, syncopated (each note a stroke, no roll under a quarter).
+down 24.383 2 0.7140 0.70 p=0.65
+up 24.584 2
+down 24.651 3 0.6620 0.70 p=0.65
+up 24.852 3
+down 24.919 4 0.6100 0.70 p=0.65
+up 25.220 4
+down 25.321 5 0.5580 0.70 p=0.65
+up 25.421 5
+down 25.454 6 0.6100 0.70 p=0.65
+up 25.655 6
+down 25.722 7 0.7140 0.70 p=0.65
+up 26.124 7
+down 26.258 8 0.8180 0.70 p=0.65
+up 26.459 8
+down 26.526 9 0.7140 0.70 p=0.65
+up 26.727 9
+down 26.794 10 0.6620 0.70 p=0.65
+up 27.095 10
+down 27.196 11 0.6100 0.70 p=0.65
+up 27.296 11
+down 27.329 12 0.5580 0.70 p=0.65
+up 27.530 12
+down 27.597 13 0.4540 0.70 p=0.65
+up 27.798 13
+down 27.865 14 0.5060 0.70 p=0.65
+up 28.267 14
+down 28.401 15 0.6100 0.70 p=0.65
+up 28.602 15
+down 28.669 16 0.5580 0.70 p=0.65
+up 28.870 16
+down 28.937 17 0.4540 0.70 p=0.65
+up 29.137 17
+down 29.204 18 0.3500 0.70 p=0.65
+up 29.807 18
+# Again an octave up, harder, then a rolled sustain on the top note, pressed in as it goes.
+down 30.276 19 0.8180 0.75 p=0.75
+up 30.477 19
+down 30.544 20 0.7660 0.75 p=0.75
+up 30.745 20
+down 30.812 21 0.7140 0.75 p=0.75
+up 31.113 21
+down 31.213 22 0.6620 0.75 p=0.75
+up 31.314 22
+down 31.347 23 0.7140 0.75 p=0.75
+up 31.548 23
+down 31.615 24 0.8180 0.75 p=0.75
+up 32.017 24
+down 32.151 25 0.9220 0.75 p=0.75
+up 32.352 25
+down 32.419 26 0.8180 0.75 p=0.75
+up 32.620 26
+down 32.687 27 0.8180 0.75 p=0.50
+glide 33.222 34.294 27 0.8180 0.75 p=0.90
+up 34.829 27
+# Down to the cello pan's range: low notes with a strong octave, settling onto pitch.
+key 35.097 Down
+down 35.147 28 0.6100 0.60 p=0.70
+up 35.489 28
+down 35.549 29 0.4540 0.60 p=0.70
+up 35.891 29
+down 35.951 30 0.5060 0.60 p=0.70
+up 36.179 30
+down 36.219 31 0.3500 0.60 p=0.70
+up 36.674 31
+down 36.754 32 0.2460 0.60 p=0.70
+up 37.665 32
+key 37.976 Up
+tempo 40.386 118
+# Sync: an Italo disco arpeggio, a held hook that keeps tearing, the FM snarl under pressure.
+key 40.476 Right
+# An Italo disco arpeggio in sixteenths, every note opening with the two slaves' sweep.
+down 40.976 2 0.6100 0.50 p=0.60
+up 41.078 2
+down 41.103 3 0.7140 0.50 p=0.60
+up 41.205 3
+down 41.230 4 0.8180 0.50 p=0.60
+up 41.332 4
+down 41.357 5 0.9740 0.50 p=0.60
+up 41.459 5
+down 41.484 6 0.8180 0.50 p=0.60
+up 41.586 6
+down 41.612 7 0.7140 0.50 p=0.60
+up 41.713 7
+down 41.739 8 0.6100 0.50 p=0.60
+up 41.840 8
+down 41.866 9 0.7140 0.50 p=0.60
+up 41.968 9
+down 41.993 10 0.5060 0.50 p=0.60
+up 42.095 10
+down 42.120 11 0.6100 0.50 p=0.60
+up 42.222 11
+down 42.247 12 0.7140 0.50 p=0.60
+up 42.349 12
+down 42.374 13 0.8700 0.50 p=0.60
+up 42.476 13
+down 42.501 14 0.7140 0.50 p=0.60
+up 42.603 14
+down 42.629 15 0.6100 0.50 p=0.60
+up 42.730 15
+down 42.756 16 0.5060 0.50 p=0.60
+up 42.857 16
+down 42.883 17 0.6100 0.50 p=0.60
+up 42.984 17
+down 43.010 18 0.6100 0.50 p=0.60
+up 43.112 18
+down 43.137 19 0.7140 0.50 p=0.60
+up 43.239 19
+down 43.264 20 0.8180 0.50 p=0.60
+up 43.366 20
+down 43.391 21 0.9740 0.50 p=0.60
+up 43.493 21
+down 43.518 22 0.8180 0.50 p=0.60
+up 43.620 22
+down 43.645 23 0.7140 0.50 p=0.60
+up 43.747 23
+down 43.773 24 0.6100 0.50 p=0.60
+up 43.874 24
+down 43.900 25 0.7140 0.50 p=0.60
+up 44.001 25
+down 44.027 26 0.4020 0.50 p=0.60
+up 44.129 26
+down 44.154 27 0.5060 0.50 p=0.60
+up 44.256 27
+down 44.281 28 0.6100 0.50 p=0.60
+up 44.383 28
+down 44.408 29 0.7660 0.50 p=0.60
+up 44.510 29
+down 44.535 30 0.6100 0.50 p=0.60
+up 44.637 30
+down 44.662 31 0.5060 0.50 p=0.60
+up 44.764 31
+down 44.790 32 0.4020 0.50 p=0.60
+up 44.891 32
+down 44.917 33 0.5060 0.50 p=0.60
+up 45.018 33
+# The hook, legato and held: the tear never settles, it keeps moving with the vibrato.
+down 45.044 34 0.8180 0.45 p=0.60
+down 45.552 35 0.8700 0.45 p=0.60
+up 45.807 35
+up 46.061 34
+down 46.061 36 0.7140 0.45 p=0.60
+up 47.586 36
+# Held, pressed harder: the FM crossfade's snarl; then the finger rises and the sweep goes with it.
+down 47.840 37 0.6100 0.30 p=0.50
+glide 48.349 49.366 37 0.6100 0.30 p=1.00
+glide 49.620 50.637 37 0.6100 0.95 p=0.60
+up 50.891 37
+tempo 53.256 66
+# Erhu: a cadence with a big slide, bow changes on repeated notes, a whisper bowed into a grind.
+key 53.346 Right
+# A cadence: Mi, a big slide up a fifth to the upper Mi's neighbour, ornamented, and home.
+down 53.846 2 0.4540 0.55 p=0.55
+glide 55.210 55.755 2 0.6620 0.55 p=0.65
+glide 56.755 57.028 2 0.6100 0.55 p=0.65
+up 57.937 2
+# Repeated notes: each one a change of bow, the hair catching the string again.
+down 58.164 3 0.5580 0.55 p=0.60
+up 58.546 3
+down 58.619 4 0.5580 0.55 p=0.60
+up 59.001 4
+down 59.073 5 0.5580 0.55 p=0.60
+up 59.455 5
+down 59.528 6 0.5580 0.55 p=0.60
+up 59.910 6
+down 59.982 7 0.5060 0.55 p=0.60
+up 60.801 7
+# One long note bowed from a whisper (flautando, whistling) into a hard sul ponticello grind.
+down 60.891 8 0.6100 0.50 p=0.20
+glide 62.255 64.982 8 0.6100 0.85 p=1.00
+up 65.437 8
+# And down, a slide of an octave into the low string, sighing home.
+down 65.891 9 0.7140 0.50 p=0.60
+glide 66.801 68.164 9 0.3500 0.45 p=0.55
+glide 68.801 69.164 9 0.2460 0.45 p=0.50
+up 71.346 9
+tempo 73.456 96
+# Accordion: a cumbia musette riff, a tango in the clarinet stop, the bandoneon stop.
+key 73.546 Right
+# Cumbia, high on the pad: the musette's three reeds, a riff with repeated notes, each repeat turning the bellows.
+down 74.046 2 0.6100 0.85 p=0.65
+up 74.296 2
+down 74.358 3 0.6100 0.85 p=0.65
+up 74.609 3
+down 74.671 4 0.7140 0.85 p=0.65
+up 74.796 4
+down 74.827 5 0.7660 0.85 p=0.65
+up 75.077 5
+down 75.140 6 0.7140 0.85 p=0.65
+up 75.265 6
+down 75.296 7 0.6100 0.85 p=0.65
+up 75.546 7
+down 75.609 8 0.5580 0.85 p=0.65
+up 75.859 8
+down 75.921 9 0.5060 0.85 p=0.65
+up 76.171 9
+down 76.234 10 0.5060 0.85 p=0.65
+up 76.484 10
+down 76.546 11 0.5580 0.85 p=0.65
+up 76.671 11
+down 76.702 12 0.6100 0.85 p=0.65
+up 76.952 12
+down 77.015 13 0.5580 0.85 p=0.65
+up 77.140 13
+down 77.171 14 0.5060 0.85 p=0.65
+up 77.421 14
+down 77.483 15 0.4540 0.85 p=0.65
+up 77.983 15
+down 78.108 16 0.6100 0.85 p=0.65
+up 78.358 16
+down 78.421 17 0.6100 0.85 p=0.65
+up 78.671 17
+down 78.733 18 0.7140 0.85 p=0.65
+up 78.858 18
+down 78.890 19 0.7660 0.85 p=0.65
+up 79.140 19
+down 79.202 20 0.7140 0.85 p=0.65
+up 79.327 20
+down 79.358 21 0.6100 0.85 p=0.65
+up 79.608 21
+down 79.671 22 0.5580 0.85 p=0.65
+up 79.921 22
+down 79.983 23 0.5060 0.85 p=0.65
+up 80.233 23
+down 80.296 24 0.5060 0.85 p=0.65
+up 80.546 24
+down 80.608 25 0.5580 0.85 p=0.65
+up 80.733 25
+down 80.765 26 0.6100 0.85 p=0.65
+up 81.015 26
+down 81.077 27 0.5580 0.85 p=0.65
+up 81.202 27
+down 81.233 28 0.5060 0.85 p=0.65
+up 81.483 28
+down 81.546 29 0.4540 0.85 p=0.65
+up 82.046 29
+# Tango, low on the pad: the clarinet stop, one dry reed, marcato.
+down 82.171 30 0.6100 0.18 p=0.75
+up 82.358 30
+down 82.483 31 0.6100 0.18 p=0.75
+up 82.671 31
+down 82.796 32 0.6100 0.18 p=0.75
+up 82.983 32
+down 83.108 33 0.6100 0.18 p=0.75
+up 83.296 33
+down 83.421 34 0.6620 0.18 p=0.75
+up 83.515 34
+down 83.577 35 0.6100 0.18 p=0.75
+up 83.671 35
+down 83.733 36 0.5580 0.18 p=0.75
+up 83.827 36
+down 83.890 37 0.5060 0.18 p=0.75
+up 83.983 37
+down 84.046 38 0.4540 0.18 p=0.75
+up 84.421 38
+down 84.671 39 0.8180 0.18 p=0.75
+up 84.858 39
+down 84.983 40 0.7660 0.18 p=0.75
+up 85.171 40
+down 85.296 41 0.7140 0.18 p=0.75
+up 85.483 41
+down 85.608 42 0.6620 0.18 p=0.75
+up 85.796 42
+down 85.921 43 0.6100 0.18 p=0.75
+up 86.483 43
+# The bandoneon stop in the middle of the pad, the octave below speaking under it; then sliding up into the musette.
+down 86.858 44 0.4540 0.50 p=0.65
+up 88.108 44
+down 88.171 45 0.6100 0.50 p=0.70
+glide 88.796 89.734 45 0.6100 0.90 p=0.70
+up 90.359 45
+end 92.958

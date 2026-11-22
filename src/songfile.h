@@ -37,6 +37,7 @@
 // up); "i" and "f" are its values with trailing zeros left off; "flags" and
 // "layer" are left off when 0. "name" under "key" is only for reading.
 
+#include <QDateTime>
 #include <QJsonObject>
 #include <QString>
 #include <functional>
@@ -91,6 +92,12 @@ public:
 
 // Ctrl+S, Ctrl+Shift+S, Ctrl+O and the song kept on quit: the session's
 // song to and from files, each step said in the window's notice.
+// The name a new song is first offered under: when it was made, then its
+// tempo and key, so a folder of them sorts by date and says what each is.
+// "2026-11-22 15.43 · 124 bpm · A aeolian.tenfold", with plain # and b for
+// the sharps and flats, which every file system and keyboard has.
+QString songFileName(double bpm, int root, const QString &mode, const QDateTime &when);
+
 class SongFiles {
 public:
     SongFiles(Session *session, FilePicker *picker);

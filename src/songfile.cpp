@@ -13,6 +13,7 @@
 #include <cstdlib>
 
 #include "session.h"
+#include "tuning.h"
 
 namespace tf {
 
@@ -402,13 +403,26 @@ void SongFiles::save() {
         saveTo(m_path);
 }
 
+QString songFileName(double bpm, int root, const QString &mode, const QDateTime &when) {
+    QString key = QString::fromUtf8(Tuning::noteName(root));
+    key.replace(QStringLiteral("♯"), QStringLiteral("#")).replace(QStringLiteral("♭"), QStringLiteral("b"));
+    return QStringLiteral("%1 · %2 bpm · %3 %4.tenfold")
+        .arg(when.toString(QStringLiteral("yyyy-MM-dd HH.mm")))
+        .arg(int(std::lround(bpm)))
+        .arg(key, mode.toLower());
+}
+
 void SongFiles::saveAs() {
     if (!m_picker)
         return;
     const QFileInfo was(m_path);
     const QString folder = m_path.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::MusicLocation)
                                             : was.absolutePath();
-    const QString name = m_path.isEmpty() ? QStringLiteral("song.tenfold") : was.fileName();
+    const StudioView &v = m_session->view();
+    const ScaleFamily &f = family(v.family);
+    const QString mode = QString::fromUtf8(f.modeNames[std::clamp(v.brightness, 0, f.modeCount - 1)]);
+    const QString name = m_path.isEmpty() ? songFileName(v.bpm, v.root, mode, QDateTime::currentDateTime())
+                                          : was.fileName();
     m_picker->saveFile(QStringLiteral("Save song"), name, folder, [this](const QString &path) {
         if (path.isEmpty())
             return;

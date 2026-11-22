@@ -81,6 +81,15 @@ QJsonObject saved(const std::string &script) {
 class SongTests : public QObject {
     Q_OBJECT
 private slots:
+    void aNewSongIsNamedForWhenAndWhatItIs() {
+        const QDateTime when(QDate(2026, 11, 22), QTime(9, 5));
+        QCOMPARE(songFileName(124.4, 9, QStringLiteral("Aeolian"), when),
+                 QStringLiteral("2026-11-22 09.05 · 124 bpm · A aeolian.tenfold"));
+        QCOMPARE(songFileName(90, 1, QStringLiteral("Dorian"), when),
+                 QStringLiteral("2026-11-22 09.05 · 90 bpm · C# dorian.tenfold"));
+        QCOMPARE(songFileName(90, 10, QStringLiteral("Ionian"), when),
+                 QStringLiteral("2026-11-22 09.05 · 90 bpm · Bb ionian.tenfold"));
+    }
     void aSongComesBackAsItWasSaved() {
         testkit::reopen(kSong, 5.0, [](Session &before, Session &opened, const QJsonObject &doc) {
             QCOMPARE(doc[QStringLiteral("tenfold")].toInt(), 1);

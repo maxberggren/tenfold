@@ -38,7 +38,8 @@ up 13.144 6
 key 13.168 Down
 # Shift+→ three times, the 3·3·2: the left hand plays the Stradella
 # buttons, the bass (root, then the fifth) on the accents and the chord on
-# the hits between, a tango's habanera, a cumbia.
+# the hits between, a tango's habanera, a cumbia, while the right hand holds
+# the chord softly over them (brought forward on the last, pressed harder).
 key 13.172 Shift+Right
 key 13.176 Shift+Right
 key 13.180 Shift+Right
@@ -46,7 +47,7 @@ down 13.220 7 0.0714 0.40 p=0.60
 up 17.486 7
 down 17.546 8 0.5000 0.40 p=0.60
 up 19.669 8
-down 19.729 9 0.6429 0.72 p=0.70
+down 19.729 9 0.6429 0.72 p=0.90
 up 21.852 9
 # Shift+← once, the 8ths: the bellows shake, a swell on every eighth with
 # the reeds sagging a few cents at each turn.
@@ -56,7 +57,9 @@ up 26.181 10
 key 26.205 Shift+Left
 key 26.209 Shift+Left
 # KALIMBA on its 8ths: one tine a hit, the thumbs taking turns, left on the
-# beat; pressed harder on the second chord, the bottle caps rattle on each
+# beat, each stopping the tine it plucked last so the figure is single
+# notes over the box's low hollow knock; pressed harder on the second
+# chord, the bottle caps rattle on each
 # pluck; then Shift+→ for the 3·3·2 of Afro house, and a flat finger, the
 # thumb's soft pad, no nail.
 key 26.213 Right
@@ -72,10 +75,13 @@ up 37.072 14
 key 37.096 Shift+Left
 # GAMELAN on its sixteenths: kotekan nyog cag, the polos on the left and
 # the sangsih on the right a step ahead and a step higher, one line moving
-# every sixteenth, each player damping the bar it struck before. Shift+→
-# for the triplet wub: norot, each tone of the chord against the note above
-# it. Shift+→ again, HOLD: a sus chord struck whole, the bars beating and
-# the tubes blooming, damped as the next is struck.
+# every sixteenth, each player damping the bar it struck before, and the
+# jegogan sounding the root far under them on each chord's first stroke
+# and every bar. The last chord is let go mid-figure: the angsel, the
+# players ending together on the next stroke, hard, and damping it at once.
+# Shift+→ for the triplet wub: norot, each tone of the chord against the
+# note above it. Shift+→ again, HOLD: a sus chord struck whole, the bars
+# beating and the tubes blooming, damped as the next is struck.
 key 37.100 Right
 down 37.140 15 0.0714 0.40 p=0.60
 up 39.262 15
@@ -84,7 +90,7 @@ up 41.445 16
 down 41.505 17 0.7857 0.40 p=0.60
 up 43.628 17
 down 43.688 18 0.6429 0.24 p=0.60
-up 45.811 18
+up 45.150 18
 key 45.835 Shift+Right
 down 45.875 19 0.0714 0.40 p=0.60
 up 47.998 19
@@ -97,9 +103,10 @@ down 52.428 22 0.7857 0.08 p=0.60
 up 54.550 22
 key 54.574 Shift+Left
 key 54.578 Shift+Left
-# STEEL, the pedal steel, a ballad: each chord swells in under the volume
-# pedal (slowly under a light touch) and sustains, the bar sliding to it
-# from the last, its vibrato growing in. Pressing harder pushes the B
+# STEEL, the pedal steel, a ballad, through its clean amp and spring, a low
+# string on the root under each chord: each chord swells in under the
+# volume pedal (slowly under a light touch) and sustains, the bar sliding to
+# it from the last, its vibrato growing in. Pressing harder pushes the B
 # pedal (the third up to the fourth) and then the A pedal (the fifth up to
 # the sixth), easing off resolves them, the steel's cry; a finger laid flat
 # pulls the knee lever, the root down a step.
@@ -122,8 +129,9 @@ up 71.865 26
 # SITAR: the alap, a raked power chord and its chikari left to ring, pulled
 # into a meend two bars in (the top string up to the next note) and eased
 # back; then Shift+→ twice for an 8ths jhala, the beats raking the chord
-# and the offbeats striking the chikari, the sympathetic strings ringing on
-# after the last.
+# quickly (each rake stopping the last one's ring) and the offbeats
+# striking the chikari as hard, a pulse, the sympathetic strings ringing
+# on after the last.
 key 71.889 Right
 down 71.929 27 0.0714 0.08 p=0.50
 glide 74.501 75.144 27 0.0714 0.08 p=0.95

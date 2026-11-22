@@ -200,6 +200,48 @@ double choppiness(const testkit::Take &take, double from, double to, double bpm)
     return hi / std::max(lo, 1e-6);
 }
 
+// The level of a stretch in decibels (its rms).
+double levelDb(const testkit::Take &take, double from, double to) {
+    return 20 * std::log10(std::max(1e-9, take.rms(from, to)));
+}
+
+// How far a gate's hits stand out of what rings under them: for each hit
+// from `from` to `to` (a step apart, on the beat's grid), the loudest
+// 20 ms just after it over the quietest just before it, in decibels; the
+// smallest of them.
+double weakestPulse(const testkit::Take &take, double step, double from, double to, int *hits = nullptr) {
+    double weakest = 1e9;
+    int count = 0;
+    for (double t = std::ceil(from / step) * step; t + step < to; t += step) {
+        double peak = -1e9, trough = 1e9;
+        for (double d = 0; d < 0.06; d += 0.005)
+            peak = std::max(peak, levelDb(take, t + d, t + d + 0.02));
+        for (double d = 0.025; d < 0.07; d += 0.005)
+            trough = std::min(trough, levelDb(take, t - d, t - d + 0.02));
+        weakest = std::min(weakest, peak - trough);
+        ++count;
+    }
+    if (hits)
+        *hits = count;
+    return weakest;
+}
+
+// The level of one pitch over a stretch, in decibels (a Hann-windowed
+// Goertzel at hz).
+double toneDb(const testkit::Take &take, double hz, double from, double to) {
+    const size_t a = size_t(from * 48000), b = std::min(take.left.size(), size_t(to * 48000));
+    if (b <= a + 1)
+        return -200;
+    std::complex<double> acc = 0;
+    double wsum = 0;
+    for (size_t i = a; i < b; ++i) {
+        const double w = 0.5 - 0.5 * std::cos(2 * M_PI * double(i - a) / double(b - a - 1));
+        acc += 0.5 * (take.left[i] + take.right[i]) * w * std::polar(1.0, -2 * M_PI * hz * double(i) / 48000.0);
+        wsum += w;
+    }
+    return 20 * std::log10(std::max(1e-12, std::abs(acc) / wsum));
+}
+
 // Pitch classes of A natural minor, the studio's default key.
 const std::set<int> kAMinor = {9, 11, 0, 2, 4, 5, 7};
 
@@ -1656,18 +1698,23 @@ private slots:
     // The accordion's bellows shake swells the sound on its eighths (a few
     // decibels, never a chop), and on the 3·3·2 its left hand plays the
     // Stradella buttons: a bass reed under the chord, which a held chord
-    // has none of, and a rhythm with rests between the presses.
+    // has none of, and a rhythm, the presses standing well out of the right
+    // hand's chord held softly between them (never silence), which a firm
+    // press brings forward.
     void theAccordionShakesAndPlaysTheBassButtons() {
-        auto played = [](int gate) {
+        auto played = [](int gate, double pressure = 0.6) {
             return testkit::play("page 0 3\n" + soundKeys(Accordion) + "down 0.2 9 " + rail(gate) + "\ndown 0.3 1 " +
-                                 cell(0, Triad) + " p=0.6\nup 2.8 1\nup 2.9 9\nend 3.2\n");
+                                 cell(0, Triad) + " p=" + num(pressure) + "\nup 2.8 1\nup 2.9 9\nend 3.2\n");
         };
         const auto shaken = played(Eighths), tango = played(Tresillo), held = played(Hold);
+        const auto firm = played(Tresillo, 0.95);
         // (A held musette chord moves a little by itself, its reeds beating.)
         const double swing = 20 * std::log10(choppiness(shaken, 0.8, 2.6, 124)),
                      still = 20 * std::log10(choppiness(held, 0.8, 2.6, 124));
         QVERIFY2(swing - still > 2 && swing - still < 7, qPrintable(QString("%1 dB, held %2 dB").arg(swing).arg(still)));
-        QVERIFY2(choppiness(tango, 0.8, 2.6, 124) > 10, qPrintable(QString::number(choppiness(tango, 0.8, 2.6, 124))));
+        const double chop = choppiness(tango, 0.8, 2.6, 124), firmChop = choppiness(firm, 0.8, 2.6, 124);
+        QVERIFY2(chop > 3 && chop < 10, qPrintable(QString::number(chop)));
+        QVERIFY2(firmChop < 0.8 * chop, qPrintable(QString("firm %1, medium %2").arg(firmChop).arg(chop)));
         // The bass button on A2 (110 Hz, under the page's high-pass but not
         // gone) and on the fifth, E3 (165 Hz), both under the chord's
         // voicing, against the held chord's.
@@ -1675,6 +1722,84 @@ private slots:
             return bandShare(t, 0.6, 107, 113) + bandShare(t, 0.6, 162, 168);
         };
         QVERIFY2(bass(tango) > 5 * bass(held), qPrintable(QString("bass %1 tango, %2 held").arg(bass(tango)).arg(bass(held))));
+    }
+
+    // The sitar's jhala: on its eighths the rakes and the chikari strokes
+    // between them pulse, each standing at least 6 dB out of what rings
+    // before it (a 20 ms envelope), never piling up into a wash; and the
+    // buzz stays in the jawari's band, little of it above 12 kHz.
+    void theSitarsJhalaPulses() {
+        const auto take = testkit::play("page 0 3\n" + soundKeys(Sitar) + "down 0.2 9 " + rail(Eighths) +
+                                        "\ndown 0.3 1 " + cell(0, Triad) + " p=0.6\nup 2.8 1\nup 2.9 9\nend 3.2\n");
+        int hits = 0;
+        const double weakest = weakestPulse(take, 60.0 / 124 / 2, 0.7, 2.75, &hits);
+        QVERIFY2(hits >= 7 && weakest > 6, qPrintable(QString("%1 hits, the weakest %2 dB").arg(hits).arg(weakest)));
+        const double air = bandShare(take, 0.6, 12000, 24000);
+        QVERIFY2(air < 2e-4, qPrintable(QString::number(air)));
+    }
+
+    // The pedal steel has a body: its low string under the chord and its
+    // clean amp put more of it between 150 Hz and 1 kHz than between 1 and
+    // 4 kHz, and its low string is heard under 150 Hz (within 30 dB of the
+    // body), still clear of the sub.
+    void theSteelHasBody() {
+        const auto take = heldChord(Steel, nullptr, true, 0.5);
+        const double low = bandShare(take, 1.0, 40, 150), body = bandShare(take, 1.0, 150, 1000),
+                     bite = bandShare(take, 1.0, 1000, 4000);
+        QVERIFY2(body > bite && low > 1e-3 * body,
+                 qPrintable(QString("under 150 Hz %1, 150 Hz-1 kHz %2, 1-4 kHz %3").arg(low).arg(body).arg(bite)));
+    }
+
+    // The kalimba's thumbs stop the tine each plucked last as it plucks
+    // its next, so on its eighths the figure is heard as notes, not a held
+    // chord: each tine falls at least 20 dB between its plucks. And the
+    // box's hollow sounds low under the tines.
+    void theKalimbasFigureIsNotes() {
+        std::vector<float> notes;
+        const auto take = playWatching("page 0 3\n" + soundKeys(Kalimba) + "down 0.3 1 " + cell(0, Triad) +
+                                           " p=0.5\nup 2.8 1\nend 3.0\n",
+                                       [&](double now, const StudioView &v) {
+                                           if (now > 1.0 && now < 1.1)
+                                               notes = voicing(v);
+                                       });
+        QVERIFY(notes.size() >= 3);
+        int apart = 0;
+        QString dips;
+        for (float n : notes) {
+            const double hz = 440.0 * std::exp2((n - 69.0) / 12.0);
+            double hi = -1e9, lo = 1e9;
+            for (double t = 0.8; t < 2.6; t += 0.02) {
+                const double l = toneDb(take, hz, t, t + 0.06);
+                hi = std::max(hi, l);
+                lo = std::min(lo, l);
+            }
+            apart += hi - lo > 20;
+            dips += QString(" %1: %2 dB").arg(n).arg(hi - lo);
+        }
+        const double hollow = bandShare(take, 0.6, 120, 180);
+        QVERIFY2(apart >= 3, qPrintable(dips));
+        QVERIFY2(hollow > 1e-3, qPrintable(QString::number(hollow)));
+    }
+
+    // The gamelan's jegogan strikes the chord's root far under the figure
+    // (A2 under A minor) on its first stroke and every bar; and its angsel:
+    // let go in the middle of the figure, the players end together on the
+    // next stroke, harder than the figure, and damp it at once, so half a
+    // second later it is 30 dB down.
+    void theGamelanAnchorsAndEndsTogether() {
+        const auto take = testkit::play("page 0 3\n" + soundKeys(Gamelan) + "down 0.2 9 " + rail(Sixteenths) +
+                                        "\ndown 0.3 1 " + cell(0, Triad) + " p=0.6\nup 2.8 1\nend 3.6\n");
+        const double jegogan = bandShare(take, 0.4, 107, 113);
+        double figure = -1e9, angsel = -1e9;
+        for (double t = 2.2; t < 2.78; t += 0.01)
+            figure = std::max(figure, levelDb(take, t, t + 0.02));
+        for (double t = 2.8; t < 3.0; t += 0.01)
+            angsel = std::max(angsel, levelDb(take, t, t + 0.02));
+        const double after = levelDb(take, 3.3, 3.4) - levelDb(take, 2.2, 2.8);
+        QVERIFY2(jegogan > 0.01, qPrintable(QString::number(jegogan)));
+        QVERIFY2(angsel > figure + 1.5,
+                 qPrintable(QString("the angsel %1 dB, the figure %2 dB").arg(angsel).arg(figure)));
+        QVERIFY2(after < -30, qPrintable(QString("%1 dB half a second on").arg(after)));
     }
 };
 

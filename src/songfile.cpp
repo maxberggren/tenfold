@@ -5,10 +5,10 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <cstdio>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstdlib>
 
@@ -141,11 +141,18 @@ bool integer(const QJsonValue &v, double lo, double hi, int64_t *out) {
 }
 
 // Through decimal text rather than arithmetic: the build's fast maths turns
-// a division by a million into a multiplication that misses by an ulp.
+// a division by a million into a multiplication that misses by an ulp. The
+// shortest decimal that reads back as the same float, found by printf
+// (std::to_chars for floats needs macOS 13.3).
 double tidyFloat(float f) {
+    if (!std::isfinite(f))
+        return f;
     char buf[64];
-    const auto r = std::to_chars(buf, buf + sizeof buf - 1, f);
-    *r.ptr = 0;
+    for (int digits = 1; digits <= 9; ++digits) {
+        std::snprintf(buf, sizeof buf, "%.*g", digits, double(f));
+        if (std::strtof(buf, nullptr) == f)
+            break;
+    }
     return std::strtod(buf, nullptr);
 }
 
@@ -153,10 +160,8 @@ double tidyNumber(double v, int decimals) {
     if (!std::isfinite(v))
         return v;
     char buf[400];
-    const auto r = std::to_chars(buf, buf + sizeof buf - 1, v, std::chars_format::fixed, decimals);
-    if (r.ec != std::errc())
+    if (std::snprintf(buf, sizeof buf, "%.*f", decimals, v) >= int(sizeof buf))
         return v;
-    *r.ptr = 0;
     return std::strtod(buf, nullptr);
 }
 

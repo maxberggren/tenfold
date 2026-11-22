@@ -745,13 +745,15 @@ private slots:
     }
 
     // The mouse reaches what the keys do: a click on TECHNO or TABLA under
-    // the pad changes the kit, the arrow at the drum kits' end shows the
-    // ones past it, swing's + adds swing, a filled clip slot launches.
+    // the pad changes the kit, the faded chip at the drum kits' end leads
+    // on to the ones past it, swing's + adds swing, a filled clip slot
+    // launches.
     void theBandUnderThePadIsClickable() {
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
         // is 0.048 of it under the pad, row 1 0.119. The kits fill both rows
-        // from 0.57 of the width: row 0 a window of four of the ten drum
-        // kits between two arrows, row 1 the five from the world's music;
+        // from 0.57 of the width: row 0 a window onto the ten drum kits
+        // (the console's chips, faded at the ends), row 1 the five from
+        // the world's music;
         // row 1's left 0.55 holds swing −, the swing, swing + (0.14..0.19),
         // loop −, loop +, overdub and back.
         testkit::play("page 0 1\nbutton 0.2 0.72 -0.048\nend 0.5\n", [](Session &s) {
@@ -760,8 +762,18 @@ private slots:
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("tabla"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 1\nbutton 0.2 0.985 -0.048\nbutton 0.4 0.72 -0.048\nend 0.6\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("boom bap"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+        // The faded chip at the row's right end is the next kit past the
+        // window: clicking it chooses that kit and the window follows, so
+        // clicking there again and again walks on to the last drum kit,
+        // and the first click already leaves house behind.
+        testkit::play("page 0 1\nbutton 0.2 0.985 -0.048\nend 0.4\n", [](Session &s) {
+            QVERIFY2(!s.pageStatus().contains(QStringLiteral("house"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+        });
+        std::string walk = "page 0 1\n";
+        for (int i = 0; i < 10; ++i)
+            walk += "button " + std::to_string(0.2 + 0.1 * i) + " 0.985 -0.048\n";
+        testkit::play(walk + "end 1.4\n", [](Session &s) {
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("brushes"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
         testkit::play("page 0 1\nbutton 0.2 0.162 -0.119\nbutton 0.3 0.162 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
@@ -1841,10 +1853,26 @@ private slots:
             return t;
         };
         // Amapiano's log drum plays a riff in three, three and two that
-        // walks the scale.
+        // leaps as the log drum does: root, the octave, the fifth above it.
         const auto log = drums::groovePattern(drums::Sub, drums::Amapiano, 1, 0);
         QCOMPARE(ticks(log), (std::vector<int>{0, 18, 36, 48, 66, 84}));
-        QCOMPARE(int(log.steps[2].degree), 2);
+        QCOMPARE(int(log.steps[0].degree), 0);
+        QCOMPARE(int(log.steps[1].degree), 7);
+        QCOMPARE(int(log.steps[2].degree), 11);
+        // The gamelan's bonang and saron play a kotekan: two parts that
+        // never strike together and together strike every sixteenth.
+        for (int density = 0; density < 3; ++density) {
+            const auto polos = ticks(drums::groovePattern(drums::Perc, drums::Gamelan, density, 0));
+            const auto sangsih = ticks(drums::groovePattern(drums::TomMid, drums::Gamelan, density, 0));
+            std::vector<int> both = polos;
+            both.insert(both.end(), sangsih.begin(), sangsih.end());
+            std::sort(both.begin(), both.end());
+            QVERIFY2(std::adjacent_find(both.begin(), both.end()) == both.end(), qPrintable(QString::number(density)));
+            QCOMPARE(int(both.size()), density == 0 ? 8 : 16);
+        }
+        // The djembe's shekere leaves room for the bells: no more than an
+        // eighth note's worth of strokes in its groove.
+        QVERIFY(drums::groovePattern(drums::Shaker, drums::Djembe, 1, 0).count <= 8);
         // And there is no backbeat in it: nothing on two and four from the
         // woodrim or the vox at its sparest.
         for (const int pad : {drums::Snare, drums::Clap})
@@ -1864,6 +1892,126 @@ private slots:
         const auto moved = drums::groovePattern(drums::Sub, drums::Gamelan, 1, 1);
         QCOMPARE(ticks(moved), (std::vector<int>{6, 54}));
         QCOMPARE(int(moved.steps[1].degree), 4);
+    }
+
+    void theWorldKitsAnswerTheCritic() {
+        // Amapiano's kick leaves the bottom octave to the log drum: under
+        // 80 Hz it carries far less than house's kick does.
+        auto below = [](const Dry &d, float hz) {
+            Svf a, b;
+            a.set(hz, 0.7f, kRate);
+            b.set(hz, 0.7f, kRate);
+            double e = 0;
+            for (size_t i = 0; i < d.l.size(); ++i) {
+                const float y = b.step(a.step(0.5f * (d.l[i] + d.r[i])).low).low;
+                e += double(y) * y;
+            }
+            return 10 * std::log10(e + 1e-20);
+        };
+        auto sideOverMid = [](const Dry &d) {
+            double s = 0, m = 0;
+            for (size_t i = 0; i < d.l.size(); ++i) {
+                s += double(d.l[i] - d.r[i]) * (d.l[i] - d.r[i]);
+                m += double(d.l[i] + d.r[i]) * (d.l[i] + d.r[i]);
+            }
+            return s / (m + 1e-20);
+        };
+        auto correlation = [](const Dry &a, const Dry &b) {
+            double ab = 0, aa = 0, bb = 0;
+            for (size_t i = 0; i < std::min(a.l.size(), b.l.size()); ++i) {
+                ab += double(a.l[i]) * b.l[i];
+                aa += double(a.l[i]) * a.l[i];
+                bb += double(b.l[i]) * b.l[i];
+            }
+            return ab / std::sqrt(aa * bb + 1e-30);
+        };
+        Ctx ctx;
+        {
+            const double house = below(strike(drums::Kick, drums::House, 1.0f, 0.5, ctx), 80.0f);
+            const double amapiano = below(strike(drums::Kick, drums::Amapiano, 1.0f, 0.5, ctx), 80.0f);
+            QVERIFY2(amapiano < house - 10.0, qPrintable(QStringLiteral("%1 against %2").arg(amapiano).arg(house)));
+        }
+        // Its two shakers are one in each ear: far wider than house's.
+        {
+            const double house = sideOverMid(strike(drums::Shaker, drums::House, 1.0f, 0.3, ctx));
+            const double amapiano = sideOverMid(strike(drums::Shaker, drums::Amapiano, 1.0f, 0.3, ctx));
+            QVERIFY2(amapiano > 0.3 && amapiano > house * 4.0,
+                     qPrintable(QStringLiteral("%1 against %2").arg(amapiano).arg(house)));
+        }
+        // The kecrek's loose plates never land twice alike, and neither
+        // does a hand on the tabla's dayan: two strokes of the same pad,
+        // one after the other, are two different sounds (a drum machine's
+        // would be the same samples, correlating perfectly). The plates
+        // differ by percents, the dayan's strokes by cents and touch.
+        for (const auto &[pad, kit] : {std::pair{drums::Hat, drums::Gamelan}, std::pair{drums::Snare, drums::Tabla},
+                                       std::pair{drums::Perc, drums::Tabla}}) {
+            drums::Engine e;
+            e.init(kRate);
+            const Dry a = strike(pad, kit, 1.0f, 0.25, ctx, &e);
+            const Dry b = strike(pad, kit, 1.0f, 0.25, ctx, &e);
+            const double c = correlation(a, b);
+            QVERIFY2(c < (pad == drums::Hat ? 0.9 : 0.97),
+                     qPrintable(QStringLiteral("%1: %2").arg(drums::padName(pad, kit)).arg(c)));
+        }
+        // The gamelan's notes go by its own names: pelog's fourth is pat,
+        // slendro's fourth (which skips 4) is 5, ma.
+        QCOMPARE(QString::fromUtf8(drums::gamelanNoteName(3, true)), QStringLiteral("4 pat"));
+        QCOMPARE(QString::fromUtf8(drums::gamelanNoteName(3, false)), QStringLiteral("5 ma"));
+        QCOMPARE(QString::fromUtf8(drums::gamelanNoteName(-1, true)), QStringLiteral("7 pi"));
+        QCOMPARE(drums::gamelanPadDegree(drums::TomHi), 4);
+        QCOMPARE(drums::gamelanPadDegree(drums::Kick), -1);
+    }
+
+    void theChipHasTheGameBoysOutputStage() {
+        // The DMG's output capacitor, at 0.999958 a cycle of its 4 MHz
+        // clock: about 0.9963 a sample at 48 kHz, a high-pass near 30 Hz.
+        QVERIFY(std::fabs(drums::ChipVoice::chargeFactor(48000.0f) - 0.99634f) < 0.0001f);
+        // So a held, low pulse droops between its edges: the bass's high
+        // half starts well above where it ends.
+        Ctx ctx;
+        drums::Sub808 b;
+        drums::Edit e;
+        b.start(1, 0, 1.0f, 0, drums::Chip, e, 0, float(kRate));
+        std::vector<float> x;
+        float l[kBlock], r[kBlock];
+        for (int i = 0; i < int(0.5 * kRate) / kBlock; ++i) {
+            std::fill(l, l + kBlock, 0.0f);
+            std::fill(r, r + kBlock, 0.0f);
+            b.render(l, r, kBlock, ctx.h);
+            x.insert(x.end(), l, l + kBlock);
+        }
+        // Find a rising edge after the attack, then compare the half
+        // cycle's start with its end.
+        size_t at = size_t(0.3 * kRate);
+        while (at + 1 < x.size() && !(x[at] <= 0.0f && x[at + 1] > 0.0f))
+            ++at;
+        float top = 0;
+        size_t peakAt = at;
+        for (size_t i = at; i < at + 120; ++i)
+            if (x[i] > top)
+                top = x[i], peakAt = i;
+        size_t end = peakAt;
+        while (end + 1 < x.size() && x[end + 1] > x[end] * 0.3f && x[end + 1] > 0.0f)
+            ++end;
+        QVERIFY2(x[end] < top * 0.75f, qPrintable(QStringLiteral("%1 then %2").arg(top).arg(x[end])));
+        // Every chip drum still ends with nothing left over, and the hat is
+        // the noise channel's metallic seven-bit mode.
+        for (int pad = 0; pad < drums::PadCount; ++pad) {
+            if (pad == drums::Sub)
+                continue;
+            const Dry d = strike(pad, drums::Chip, 1.0f, 1.0, ctx);
+            double mean = 0;
+            for (float v : d.l)
+                mean += v;
+            QVERIFY2(std::fabs(mean / double(d.l.size())) < 0.002, drums::padName(pad, drums::Chip));
+        }
+        drums::Voice v;
+        drums::Setup su{float(kRate), drums::Chip, &ctx.h};
+        drums::Strike s;
+        s.pad = drums::Hat;
+        s.kit = drums::Chip;
+        v.start(s, su, float(kRate), 0, 1);
+        QVERIFY(v.chip.shortNoise);
     }
 
     void patternsAreWhatTheKitsPromise() {

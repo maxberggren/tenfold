@@ -11,7 +11,7 @@ key 0.40 Right
 key 0.45 Right
 key 0.50 Right
 key 0.55 Right
-# Amapiano at 112: soft kicks, the woodrim off the backbeat, swung shakers and hats, the log drum sliding through its riff and the keys' stabs; slid up halfway for busier. Then the vox, private-school clicks and muted toms, the marimba and the wood.
+# Amapiano at 112: a light kick high-passed off the log drum's octave, the woodrim off the backbeat, two shakers and the hats spread across both ears, the log drum leaping an octave and more through its riff, and the keys' stabs; slid up halfway for busier. Then the vox, private-school clicks and muted toms, the marimba and the wood.
 tempo 0.65 112
 down 0.80 1 0.125 0.125 p=0.60
 down 0.82 2 0.375 0.125 p=0.60
@@ -66,16 +66,16 @@ glide 28.52 28.87 1 0.125 0.575 p=0.70
 glide 29.07 29.37 1 0.125 0.375 p=0.70
 up 29.67 1
 tap 30.07 0.875 0.985 p=0.60 len=0.08
-# Gamelan at 100, in pelog: the kendhang, kecrek and ceng-ceng in both ears, the kempyang keeping time, the kenong, the slenthem's balungan and the jegogan; then a saron melody, the bonang and the kempul, the angklung shaken while held, and the gong ageng.
+# Gamelan at 100, in pelog: the kendhang, the kecrek's loose plates, the kenong, the slenthem's balungan and the jegogan, and over them the bonang and the saron interlocking in a kotekan, one line from two players; then a saron melody, the bonang and the kempul, the angklung shaken while held, and the gong ageng.
 key 32.27 Right
 tempo 32.32 100
 down 32.47 1 0.125 0.125 p=0.60
-down 32.49 2 0.625 0.125 p=0.60
+down 32.49 2 0.375 0.625 p=0.60
 down 32.51 3 0.875 0.125 p=0.60
 down 32.53 4 0.125 0.375 p=0.60
 down 32.55 5 0.625 0.375 p=0.60
 down 32.57 6 0.875 0.375 p=0.60
-down 32.59 7 0.375 0.875 p=0.60
+down 32.59 7 0.875 0.625 p=0.60
 up 42.47 1
 up 42.47 2
 up 42.47 3
@@ -96,7 +96,7 @@ tap 46.37 0.625 0.875 p=0.60 len=0.08
 down 47.17 1 0.875 0.875 p=0.60
 up 49.17 1
 tap 49.57 0.125 0.875 p=0.75 len=0.08
-# Chiptune at 140: the wave-channel kick, the noise snare and hats, and the pulse bass jumping octaves, its duty sweeping; then the blip, the arpeggio, the metallic noise, the crash stepping down the noise clock, lasers (the far one wobbling in the frame vibrato) and toms, and the pulse held.
+# Chiptune at 140: the wave-channel kick, the noise snare, the seven-bit noise's metallic hats, and the pulse bass jumping octaves, its duty sweeping and drooping through the Game Boy's output capacitor; then the blip, the arpeggio, the metallic noise, the crash stepping down the noise clock, lasers (the far one wobbling in the frame vibrato) and toms, and the pulse held.
 key 56.57 Right
 tempo 56.62 140
 down 56.77 1 0.125 0.125 p=0.60
@@ -121,7 +121,7 @@ tap 67.06 0.375 0.625 p=0.60 len=0.08
 tap 67.19 0.625 0.625 p=0.60 len=0.08
 down 67.69 1 0.125 0.375 p=0.60
 up 69.29 1
-# Djembe at 110: the djembe's bass, slap and tone, the three dunun interlocking, the dunun's bell and the balafon; then the talking drum, the krin's two tongues, a kora, the sesse, the karinyan scraped, shekere and kese, and the high bell.
+# Djembe at 110: the djembe's bass, slap and tone, the three dunun interlocking, the dunun's bell leading over the rattles, and the balafon; then the talking drum, the krin's two tongues, a kora, the sesse, the karinyan scraped, shekere and kese, and the high bell.
 key 69.89 Right
 tempo 69.94 110
 down 70.09 1 0.125 0.125 p=0.60

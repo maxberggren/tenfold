@@ -114,7 +114,7 @@ jobs:
             build-essential pkg-config git curl ca-certificates file python3-venv \
             libpipewire-0.3-dev libgl-dev libegl-dev libopengl-dev libglx-dev \
             libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 \
-            libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+            libxkbcommon0 libxkbcommon-dev libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
             libxcb-xinerama0 libxcb-xkb1 libx11-xcb1 libsm6 libice6 fonts-dejavu-core

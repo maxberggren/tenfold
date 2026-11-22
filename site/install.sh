@@ -1,11 +1,13 @@
 #!/bin/sh
 # Installs tenfold on Linux, the way that suits the system:
 #
-#   Arch and its kin (Omarchy, Arch Linux ARM on Asahi)
+#   Arch and the systems that keep step with it (Omarchy, Arch Linux ARM
+#   on Asahi, EndeavourOS, CachyOS)
 #       the release's pacman package, which brings Qt 6 and PipeWire with it
 #   NixOS
 #       the flake in the repository, through nix profile
-#   any other Linux (Ubuntu, Debian, Fedora, openSUSE, Mint, Pop!_OS, ...)
+#   any other Linux (Ubuntu, Debian, Fedora, openSUSE, Mint, Pop!_OS, and
+#   the pacman systems that don't keep step: Manjaro, SteamOS, ...)
 #       the release's bundle, which carries its own Qt, into ~/.local; the
 #       system's package manager adds PipeWire's library and polkit if
 #       they're missing
@@ -83,7 +85,13 @@ if [ -z "$method" ]; then
     if [ "$os_id" = nixos ] || [ -e /etc/NIXOS ]; then
         method=nix
     elif have pacman && [ -z "${TENFOLD_BUNDLE:-}" ]; then
-        method=pacman
+        # The package is built against Arch's Qt of the day, so it only
+        # suits systems on Arch's own repositories. Manjaro's lag behind,
+        # SteamOS's root is read-only: both get the bundle.
+        case "$os_id" in
+        arch | archarm | endeavouros | cachyos) method=pacman ;;
+        *) method=bundle ;;
+        esac
     else
         method=bundle
     fi
@@ -209,6 +217,11 @@ install_pacman() {
         ask $sudo pacman -U --needed "$tmp/${url##*/}"
     else
         $sudo pacman -U --needed --noconfirm "$tmp/${url##*/}" </dev/null
+    fi
+    # Proof it runs against this system's Qt.
+    if ! tenfold --help >/dev/null 2>&1; then
+        tenfold --help >&2 || true
+        fail "the package is installed but doesn't start here (is the system up to date? sudo pacman -Syu). Or take the bundle instead: TENFOLD_METHOD=bundle"
     fi
     say ""
     say "tenfold is installed. Open it from the app launcher, or run: tenfold"

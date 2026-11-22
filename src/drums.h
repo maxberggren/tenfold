@@ -58,8 +58,9 @@
 //             where it was, saturated so its harmonics carry, with a
 //             resonant "bark" that sweeps down after each attack, sliding
 //             from note to note in its 3-3-2 riff and leaping an octave
-//             and a fifth; the whole low end is its own, the kick
-//             high-passed to a light punch above it; around it a woody rim
+//             and a fifth, over a clean sub that stays under 80 Hz
+//             wherever the riff leaps; the whole low end is its own, the
+//             kick high-passed to a light punch above it; around it a woody rim
 //             off the backbeat, a vocal chop, private-school clicks and
 //             muted toms, a two-layer shaker swung as the lead
 //             percussion (a layer in each ear, the hats opposite each
@@ -96,9 +97,14 @@
 //             grind (its seven-bit mode the metallic hat), all through the
 //             chip's DACs and output capacitor: channels pop on and low
 //             pulses droop.
-//   djembe    a West African ensemble: the djembe's bass, tone and slap,
-//             the three dunun (dununba, sangban, kenkeni) struck with a
-//             stick, open or pressed, the dunun's iron bells, a talking
+//   djembe    a West African ensemble, spread as it stands: the djembe's
+//             bass, tone and slap (the slap cracking, a snap of skin and
+//             the high modes the hand's edge drives; busy, the lead
+//             djembe's call of flams and slap triplets), the three dunun
+//             (dununba, sangban, kenkeni) struck with a stick, open or
+//             pressed, the dunun's iron bells (six inharmonic modes, which
+//             of them speak decided by where the rod lands, now and then a
+//             buzzing bounce), every stroke a little different, a talking
 //             drum squeezed as it speaks, kese and shekere rattles (kept
 //             under the bells and the slaps, which lead), a
 //             scraped karinyan, the sesse's buzzing tin, a krin slit drum,
@@ -266,7 +272,7 @@ inline float kitSwing(int kit) {
 // kit never jumps the mix. Every hit carries its kit, so a loop keeps its
 // level too.
 inline float kitTrim(int kit) {
-    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 2.0f};
+    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f};
     static const auto gain = [] {
         std::array<float, KitCount> g{};
         for (int k = 0; k < KitCount; ++k)
@@ -900,6 +906,28 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
         p.sort();
         return p;
     }
+    if (kit == Djembe && pad == Snare && density == 2) {
+        // Busy, the slap pad is the lead djembe's, the soloist over the
+        // accompaniment: no longer a timekeeping pattern but a call (played
+        // straight, as a lead plays across the kuku's lilt). Flams
+        // (the other hand a tick ahead, softly) mark one and three, a
+        // triplet of slaps turns beat two around, and the bar ends in an
+        // echauffement, slap triplets swelling into the next one.
+        auto flam = [&](int t, float vel) {
+            p.add(t - 1 + shift * 6, 0.42f);
+            p.add(t + shift * 6, vel);
+        };
+        flam(0, 1.0f);
+        p.add(12 + shift * 6, 0.72f);
+        for (int t = 36; t < 48; t += 4)
+            p.add(t + shift * 6, 0.62f + 0.12f * float(t - 36) / 4.0f);
+        flam(48, 1.0f);
+        p.add(60 + shift * 6, 0.72f);
+        for (int t = 72; t < 92; t += 4)
+            p.add(t + shift * 6, 0.5f + 0.45f * float(t - 72) / 16.0f);
+        p.sort();
+        return p;
+    }
     if (kit == Brushes)
         if (const char *s = detail::tripletPart(pad, density)) {
             detail::addTriplets(p, s, shift);
@@ -1222,6 +1250,9 @@ struct Voice {
     // is padded; the angklung's are struck again at each shake of the frame.
     int modes = 0;
     float strike = 0, soft = 0;
+    // A second burst of noise in a band of its own (f2), for a skin that
+    // cracks as well as rings: the djembe's slap.
+    float snap = 0, snapEnv = 0, snapMul = 1;
     float shakePh = 0, shakeInc = 0, shakeEnv = 0, shakeMul = 1, shakeLen = 0;
     // A rattle: a modal instrument that strikes itself again and again, a
     // little apart and a little softer each time: bells on a string, the
@@ -2031,56 +2062,93 @@ struct Voice {
         }
     }
 
-    // The djembe's ensemble.
+    // The djembe's ensemble, placed as it stands when it plays: the lead
+    // djembe on the right and the accompanying djembe's tones on the
+    // left, the three dunun across the back from the dununba on the left to
+    // the kenkeni on the right, each iron bell on its own drum.
     bool startDjembe(const Strike &s, const Harmony &h, float decayScale, float tone, float ratio, float edge,
                      float &pan) {
         const int degrees = s.degrees;
         auto dm = [&](float seconds) { return decayMul(seconds * decayScale, rate); };
         const float b = std::exp2(tone);
+        // No hand and no stick strikes twice alike, and a fast pattern
+        // shows it: each stroke lands a few cents off (where on the skin,
+        // how tight it is under the hand), its upper modes a fifth more or
+        // less against the fundamental, its ring a fifth longer or shorter,
+        // and its level a little up or down. The skins and the bells take
+        // the same touch, drawn afresh for every stroke.
+        const float lean = std::exp2(6.0f * rng2.bipolar() / 1200.0f);
+        const float balance = 0.8f + 0.4f * rng2.unit();
+        const float ring = 0.8f + 0.4f * rng2.unit();
+        const float hit = 0.85f + 0.3f * rng2.unit();
         switch (pad) {
         case Kick: {
             // Bass: the palm flat in the middle of the djembe's goatskin,
             // and what answers is the air in its goblet, a Helmholtz
             // resonance near 75 Hz, with a little of the skin's own mode
             // and the slap of the palm.
-            const float f = kickHz(h, degrees, 75.0f) * ratio;
-            mode(0, f, 1.0f, 0.22f * decayScale);
-            mode(1, f * 2.03f, 0.18f * b, 0.07f * decayScale);
-            mode(2, f * 4.6f, 0.1f * b, 0.03f * decayScale);
+            const float f = kickHz(h, degrees, 75.0f) * ratio * lean;
+            mode(0, f, 1.0f, 0.22f * ring * decayScale);
+            mode(1, f * 2.03f, 0.18f * b * balance, 0.07f * ring * decayScale);
+            mode(2, f * 4.6f, 0.1f * b * balance, 0.03f * ring * decayScale);
             soft = 0.004f * rate;
             strikeNoise(350.0f, 0.6f, 1.4f, 0.012f);
-            gain = 0.62f;
-            pan = 0;
+            gain = 0.62f * hit;
+            pan = 0.2f; // the lead's
             send = 0.1f;
             return true;
         }
         case Snare: {
             // Slap: the fingers whipped onto the skin's edge and off, so the
-            // high modes ring and the fundamental hardly sounds: "pa".
-            const float f = 360.0f * ratio;
+            // high modes ring and the fundamental hardly sounds: "pa". What
+            // makes it cut through a whole ensemble is the crack: the skin
+            // snapping under the fingertips, a burst of noise between 2.5
+            // and 6 kHz gone in a few milliseconds, and the skin's high,
+            // inharmonic modes that only the hand's edge drives, a hiss of
+            // metal-bright ring above 6 kHz that dies within a few
+            // hundredths. The lead's slaps, from the right; each hand a
+            // little apart from the other.
+            const float f = 360.0f * ratio * lean;
             static const float ratios[7] = {1.0f, 1.62f, 2.25f, 2.9f, 3.55f, 4.4f, 5.3f};
             static const float amps[7] = {0.25f, 0.8f, 1.0f, 0.7f, 0.5f, 0.35f, 0.2f};
             static const float taus[7] = {0.05f, 0.09f, 0.07f, 0.05f, 0.04f, 0.03f, 0.02f};
             for (int q = 0; q < 7; ++q)
-                mode(q, f * ratios[q], amps[q] * (q > 2 ? b : 1.0f), taus[q] * decayScale);
-            strikeNoise(3200.0f * std::exp2(0.3f * tone), 0.8f, 2.2f, 0.004f);
-            gain = 0.14f;
-            pan = 0.15f;
+                mode(q, f * ratios[q], amps[q] * (q > 2 ? b * balance : 1.0f), taus[q] * ring * decayScale);
+            // The edge's modes come in over a fraction of a millisecond each,
+            // a little apart, as the hand rolls onto the rim: struck all at
+            // once they would line up into a click.
+            static const float high[5] = {11.8f, 14.6f, 17.3f, 21.1f, 25.7f};
+            for (int q = 0; q < 5; ++q)
+                mode(7 + q, f * high[q] * (1.0f + 0.015f * rng2.bipolar()),
+                     (0.7f - 0.09f * float(q)) * b * (0.6f + 0.8f * rng2.unit()), (0.03f - 0.004f * float(q)) * ring,
+                     0.0003f + 0.0005f * rng2.unit());
+            strikeNoise(std::min(8000.0f * std::exp2(0.3f * tone), rate * 0.4f), 0.8f, 2.4f, 0.007f);
+            snap = 3.2f;
+            snapEnv = 1;
+            snapMul = decayMul(0.003f + 0.005f * rng2.unit(), rate);
+            f2.set(std::min(3900.0f * std::exp2(0.3f * tone) * (0.9f + 0.2f * rng2.unit()), rate * 0.4f), 0.75f, rate);
+            gain = 0.14f * hit;
+            pan = 0.62f + 0.1f * rng2.bipolar();
             send = 0.3f;
             return true;
         }
         case Clap: {
             // Tone: the flat fingers on the skin near the edge, lifted at
-            // once: the skin's own note, open and round, in the key.
-            const float f = degreeHz(h, 0, 330.0f) * ratio;
+            // once: the skin's own note, open and round, in the key. The
+            // accompanying djembe's, from the left.
+            const float f = degreeHz(h, 0, 330.0f) * ratio * lean;
             static const float ratios[5] = {1.0f, 1.52f, 1.98f, 2.44f, 2.9f};
             static const float amps[5] = {1.0f, 0.35f, 0.45f, 0.2f, 0.12f};
             static const float taus[5] = {0.16f, 0.08f, 0.07f, 0.05f, 0.04f};
             for (int q = 0; q < 5; ++q)
-                mode(q, f * ratios[q], amps[q] * (q ? b : 1.0f), taus[q] * decayScale);
+                mode(q, f * ratios[q], amps[q] * (q ? b * balance : 1.0f), taus[q] * ring * decayScale);
             strikeNoise(1400.0f, 0.8f, 0.9f, 0.003f);
-            gain = 0.17f;
-            pan = -0.15f;
+            snap = 0.9f;
+            snapEnv = 1;
+            snapMul = decayMul(0.003f, rate);
+            f2.set(std::min(4200.0f, rate * 0.4f), 0.8f, rate);
+            gain = 0.17f * hit;
+            pan = -0.55f + 0.08f * rng2.bipolar();
             send = 0.3f;
             return true;
         }
@@ -2092,15 +2160,15 @@ struct Voice {
             // sangban, the kenkeni highest. Open, the skin rings; struck at
             // the far edge, the stick stays pressed into it, a closed stroke.
             const float near = pad == TomLo ? 78.0f : pad == TomMid ? 125.0f : 185.0f;
-            const float f = degreeHz(h, degrees, near);
-            const float m = edge > 0.3f ? 0.18f : 1.0f;
+            const float f = degreeHz(h, degrees, near) * lean;
+            const float m = (edge > 0.3f ? 0.18f : 1.0f) * ring;
             mode(0, f, 1.0f, 0.32f * m * decayScale);
-            mode(1, f * 1.59f, 0.4f * b, 0.14f * m * decayScale);
-            mode(2, f * 2.14f, 0.3f * b, 0.09f * m * decayScale);
-            mode(3, f * 2.65f, 0.15f * b, 0.05f * m * decayScale);
+            mode(1, f * 1.59f, 0.4f * b * balance, 0.14f * m * decayScale);
+            mode(2, f * 2.14f, 0.3f * b * balance, 0.09f * m * decayScale);
+            mode(3, f * 2.65f, 0.15f * b * balance, 0.05f * m * decayScale);
             strikeNoise(2600.0f, 1.0f, 1.6f, 0.0025f);
-            gain = pad == TomLo ? 0.3f : pad == TomMid ? 0.26f : 0.21f;
-            pan = pad == TomLo ? -0.3f : pad == TomMid ? 0.05f : 0.35f;
+            gain = (pad == TomLo ? 0.3f : pad == TomMid ? 0.26f : 0.21f) * hit;
+            pan = pad == TomLo ? -0.55f : pad == TomMid ? 0.0f : 0.55f;
             send = 0.25f;
             return true;
         }
@@ -2108,18 +2176,35 @@ struct Voice {
         case Ride: {
             // The dunun's iron bells, struck with an iron rod: the
             // kenkeni's high one on the rim pad, the dununba's lower one,
-            // the timeline, on the ride. Struck at the far edge, a hand
-            // mutes it.
+            // the timeline, on the ride, each where its drum is. Iron rings
+            // in modes nowhere near harmonic: the lowest as a pair a few
+            // hertz apart (the bell is not quite round), then five more up
+            // to seven and more times it. Where the rod lands on the bell
+            // decides which of them speak, and it never lands twice in the
+            // same place; now and then it bounces, a buzzing double strike.
+            // Struck at the far edge, a hand mutes it.
             const bool high = pad == Rim;
-            const float f = (high ? 1480.0f : 780.0f) * ratio * std::exp2(0.25f * tone);
-            const float m = edge > 0.3f ? 0.25f : 1.0f;
-            mode(0, f, 1.0f, (high ? 0.35f : 0.6f) * m * decayScale);
-            mode(1, f * 1.006f, 0.5f, (high ? 0.35f : 0.6f) * m * decayScale);
-            mode(2, f * (high ? 2.71f : 2.43f), 0.5f, 0.15f * m * decayScale);
-            mode(3, f * (high ? 5.1f : 4.47f), 0.25f, 0.06f * m * decayScale);
-            strikeNoise(6000.0f, 1.0f, 1.0f, 0.0015f);
-            gain = high ? 0.088f : 0.076f;
-            pan = high ? 0.4f : 0.3f;
+            const float f = (high ? 1480.0f : 780.0f) * ratio * std::exp2(0.25f * tone) * lean;
+            const float m = (edge > 0.3f ? 0.25f : 1.0f) * ring;
+            static const float hiRatios[5] = {2.32f, 2.71f, 3.93f, 5.1f, 6.4f};
+            static const float loRatios[5] = {2.43f, 3.18f, 4.47f, 5.92f, 7.61f};
+            const float *ratios = high ? hiRatios : loRatios;
+            const float fundTau = (high ? 0.35f : 0.6f) * m * decayScale;
+            mode(0, f, 1.0f, fundTau);
+            mode(1, f * 1.006f, 0.5f, fundTau);
+            const float contact = 0.1f + 0.8f * rng2.unit();
+            for (int q = 0; q < 5; ++q) {
+                const float where = 0.25f + 0.75f * std::fabs(std::sin(kPi * contact * (1.0f + 0.9f * float(q))));
+                mode(2 + q, f * ratios[q], (high ? 0.6f : 0.55f - 0.06f * float(q)) * where * balance,
+                     (0.16f - 0.022f * float(q)) * m * decayScale);
+            }
+            if (rng2.unit() < 0.2f)
+                rattle(3, 0.006f, 0.004f, 0.35f, 0, 1, 2);
+            strikeNoise(std::min(7500.0f, rate * 0.4f), 0.9f, high ? 2.4f : 1.8f, 0.0015f);
+            // Panned out to its drum, the bell is louder in that ear: the
+            // dununba's is trimmed to keep under the bass.
+            gain = (high ? 0.1f : 0.068f) * hit;
+            pan = high ? 0.65f : -0.65f;
             send = 0.2f;
             return true;
         }
@@ -2240,8 +2325,8 @@ struct Voice {
             f5.set(std::min(13000.0f, rate * 0.4f), 0.6f, rate);
             // Under the bells and the slaps, which carry the timeline: the
             // rattles keep the pulse but never cover them.
-            gain = kese ? 0.06f : 0.065f;
-            pan = kese ? 0.35f + 0.25f * (s.sx - 0.5f) : -0.3f + 0.25f * (s.sx - 0.5f);
+            gain = kese ? 0.06f : 0.055f;
+            pan = kese ? 0.7f + 0.2f * (s.sx - 0.5f) : -0.7f + 0.2f * (s.sx - 0.5f);
             send = 0.15f;
             return true;
         }
@@ -2473,6 +2558,10 @@ struct Voice {
             }
             env[3] *= mul[3];
             v += f1.step(rng.bipolar()).band * env[3] * strike;
+            if (snap > 0) {
+                snapEnv *= snapMul;
+                v += f2.step(rng.bipolar()).band * snapEnv * snap;
+            }
             if (soft > 0 && t < soft)
                 v *= t / soft;
             return v;
@@ -2755,6 +2844,7 @@ struct Voice {
         auto dm = [&](float seconds) { return decayMul(seconds * decayScale, rate); };
         modes = 0;
         strike = 0;
+        snap = 0;
         soft = 0;
         shakeInc = 0;
         rattleLeft = 0;
@@ -3720,6 +3810,7 @@ struct Sub808 {
     float bend = 0, bendTarget = 0;
     float since = 1e9f; // samples since the last note began, for the log drum's slides
     float cap = 0;      // the chip's output capacitor, for its pulse (ChipVoice)
+    float subPh[2] = {}; // the log drum's sub, an octave and two under its note
     Rng rng{0x808u};
 
     // holdSeconds > 0: a hit that lets go by itself; 0: held until off().
@@ -3752,7 +3843,7 @@ struct Sub808 {
         kit = kit_;
         edit = e;
         if (!active)
-            phase = phase2 = phase3 = cap = 0;
+            phase = phase2 = phase3 = cap = subPh[0] = subPh[1] = 0;
         if (!slide)
             bright = 1.0f;
         active = true;
@@ -3915,6 +4006,16 @@ struct Sub808 {
     // resonant band of the driven tone sweeping from 900 Hz down to 400 as
     // it fades, the knock that makes it a log drum. Held, its tail rings
     // most of a second; the tone (twisted up) drives it harder.
+    //
+    // Under it all a clean sub, because on a club's system the log drum is
+    // the loudest low end in the record, and its riff leaps up out of the
+    // bottom octave: the note itself and the sines an octave and two under
+    // it, each weighted by how near it is to 55 Hz on a window an octave
+    // either side (cos² of the distance in octaves, so the weights always
+    // add up to one). Whatever note it plays and wherever it slides, the
+    // sub stays between about 40 and 80 Hz and moves smoothly, while the
+    // bark above it is left exactly as it was.
+    static constexpr float kLogSub = 0.95f;
     void renderLog(float *l, float *r, int from, int n) {
         const float decayScale = std::exp2(clampf(edit.decay, -3.0f, 3.0f));
         const float sustain = decayMul(0.8f * decayScale, rate), release = decayMul(0.3f * decayScale, rate);
@@ -3926,12 +4027,22 @@ struct Sub808 {
         const float drive = 2.4f * std::exp2(1.2f * std::max(0.0f, tone));
         const float norm = 1.0f / fastTanh(drive);
         const float trim = kitTrim(kit);
+        auto weight = [](float hzOf) {
+            const float x = std::log2(hzOf / 55.0f);
+            const float c = std::cos(0.5f * kPi * x);
+            return std::fabs(x) < 1.0f ? c * c : 0.0f;
+        };
+        const float w0 = weight(hz), w1 = weight(0.5f * hz), w2 = weight(0.25f * hz);
         float peak = 0;
         for (int i = from; i < n; ++i) {
             envelope(attack, sustain, release);
             punch *= punchMul;
             bright *= brightMul;
             click *= clickMul;
+            subPh[0] += 0.5f * hz * (1.0f + punch) / rate;
+            subPh[0] -= std::floor(subPh[0]);
+            subPh[1] += 0.25f * hz * (1.0f + punch) / rate;
+            subPh[1] -= std::floor(subPh[1]);
             phase += hz * (1.0f + punch) / rate;
             phase -= std::floor(phase);
             const float w = kTwoPi * phase;
@@ -3943,7 +4054,8 @@ struct Sub808 {
             // harmonics up where it sits) and the stick's knock.
             const float edge = fastTanh(6.0f * sine) * env + clickBp.step(rng.bipolar()).band * click * 2.0f;
             const float knock = bark.step(edge).band * 0.25f;
-            const float y = (driven + knock * (0.15f + 0.85f * bright)) * vel * 0.42f * trim;
+            const float sub = (w0 * std::sin(w) + w1 * std::sin(kTwoPi * subPh[0]) + w2 * std::sin(kTwoPi * subPh[1])) * env;
+            const float y = (driven + knock * (0.15f + 0.85f * bright) + kLogSub * sub) * vel * 0.42f * trim;
             l[i] += y;
             r[i] += y;
             peak = std::max(peak, std::fabs(y));

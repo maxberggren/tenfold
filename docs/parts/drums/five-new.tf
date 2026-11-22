@@ -121,7 +121,7 @@ tap 67.06 0.375 0.625 p=0.60 len=0.08
 tap 67.19 0.625 0.625 p=0.60 len=0.08
 down 67.69 1 0.125 0.375 p=0.60
 up 69.29 1
-# Djembe at 110: the djembe's bass, slap and tone, the three dunun interlocking, the dunun's bell leading over the rattles, and the balafon; then the talking drum, the krin's two tongues, a kora, the sesse, the karinyan scraped, shekere and kese, and the high bell.
+# Djembe at 110: the djembe's bass, slap and tone, the three dunun interlocking across the field from the dununba on the left to the kenkeni on the right, the dunun's bell leading over the rattles, and the balafon; halfway the slap is slid up to busy and the lead djembe calls over the ensemble, flams and slap triplets cracking into the bar; then the talking drum, the krin's two tongues, a kora, the sesse, the karinyan scraped, shekere and kese, and the high bell.
 key 69.89 Right
 tempo 69.94 110
 down 70.09 1 0.125 0.125 p=0.60
@@ -132,6 +132,7 @@ down 70.17 5 0.125 0.625 p=0.60
 down 70.19 6 0.375 0.625 p=0.60
 down 70.21 7 0.625 0.625 p=0.60
 down 70.23 8 0.375 0.875 p=0.60
+glide 74.60 74.90 2 0.375 0.205 p=0.60
 up 79.09 1
 up 79.09 2
 up 79.09 3

@@ -1962,6 +1962,96 @@ private slots:
         QCOMPARE(drums::gamelanPadDegree(drums::Kick), -1);
     }
 
+    void theWorldKitsAnswerTheCriticAgain() {
+        auto band = [](const Dry &d, float hz, bool above, bool side) {
+            Svf a, b;
+            a.set(hz, 0.7f, kRate);
+            b.set(hz, 0.7f, kRate);
+            double e = 0;
+            for (size_t i = 0; i < d.l.size(); ++i) {
+                const float x = 0.5f * (side ? d.l[i] - d.r[i] : d.l[i] + d.r[i]);
+                const float y = above ? b.step(a.step(x).high).high : b.step(a.step(x).low).low;
+                e += double(y) * y;
+            }
+            return 10 * std::log10(e + 1e-20);
+        };
+        auto correlation = [](const Dry &a, const Dry &b) {
+            double ab = 0, aa = 0, bb = 0;
+            for (size_t i = 0; i < std::min(a.l.size(), b.l.size()); ++i) {
+                ab += double(a.l[i]) * b.l[i];
+                aa += double(a.l[i]) * a.l[i];
+                bb += double(b.l[i]) * b.l[i];
+            }
+            return ab / std::sqrt(aa * bb + 1e-30);
+        };
+        Ctx ctx;
+        // The log drum is the loudest low end in an amapiano record: its
+        // groove carries as much under 80 Hz as house's kick and 808 do.
+        {
+            const double house = band(grooveTake(drums::House, ctx), 80.0f, false, false);
+            const double amapiano = band(grooveTake(drums::Amapiano, ctx), 80.0f, false, false);
+            QVERIFY2(std::fabs(amapiano - house) < 1.0, qPrintable(QStringLiteral("%1 against %2").arg(amapiano).arg(house)));
+        }
+        // The djembe's slap cracks: a good share of it is above 6 kHz,
+        // where its tone has next to nothing.
+        {
+            const Dry slap = strike(drums::Snare, drums::Djembe, 1.0f, 0.3, ctx);
+            const Dry tone = strike(drums::Clap, drums::Djembe, 1.0f, 0.3, ctx);
+            const double crack = band(slap, 6000.0f, true, false) - band(slap, 20.0f, true, false);
+            const double round = band(tone, 6000.0f, true, false) - band(tone, 20.0f, true, false);
+            QVERIFY2(crack > -16.0 && crack > round + 12.0, qPrintable(QStringLiteral("%1, the tone %2").arg(crack).arg(round)));
+        }
+        // No hand or stick strikes twice alike: two strokes of the slap,
+        // the bass, a dunun or either iron bell, one after the other, are
+        // two different sounds. A few cents hardly move a low drum's phase
+        // in a quarter of a second, so the bass and the dunun differ least;
+        // the slap's crack and the bells' contact differ most.
+        for (const int pad : {drums::Snare, drums::Kick, drums::TomMid, drums::Rim, drums::Ride}) {
+            drums::Engine e;
+            e.init(kRate);
+            const Dry a = strike(pad, drums::Djembe, 1.0f, 0.25, ctx, &e);
+            const Dry b = strike(pad, drums::Djembe, 1.0f, 0.25, ctx, &e);
+            const double c = correlation(a, b);
+            const bool low = pad == drums::Kick || pad == drums::TomMid;
+            QVERIFY2(c < (low ? 0.99 : 0.9), qPrintable(QStringLiteral("%1: %2").arg(drums::padName(pad, drums::Djembe)).arg(c)));
+        }
+        // The ensemble stands spread out: above 3 kHz its groove is far
+        // wider than house's, no more than 10 dB of side under its middle.
+        {
+            const Dry djembe = grooveTake(drums::Djembe, ctx);
+            const double width = band(djembe, 3000.0f, true, true) - band(djembe, 3000.0f, true, false);
+            QVERIFY2(width > -10.0, qPrintable(QString::number(width)));
+        }
+        // Busy, the slap pad is the lead djembe's call: flams (two strokes
+        // a tick apart) and triplets of slaps (four ticks apart).
+        {
+            const drums::Pattern lead = drums::groovePattern(drums::Snare, drums::Djembe, 2, 0);
+            int flams = 0, triplets = 0;
+            for (int i = 1; i < lead.count; ++i) {
+                flams += lead.steps[i].tick - lead.steps[i - 1].tick == 1;
+                triplets += lead.steps[i].tick - lead.steps[i - 1].tick == 4;
+            }
+            QVERIFY2(flams >= 1 && triplets >= 4, qPrintable(QStringLiteral("%1 flams, %2").arg(flams).arg(triplets)));
+        }
+        // The gamelan's kotekan can be found without the help: grooving
+        // the bonang without the saron, the status line asks for the saron,
+        // and with both it names the kotekan.
+        std::string gamelan = "page 0 1\n";
+        for (int i = 0; i < drums::Gamelan; ++i)
+            gamelan += "key " + std::to_string(0.1 + 0.02 * i) + " Right\n";
+        auto statusOf = [&](const std::string &fingers) {
+            QString status;
+            testkit::play(gamelan + fingers + "end 2.5\n",
+                          [&](Session &s) { status = s.pageStatus(0); });
+            return status;
+        };
+        const QString half = statusOf("down 1.0 1 " + at(drums::Kick) + "\ndown 1.01 2 " + at(drums::Perc) + "\n");
+        QVERIFY2(half.contains(QStringLiteral("SARON")) && half.contains(QStringLiteral("KOTEKAN")), qPrintable(half));
+        const QString both = statusOf("down 1.0 1 " + at(drums::Kick) + "\ndown 1.01 2 " + at(drums::Perc) +
+                                      "\ndown 1.02 3 " + at(drums::TomMid) + "\n");
+        QVERIFY2(both.contains(QStringLiteral("KOTEKAN: bonang and saron")), qPrintable(both));
+    }
+
     void theChipHasTheGameBoysOutputStage() {
         // The DMG's output capacitor, at 0.999958 a cycle of its 4 MHz
         // clock: about 0.9963 a sample at 48 kHz, a high-pass near 30 Hz.

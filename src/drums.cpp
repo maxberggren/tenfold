@@ -508,9 +508,12 @@ public:
             "each ear, marimba, keys), tabla (its bols, no two strokes alike, ghungroo, chimta, tarang, tanpura, sitar), "
             "gamelan (in pelog over a minor scale, slendro over a major one, its pads named by its own notes, 1 ji to "
             "7 pi: saron, bonang, kenong, slenthem, ketuk, kecrek, ceng-ceng, the gong ageng, angklung; hold the bonang "
-            "and the saron in a groove and they interlock, a kotekan), chiptune (a Game Boy's channels and its output "
+            "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
-            "karinyan, sesse, krin, kora, balafon)\n"
+            "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
+            "djembe's call, flams and slap triplets)\n"
+            "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
+            "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the kits (the drum kits in the first row, "
             "the world's five in the second; a row too narrow for all of them fades at its ends, and a faded kit "
@@ -528,6 +531,7 @@ public:
     QString status() const override {
         QStringList parts;
         QStringList groove;
+        bool bonang = false, saron = false;
         for (const auto &h : m_holders) {
             if (!h.used)
                 continue;
@@ -537,13 +541,26 @@ public:
                 if (h.gen >= 0)
                     parts << QStringLiteral("%1 rolls %2").arg(name, QString::fromUtf8(rateName(m_gens[size_t(h.gen)].rate)));
                 break;
-            case Mode::Groove: groove << name; break;
+            case Mode::Groove:
+                groove << name;
+                bonang |= h.pad == Perc;
+                saron |= h.pad == TomMid;
+                break;
             case Mode::Edit: parts << QStringLiteral("shaping %1").arg(name); break;
             case Mode::Bass: parts << QStringLiteral("%1 held").arg(name); break;
             case Mode::Sweep: parts << QStringLiteral("fill"); break;
             default: break;
             }
         }
+        // The gamelan's kotekan is one line split between the bonang and the
+        // saron, and either alone plays only a broken half of it: grooving
+        // one, the status line says which to hold with it, so a player
+        // finds the interlock without reading the help.
+        if (m_kit == Gamelan && bonang != saron)
+            parts.prepend(bonang ? QStringLiteral("hold SARON (W) too for the KOTEKAN")
+                                 : QStringLiteral("hold BONANG (R) too for the KOTEKAN"));
+        if (m_kit == Gamelan && bonang && saron)
+            parts.prepend(QStringLiteral("KOTEKAN: bonang and saron interlock"));
         if (!groove.isEmpty())
             parts.prepend(QStringLiteral("%1 grooving").arg(groove.join('+')));
         if (repeating())

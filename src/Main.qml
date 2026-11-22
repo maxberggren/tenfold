@@ -682,6 +682,8 @@ ApplicationWindow {
             onBack: win.back()
         }
     }
+    // The picture's resolution follows the frame time while it shows here.
+    onFrameSwapped: if (visual.showing && !visualWindow.active) visual.frameDrawn()
     Connections {
         target: visual
         function onWindowAsked() { visualWindow.active = !visualWindow.active }

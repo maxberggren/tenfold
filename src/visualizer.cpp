@@ -43,6 +43,22 @@ Visualizer::Visualizer(Session *session, QObject *parent) : QObject(parent), m_s
         m_u.insert(QLatin1String(x.name), QVector4D(x.v[0], x.v[1], x.v[2], x.v[3]));
 }
 
+void Visualizer::frameDrawn() {
+    if (!m_frames.isValid()) {
+        m_frames.start();
+        return;
+    }
+    const double dt = std::min(0.25, m_frames.nsecsElapsed() * 1e-9);
+    m_frames.restart();
+    m_frameAvg += (dt - m_frameAvg) * 0.05;
+    // Over 20 ms a frame: the world draws smaller; under 14 ms: back up,
+    // never above the quality the page asks for, nor under a third of it.
+    if (m_frameAvg > 0.020)
+        m_fit = std::max(0.33, m_fit * 0.98);
+    else if (m_frameAvg < 0.014)
+        m_fit = std::min(1.0, m_fit * 1.01);
+}
+
 void Visualizer::stepLive() {
     const double dt = m_clock.nsecsElapsed() * 1e-9;
     m_clock.restart();

@@ -105,11 +105,16 @@ void SignalTracker::update(const StudioView &v, double dt) {
         const float now[3] = {hit({Kick}), hit({Snare, Clap, Rim}), hit({Hat, Shaker, Open, Ride})};
         float *env[3] = {&s.kick, &s.snare, &s.hat};
         int *count[3] = {&s.kicks, &s.snares, &s.hats};
-        const double falls[3] = {0.18, 0.16, 0.07};
+        // Impulses: up in a frame, gone in four (the hats in two).
+        const double falls[3] = {0.06, 0.05, 0.035};
+        // On the hit only: the pad's own flash fades slower than a punch.
         for (int i = 0; i < 3; ++i) {
-            if (now[i] > m_prevDrum[i] + 0.05f && now[i] > 0.1f)
+            if (now[i] > m_prevDrum[i] + 0.05f && now[i] > 0.1f) {
                 ++*count[i];
-            *env[i] = std::max(decay(*env[i], dt, falls[i]), now[i]);
+                *env[i] = std::max(*env[i], std::min(1.0f, now[i] * 1.3f));
+            } else {
+                *env[i] = decay(*env[i], dt, falls[i]);
+            }
             m_prevDrum[i] = now[i];
         }
         s.perc = std::max(decay(s.perc, dt, 0.15), hit({TomLo, TomMid, TomHi, Perc, Crash, Bell, Zap}));
@@ -473,6 +478,8 @@ void HandMorph::tick(double dt, bool autopilot) {
         if (slot.alive < 1)
             slot.alive = std::max(0.0f, slot.alive - float(dt / 0.6));
     h.chaos *= float(std::exp(-dt / 0.35));
+    // Nine or ten fingers: everything at once, eased in and out.
+    h.extreme += (float(h.count >= 9) - h.extreme) * float(1.0 - std::exp(-dt / 0.4));
     if (h.count == 0) {
         h.motion *= float(std::exp(-dt / 0.3));
         m_idle += dt;
@@ -854,9 +861,12 @@ std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand 
         {"vocal", {s.vocal, s.vocalPitch, s.clarity, s.vocalLoops}},
         {"levels0", {s.level[Drums], s.level[Bass], s.level[Chords], s.level[Lead]}},
         {"levels1", {s.level[Arp], s.level[Atmos], s.level[Fx], s.level[Vocal]}},
-        {"morph0", {world, l.fold, l.symmetry, l.seed + d.seedShift}},
-        {"morph1", {l.yaw, l.pitch, l.twist, l.zoom}},
-        {"morph2", {float(d.travel), l.warp, l.hue, h.chaos}},
+        // Ten fingers push every bend to its most impossible: space inverted,
+        // twisted, folded, in a kaleidoscope.
+        {"morph0", {world, std::min(1.0f, l.fold + 0.4f * h.extreme), std::max(l.symmetry, 0.6f * h.extreme),
+                    l.seed + d.seedShift}},
+        {"morph1", {l.yaw, l.pitch, l.twist + 2.0f * h.extreme, l.zoom}},
+        {"morph2", {float(d.travel), std::max(l.warp, 0.85f * h.extreme), l.hue, h.chaos}},
         {"morph3", {float(marchSteps(set.quality)), clamp01(h.pressure * float(h.count > 0)), d.pace, float(h.count)}},
         {"roll", {d.roll, l.trails, set.markers ? 1.0f : 0.0f, crt}},
     };

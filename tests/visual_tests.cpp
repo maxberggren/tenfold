@@ -270,6 +270,23 @@ private slots:
         QVERIFY(std::fabs(h.look.yaw) < 0.01f);
     }
 
+    // Ten fingers: every bend at once, eased in, and out when they lift.
+    void tenFingersAreTheExtreme() {
+        HandMorph h;
+        h.frame(ring(0, 10, 0.5f, 0.5f, 0.25f, 0), 1.6f);
+        for (int i = 0; i < 10; ++i)
+            h.tick(0.1, false);
+        QVERIFY(h.hand().extreme > 0.9f);
+        const auto u = uniforms(Signals(), Settings(), h.hand(), Drive(), 640, 360, 0);
+        for (const Uniform &x : u)
+            if (std::strcmp(x.name, "morph2") == 0)
+                QVERIFY(x.v[1] > 0.75f); // the inversion
+        h.frame(Frame{1.1, false, 0, {}}, 1.6f);
+        for (int i = 0; i < 20; ++i)
+            h.tick(0.1, false);
+        QVERIFY(h.hand().extreme < 0.01f);
+    }
+
     // Every finger keeps its slot while down and fades from it after a lift.
     void liftedFingersFade() {
         HandMorph h;

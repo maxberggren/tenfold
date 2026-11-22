@@ -40,6 +40,7 @@ Window {
     Visualizer {
         anchors.fill: parent
     }
+    onFrameSwapped: visual.frameDrawn()
 
     // Keys here play the main window's page, as there.
     Item {

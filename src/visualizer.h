@@ -63,8 +63,12 @@ public:
     // Live: step() with the time since the last call.
     void stepLive();
 
+    // A window drew a frame of the picture: live, the world's resolution
+    // follows how long frames take, so playing never drops frames.
+    Q_INVOKABLE void frameDrawn();
+
     QVariantMap u() const { return m_u; }
-    double sceneScale() const { return m_scale; }
+    double sceneScale() const { return m_scale * m_fit; }
     // The visual page is showing in the main window.
     bool showing() const { return m_showing; }
     bool crt() const { return m_crt; }
@@ -85,6 +89,9 @@ private:
     tf::visual::Drive m_drive;
     QVariantMap m_u;
     double m_scale = 0.5;
+    double m_fit = 1.0;        // the share of m_scale the live frame time allows
+    double m_frameAvg = 1.0 / 60;
+    QElapsedTimer m_frames;
     bool m_showing = false;
     bool m_crt = false;
     int m_windowAsks = -1, m_fullScreenAsks = -1;

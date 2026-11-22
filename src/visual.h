@@ -140,6 +140,7 @@ struct Hand {
     float pressure = 0;         // mean, 0..1
     float motion = 0;           // how fast it moves, smoothed (pads a second)
     float chaos = 0;            // a glitch that follows quick motion and decays
+    float extreme = 0;          // 0..1, nine or ten fingers down (eased)
     struct Finger {
         float x = 0, y = 0, pressure = 0, alive = 0; // alive fades 1 → 0 after a lift
         int id = -1;

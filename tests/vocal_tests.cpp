@@ -672,10 +672,12 @@ private slots:
         // tenth of a second it is no higher than it was before the voice
         // began to fall.
         const auto take = playStyle(Throat, "voice 0.3 1.6 hz=220 vowel=o level=0.3\nend 2.6\n");
-        const double held = strongestHz(take, 1.3, 1.6, 1000, 3400);
+        // (The last note it walked to before the voice fell: the figure
+        // moves on the beat, at 1.5 s.)
+        const double held = strongestHz(take, 1.6, 1.85, 1000, 3400);
         double worst = 0;
         for (double a = 1.7; a < 2.1; a += 0.05) {
-            const double p = power(take, held, 1.3, 1.6);
+            const double p = power(take, held, 1.6, 1.85);
             for (double hz = held * 1.02; hz < 3400; hz += 4)
                 if (power(take, hz, a, a + 0.05) > 0.01 * p)
                     worst = std::max(worst, hz / held);
@@ -839,11 +841,296 @@ private slots:
         // And Left from NATURAL wraps round to the last of them.
         const auto wrapped = reopenVocal(std::string(kPage) + "key 0.1 Left\nend 0.6\n", 0.5);
         QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("screwed"));
-        // The styles' own options too: slendro, and no sub.
+        // The styles' own options too: slendro; the talk box on the keys,
+        // and (Shift+B) with no sub; the tape a fifth down.
         const auto gam = reopenVocal(std::string(kPage) + rights(Gamelan) + "key 0.5 B\nend 0.8\n", 0.5);
         QCOMPARE(gam.settings[QStringLiteral("gamelanTuning")].toString(), QStringLiteral("slendro"));
-        const auto talk = reopenVocal(std::string(kPage) + rights(Talk) + "key 0.5 B\nend 0.8\n", 0.5);
+        const auto talk = reopenVocal(std::string(kPage) + rights(Talk) + "key 0.5 B\nkey 0.6 Shift+B\nend 0.8\n", 0.5);
+        QCOMPARE(talk.settings[QStringLiteral("talkboxKeys")].toBool(false), true);
         QCOMPARE(talk.settings[QStringLiteral("talkboxSub")].toBool(true), false);
+        const auto screw = reopenVocal(std::string(kPage) + rights(Screwed) + "key 0.5 B\nend 0.8\n", 0.5);
+        QCOMPARE(screw.settings[QStringLiteral("screwedSpeed")].toString(), QStringLiteral("fifth"));
+    }
+
+    // --- the five styles, round three ---------------------------------------------
+
+    void theTalkBoxPlaysFromTheLanesInKeys() {
+        // B: KEYS. Sung A3, a finger on the lane of C4 (lane 9 of 15, from
+        // A2): the synth is on C4, not on the note sung; with no finger, the
+        // voice alone makes almost nothing (a talk box with no key down).
+        const std::string sing = "key 0.45 B\nvoice 0.5 2.4 hz=220 vowel=a level=0.3\n";
+        const auto take = playStyle(Talk, sing + "down 1.0 1 0.611 0.6 p=0.6\nup 2.6 1\nend 3.0\n");
+        checkStyle(take, "TALK BOX");
+        QVERIFY2(take.status.contains(QLatin1String("keys")), qPrintable(take.status));
+        QVERIFY2(take.help.contains(QLatin1String("KEYS")), "no KEYS in the help");
+        const double c4 = power(take, 261.6, 1.5, 2.5), a3 = power(take, 220.0, 1.5, 2.5);
+        qInfo("talk box keys: C4 %.1f dB over A3", 10 * std::log10(c4 / std::max(1e-12, a3)));
+        QVERIFY2(c4 > 10 * a3, "the lane doesn't set the note");
+        qInfo("talk box keys: no key %.1f dBFS, a key %.1f dBFS", 20 * std::log10(take.rms(0.6, 0.95) + 1e-12),
+              20 * std::log10(take.rms(1.5, 2.5) + 1e-12));
+        QVERIFY2(take.rms(0.6, 0.95) < 0.25 * take.rms(1.5, 2.5), "it sounds with no key down");
+    }
+
+    void theTalkBoxsKeysGlideLegato() {
+        // A3's lane held, then E4's pressed over it: the synth slides up
+        // from A3 (legato glide); lifted and pressed again alone, it starts
+        // on its note.
+        const std::string keys = "key 0.45 B\nvoice 0.5 3.2 hz=220 vowel=a level=0.3\n"
+                                 "down 0.6 1 0.5 0.6 p=0.6\ndown 1.2 2 0.721 0.6 p=0.6\nup 1.25 1\n"
+                                 "up 1.9 2\ndown 2.4 3 0.721 0.6 p=0.6\nup 3.2 3\nend 3.5\n";
+        const auto take = playStyle(Talk, keys);
+        const double leap = 1.2 + 0.02;
+        const double early = strongestHz(take, leap + 0.03, leap + 0.09, 180, 400);
+        const double late = strongestHz(take, leap + 0.35, leap + 0.65, 180, 400);
+        const double fresh = strongestHz(take, 2.43, 2.49, 180, 400);
+        qInfo("talk box keys: %.0f Hz just after the legato leap, %.0f landed; %.0f just after a fresh key", early,
+              late, fresh);
+        QVERIFY2(early < 315, qPrintable(QString("%1 Hz: no glide").arg(early)));
+        QVERIFY2(std::fabs(late - 329.6) < 6, qPrintable(QString("%1 Hz").arg(late)));
+        QVERIFY2(std::fabs(fresh - 329.6) < 12, qPrintable(QString("%1 Hz: a fresh key slid").arg(fresh)));
+    }
+
+    void theTalkBoxHasNoPeaksBetweenSamples() {
+        // Sung with two harmony fingers: the true peak (4× oversampled) is
+        // within half a dB of the samples' own peak.
+        const std::string sing = "voice 0.3 0.5 hz=220 vowel=a level=0.3\nvoice 0.9 0.4 hz=262 vowel=e level=0.3\n"
+                                 "voice 1.4 1.4 hz=330 vowel=o level=0.3 to=294\n"
+                                 "down 0.8 1 0.62 0.55 p=0.6\ndown 0.8 2 0.40 0.55 p=0.6\nup 2.8 1\nup 2.8 2\nend 3.0\n";
+        const auto take = playStyle(Talk, sing);
+        const double sp = 20 * std::log10(take.peak()), tp = 20 * std::log10(truePeak(take));
+        qInfo("talk box: sample peak %.2f dBFS, true peak %.2f dBTP", sp, tp);
+        QVERIFY2(tp - sp < 0.5, qPrintable(QString("%1 dB over").arg(tp - sp)));
+        QVERIFY2(tp < -2.0, qPrintable(QString("%1 dBTP").arg(tp)));
+    }
+
+    void theThroatsWhistleIsPinned() {
+        // A held drone, sung with vibrato, a finger on a harmonic: the
+        // whistle's pitch, 60 ms at a time, stays within 25 Hz (it would
+        // swing 80 if it carried k times the vibrato).
+        const auto take = playStyle(Throat, "voice 0.3 2.6 hz=220 vowel=a level=0.3\n"
+                                            "down 0.2 1 0.62 0.6 p=0.6\nup 2.8 1\nend 3.0\n");
+        const double centre = strongestHz(take, 1.2, 2.4, 1000, 3400);
+        double lo = 1e9, hi = 0;
+        for (double a = 1.2; a < 2.35; a += 0.03) {
+            const double hz = strongestHz(take, a, a + 0.06, centre - 120, centre + 120);
+            lo = std::min(lo, hz);
+            hi = std::max(hi, hz);
+        }
+        qInfo("throat: whistle at %.0f Hz, from %.0f to %.0f", centre, lo, hi);
+        QVERIFY2(hi - lo < 25, qPrintable(QString("it swings %1 Hz").arg(hi - lo)));
+    }
+
+    void theThroatsGrowlDoublesThePeriod() {
+        // Kargyraa: every other cycle weaker, so there are partials half way
+        // between the voice's harmonics (A3's: 330, 550 Hz) that the voice
+        // alone doesn't have.
+        const std::string sing = "voice 0.3 2.0 hz=220 vowel=a level=0.3\nend 2.6\n";
+        const auto take = playStyle(Throat, sing);
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        const double sub = power(take, 330, 1.0, 2.0) + power(take, 550, 1.0, 2.0);
+        const double plain = power(natural, 330, 1.0, 2.0) + power(natural, 550, 1.0, 2.0);
+        qInfo("throat: subharmonics %.1f dB over the voice's", 10 * std::log10(sub / std::max(1e-12, plain)));
+        QVERIFY2(sub > 10 * plain, "no period doubling");
+    }
+
+    void theThroatsFigureComesHomeOnTheBar() {
+        // Alone, at 120 bpm over a held A3: the whistle holds the key's
+        // root overtone (harmonic 8, A6) for the first two beats of a bar.
+        double bar = -1, lastBar = -1;
+        const auto take = testkit::watch(std::string(kPage) + rights(Throat) +
+                                             "tempo 0.01 120\nvoice 0.3 4.6 hz=220 vowel=a level=0.3\nend 5.0\n",
+                                         [&](double t, Session &s) {
+                                             const double b = std::floor(s.view().beat / 4.0);
+                                             if (t > 1.2 && bar < 0 && lastBar >= 0 && b != lastBar)
+                                                 bar = t;
+                                             lastBar = b;
+                                         });
+        QVERIFY(bar > 0 && bar < 3.5);
+        const double hz = strongestHz(take, bar + 0.15, bar + 0.9, 1000, 3400);
+        const double later = strongestHz(take, bar + 1.1, bar + 1.9, 1000, 3400);
+        qInfo("throat: the bar at %.2f s: its first two beats on %.0f Hz, the next two %.0f", bar, hz, later);
+        QVERIFY2(std::fabs(hz - 1760) < 15, qPrintable(QString("%1 Hz").arg(hz)));
+        QVERIFY2(std::fabs(later - 1760) > 50, "the figure doesn't move off the root");
+    }
+
+    void theSitarHasNoRumbleAndNoFoldedTop() {
+        // The bridge's lopsided touch is DC and rumble; its switching
+        // folds into the top octave. Neither gets out: under 30 Hz is 50 dB
+        // under the whole, the offset under 10⁻⁴, and over 12 kHz no more
+        // than the natural voice puts there singing the same.
+        const std::string sing = "voice 0.3 0.4 hz=220 vowel=a level=0.3\nvoice 0.8 1.6 hz=262 vowel=o level=0.3\n"
+                                 "voice 2.6 0.3 hz=196 vowel=e level=0.3\nvoice 3.0 1.0 hz=220 vowel=a level=0.3\nend 5.0\n";
+        const auto take = playStyle(Sitar, sing);
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        const double low = bandDb(take, 0, 30, 0.5, 4.5);
+        double dc = 0;
+        for (size_t i = 24000; i < 216000; ++i)
+            dc += take.left[i] + take.right[i];
+        dc /= 2.0 * 192000;
+        // (Over 12 kHz in short windows through the phrase: a long one
+        // would take a minute to sum, bin by bin.)
+        auto topOf = [&](const testkit::Take &t) {
+            double e = 0;
+            for (double a = 0.5; a < 4.45; a += 0.2)
+                e += std::pow(10.0, bandDb(t, 12000, 20000, a, a + 0.2, true) / 10);
+            return 10 * std::log10(e / 20);
+        };
+        const double top = topOf(take), topNat = topOf(natural);
+        qInfo("sitar: under 30 Hz %.1f dB, offset %.1e; over 12 kHz %.1f dB (the voice %.1f)", low, dc, top, topNat);
+        QVERIFY2(low < -50, qPrintable(QString("%1 dB under 30 Hz").arg(low)));
+        QVERIFY2(std::fabs(dc) < 1e-4, qPrintable(QString("offset %1").arg(dc)));
+        QVERIFY2(top < topNat, qPrintable(QString("%1 dB over 12 kHz").arg(top)));
+    }
+
+    void theSitarFollowsASlideButNotEveryWaver() {
+        // A held A3 sung with vibrato: the string's pitch moves far less than
+        // the voice's (a little of the vibrato, slowly), 60 ms at a time.
+        // (Sung from 0.5 s: the style has come in by then, and plucks.)
+        const std::string sing = "voice 0.5 2.4 hz=220 vowel=a level=0.3\nend 3.1\n";
+        const auto take = playStyle(Sitar, sing);
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        // The pitch near A3, period by period: the take through a narrow
+        // band round 220 Hz, its upward zero crossings (interpolated), each
+        // period's frequency averaged over 60 ms; how far that moves.
+        auto swing = [&](const testkit::Take &t) {
+            Svf bp, bp2;
+            bp.set(220.0f, 5.0f, 48000.0f);
+            bp2.set(220.0f, 5.0f, 48000.0f);
+            std::vector<std::pair<double, double>> crossings; // (time, frequency)
+            float prev = 0;
+            double lastT = -1;
+            for (size_t i = size_t(1.0 * 48000); i < size_t(2.7 * 48000); ++i) {
+                const float y = bp2.step(bp.step(0.5f * (t.left[i] + t.right[i])).band).band;
+                if (prev < 0 && y >= 0) {
+                    const double at = (double(i) - 1 + prev / (prev - y)) / 48000.0;
+                    if (lastT > 0)
+                        crossings.push_back({at, 1.0 / (at - lastT)});
+                    lastT = at;
+                }
+                prev = y;
+            }
+            double lo = 1e9, hi = 0;
+            for (double a = 1.3; a < 2.6; a += 0.03) {
+                double sum = 0;
+                int count = 0;
+                for (const auto &c : crossings)
+                    if (c.first >= a && c.first < a + 0.06)
+                        sum += c.second, ++count;
+                if (count) {
+                    lo = std::min(lo, sum / count);
+                    hi = std::max(hi, sum / count);
+                }
+            }
+            return hi - lo;
+        };
+        const double string = swing(take), voice = swing(natural);
+        qInfo("sitar: the string swings %.1f Hz where the voice swings %.1f", string, voice);
+        QVERIFY2(string < 0.6 * voice, qPrintable(QString("%1 Hz of %2").arg(string).arg(voice)));
+    }
+
+    void theGamelansSingerSingsInPelog() {
+        // C4 sung in pelog: the voice under the bronze is drawn onto pelog's
+        // tone 270 cents over A (257.6 Hz), not left on the piano's C.
+        const std::string sing = "voice 0.3 1.3 hz=261.6 vowel=a level=0.3\nend 1.8\n";
+        const auto take = playStyle(Gamelan, sing);
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        const double pelog = power(take, 257.6, 0.7, 1.5), piano = power(take, 261.6, 0.7, 1.5);
+        qInfo("gamelan: the voice %.1f dB nearer pelog's tone than C (natural: %.1f)",
+              10 * std::log10(pelog / std::max(1e-12, piano)),
+              10 * std::log10(power(natural, 257.6, 0.7, 1.5) / std::max(1e-12, power(natural, 261.6, 0.7, 1.5))));
+        QVERIFY2(pelog > 3 * piano, "the voice stays on C");
+    }
+
+    void bronzeNeverStepsWhenAStrikeIsStolen() {
+        // Twenty long-ringing strikes 30 ms apart, more than there are
+        // voices: the stolen ones fade first, so the output never jumps by
+        // more than its own swing allows.
+        vocal::Bronze b;
+        b.init(48000);
+        const vocal::Bronze::Spec bar = {{1.0f, 2.756f, 5.404f, 8.933f}, {1.0f, 0.35f, 0.15f, 0.06f},
+                                         {3.5f, 1.5f, 0.7f, 0.3f}, 6.0f, 0.7f, 6.0f, 0.12f, 0.0f, 20};
+        Rng rng;
+        float last = 0, worst = 0, peak = 0;
+        int most = 0;
+        for (int k = 0; k < 20; ++k) {
+            b.strike(40.0f + float(k % 7), 1.0f, bar);
+            for (int i = 0; i < 1440; ++i) {
+                float l, r;
+                b.step(rng, l, r);
+                worst = std::max(worst, std::fabs(l - last));
+                peak = std::max(peak, std::fabs(l));
+                last = l;
+            }
+            most = std::max(most, b.live());
+        }
+        qInfo("bronze: %d strikes at once; the largest step %.4f of a peak %.3f", most, worst, peak);
+        QCOMPARE(most, vocal::Bronze::kStrikes);
+        // (A low bar's own swing from one sample to the next is a few
+        // hundredths; a strike written over would drop by what it rang.)
+        QVERIFY2(worst < 0.3f, qPrintable(QString("a step of %1").arg(worst)));
+    }
+
+    void screwedCatchesUpOnlyWhenItMust() {
+        // Sung on and on over three bars at 120 bpm: no backspin at the bar
+        // lines (the tape doesn't play backwards there: what comes out just
+        // after a bar line is what was sung, slowed, not a reversed chirp);
+        // the tape drags on, and the voice is heard all the way through.
+        std::string s = "tempo 0.01 120\n";
+        for (int k = 0; k < 11; ++k)
+            s += "voice " + std::to_string(0.3 + 0.5 * k) + " 0.45 hz=220 vowel=a level=0.3\n";
+        const auto take = playStyle(Screwed, s + "end 6.2\n");
+        for (double t = 0.6; t < 5.8; t += 0.4)
+            QVERIFY2(take.rms(t, t + 0.4) > 0.02, qPrintable(QString("silent at %1 s").arg(t)));
+        // Every bar line passes on E3 (A3 a fourth down), not a chirp.
+        for (double bar : {2.0, 4.0}) {
+            const double e3 = power(take, 164.8, bar, bar + 0.25);
+            double other = 0;
+            for (double hz = 250; hz < 1200; hz += 37)
+                other += power(take, hz, bar, bar + 0.25);
+            qInfo("screwed: at the bar line %.0f s, E3 %.1f dB over the rest of the band", bar,
+                  10 * std::log10(e3 / std::max(1e-12, other / 26)));
+            QVERIFY2(e3 > 3 * other / 26, "a chirp at the bar line");
+        }
+    }
+
+    void screwedsLowestLaneSpinsItBack() {
+        // Held, the lowest lane spins the tape back: a reversed, falling
+        // chirp of what was just played, where without it there is the word.
+        const std::string sing = "tempo 0.01 120\nvoice 0.3 1.6 hz=220 vowel=a level=0.3\n";
+        const auto spun = playStyle(Screwed, sing + "down 1.2 1 0.14 0.6 p=0.6\nup 1.8 1\nend 2.4\n");
+        const auto plain = playStyle(Screwed, sing + "end 2.4\n");
+        QVERIFY2(spun.status.contains(QLatin1String("SCREWED")), qPrintable(spun.status));
+        const double e3 = power(spun, 164.8, 1.35, 1.7), e3plain = power(plain, 164.8, 1.35, 1.7);
+        qInfo("screwed: E3 under the spin %.1f dB from the plain tape's", 10 * std::log10(e3 / std::max(1e-12, e3plain)));
+        QVERIFY2(e3 < 0.3 * e3plain, "the tape plays on under the spin");
+    }
+
+    void screwedsSpeedIsTheOption() {
+        // B: a fifth down. A3 sung comes out on D3.
+        const auto take = playStyle(Screwed, "key 0.45 B\nvoice 0.5 0.6 hz=220 vowel=a level=0.3\nend 2.2\n");
+        const double hz = strongestHz(take, 0.7, 1.0, 120, 200);
+        qInfo("screwed a fifth down: %.1f Hz", hz);
+        QVERIFY2(std::fabs(hz - 146.8) < 3, qPrintable(QString("%1 Hz").arg(hz)));
+        QVERIFY2(take.status.contains(QLatin1String("5th down")), qPrintable(take.status));
+    }
+
+    void aScrewedLoopIsThePhraseSlowedWhole() {
+        // Over the metronome, a bar sung and Space in SCREWED: the loop is
+        // two bars, the phrase slowed in it whole: a fourth down, its words
+        // 0.8 s apart where they were sung 0.6 apart.
+        const std::string script = std::string(kPage) + rights(Screwed) +
+                                   "tempo 0.01 120\nkey 0.4 Ctrl+M\n"
+                                   "voice 4.2 0.4 hz=220\nvoice 4.8 0.4 hz=220\nvoice 5.4 0.4 hz=220\n"
+                                   "key 6.3 Space\nkey 6.6 Ctrl+M\nend 13\n";
+        const auto take = testkit::play(script);
+        const PartView &v = take.view.parts[kVocal];
+        QCOMPARE(v.playing, 0);
+        QCOMPARE(int(v.clips[0].lengthBeats), 8);
+        const double a = onsetAfter(take, 8.0, 0.05), b = onsetAfter(take, a + 0.5, 0.05);
+        qInfo("screwed loop: words %.3f s apart", b - a);
+        QVERIFY2(a > 0 && std::fabs((b - a) - 0.6 / 0.74915) < 0.03, qPrintable(QString("%1 s apart").arg(b - a)));
+        const double hz = strongestHz(take, a + 0.05, a + 0.35, 120, 200);
+        QVERIFY2(std::fabs(hz - 164.8) < 3, qPrintable(QString("%1 Hz").arg(hz)));
     }
 
 private:
@@ -889,6 +1176,58 @@ private:
             total += s1 * s1 + s2 * s2 - c * s1 * s2;
         }
         return total;
+    }
+    // The energy between lo and hi Hz over [a, b) seconds, in dB of the
+    // whole: the DFT's bins in the band (a bin every 1/(b − a) Hz), through
+    // a Hann window (a plain one would leak the loud notes far down the
+    // band, into what is measured).
+    // (absolute: in dB of a full-scale sine's energy over the same span.)
+    static double bandDb(const testkit::Take &t, double lo, double hi, double a, double b, bool absolute = false) {
+        const size_t i0 = size_t(a * 48000), i1 = std::min(t.left.size(), size_t(b * 48000));
+        const double N = double(i1 - i0);
+        auto w = [&](size_t i) { return 0.5 - 0.5 * std::cos(kTwoPi * double(i - i0) / N); };
+        double total = 0, band = 0;
+        for (const auto *ch : {&t.left, &t.right})
+            for (size_t i = i0; i < i1; ++i)
+                total += std::pow(double((*ch)[i]) * w(i), 2);
+        const double df = 48000.0 / N;
+        for (double hz = std::ceil(lo / df) * df; hz <= hi; hz += df) {
+            const double c = 2 * std::cos(kTwoPi * hz / 48000.0);
+            double p = 0;
+            for (const auto *ch : {&t.left, &t.right}) {
+                double s1 = 0, s2 = 0;
+                for (size_t i = i0; i < i1; ++i) {
+                    const double s0 = (*ch)[i] * w(i) + c * s1 - s2;
+                    s2 = s1;
+                    s1 = s0;
+                }
+                p += s1 * s1 + s2 * s2 - c * s1 * s2;
+            }
+            band += (hz < df * 0.5 ? 1.0 : 2.0) * p / N;
+        }
+        if (absolute)
+            total = 2 * 0.5 * 0.375 * N; // both channels, a unit sine, Hann's 3/8
+        return 10 * std::log10(std::max(1e-30, band) / std::max(1e-30, total));
+    }
+    // The peak between the samples too: 4× oversampled, a windowed sinc.
+    static double truePeak(const testkit::Take &t) {
+        constexpr int kTaps = 16;
+        double best = 0;
+        for (const auto *ch : {&t.left, &t.right}) {
+            const auto &x = *ch;
+            for (size_t i = kTaps; i + kTaps < x.size(); ++i)
+                for (int ph = 1; ph < 4; ++ph) {
+                    const double frac = ph / 4.0;
+                    double s = 0;
+                    for (int k = -kTaps + 1; k <= kTaps; ++k) {
+                        const double u = double(k) - frac;
+                        const double w = 0.5 + 0.5 * std::cos(kTwoPi * 0.5 * u / kTaps);
+                        s += x[size_t(int64_t(i) + k)] * w * std::sin(kPi * u) / (kPi * u);
+                    }
+                    best = std::max(best, std::fabs(s));
+                }
+        }
+        return std::max(best, double(t.peak()));
     }
     static double peakPower(const testkit::Take &t, double hz, double a, double b) {
         const size_t i0 = size_t(a * 48000), i1 = std::min(t.left.size(), size_t(b * 48000));

@@ -69,11 +69,13 @@ const char *presetLine(int p) {
         "copies of you sing the Chords page's chord around your note",
         "a synth chord speaks your words: the chord, or your fingers' notes",
         "one note, the chord's root, flat as a machine",
-        "a funk synth speaks your words, sliding note to note; fingers add harmonies",
-        "Tuvan throat singing: you are the drone, a whistle sings its overtones",
-        "your voice plays a sitar: syllables pluck it, slides bend it",
-        "syllables strike bronze, gongs keep the cycle; a finger plays kotekan",
-        "slowed tape, a fourth down, spun back each bar; a finger chops the word",
+        // (The five after robot kept to 50 characters: the status line
+        // adds the style's option and Space's two ways after them.)
+        "a funk synth up a tube, your mouth shapes it",
+        "you are the drone, a whistle walks its overtones",
+        "your voice plays a sitar: syllables pluck it",
+        "syllables strike bronze, gongs keep the cycle",
+        "you, slowed on tape; fingers chop and spin it",
     };
     return lines[std::clamp(p, 0, PresetCount - 1)];
 }
@@ -96,7 +98,9 @@ enum ParamId {
     PChop,    // i[1]: which (0..3), i[2], i[3]: the word's first sample (high, low 32 bits);
               // f[0] on, f[1] its length in samples, f[2] level, f[3] semitones
     PDemo,    // i[1]: a demo singer in place of the microphone
-    PStyleOpt, // i[1]: the gamelan's tuning (GamTuning), i[2]: the talk box's sub octave (1 on)
+    PStyleOpt, // i[1]: the gamelan's tuning (GamTuning), i[2]: the talk box's sub octave (1 on),
+               // i[3]: the talk box played from the lanes (1) or by the note sung (0),
+               // f[0]: the screwed tape's speed (ScrewSpeed)
 };
 
 // The gamelan's tunings: its own two, rooted on the song's key note, or the
@@ -105,6 +109,21 @@ enum GamTuning { Pelog, Slendro, GamKey, GamTuningCount };
 const char *gamTuningName(int t) {
     static const char *names[] = {"PELOG", "SLENDRO", "KEY"};
     return names[std::clamp(t, 0, GamTuningCount - 1)];
+}
+// The screwed tape's speeds: a fourth down (most of a voice in the key
+// stays in it), a fifth down, and the classic 0.8 of a pitched-down deck.
+enum ScrewSpeed { ScrewFourth, ScrewFifth, ScrewClassic, ScrewSpeedCount };
+const char *screwSpeedName(int s) {
+    static const char *names[] = {"4TH DOWN", "5TH DOWN", "0.8×"};
+    return names[std::clamp(s, 0, ScrewSpeedCount - 1)];
+}
+const char *screwSpeedKey(int s) {
+    static const char *names[] = {"fourth", "fifth", "classic"};
+    return names[std::clamp(s, 0, ScrewSpeedCount - 1)];
+}
+float screwSpeed(int s) {
+    static const float rates[] = {0.74915f, 0.66742f, 0.8f}; // 2^(−5/12), 2^(−7/12), 0.8
+    return rates[std::clamp(s, 0, ScrewSpeedCount - 1)];
 }
 constexpr int kChops = 4;
 
@@ -185,7 +204,22 @@ enum {
     OvertoneMidi,  // and its pitch
     Scope = 64,  // 64 × (min, max) of the microphone, the last 43 ms
     ScopeN = 64,
+    // The styles' own pictures, after the scope.
+    TalkMidi = 192, // the talk box's synth: its pitch now (glide and vibrato in it)
+    TalkTarget,     // the note it is heading for
+    TalkGate,       // how open it is (KEYS: a lane held)
+    SitarBuzz,      // how far onto the jawari the main string reaches
+    SitarLevel,     // the main string's level
+    Taraf,          // 13 × the sympathetic strings' levels
+    GamCycle = Taraf + 13, // the beat within the gong's 16-beat cycle
+    GamStruck,      // the last bar struck (its MIDI note), and
+    GamStruckAge,   // how long ago, in seconds
+    ScrewLag,       // seconds the tape head is behind the live voice
+    ScrewLimit,     // the lag at which it jumps back
+    ScrewSpin,      // 1 while the tape spins back or stops
+    ScrewSemis,     // how far down the tape plays
 };
+static_assert(ScrewSemis < kPartData, "fits the page's data");
 }
 
 // The nearest note of the key, or of the chord when follow is on, to a
@@ -369,6 +403,7 @@ public:
         m_rate = rate;
         m_tape->rate = rate;
         m_hp.set(90.0f, 0.7f, rate);
+        m_outDcL.r = m_outDcR.r = 1.0f - kTwoPi * 4.0f / rate;
         m_pitch.init(rate);
         m_echo.init(rate);
         m_reverb.init(rate);
@@ -457,6 +492,7 @@ public:
                     v->shifter.reset();
                     v->fresh = true;
                     v->midi = -1;
+                    v->order = ++m_voiceOrder;
                 }
             }
             if (!v)
@@ -521,6 +557,8 @@ public:
         case PStyleOpt:
             m_gamTuning = std::clamp(c.i[1], 0, GamTuningCount - 1);
             m_talkSub = c.i[2] != 0;
+            m_talkKeys = c.i[3] != 0;
+            m_screwSpeed = std::clamp(int(std::lround(c.f[0])), 0, ScrewSpeedCount - 1);
             break;
         default: break;
         }
@@ -597,6 +635,7 @@ public:
             const float comp = m_compEnv > 0.1f ? std::pow(0.1f / m_compEnv, 0.667f) : 1.0f;
             y *= comp * 1.25f;
             dry[i] = y;
+            tape.dry[size_t(sample & kRingMask)] = y;
             m_src.push(y);
             if (m_pitch.push(y, m_gate > 0.2f))
                 track();
@@ -646,6 +685,31 @@ public:
         const float hz = voiced ? m_heldHz : 0.0f;
         const float period = voiced ? m_heldPeriod : 0.0f;
         const float sungMidi = voiced ? midiOfHz(hz) : -1.0f;
+        // The note sung, as the five styles after robot play an instrument
+        // by it: kept from the tracker's octave slips. On a low "o" (a
+        // strong second harmonic) YIN hears the voice an octave up every
+        // few estimates; a string or a synth that followed would leap an
+        // octave and back many times a second. A reading an octave over
+        // the note held is folded back down unless it lasts a sixth of a
+        // second (a real leap); one an octave under is taken at once (the
+        // slips are upward, so it is the held note that was the slip).
+        float styleMidi = sungMidi;
+        if (sungMidi > 0) {
+            const float diff = sungMidi - m_octRef;
+            const float oct = std::round(diff / 12.0f);
+            if (m_octRef > 0 && oct > 0 && std::fabs(diff - 12.0f * oct) < 0.8f) {
+                m_octAway += n;
+                if (m_octAway > int(m_rate / 6))
+                    m_octRef = sungMidi, m_octAway = 0;
+                else
+                    styleMidi = sungMidi - 12.0f * oct;
+            } else {
+                m_octRef = sungMidi;
+                m_octAway = 0;
+            }
+        } else if (!voiced) {
+            m_octRef = -1;
+        }
         bool anyFinger = false;
         for (const auto &v : m_voices)
             anyFinger |= v.on;
@@ -667,6 +731,23 @@ public:
                 m_leadMidi = float(target);
                 leadTarget = std::exp2(float(target - sungMidi) / 12.0f);
             }
+        } else if (m_preset == Gamelan && m_gamTuning != GamKey) {
+            // In pelog and slendro the voice that stays under the bronze is
+            // drawn into the gamelan's tuning, as a pesindhen sings in it:
+            // gently (the note sung is followed through 80 ms, and only that
+            // slow pitch is moved onto the degree), so the voice's own
+            // vibrato and slides stay in it, round the gamelan's tone
+            // rather than the piano's 30 or 40 cents away.
+            shift = voicedNow || m_formant != 0;
+            if (voiced) {
+                const float a = 1.0f - std::exp(-float(n) / (0.08f * m_rate));
+                m_gamSlow = m_gamSlow > 0 ? m_gamSlow + (styleMidi - m_gamSlow) * a : styleMidi;
+                const double target = gamMidi(h, m_gamTuning, gamDegreeNear(h, m_gamTuning, m_gamSlow));
+                m_leadMidi = float(target);
+                leadTarget = std::exp2(float(target - m_gamSlow) / 12.0f);
+            } else {
+                m_gamSlow = -1;
+            }
         } else {
             m_leadMidi = sungMidi;
         }
@@ -679,7 +760,7 @@ public:
         const float wantDry = (m_preset == Prism && anyFinger) || m_preset == Vocoder || m_preset == Talk ||
                                       m_preset == Throat || m_preset == Screwed
                                   ? 0.0f
-                              : m_preset == Sitar   ? 0.15f
+                              : m_preset == Sitar   ? 0.0f
                               : m_preset == Gamelan ? 0.45f
                                                     : 1.0f;
         const float ratioNow = m_leadRatio.y;
@@ -746,7 +827,7 @@ public:
             }
         }
 
-        renderStyles(dry, leadL, leadR, n, h, tr, voiced, voicedNow, sungMidi, hz, period);
+        renderStyles(dry, leadL, leadR, n, h, tr, voiced, voicedNow, styleMidi, hz);
 
         // 3. The fingers: your voice again at each one's note.
         float bus[2][kBlock] = {};
@@ -1046,7 +1127,12 @@ public:
             monR = outR;
         }
         for (int i = 0; i < n; ++i) {
-            const float l = fastTanh(bus[0][i] * 0.9f) / 0.9f, r = fastTanh(bus[1][i] * 0.9f) / 0.9f;
+            // (The DC blockers: a voice levelled by a quick compressor, or
+            // a lopsided pluck, carries an offset of a few 10⁻⁴, which no
+            // loop or ear wants, and the monitor bus has no blocker of its
+            // own after this.)
+            const float l = m_outDcL.step(fastTanh(bus[0][i] * 0.9f) / 0.9f),
+                        r = m_outDcR.step(fastTanh(bus[1][i] * 0.9f) / 0.9f);
             const int64_t s = int64_t(tr.sample) + i;
             tape.wetL[size_t(s & kRingMask)] = l;
             tape.wetR[size_t(s & kRingMask)] = r;
@@ -1112,6 +1198,21 @@ public:
         d[pub::Stutter] = float(m_stutter);
         d[pub::Overtone] = m_overtone;
         d[pub::OvertoneMidi] = m_overtoneMidi;
+        d[pub::TalkMidi] = m_talkNow;
+        d[pub::TalkTarget] = m_talkNote;
+        d[pub::TalkGate] = m_preset == Talk ? m_talkLevel : 0;
+        d[pub::SitarBuzz] = m_sitar.buzz();
+        d[pub::SitarLevel] = m_sitarTail > 0 ? m_sitarLvl : 0;
+        m_sitarLvl = 0;
+        for (int k = 0; k < Strings::kCount; ++k)
+            d[pub::Taraf + k] = m_sitarTail > 0 ? m_strings.level(k) : 0;
+        d[pub::GamCycle] = m_gamCycle;
+        d[pub::GamStruck] = m_gamNote;
+        d[pub::GamStruckAge] = float(std::min(m_gamStruckAge, 1 << 24)) / m_rate;
+        d[pub::ScrewLag] = m_preset == Screwed ? m_scLag : 0;
+        d[pub::ScrewLimit] = m_scLimit;
+        d[pub::ScrewSpin] = m_spinHeld || m_spinLvl > 0.05f ? 1 : 0;
+        d[pub::ScrewSemis] = 12.0f * std::log2(screwSpeed(m_screwSpeed));
         // The lag of a shifted copy: about half a period, plus what the
         // formant asks.
         d[pub::Lag] = m_pitch.period() > 0 ? m_pitch.period() * 0.5f / m_rate * 1000.0f : 3.0f;
@@ -1171,13 +1272,19 @@ private:
         m_talkSubLvl.setTime(0.05f, rate);
         m_talkAir[0].set(3500.0f, 0.7f, rate);
         m_talkAir[1].set(3500.0f, 0.7f, rate);
+        m_talkTop[0].set(14000.0f, 0.6f, rate);
+        m_talkTop[1].set(14000.0f, 0.6f, rate);
         m_talkSubLvl.reset(1);
+        m_talkGate.setTime(0.02f, rate);
+        m_talkGate.reset(1);
         m_throatMix.setTime(0.04f, rate);
         m_whOn.setTime(0.06f, rate);
         m_underLvl.setTime(0.03f, rate);
         m_throatTone.set(3400.0f, 0.6f, rate);
         m_sitar.init(rate);
-        m_sitar.setDecay(6.0f);
+        // A string rings three seconds: long enough to sing over, short
+        // enough that a rest between phrases is heard as one.
+        m_sitar.setDecay(3.0f);
         m_sitar.setJawari(0.45f, 0.015f);
         for (auto &c : m_chik) {
             c.init(rate);
@@ -1190,7 +1297,19 @@ private:
             f.setJawari(0.45f, 0.015f);
         }
         m_sitarBody.set(320.0f, 1.4f, rate);
-        m_sitarTop.set(11000.0f, 0.6f, rate);
+        // Under the talk box's ceiling: the voice's breath and the room
+        // are added to it on the way.
+        m_sitCeil.limit = 0.36f;
+        // A pluck's peak is its first few milliseconds: the ceiling lets go
+        // of it quickly, so the string's ring after it isn't held down.
+        m_sitCeil.setRelease(0.025f, rate);
+        // Butterworth fourth order: two stages, Q 0.54 and 1.31.
+        for (int side = 0; side < 2; ++side)
+            for (int st = 0; st < 2; ++st) {
+                m_sitHp[side][st].set(55.0f, st ? 1.3066f : 0.5412f, rate);
+                m_sitLp[side][st].set(9500.0f, st ? 1.3066f : 0.5412f, rate);
+                m_sitHp2[side].set(45.0f, 0.7071f, rate);
+            }
         m_strings.init(rate);
         m_sitarMix.setTime(0.05f, rate);
         m_bronze.init(rate);
@@ -1208,6 +1327,9 @@ private:
         for (auto &v : m_voices) {
             v.syn.setTime(0.012f, rate);
             v.syn.reset(0);
+            // The harmonies glide as the lead does: one hand.
+            v.synGlide.setTime(0.06f, rate);
+            v.synGlide.reset(57);
         }
     }
 
@@ -1257,6 +1379,7 @@ private:
             6.0f, 0.7f, 6.0f, 0.12f, 0.35f, 1};
         m_bronze.strike(foldMidi(midi + 12, 62, 88), velocity, bar);
         m_gamNote = midi;
+        m_gamStruckAge = 0;
         m_bronzeTail = int(m_rate * 8);
     }
     static float foldMidi(double m, double lo, double hi) {
@@ -1288,7 +1411,7 @@ private:
     }
 
     void renderStyles(const float *dry, float *leadL, float *leadR, int n, const Harmony &h, const Transport &tr,
-                      bool voiced, bool voicedNow, float sungMidi, float hz, float period) {
+                      bool voiced, bool voicedNow, float sungMidi, float hz) {
         // How long since the voice was last heard: the styles that keep a
         // cycle of their own (the sitar's drones, the gamelan's gongs) keep
         // it while you sing, and let it go a bar after you stop.
@@ -1307,14 +1430,40 @@ private:
         const bool steady = voicedNow && hz > 0 && m_pitch.clarity() > 0.75f && m_stEnv > 0.45f * m_stPeak;
 
         // The talk box: a funk synth up the tube, your mouth shaping it.
-        // The synth plays the note you sing, snapped hard to the key (or
-        // the chord, following), held through consonants and gaps as a
+        //
+        // SUNG: the synth plays the note you sing, snapped hard to the key
+        // (or the chord, following), held through consonants and gaps as a
         // player keeps the key down, slid into from the last note with a
         // Minimoog's glide, scooped up into from a semitone under after a
         // rest, its vibrato coming in on a held note. Each finger adds a
-        // synth note a harmony from it, every other one to each side.
+        // synth note a harmony from it, every other one to each side; every
+        // note is moved by the one hand (the same glide, scoop and vibrato),
+        // so a chord moves together instead of beating against itself.
+        //
+        // KEYS: as a talk box is played. The lanes are a keyboard: the
+        // latest finger held sets the synth's note, mono, with legato glide
+        // from the finger before it as a Minimoog's; the voice only shapes
+        // it, so there is no sound but the words' s and t without a key.
         if (m_preset == Talk || m_talkMix.y > 0.001f) {
-            if (steady) {
+            const Voice *key = nullptr;
+            if (m_talkKeys)
+                for (const auto &v : m_voices)
+                    if (v.on && (!key || v.order > key->order))
+                        key = &v;
+            if (m_talkKeys) {
+                if (key) {
+                    const float note = float(noteMidi(h, key->value, key->mode));
+                    // A key pressed after a lift starts on its note; one
+                    // pressed over another (legato) glides from it.
+                    if (!m_talkKeyHeld)
+                        m_talkGlide.reset(note);
+                    if (std::fabs(note - m_talkNote) > 0.01f)
+                        m_talkHeld = 0;
+                    m_talkNote = note;
+                }
+                m_talkKeyHeld = key != nullptr;
+                m_talkRest = false;
+            } else if (steady) {
                 const float note = float(snapMidi(h, sungMidi, m_follow));
                 if (std::fabs(note - m_talkNote) > 0.01f)
                     m_talkHeld = 0;
@@ -1324,7 +1473,8 @@ private:
                 m_talkRest = false;
             }
             m_talkQuiet = voicedNow ? 0 : m_talkQuiet + n;
-            m_talkRest |= m_talkQuiet > int(m_rate * 0.1f);
+            if (!m_talkKeys)
+                m_talkRest |= m_talkQuiet > int(m_rate * 0.1f);
             m_talkHeld += float(n) / m_rate;
             if (m_preset == Talk)
                 m_leadMidi = m_talkNote;
@@ -1332,13 +1482,20 @@ private:
             float fingerMidi[kMaxVoices];
             int sounding = 1;
             for (int k = 0; k < kMaxVoices; ++k) {
-                const Voice &v = m_voices[k];
+                Voice &v = m_voices[k];
                 fingerMidi[k] = float(noteMidi(h, v.value, v.mode, m_talkNote, m_follow));
-                sounding += v.on;
+                const bool plays = v.on && !m_talkKeys;
+                sounding += plays;
+                // A harmony that starts starts where the lead is in its
+                // glide, by its own interval: the hand comes down as one.
+                if (plays && v.syn.y < 0.0005f)
+                    v.synGlide.reset(fingerMidi[k] + (m_talkGlide.y - m_talkNote));
             }
             const float norm = 1.0f / std::sqrt(float(sounding));
+            const bool gateOpen = !m_talkKeys || key != nullptr;
             for (int i = 0; i < n; ++i) {
                 const float mix = m_talkMix.step(m_preset == Talk ? 1.0f : 0.0f);
+                const float gate = m_talkGate.step(gateOpen ? 1.0f : 0.0f);
                 const float lead = m_talkGlide.step(m_talkNote);
                 m_vibPhase += 5.3f / m_rate;
                 if (m_vibPhase >= 1)
@@ -1346,16 +1503,22 @@ private:
                 m_pwmPhase += 0.31f / m_rate;
                 if (m_pwmPhase >= 1)
                     m_pwmPhase -= 1;
+                const float vib = depth * std::sin(kTwoPi * m_vibPhase);
                 const float width = 0.5f + 0.22f * std::sin(kTwoPi * m_pwmPhase);
                 const float sub = m_talkSubLvl.step(m_talkSub ? 1.0f : 0.0f);
-                const float c = talkOsc(m_talkPh, lead + depth * std::sin(kTwoPi * m_vibPhase), width, sub);
+                m_talkNow = lead + vib;
+                const float c = talkOsc(m_talkPh, m_talkNow, width, sub) * gate;
                 float cl = c, cr = c;
                 int side = 0;
                 for (int k = 0; k < kMaxVoices; ++k) {
                     Voice &v = m_voices[k];
-                    const float g = v.syn.step(v.on && m_preset == Talk ? clampf(v.gain, 0, 1.2f) : 0.0f);
+                    const float g = v.syn.step(v.on && !m_talkKeys && m_preset == Talk ? clampf(v.gain, 0, 1.2f) : 0.0f);
+                    const float fm = v.synGlide.step(fingerMidi[k]);
                     if (g > 0.0005f) {
-                        const float o = talkOsc(v.synPh, fingerMidi[k], width, sub) * g;
+                        // The lead's vibrato on every note, in step; and no
+                        // sub under the harmonies (one bass under a chord,
+                        // not three a few hertz apart).
+                        const float o = talkOsc(v.synPh, fm + vib, width, 0.0f) * g;
                         cl += o * (side ? 0.35f : 0.95f);
                         cr += o * (side ? 0.95f : 0.35f);
                         side ^= 1;
@@ -1369,40 +1532,64 @@ private:
                 const float y = 0.5f * (yl + yr);
                 m_talkIn += (dry[i] * dry[i] - m_talkIn) * 0.0005f;
                 m_talkOut += (y * y - m_talkOut) * 0.0005f;
-                const float match = clampf(std::sqrt((m_talkIn + 1e-9f) / (m_talkOut + 1e-9f)), 0.05f, 30.0f);
-                m_talkGain += (match - m_talkGain) * 0.0005f;
+                // (Levelled only while it sounds: KEYS with no key held
+                // would otherwise wind the gain up to the top.)
+                if (gate > 0.5f) {
+                    const float match = clampf(std::sqrt((m_talkIn + 1e-9f) / (m_talkOut + 1e-9f)), 0.05f, 30.0f);
+                    m_talkGain += (match - m_talkGain) * 0.0005f;
+                }
                 const float sib = m_talkSib.step(dry[i]).high * 0.45f;
-                // Its resonances peak higher than a voice for the same
-                // loudness: rounded off softly.
-                // The horn's air: what the synth has over 3.5 kHz, lifted.
-                const float ol = fastTanh(yl * m_talkGain), orr = fastTanh(yr * m_talkGain);
-                leadL[i] += (ol + 0.8f * m_talkAir[0].step(ol).high + sib) * mix;
-                leadR[i] += (orr + 0.8f * m_talkAir[1].step(orr).high + sib) * mix;
+                // The horn's air (what the synth has over 3.5 kHz, lifted),
+                // then the ceiling, last: a clipper before the lift, or a
+                // tanh after it, made edges whose peaks fell between the
+                // samples, two dB over what the samples said. Pushed into it
+                // a little, to stay as loud as the voice; and nothing over
+                // 14 kHz after it (a talk box's horn has none up there).
+                float ol = yl * m_talkGain * 1.25f, orr = yr * m_talkGain * 1.25f;
+                ol += 0.8f * m_talkAir[0].step(ol).high + sib;
+                orr += 0.8f * m_talkAir[1].step(orr).high + sib;
+                m_talkCeil.step(ol, orr);
+                leadL[i] += m_talkTop[0].step(ol).low * mix;
+                leadR[i] += m_talkTop[1].step(orr).low * mix;
             }
+            m_talkLevel = m_talkGate.y;
         } else {
             m_talkNote = voiced ? float(snapMidi(h, sungMidi, m_follow)) : m_talkNote;
             m_talkGlide.reset(m_talkNote);
+            m_talkNow = m_talkNote;
+            m_talkKeyHeld = false;
         }
 
-        // Throat singing (khoomei, sygyt): the voice is the drone; under it
-        // a growl an octave down (kargyraa: the false folds beating at half
-        // the voice's period), and over it a whistle on one of the drone's
-        // own harmonics, the melody made by moving from one harmonic to
-        // the next. Alone, the whistle walks the harmonics that fall in
-        // the key, a step a beat; a finger picks the harmonic nearest its
-        // note instead (the highest finger, if several).
+        // Throat singing (khoomei, sygyt, kargyraa): the voice is the drone;
+        // in it, the growl of kargyraa, and over it a whistle on one of the
+        // drone's own harmonics, the melody made by moving from one
+        // harmonic to the next. Alone, the whistle sings a two-bar figure
+        // on the harmonics that fall in the key, each bar starting on the
+        // key's root held for two beats; a finger picks the harmonic
+        // nearest its note instead (the highest finger, if several).
         //
-        // The whistle is the singer's own harmonic, as a throat singer's
-        // is: two narrow resonances on it in a row, lifted to stand over
-        // the drone, and the drone's harmonics either side of it (two
-        // under, two over) notched out deep, so there is a gap round the
-        // whistle as there is in sygyt. A sine on the same pitch, quiet,
-        // only steadies it. When the harmonic changes the resonance sweeps
-        // through the ones between, over a tenth of a second, as the
-        // tongue moves. And it listens only to a steady drone: when the
-        // voice starts to fall away, or its pitch gets unsure, the drone
-        // and the harmonic hold where they were and the whistle fades on
-        // its last note, so the end of a phrase has no chirp.
+        // The whistle is pinned, as sygyt's is: it sits on the k-th harmonic
+        // of the drone's slow pitch (followed through 150 ms), not of every
+        // waver of it, since k times a singer's vibrato is a third of a
+        // semitone's wobble at the sixteenth. Part of it is the singer's
+        // own harmonic, through two narrow resonances (the last as narrow
+        // as Q 40) and lifted to stand over the drone; more of it a sine
+        // locked to the same pitch at the same level, which makes it
+        // glassy and steady. The drone's harmonics either side (two under, two over)
+        // are notched out deep, so there is a gap round the whistle as in
+        // sygyt. When the harmonic changes the resonance sweeps through
+        // the ones between, over a tenth of a second, as the tongue moves.
+        // And it listens only to a steady drone: when the voice starts to
+        // fall away, or its pitch gets unsure, the drone and the harmonic
+        // hold where they were and the whistle fades on its last note, so
+        // the end of a phrase has no chirp.
+        //
+        // The growl is period doubling, as the false folds make it: every
+        // other glottal cycle is weaker than the one before (1 to 0.55, on
+        // a phase run at half the voice's own pitch, so locked to it), with
+        // a little jitter from cycle to cycle, the rattle. That puts a
+        // subharmonic under every harmonic with the voice's own vowels in
+        // it, where an octave-down copy would be a second, smaller voice.
         if (m_preset == Throat || m_throatMix.y > 0.001f) {
             if (steady) {
                 // The drone's pitch, kept from slipping an octave: a held
@@ -1415,7 +1602,15 @@ private:
                 m_droneHz = 0;
                 m_kNow = 0;
             }
-            const float drone = m_droneHz;
+            // The slow drone, in pitch: what the whistle stands on.
+            if (m_droneHz <= 0)
+                m_droneSlow = 0;
+            else if (m_droneSlow <= 0)
+                m_droneSlow = m_droneHz;
+            else
+                m_droneSlow *= std::exp2(std::log2(m_droneHz / m_droneSlow) *
+                                         (1.0f - std::exp(-float(n) / (0.15f * m_rate))));
+            const float drone = m_droneSlow;
             if (steady && drone > 0) {
                 int k = 0;
                 float best = -1;
@@ -1438,21 +1633,38 @@ private:
                     // wavering voice doesn't keep changing the scale.
                     const float home = midiToHz(snapMidi(h, midiOfHz(drone), false));
                     int scale[16];
-                    int count = 0;
+                    int count = 0, root = -1;
+                    const int rootPc = ((int(std::lround(h.midi(0, 0))) % 12) + 12) % 12;
                     for (int j = 3; j <= 32 && count < 16; ++j) {
                         const float f = float(j) * home;
                         if (f < 1000.0f || f > 3400.0f)
                             continue;
                         const float m = midiOfHz(f);
-                        if (std::fabs(float(snapMidi(h, m, false)) - m) < 0.3f)
+                        const float snapped = float(snapMidi(h, m, false));
+                        if (std::fabs(snapped - m) < 0.3f) {
+                            // The key's root, the lowest that is one: the
+                            // figure's home.
+                            if (root < 0 && ((int(std::lround(snapped)) % 12) + 12) % 12 == rootPc)
+                                root = count;
                             scale[count++] = j;
+                        }
                     }
                     if (count > 0) {
-                        // Up and down the scale, as a sygyt melody goes:
-                        // a step, a leap back, a turn.
-                        static const int walk[] = {1, 2, 3, 2, 1, 2, 4, 3, 2, 1, 0, 1};
-                        const int step = int(std::floor(tr.beatAt(0))) % 12;
-                        k = scale[std::clamp(walk[(step + 12) % 12], 0, count - 1)];
+                        if (root < 0)
+                            root = count / 3;
+                        // Two bars, in steps of the scale from the root:
+                        // the root held over each downbeat for two beats,
+                        // a rise in the first bar, a leap and a turn back
+                        // down in the second. A melody, not a loop of
+                        // steps: it comes home on every bar.
+                        static const int figure[8] = {0, 0, 1, 2, 0, 0, 3, 1};
+                        const int beat = int(std::floor(tr.beatAt(0)));
+                        const int step = figure[((beat % 8) + 8) % 8];
+                        // (Turned downwards where the scale runs out above.)
+                        int j = root + step;
+                        if (j > count - 1)
+                            j = root - step;
+                        k = scale[std::clamp(j, 0, count - 1)];
                     }
                 }
                 if (k > 0 && k != m_kTarget) {
@@ -1465,17 +1677,19 @@ private:
                     m_kSpeed = std::max(std::fabs(float(k) - m_kNow) / (0.1f * m_rate), 1.0f / (0.06f * m_rate));
                 }
             }
-            float under[kBlock] = {};
-            const bool growl = voiced || m_underLvl.y > 0.001f;
-            if (growl)
-                m_under.process(m_src, n, period, 0.5f, 0.7f, 1.0f, under);
-            else
-                m_under.reset();
+            // The whistle stays on through a moment's doubt (the tracker
+            // unsure for an estimate or two in a vibrato): it is let go
+            // only after a tenth of a second of it, or it would stutter.
+            m_whHold = steady && drone > 0 ? int(m_rate * 0.1f) : std::max(0, m_whHold - n);
+            const bool whistling = m_whHold > 0 && drone > 0 && voiced;
+            // The rattle's jitter and the doubling's phase run at the voice's
+            // own pitch, as it is now.
+            const float cycleHz = m_droneHz > 0 ? m_droneHz : (hz > 0 ? hz : 110.0f);
             for (int i = 0; i < n; ++i) {
                 const float mix = m_throatMix.step(m_preset == Throat ? 1.0f : 0.0f);
                 const float a = std::fabs(dry[i]);
                 m_thEnv += (a - m_thEnv) * (a > m_thEnv ? 0.004f : 0.0006f);
-                const float on = m_whOn.step(steady && drone > 0 ? 1.0f : 0.0f);
+                const float on = m_whOn.step(whistling ? 1.0f : 0.0f);
                 if (m_kNow > 0 && m_kNow != float(m_kTarget) && m_kTarget > 0) {
                     const float d = float(m_kTarget) - m_kNow;
                     m_kNow = std::fabs(d) <= m_kSpeed ? float(m_kTarget) : m_kNow + (d > 0 ? m_kSpeed : -m_kSpeed);
@@ -1484,7 +1698,7 @@ private:
                 if ((m_thTick++ & 15) == 0 && drone > 0 && m_kNow > 0) {
                     const float f = m_kNow * drone;
                     m_whBp[0].set(f, 22.0f, m_rate);
-                    m_whBp[1].set(f, 22.0f, m_rate);
+                    m_whBp[1].set(f, 40.0f, m_rate);
                     static const float off[4] = {-2, -1, 1, 2};
                     for (int j = 0; j < 4; ++j) {
                         m_whNotch[j].set((m_kNow + off[j]) * drone, 8.0f, m_rate);
@@ -1494,7 +1708,7 @@ private:
                 const float b1 = m_whBp[0].step(dry[i]).band * (1.0f / 22.0f);
                 // The neighbours notched out of it too, or the lift would
                 // bring them up with it.
-                float own = m_whBp[1].step(b1).band * (1.0f / 22.0f);
+                float own = m_whBp[1].step(b1).band * (1.0f / 40.0f);
                 for (auto &f : m_whNotch2) {
                     const auto o = f.step(own);
                     own = o.low + o.high;
@@ -1502,18 +1716,41 @@ private:
                 const float ao = std::fabs(own);
                 m_bpEnv += (ao - m_bpEnv) * 0.002f;
                 // Lifted to stand at about the drone's own level: up to
-                // 34 dB, a harmonic the voice barely has rising to a whistle.
-                const float want = clampf(0.6f * m_thEnv / (m_bpEnv + 1e-5f), 0.0f, 50.0f);
+                // 40 dB, a harmonic the voice barely has rising to a whistle.
+                const float want = clampf(0.6f * m_thEnv / (m_bpEnv + 1e-5f), 0.0f, 100.0f);
                 m_whGain += (want - m_whGain) * 0.0008f;
                 m_whPhase += (m_kNow * drone) / m_rate;
                 m_whPhase -= std::floor(m_whPhase);
-                const float sine = std::sin(kTwoPi * m_whPhase) * m_thEnv * 0.12f;
-                const float whistle = (own * m_whGain + sine) * on;
-                const float u = under[i] * m_underLvl.step(voiced ? 0.42f : 0.0f);
-                // The drone and its growl, pressed: the top taken off, and
-                // with the whistle the gap cut round it (the growl's own
-                // harmonics too, or they would fill it).
-                const float low = m_throatTone.step(dry[i]).low * 0.85f + u;
+                // The sine as loud as the lifted harmonic (its mean level
+                // is 2/π of its peak), followed slowly (100 ms): the
+                // harmonic itself swells and dips as the voice's vibrato
+                // carries it across so narrow a resonance, and the sine
+                // must not. Then mostly the sine: glassy, steady, with a
+                // little of the voice's own harmonic in it for its breath
+                // (only a little: the harmonic, wavering with the voice,
+                // beats against the pinned sine, and as much of each would
+                // dent the whistle at every turn of the vibrato).
+                m_whLevel += (m_bpEnv * m_whGain * 1.5708f - m_whLevel) * 0.0002f;
+                const float sine = std::sin(kTwoPi * m_whPhase) * m_whLevel;
+                const float whistle = (0.18f * own * m_whGain + 0.85f * sine) * on;
+                // Kargyraa: the strong cycle and the weak, by a phase at half
+                // the voice's pitch (eased, square-ish, so the change falls
+                // between pulses rather than on one), the weak one's depth
+                // jittered a little each pair of cycles.
+                m_kgPhase += 0.5f * cycleHz / m_rate;
+                if (m_kgPhase >= 1) {
+                    m_kgPhase -= 1;
+                    m_kgJitter = 0.08f * m_rng.bipolar();
+                }
+                m_kgJit += (m_kgJitter - m_kgJit) * 0.01f;
+                const float sq = fastTanh(2.5f * std::cos(kTwoPi * m_kgPhase)) * (1.0f / 0.98661f); // tanh(2.5)
+                const float depth = m_underLvl.step(voiced ? 1.0f : 0.0f);
+                const float weak = 0.55f + m_kgJit;
+                // (1 on the strong cycle, `weak` on the other.)
+                const float doubled = 1.0f + depth * (1.0f - weak) * 0.5f * (sq - 1.0f);
+                // The drone, pressed: the top taken off, the doubling in it,
+                // and with the whistle the gap cut round it.
+                const float low = m_throatTone.step(dry[i]).low * 1.3f * doubled;
                 float gap = low;
                 for (auto &f : m_whNotch) {
                     const auto o = f.step(gap);
@@ -1527,6 +1764,7 @@ private:
             m_overtoneMidi = m_overtone > 0 ? midiOfHz(m_kNow * drone) : 0;
         } else {
             m_overtone = 0;
+            m_droneSlow = 0;
         }
 
         // The sitar, played by the voice. Each syllable plucks the main
@@ -1539,6 +1777,21 @@ private:
         // while you sing; thirteen tarafs on the key's notes ring on under
         // all of it for seconds. A finger plucks a second string a
         // harmony from the voice, which bends with it.
+        //
+        // What the strings follow is split in two. The slow pitch (under
+        // 3 Hz: a meend, a slide, a new note) is followed fully; what is
+        // faster (a singer's vibrato) only at 30% and never faster than
+        // 6 Hz, so a held note on a buzzing string is one string with a
+        // slow ornament (a gamak), not a tangle of FM.
+        //
+        // The whole instrument then goes through one bus: a high-pass at
+        // 55 Hz (24 dB an octave: half the lowest taraf, A2), since a
+        // bridge that touches on one side of the swing pushes the string
+        // off centre and that would be DC and a wandering rumble, and a
+        // low-pass at 9.5 kHz (24 dB an
+        // octave), since a switching bridge at the sample rate scatters
+        // into the top octave and folds back. Every string goes through
+        // both: the main one, the chikari, the fingers' and the tarafs.
         if (m_preset == Sitar || m_sitarMix.y > 0.001f || m_sitarTail > 0) {
             const bool on = m_preset == Sitar;
             for (int k = 0; k < Strings::kCount; ++k)
@@ -1546,14 +1799,34 @@ private:
             m_chik[0].setHz(midiToHz(h.midi(0, 2)));
             m_chik[1].setHz(midiToHz(h.midi(0, 3)));
             if (steady) {
-                m_sitarMidi = foldMidi(sungMidi, 50, 79);
+                // (The slow pitch through two poles at 2.2 Hz: a slide is
+                // followed within a sixth of a second, a vibrato's 5 or
+                // 6 Hz kept to an eighth of itself.)
+                const float aSlow = 1.0f - std::exp(-kTwoPi * 2.2f * float(n) / m_rate);
+                const float aVib = 1.0f - std::exp(-kTwoPi * 6.0f * float(n) / m_rate);
+                if (m_sitSlow <= 0) {
+                    m_sitSlow = m_sitSlow1 = sungMidi;
+                    m_sitVib = 0;
+                }
+                m_sitSlow1 += (sungMidi - m_sitSlow1) * aSlow;
+                m_sitSlow += (m_sitSlow1 - m_sitSlow) * aSlow;
+                m_sitVib += (sungMidi - m_sitSlow - m_sitVib) * aVib;
+            }
+            const float played0 = m_sitSlow + 0.3f * m_sitVib;
+            auto stringMidi = [&]() {
+                // Folded into the sitar's reach, by whole octaves of the
+                // slow pitch only (a vibrato never crosses the fold).
+                return played0 + (foldMidi(m_sitSlow, 50, 79) - m_sitSlow);
+            };
+            if (steady && m_sitSlow > 0) {
+                m_sitarMidi = stringMidi();
                 m_sitar.setHz(midiToHz(m_sitarMidi));
             }
-            const double snapped = voiced ? snapMidi(h, sungMidi, m_follow) : 0;
+            const double snapped = m_sitSlow > 0 ? snapMidi(h, m_sitSlow, m_follow) : 0;
             for (int k = 0; k < kSitFing; ++k) {
                 const Voice &v = m_voices[k];
                 if (v.on && steady) {
-                    const double m = noteMidi(h, v.value, v.mode, sungMidi, m_follow) + (sungMidi - snapped);
+                    const double m = noteMidi(h, v.value, v.mode, m_sitSlow, m_follow) + (played0 - snapped);
                     m_sitFing[k].setHz(midiToHz(foldMidi(m, 50, 84)));
                 }
                 // Plucked once its note is known (a finger may land before
@@ -1578,6 +1851,14 @@ private:
                     m_sitVel = std::max(m_sitVel, m_sitOn.fast);
                     if (steady || --m_sitPending == 0) {
                         m_sitPending = 0;
+                        // A new pluck is on the note sung now: the slow
+                        // pitch starts again from it.
+                        if (steady) {
+                            m_sitSlow = m_sitSlow1 = sungMidi;
+                            m_sitVib = 0;
+                            m_sitarMidi = stringMidi();
+                            m_sitar.setHz(midiToHz(m_sitarMidi));
+                        }
                         m_sitar.jump();
                         m_sitar.pluck(0.7f * clampf(m_sitVel / 0.22f, 0.35f, 1.0f));
                     }
@@ -1596,6 +1877,7 @@ private:
                 if (m_chikLate > 0 && --m_chikLate == 0)
                     m_chik[1].pluck(0.22f);
                 const float s = m_sitar.step(m_rng);
+                m_sitarLvl = std::max(m_sitarLvl, std::fabs(s));
                 float played = s + 0.6f * m_sitarBody.step(s).band;
                 for (int k = 0; k < kSitFing; ++k)
                     played += m_sitFing[k].step(m_rng);
@@ -1606,12 +1888,22 @@ private:
                 // holds: brought up to sit as loud as the voice it replaces,
                 // the mizrab's peaks rounded off so they don't stick out.
                 const float g = kSitarGain;
-                // (The jawari's scatter reaches the top of the band: a sitar
-                // has nothing up there worth the harshness.)
-                played = m_sitarTop.step(played).low;
                 const float pl = 0.75f * fastTanh(played * g * 1.35f), cl = (0.6f * c0 + 0.35f * c1) * 1.2f, cr = (0.35f * c0 + 0.6f * c1) * 1.2f;
-                leadL[i] += (pl + cl + tl * 0.3f) * (0.3f + 0.7f * mix);
-                leadR[i] += (pl + cr + trr * 0.3f) * (0.3f + 0.7f * mix);
+                const float w = (0.3f + 0.7f * mix) * kSitarLevel;
+                float l = (pl + cl + tl * 0.22f) * w, r = (pl + cr + trr * 0.22f) * w;
+                // The bus: nothing folded at the top, no DC or rumble, and
+                // then the mizrab's peaks held under the ceiling (after the
+                // high-pass, which overshoots on a lopsided pluck), and the
+                // rumble its gain makes on a lopsided wave taken off again.
+                for (int st = 0; st < 2; ++st) {
+                    l = m_sitHp[0][st].step(m_sitLp[0][st].step(l).low).high;
+                    r = m_sitHp[1][st].step(m_sitLp[1][st].step(r).low).high;
+                }
+                m_sitCeil.step(l, r);
+                l = m_sitHp2[0].step(l).high;
+                r = m_sitHp2[1].step(r).high;
+                leadL[i] += l;
+                leadR[i] += r;
             }
             m_sitarTail = on ? int(m_rate * 8) : std::max(0, m_sitarTail - n);
         }
@@ -1696,44 +1988,74 @@ private:
             if (on && note > 0)
                 m_leadMidi = note;
             m_bronzeTail = std::max(0, m_bronzeTail - n);
+            m_gamStruckAge += n;
+            const double cyc = std::fmod(tr.beatAt(0), 16.0);
+            m_gamCycle = float(cyc < 0 ? cyc + 16.0 : cyc);
         }
 
         // Screwed: real slowed tape. The voice is written onto a tape and
-        // played back off it at three quarters of the speed, a fourth down
-        // (pitch, throat and time all slowed together, as a record at the
-        // wrong speed is; a fourth, so that a voice in the key lands almost
-        // all in the key, six notes of seven), through a worn cassette's
-        // wow, flutter, dull top and hiss. The playhead drags further
-        // behind the live voice as you sing; at every bar line it is spun
-        // back (a backspin of what it was playing) and dropped on the live
-        // voice again, and a phrase after a rest starts on time. A finger
-        // held repeats the last of what was played, Screw's chop: a beat of
-        // it from the middle lanes, a half or a quarter further out, the
-        // second deck a few milliseconds behind it, doubling it.
+        // played back off it slower (a fourth down by default, or a fifth,
+        // or the classic 0.8: B), pitch, throat and time all slowed
+        // together, as a record at the wrong speed is, through a worn
+        // cassette's wow, flutter, dull top and hiss, with a second deck a
+        // few milliseconds behind doubling it. The playhead drags further
+        // behind the live voice as you sing, and that is the style:
+        // relentless slowness. It catches up only when it must: when you
+        // rest (the phrase after a rest starts on time), or when it has
+        // fallen two bars behind, and then with a short tape stop (the old
+        // head winds down as the new one comes in), not a spin.
+        //
+        // The fingers are Screw's hands on the decks. One held repeats the
+        // last of what was played, doubled: a beat of it from the middle
+        // lanes, a half or a quarter further out (the top lane). The
+        // bottom lane is the backspin: held, the tape is spun back through
+        // what it just played; let go, it drops onto you again.
         if (m_preset == Screwed || m_screwMix.y > 0.001f) {
             const bool on = m_preset == Screwed;
+            const float speed = screwSpeed(m_screwSpeed);
             const int64_t inMask = int64_t(m_scIn.size()) - 1, outMask = int64_t(m_scOut.size()) - 1;
             if (m_screwMix.y < 0.001f) {
                 m_scPos = double(m_scW) - 2;
                 m_spinLvl = 0;
                 m_scFade = 1;
             }
-            // The fingers: a new one starts a repeat, its length by lane.
+            // The fingers: a new one starts a repeat, its length by lane, or
+            // (the bottom lane) a backspin.
             const double spb = tr.samplesPerBeat();
-            bool anyHeld = false;
+            bool anyHeld = false, spinHeld = false;
             for (int k = 0; k < kMaxVoices; ++k) {
                 const Voice &v = m_voices[k];
+                const bool spinLane = v.value <= -7;
                 if (on && v.on && !m_scFingOn[k]) {
-                    const int a = std::abs(v.value);
-                    const double beats = a <= 2 ? 1.0 : a <= 5 ? 0.5 : 0.25;
-                    m_repLen = std::clamp(int(beats * spb), 512, int(m_scOut.size() / 2));
-                    m_repStart = m_scOutW - m_repLen;
-                    m_repT = 0;
+                    if (spinLane) {
+                        m_spinPos = m_scPos;
+                        m_spinRate = m_scSpeed;
+                        m_spinLvl = 1;
+                        m_spinBack = true;
+                    } else {
+                        const int a = std::abs(v.value);
+                        const double beats = a <= 2 ? 1.0 : a <= 5 ? 0.5 : 0.25;
+                        m_repLen = std::clamp(int(beats * spb), 512, int(m_scOut.size() / 2));
+                        m_repStart = m_scOutW - m_repLen;
+                        m_repT = 0;
+                    }
                 }
                 m_scFingOn[k] = v.on;
-                anyHeld |= on && v.on;
+                anyHeld |= on && v.on && !spinLane;
+                spinHeld |= on && v.on && spinLane;
             }
+            // Let go of the backspin: the tape drops onto the live voice.
+            if (m_spinHeld && !spinHeld) {
+                m_scPos = double(m_scW) - 2;
+                m_scFade = 0;
+                m_spinBack = false;
+            }
+            m_spinHeld = spinHeld;
             m_repOn = anyHeld;
+            // The most the tape may fall behind: two bars, or what its
+            // reel holds.
+            const double limit = std::min(8.0 * spb, double(m_scIn.size()) - 0.1 * m_rate);
+            m_scLimit = float(limit / m_rate);
             auto readIn = [&](double pos) {
                 const double f = std::floor(pos);
                 const int64_t k = int64_t(f);
@@ -1750,21 +2072,22 @@ private:
                 const float a = std::fabs(dry[i]);
                 m_scLive += (a - m_scLive) * (a > m_scLive ? 0.01f : 0.0005f);
                 const double lag = double(m_scW) - m_scPos;
-                const double bar = std::floor(tr.beatAt(i) / 4.0);
-                bool chop = false, spin = false;
-                if (bar != m_scBar) {
-                    m_scBar = bar;
-                    chop = spin = lag > 0.1 * m_rate;
+                // Caught up when you start again after a rest (the tape has
+                // nothing left to play, and you are singing), or, two bars
+                // behind, with a tape stop.
+                bool jump = false, stop = false;
+                if (!m_spinHeld) {
+                    if (lag > limit)
+                        jump = stop = true;
+                    else if (m_scHeadEnv < 0.004f && m_scLive > 0.03f && lag > 0.04 * m_rate)
+                        jump = true;
                 }
-                if (lag > 3.0 * m_rate)
-                    chop = spin = true;
-                if (!chop && m_scHeadEnv < 0.004f && m_scLive > 0.03f && lag > 0.04 * m_rate)
-                    chop = true;
-                if (chop) {
-                    if (spin && m_scHeadEnv > 0.002f) {
+                if (jump) {
+                    if (stop && m_scHeadEnv > 0.002f) {
                         m_spinPos = m_scPos;
                         m_spinRate = m_scSpeed;
                         m_spinLvl = 1;
+                        m_spinBack = false;
                     }
                     m_scPos = double(m_scW) - 2;
                     m_scFade = 0;
@@ -1774,20 +2097,36 @@ private:
                 m_wowPhase -= std::floor(m_wowPhase);
                 m_flutPhase += 6.5f / m_rate;
                 m_flutPhase -= std::floor(m_flutPhase);
-                m_scSpeed = kScrewSpeed * (1.0f + 0.0045f * std::sin(kTwoPi * m_wowPhase) +
-                                           0.0012f * std::sin(kTwoPi * m_flutPhase));
-                m_scFade = std::min(1.0f, m_scFade + 1.0f / (0.012f * m_rate));
+                m_scSpeed = speed * (1.0f + 0.0045f * std::sin(kTwoPi * m_wowPhase) +
+                                     0.0012f * std::sin(kTwoPi * m_flutPhase));
+                // (Under a held backspin the head is silent and stands
+                // still: there is only the spin.)
+                m_scFade = m_spinHeld ? 0.0f : std::min(1.0f, m_scFade + 1.0f / (0.012f * m_rate));
                 const float main = readIn(m_scPos) * m_scFade;
                 // The second deck: the same tape, 17 ms behind and
                 // drifting against it, quiet: two copies of one record.
-                const float deck = readIn(m_scPos - (0.017 + 0.003 * std::sin(kTwoPi * m_wowPhase * 1.3f)) * m_rate);
-                m_scPos += m_scSpeed;
+                const float deck = readIn(m_scPos - (0.017 + 0.003 * std::sin(kTwoPi * m_wowPhase * 1.3f)) * m_rate) *
+                                   m_scFade;
+                if (!m_spinHeld)
+                    m_scPos += m_scSpeed;
                 float spun = 0;
                 if (m_spinLvl > 0) {
                     spun = readIn(m_spinPos) * m_spinLvl * m_spinLvl;
                     m_spinPos += m_spinRate;
-                    m_spinRate = std::max(-3.0f, m_spinRate - 3.75f / (0.08f * m_rate));
-                    m_spinLvl -= 1.0f / (0.25f * m_rate);
+                    if (m_spinBack) {
+                        // A hand on the record: dragged back to three times
+                        // its speed within 80 ms, fading over a second.
+                        m_spinRate = std::max(-3.0f, m_spinRate - 3.75f / (0.08f * m_rate));
+                        m_spinLvl -= 1.0f / (1.0f * m_rate);
+                    } else {
+                        // The tape stop: the old head winds down to nothing
+                        // over a fifth of a second.
+                        m_spinRate = std::max(0.0f, m_spinRate - speed / (0.2f * m_rate));
+                        m_spinLvl = m_spinRate > 0 ? std::min(1.0f, m_spinRate / speed * 1.5f) : 0.0f;
+                    }
+                    // (Never back past what the reel still holds.)
+                    if (double(m_scW) - m_spinPos > double(m_scIn.size()) - 4096)
+                        m_spinLvl = 0;
                 }
                 const float am = std::fabs(main);
                 m_scHeadEnv += (am - m_scHeadEnv) * (am > m_scHeadEnv ? 0.01f : 0.0005f);
@@ -1814,9 +2153,10 @@ private:
                 leadL[i] += l * mix;
                 leadR[i] += r * mix;
             }
+            m_scLag = float((double(m_scW) - m_scPos) / m_rate);
             if (on) {
                 const float p = m_scPitch[size_t((int64_t(m_scPos) >> 8) & 1023)];
-                m_leadMidi = p > 0 ? p - 5.0f : -1.0f;
+                m_leadMidi = p > 0 ? p + 12.0f * std::log2(speed) : -1.0f;
             }
         }
     }
@@ -1969,6 +2309,17 @@ private:
                 if (data) {
                     a = data[2 * k];
                     b = data[2 * k + 1];
+                } else if (take.rate < 1.0f) {
+                    // A slowed take not made yet: the singing, slowed, from
+                    // the ring (without the tape's colour, for the moment
+                    // until the page has made it).
+                    const double src = double(k) * take.rate;
+                    const int64_t s = take.start + int64_t(src);
+                    if (src < take.source && s + 1 < written && written - s < kRing) {
+                        const float u = float(src - std::floor(src));
+                        const float x0 = tape.dry[size_t(s & kRingMask)], x1 = tape.dry[size_t((s + 1) & kRingMask)];
+                        a = b = x0 + (x1 - x0) * u;
+                    }
                 } else {
                     // Not copied out yet: straight from the ring, which
                     // still holds it.
@@ -1993,6 +2344,7 @@ private:
 
     // The input.
     Svf m_hp;
+    DcBlock m_outDcL, m_outDcR; // and the output's
     float m_micGain = 1, m_gateEnv = 0, m_noise = 0.001f, m_gate = 0, m_compEnv = 0;
     // The lift's ear (the voice's level while the gate is open) and gain.
     static constexpr float kLiftTarget = 0.1f, kLiftMax = 31.6f; // −20 dBFS, +30 dB
@@ -2012,21 +2364,26 @@ private:
     float m_howlSign = 0, m_howlLevel = 0, m_howlFreq = 0;
     int m_howlCross = 0, m_howlN = 0, m_howlHi = 0;
     int64_t m_lastVoiced = -1000000;
-    float m_heldHz = 0, m_heldPeriod = 0;
+    float m_heldHz = 0, m_heldPeriod = 0, m_octRef = -1;
+    int m_octAway = 0;
     int m_unvoiced = 1 << 30;
     float m_vocIn = 0, m_vocOut = 0, m_vocGain = 0.5f;
 
     // The five styles from further afield.
     TalkBox m_talk;
     Smooth m_talkMix, m_talkGlide, m_talkSubLvl;
-    Svf m_talkSib, m_tubeHp[2], m_tubePeak[2], m_talkAir[2];
+    Svf m_talkSib, m_tubeHp[2], m_tubePeak[2], m_talkAir[2], m_talkTop[2];
     float m_talkPh[2] = {}, m_talkNote = 57, m_talkHeld = 0, m_vibPhase = 0, m_pwmPhase = 0;
     float m_talkIn = 0, m_talkOut = 0, m_talkGain = 1;
+    float m_talkNow = 57, m_talkLevel = 0;
+    Ceiling m_talkCeil;
+    Smooth m_talkGate;
     int m_talkQuiet = 0;
-    bool m_talkSub = true, m_talkRest = true;
+    bool m_talkSub = true, m_talkRest = true, m_talkKeys = false, m_talkKeyHeld = false;
     int m_sungAgo = 1 << 30;
-    Shifter m_under;
     Smooth m_throatMix, m_whOn, m_underLvl;
+    int m_whHold = 0;
+    float m_droneSlow = 0, m_whLevel = 0, m_kgPhase = 0, m_kgJitter = 0, m_kgJit = 0;
     Svf m_whBp[2], m_whNotch[4], m_whNotch2[4], m_throatTone;
     float m_stEnv = 0, m_stPeak = 0;
     float m_whPhase = 0, m_thEnv = 0, m_droneHz = 0, m_bpEnv = 0, m_whGain = 0;
@@ -2035,10 +2392,12 @@ private:
     uint32_t m_thTick = 0;
     static constexpr int kSitFing = 3;
     // Measured: the sitar as loud as the natural voice sung in its register.
-    static constexpr float kSitarGain = 2.2f;
+    static constexpr float kSitarGain = 2.2f, kSitarLevel = 3.2f;
     JawariString m_sitar, m_chik[2], m_sitFing[kSitFing];
     bool m_sitFingOn[kSitFing] = {};
-    Svf m_sitarBody, m_sitarTop;
+    Svf m_sitarBody, m_sitHp[2][2], m_sitLp[2][2], m_sitHp2[2];
+    float m_sitSlow = -1, m_sitSlow1 = -1, m_sitVib = 0, m_sitarLvl = 0;
+    Ceiling m_sitCeil;
     Strings m_strings;
     Smooth m_sitarMix;
     Onsets m_sitOn;
@@ -2051,17 +2410,20 @@ private:
     int m_gamTuning = Pelog;
     // Measured, as the sitar's: the bronze as loud as the voice it plays.
     static constexpr float kGamelanGain = 0.6f;
-    float m_gamVel = 0, m_gamNote = -1;
+    float m_gamVel = 0, m_gamNote = -1, m_gamSlow = -1, m_gamCycle = 0;
+    int m_gamStruckAge = 1 << 30;
     int m_gamPending = 0, m_gamStable = 0, m_bronzeTail = 0;
     double m_gamBeat = -1, m_kotStep = -1;
-    static constexpr float kScrewSpeed = 0.74915f; // 2^(−5/12): a fourth down
     Smooth m_screwMix, m_repLvl;
+    int m_screwSpeed = ScrewFourth;
+    float m_scLag = 0, m_scLimit = 1;
+    bool m_spinHeld = false, m_spinBack = false;
     Svf m_scLp, m_scLp2, m_scHiss;
     std::vector<float> m_scIn, m_scOut;
     float m_scPitch[1024] = {};
     int64_t m_scW = 0, m_scOutW = 0, m_repStart = 0;
-    double m_scPos = 0, m_spinPos = 0, m_scBar = -1;
-    float m_scSpeed = kScrewSpeed, m_spinRate = 0, m_spinLvl = 0, m_scFade = 1, m_scLive = 0, m_scHeadEnv = 0;
+    double m_scPos = 0, m_spinPos = 0;
+    float m_scSpeed = 0.75f, m_spinRate = 0, m_spinLvl = 0, m_scFade = 1, m_scLive = 0, m_scHeadEnv = 0;
     float m_wowPhase = 0, m_flutPhase = 0;
     int m_repLen = 4800, m_repT = 0;
     bool m_repOn = false;
@@ -2080,11 +2442,14 @@ private:
         float gain = 0, formant = 0.5f, detune = 0, pan = 0.5f, midi = 0;
         bool fresh = false; // its first block: the ratio starts where it should
         Smooth level, ratio;
-        Smooth syn;           // the talk box: its synth note's level
+        Smooth syn;           // the talk box: its synth note's level,
+        Smooth synGlide;      // and its pitch, gliding as the lead's does
         float synPh[2] = {};
+        uint32_t order = 0;   // when it came down: the talk box's keys play the latest
         Shifter shifter;
     };
     Voice m_voices[kMaxVoices];
+    uint32_t m_voiceOrder = 0;
     int m_activeVoices = 0;
     struct ChoirVoice {
         Smooth level, ratio;
@@ -2226,6 +2591,8 @@ public:
             m_lastTrail = t;
             m_trail[m_trailW++ % kTrail] = {t, hz > 0 ? midiOfHz(hz) : -1.0f, v.data[pub::InRms]};
             m_ovTrail[m_ovW++ % kTrail] = {t, v.data[pub::Overtone], 0};
+            m_tkTrail[m_tkW++ % kTrail] = {t, v.data[pub::TalkGate] > 0.05f ? v.data[pub::TalkMidi] : -1.0f,
+                                           v.data[pub::TalkGate]};
         }
         // The keys sit where the voice is: an octave around what has been
         // sung lately, moved only while no finger is on them.
@@ -2395,7 +2762,7 @@ public:
             return true;
         case Qt::Key_Delete: letGo(ctx); return true;
         case Qt::Key_M: cycleMonitor(ctx); return true;
-        case Qt::Key_B: styleOption(ctx); return true;
+        case Qt::Key_B: styleOption(ctx, shift); return true;
         case Qt::Key_V: setDemo(!m_demo, ctx); return true;
         case Qt::Key_Z: autoLevel(ctx); return true;
         case Qt::Key_Comma: setMicGain(m_micDb - 3, ctx); return true;
@@ -2461,7 +2828,7 @@ public:
         case SpotLayer: space(ctx, true); return true;
         case SpotDemo: setDemo(!m_demo, ctx); return true;
         case SpotAuto: autoLevel(ctx); return true;
-        case SpotStyleOpt: styleOption(ctx); return true;
+        case SpotStyleOpt: styleOption(ctx, false); return true;
         default: return false;
         }
     }
@@ -2483,8 +2850,8 @@ public:
             "a finger in the middle\tyour voice again, a harmony of what you sing, in the key: the lanes are −8ve, "
             "−5th, −3rd, +3rd, +5th, +6th, +8ve, your own note on the line between the thirds (it follows your "
             "melody, so it never clashes)\n"
-            "in PRISM and VOCODER\tthe lanes are notes of the key instead, two octaves around your voice: your "
-            "voice (or the vocoder) sings exactly the notes you hold\n"
+            "in PRISM, VOCODER and the TALK BOX's KEYS\tthe lanes are notes of the key instead, two octaves around your voice: your "
+            "voice (or the vocoder, or the talk box's synth) sings exactly the notes you hold\n"
             "its height · pressure · twist\tthe throat (your own on the middle line, darker below, brighter above) · its level · a detune that widens it\n"
             "more fingers\ta harmony, a chord, a ten-voice choir of you\n"
             "the tape (the strip of waveform under the lanes)\tTOUCH A WORD and it plays again, over and over while "
@@ -2500,22 +2867,32 @@ public:
             "click the pad\tTAPE STOP: the voice winds down while you hold it\n"
             "Left / Right\tthe voice: natural, hard tune, prism (only the notes you hold), choir on the Chords "
             "page's chord, vocoder, robot, then five from further afield (the status line says what each does). "
-            "TALK BOX: a funk synth up a tube, your mouth shaping it into words: it plays the note you sing, "
-            "snapped to the key, slides between notes with a Minimoog's glide and scoops into a phrase; fingers "
-            "add synth harmonies, spread left and right. THROAT: Tuvan throat singing: your voice is the drone, a "
-            "growl an octave under it, and a whistle made of its own overtones walks the ones in the key a step a "
-            "beat (the page shows which overtone sings); a finger picks the overtone. SITAR: your voice plays a "
-            "sitar: each syllable plucks the string at your note, a slide you sing bends it, the bridge makes it "
-            "buzz, drone strings strike the beat and thirteen sympathetic strings ring on; a finger plucks a "
-            "second string a harmony away. GAMELAN: each syllable strikes a pair of bronze bars, beating, over "
-            "their tubes, in pelog (or slendro, or the song's key: B); gongs mark the bar, the half bar and every "
-            "fourth bar while you sing; a finger plays kotekan, two parts interlocking on the sixteenths round "
-            "your note (further up the lanes, higher). SCREWED: you on slowed tape, a fourth down and three "
-            "quarters the speed, falling behind as you sing and spun back onto you at every bar; a finger repeats "
-            "the last of it Screw-style, doubled (a beat from the middle lanes, a half or a quarter further out). "
-            "The row of styles under the pad scrolls with the lit one; click any to pick it\n"
-            "B\tthe style's own option, also the chip at the end of the row of styles: the GAMELAN's tuning "
-            "(pelog, slendro, the song's key), the TALK BOX's sub octave (on, off)\n"
+            "TALK BOX: a funk synth up a tube, your mouth shaping it into words. SUNG (B), it plays the note you "
+            "sing, snapped to the key, slides between notes with a Minimoog's glide and scoops into a phrase; "
+            "fingers add synth harmonies, spread left and right, moving with it as one hand. KEYS (B again), the "
+            "lanes are a keyboard in the key, as a talk box is played: the latest lane held is the note, mono, "
+            "gliding from the one before when you play legato; you only mouth the words (no key, no note). "
+            "Shift+B: its sub octave on or off. The page draws the synth's pitch sliding to its note. "
+            "THROAT: Tuvan throat singing: your voice is the drone, growling with kargyraa's period doubling "
+            "(every other cycle weaker), and a pinned whistle made of its own overtones sings a two-bar figure on "
+            "the ones in the key, home on the root at every bar (the page shows the ladder of overtones); a "
+            "finger picks the overtone. SITAR: your voice plays a sitar: each syllable plucks the string at your "
+            "note, a slide you sing bends it (a little of your vibrato with it), the bridge makes it buzz, drone "
+            "strings strike the beat and thirteen sympathetic strings ring on (the page lights the bridge and "
+            "each string as it rings); a finger plucks a second string a harmony away. GAMELAN: each syllable "
+            "strikes a pair of bronze bars, beating, over their tubes, in pelog (or slendro, or the song's key: "
+            "B), your voice drawn into that tuning under them; gongs mark the bar, the half bar and every fourth "
+            "bar while you sing (the page shows the gong's cycle and the beats to the next gong); a finger plays "
+            "kotekan, two parts interlocking on the sixteenths, each lane named by the three tones of the scale "
+            "it plays. SCREWED: you on slowed tape (a fourth down; B: a fifth, or 0.8), falling further behind "
+            "as you sing (the page shows how far), caught up when you rest or, two bars behind, with a tape "
+            "stop; a finger repeats the last of it Screw-style, doubled (a beat from the middle lanes, a half or "
+            "a quarter further up), and the lowest lane, held, spins it back; Space makes a loop of the phrase "
+            "slowed whole. The row of styles under the pad scrolls with the lit one; click any to pick it\n"
+            "B\tthe style's own option, also the chip at the end of the row of styles: the TALK BOX sung or "
+            "played from the lanes (KEYS), the GAMELAN's tuning (pelog, slendro, the song's key), the SCREWED "
+            "tape's speed (a fourth down, a fifth, 0.8)\n"
+            "Shift+B\tthe TALK BOX's sub octave (on, off)\n"
             "Shift+Left / Right (or [ ])\tthe stutter's rate: 1/8, 1/8T, 1/16, 1/16T, 1/32\n"
             "Up / Down\tthe keys an octave up or down\n"
             "- and +\tthe voice's own throat: darker (giant), brighter (elf)\n"
@@ -2523,7 +2900,7 @@ public:
             "the key left of 1 (§)\tfollow the Chords page: the keys are the chord's notes, hard tune snaps to "
             "them\n"
             "Delete\tlet go: latched notes, freeze, every strip\n"
-            "A S D F G H J (K L)\tthe harmony lanes (in PRISM and VOCODER, notes) from the keyboard, held\n"
+            "A S D F G H J (K L)\tthe harmony lanes (in PRISM, VOCODER and KEYS, notes) from the keyboard, held\n"
             "V\ta demo singer in place of the microphone, to learn the page and loop it with no mic\n"
             "Z (AUTO)\tsing for three seconds: the microphone's level sets itself\n"
             "Q · W · E · R · T\techo throw · reverb throw · freeze · stutter · tape stop, held\n"
@@ -2561,10 +2938,12 @@ public:
             s = m_preset >= Talk ? style : QStringLiteral("sing; fingers add voices and effects  ·  ") + style;
         else
             s += QStringLiteral("  ·  ") + style;
-        if (m_preset == Gamelan)
-            s += QStringLiteral(" (%1, B)").arg(QString::fromLatin1(gamTuningName(m_gamTuning)).toLower());
-        s += QStringLiteral("  ·  Space new loop, Shift+Space layer");
-        return s;
+        if (hasOption(m_preset))
+            s += QStringLiteral(" (%1, B)").arg(optionWords());
+        // Space's two ways first: what the style does can run off the end
+        // of the line (its name is lit under the pad anyway); how to loop
+        // must not.
+        return QStringLiteral("Space new loop, Shift+Space layer  ·  ") + s;
     }
 
     void startOver(ControlContext &ctx) override {
@@ -2593,6 +2972,8 @@ public:
         out[QStringLiteral("follow")] = m_follow;
         out[QStringLiteral("gamelanTuning")] = QString::fromLatin1(gamTuningName(m_gamTuning)).toLower();
         out[QStringLiteral("talkboxSub")] = m_talkSub;
+        out[QStringLiteral("talkboxKeys")] = m_talkKeys;
+        out[QStringLiteral("screwedSpeed")] = QLatin1String(screwSpeedKey(m_screwSpeed));
     }
     void load(const QJsonObject &in, ControlContext &ctx) override {
         m_preset = Natural;
@@ -2610,6 +2991,12 @@ public:
             if (tuning == QString::fromLatin1(gamTuningName(t)).toLower())
                 m_gamTuning = t;
         m_talkSub = in.value(QStringLiteral("talkboxSub")).toBool(true);
+        m_talkKeys = in.value(QStringLiteral("talkboxKeys")).toBool(false);
+        m_screwSpeed = ScrewFourth;
+        const QString speed = in.value(QStringLiteral("screwedSpeed")).toString();
+        for (int k = 0; k < ScrewSpeedCount; ++k)
+            if (speed == QLatin1String(screwSpeedKey(k)))
+                m_screwSpeed = k;
         // To the engine at once, with no notice for each.
         param(ctx, PPreset, m_preset);
         param(ctx, PStutter, m_stutter);
@@ -2857,7 +3244,29 @@ private:
         t.set(v.root, v.family, v.brightness, v.just);
         return t;
     }
-    bool harmonyLanes() const { return harmonyKeys(m_preset); }
+    // A lane's name where it isn't a harmony. The gamelan's: the three
+    // tones of its scale the kotekan interlocks on, numbered as Javanese
+    // musicians number them (pelog 1 to 7, slendro 1 2 3 5 6), from the
+    // last bar struck. The screwed tape's: what the hand does.
+    QString laneName(const Harmony &h, int value, const float *d) const {
+        if (m_preset == Screwed)
+            return value <= -7 ? QStringLiteral("SPIN")
+                   : std::abs(value) <= 2 ? QStringLiteral("1 BEAT")
+                   : std::abs(value) <= 5 ? QStringLiteral("1/2")
+                                          : QStringLiteral("1/4");
+        const double base = d[pub::GamStruck] > 0 ? double(d[pub::GamStruck]) : h.tuning.baseMidi() + 12;
+        const int deg = gamDegreeNear(h, m_gamTuning, base) + std::clamp(value, -7, 7);
+        const int n = m_gamTuning == Pelog ? 7 : m_gamTuning == Slendro ? 5 : std::max(1, h.tuning.degreesPerOctave());
+        static const int slendro[5] = {1, 2, 3, 5, 6};
+        QStringList out;
+        for (int t = 0; t < 3; ++t) {
+            const int k = ((deg + t) % n + n) % n;
+            out << QString::number(m_gamTuning == Slendro ? slendro[k] : k + 1);
+        }
+        return out.join(QStringLiteral("·"));
+    }
+    // (The talk box's KEYS make the lanes a keyboard, as PRISM's are.)
+    bool harmonyLanes() const { return harmonyKeys(m_preset) && !(m_preset == Talk && m_talkKeys); }
     int laneCount(const StudioView &v) const {
         if (harmonyLanes())
             return kIntervalCount;
@@ -3190,25 +3599,54 @@ private:
     }
     // B, or the chip beside the styles: the style's own option. The
     // gamelan's tuning (pelog, slendro, or the song's key, to play in tune
-    // with the other pages); the talk box's sub octave.
-    bool hasOption(int preset) const { return preset == Gamelan || preset == Talk; }
+    // with the other pages); the talk box played by the voice or from the
+    // lanes (and with Shift, its sub octave); the screwed tape's speed.
+    bool hasOption(int preset) const { return preset == Gamelan || preset == Talk || preset == Screwed; }
     QString optionLabel() const {
         if (m_preset == Gamelan)
             return QStringLiteral("%1  B").arg(QString::fromLatin1(gamTuningName(m_gamTuning)));
-        return m_talkSub ? QStringLiteral("SUB ON  B") : QStringLiteral("SUB OFF  B");
+        if (m_preset == Screwed)
+            return QStringLiteral("%1  B").arg(QString::fromUtf8(screwSpeedName(m_screwSpeed)));
+        // (The sub, on by default, is named only when it is off.)
+        return QStringLiteral("%1%2  B")
+            .arg(m_talkKeys ? QStringLiteral("KEYS") : QStringLiteral("SUNG"))
+            .arg(m_talkSub ? QString() : QStringLiteral(" −SUB"));
     }
-    void styleOption(ControlContext &ctx) {
+    // The option as the status line says it.
+    QString optionWords() const {
+        if (m_preset == Gamelan)
+            return QString::fromLatin1(gamTuningName(m_gamTuning)).toLower();
+        if (m_preset == Screwed)
+            return QString::fromUtf8(screwSpeedName(m_screwSpeed)).toLower();
+        return m_talkKeys ? QStringLiteral("keys: hold a lane") : QStringLiteral("sung");
+    }
+    void styleOption(ControlContext &ctx, bool shift) {
         if (m_preset == Gamelan) {
             m_gamTuning = (m_gamTuning + 1) % GamTuningCount;
             static const char *why[] = {"pelog, seven tones on the key's root", "slendro, five tones on the key's root",
                                         "the song's key, in tune with the other pages"};
             ctx.notice(QStringLiteral("Gamelan tuning: %1").arg(QString::fromLatin1(why[m_gamTuning])));
-        } else if (m_preset == Talk) {
+        } else if (m_preset == Talk && shift) {
             m_talkSub = !m_talkSub;
             ctx.notice(m_talkSub ? QStringLiteral("Talk box: a square an octave under the synth")
                                  : QStringLiteral("Talk box: no sub octave"));
+        } else if (m_preset == Talk) {
+            // The fingers held mean something else now: let them go.
+            for (Finger &h : m_fingers)
+                if (h.id >= 0 && h.zone == Keys)
+                    lift(h, ctx);
+            letGoLatched(ctx);
+            m_talkKeys = !m_talkKeys;
+            ctx.notice(m_talkKeys ? QStringLiteral("Talk box KEYS: the lanes play the synth, your mouth shapes it")
+                                  : QStringLiteral("Talk box SUNG: the synth plays the note you sing"));
+        } else if (m_preset == Screwed) {
+            m_screwSpeed = (m_screwSpeed + 1) % ScrewSpeedCount;
+            static const char *why[] = {"a fourth down, three quarters the speed", "a fifth down, two thirds the speed",
+                                        "0.8 of the speed, the classic pitched-down deck"};
+            ctx.notice(QStringLiteral("Screwed tape: %1").arg(QString::fromLatin1(why[m_screwSpeed])));
         } else {
-            ctx.notice(QStringLiteral("%1 has no option of its own (B changes the GAMELAN's tuning and the TALK BOX's sub)")
+            ctx.notice(QStringLiteral("%1 has no option of its own (B: the TALK BOX's keys, the GAMELAN's tuning, "
+                                      "the SCREWED tape's speed)")
                            .arg(QString::fromLatin1(presetName(m_preset))));
             return;
         }
@@ -3221,6 +3659,8 @@ private:
         c.i[0] = PStyleOpt;
         c.i[1] = m_gamTuning;
         c.i[2] = m_talkSub ? 1 : 0;
+        c.i[3] = m_talkKeys ? 1 : 0;
+        c.f[0] = float(m_screwSpeed);
         ctx.send(c);
     }
     void setStutter(int s, ControlContext &ctx) {
@@ -3423,9 +3863,31 @@ private:
             s0 = sampleAt(v, ctx.timeAt(b0));
             len = int64_t(std::llround((b1 - b0) * 60.0 / std::max(1.0, v.bpm) * m_tape->rate));
         }
+        // SCREWED: a new loop is the phrase slowed honestly, as live singing
+        // can't be: all of it, at the tape's speed, so it fills more bars
+        // than it was sung in (the fewest whole steps that hold it, the
+        // rest a breath of tape), ending where Space's loop would have.
+        float rate = 1;
+        int source = 0, sungBars = pk.bars;
+        if (m_preset == Screwed && into < 0 && !free) {
+            rate = screwSpeed(m_screwSpeed);
+            int bars = barSteps().back();
+            for (int b : barSteps())
+                if (double(b) * rate >= double(pk.bars) - 1e-9) {
+                    bars = b;
+                    break;
+                }
+            const double spbS = 60.0 / std::max(1.0, v.bpm) * m_tape->rate;
+            len = int64_t(std::llround(4.0 * bars * spbS));
+            source = int(std::min<int64_t>(int64_t(std::llround((b1 - b0) * spbS)), int64_t(double(len) * rate)));
+            b0 = b1 - 4.0 * bars;
+            sungBars = bars;
+        }
         take.data.store(nullptr, std::memory_order_release);
         take.start = s0;
         take.length = int(len);
+        take.rate = rate;
+        take.source = source;
         m_zeroBefore[handle] = into >= 0 ? sampleAt(v, ctx.timeAt(m_loopSince)) : INT64_MIN;
         m_pending.push_back(handle);
         copyPending();
@@ -3455,6 +3917,8 @@ private:
                        .arg(pk.phrases == 1 ? "" : "s");
         } else {
             what = pk.bars == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(pk.bars);
+            if (rate < 1)
+                what += QStringLiteral(" slowed to %1 (%2×, nothing lost)").arg(sungBars).arg(double(rate), 0, 'f', 2);
             if (std::fabs(pk.delta) > 1e-6)
                 what += QStringLiteral(", cut %1 beat %2 the bar")
                             .arg(std::fabs(pk.delta), 0, 'g', 3)
@@ -3483,6 +3947,8 @@ private:
             return;
         m_tape->takes[h].data.store(nullptr, std::memory_order_release);
         m_tape->takes[h].length = 0;
+        m_tape->takes[h].rate = 1;
+        m_tape->takes[h].source = 0;
         m_audio[h].clear();
         m_audio[h].shrink_to_fit();
         m_pending.erase(std::remove(m_pending.begin(), m_pending.end(), h), m_pending.end());
@@ -3498,7 +3964,8 @@ private:
         for (size_t i = 0; i < m_pending.size();) {
             const int h = m_pending[i];
             Tape::Take &take = m_tape->takes[h];
-            if (take.start + take.length > written) {
+            const bool slowed = take.rate < 1.0f;
+            if (take.start + (slowed ? take.source : take.length) > written) {
                 ++i;
                 continue;
             }
@@ -3506,6 +3973,12 @@ private:
             const int len = take.length;
             buf.assign(size_t(2 * len), 0.0f);
             const int fade = std::max(1, std::min(len / 4, int(0.005 * tape.rate)));
+            if (slowed) {
+                slowTake(take, buf, written);
+                take.data.store(buf.data(), std::memory_order_release);
+                m_pending.erase(m_pending.begin() + long(i));
+                continue;
+            }
             const int ramp = int(0.02 * tape.rate);
             const int64_t zero = m_zeroBefore[h];
             for (int k = 0; k < len; ++k) {
@@ -3524,6 +3997,55 @@ private:
             }
             take.data.store(buf.data(), std::memory_order_release);
             m_pending.erase(m_pending.begin() + long(i));
+        }
+    }
+
+    // A slowed take, made from the singing as the SCREWED tape plays it
+    // live: read at the tape's speed with its wow and flutter, the top
+    // dulled and the loud parts rounded, the second deck 17 ms behind,
+    // hiss; faded in and out at its cuts and where the singing ends.
+    void slowTake(const Tape::Take &take, std::vector<float> &buf, int64_t written) const {
+        const Tape &tape = *m_tape;
+        const float sr = tape.rate;
+        Svf lp, lp2, hissF;
+        lp.set(4600.0f, 0.6f, sr);
+        lp2.set(4600.0f, 0.6f, sr);
+        hissF.set(4800.0f, 0.5f, sr);
+        Rng rng{0x5C2E};
+        auto at = [&](double p) {
+            if (p < 0 || p >= take.source - 1)
+                return 0.0f;
+            const int64_t s = take.start + int64_t(p);
+            if (written - s >= kRing)
+                return 0.0f;
+            const float u = float(p - std::floor(p));
+            const float a = tape.dry[size_t(s & kRingMask)], b = tape.dry[size_t((s + 1) & kRingMask)];
+            return a + (b - a) * u;
+        };
+        const int len = take.length;
+        const int fade = std::max(1, std::min(len / 4, int(0.005 * sr)));
+        const double end = double(take.source) / take.rate; // where the singing runs out
+        double pos = 0;
+        float wow = 0, flut = 0;
+        for (int k = 0; k < len; ++k) {
+            wow += 0.45f / sr;
+            wow -= std::floor(wow);
+            flut += 6.5f / sr;
+            flut -= std::floor(flut);
+            const float main = at(pos);
+            const float deck = at(pos - (0.017 + 0.003 * std::sin(kTwoPi * wow * 1.3f)) * sr);
+            pos += take.rate * (1.0f + 0.0045f * std::sin(kTwoPi * wow) + 0.0012f * std::sin(kTwoPi * flut));
+            const float tone = fastTanh(lp.step(main).low * 1.3f) * (1.0f / 1.3f);
+            const float deckTone = lp2.step(deck).low;
+            const float hiss = hissF.step(rng.bipolar()).band * 0.006f;
+            float g = 1;
+            if (k < fade)
+                g = hann().at(0.5f * float(k) / float(fade));
+            else if (len - 1 - k < fade)
+                g = hann().at(0.5f * float(len - 1 - k) / float(fade));
+            const float tail = clampf(float((end - double(k)) / double(fade)), 0.0f, 1.0f);
+            buf[size_t(2 * k)] = ((tone + deckTone * 0.22f) * tail + hiss) * g;
+            buf[size_t(2 * k + 1)] = ((tone + deckTone * 0.3f) * tail + hiss) * g;
         }
     }
 
@@ -3548,9 +4070,12 @@ private:
     // `midi`), for the ladder the page draws.
     TrailPoint m_ovTrail[kTrail];
     int m_ovW = 0;
+    // The talk box's synth, its pitch as it went (glides and all).
+    TrailPoint m_tkTrail[kTrail];
+    int m_tkW = 0;
     // The styles' own options: the gamelan's tuning, the talk box's sub.
-    int m_gamTuning = Pelog;
-    bool m_talkSub = true;
+    int m_gamTuning = Pelog, m_screwSpeed = ScrewFourth;
+    bool m_talkSub = true, m_talkKeys = false;
     double m_loopSince = -1e18;
     uint32_t m_takesSeen = 0;
     int m_playingSeen = -1;
@@ -3755,6 +4280,9 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     const float sung = sungHz > 0 ? midiOfHz(sungHz) : -1.0f;
     const bool harmony = harmonyLanes();
     const int labelPx = int(std::clamp(H * 0.026, 9.0, 14.0));
+    // In two styles a lane isn't a harmony, and is named for what it plays.
+    const Harmony hl = harmonyOf(sv);
+    const bool ownLanes = m_preset == Gamelan || m_preset == Screwed;
     if (harmony) {
         for (int k = 0; k < lanes; ++k) {
             const float x0 = kLeft + laneW * float(k);
@@ -3763,9 +4291,15 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                 p.fillRect(r, c::alpha(col, 0.035f));
             p.setPen(QPen(c::alpha(col, 0.16f), 1));
             p.drawLine(pc.at(x0, kTapeTop), pc.at(x0, kTop));
-            c::text(p, pc.rect(x0, kTapeTop, x0 + laneW, kTapeTop + 0.05f), QString::fromUtf8(kIntervalNames[k]),
+            c::text(p, pc.rect(x0, kTapeTop, x0 + laneW, kTapeTop + 0.05f),
+                    ownLanes ? laneName(hl, kIntervals[k], d) : QString::fromUtf8(kIntervalNames[k]),
                     c::alpha(col, 0.75f), labelPx, true, Qt::AlignCenter);
         }
+        if (m_preset == Gamelan)
+            c::text(p, pc.rect(kLeft, kTapeTop + 0.05f, kRight, kTapeTop + 0.09f),
+                    QStringLiteral("KOTEKAN: THE THREE %1 TONES EACH LANE INTERLOCKS")
+                        .arg(QString::fromLatin1(gamTuningName(m_gamTuning))),
+                    c::alpha(col, 0.5f), labelPx - 2, true, Qt::AlignCenter);
         // Your own note sits between the thirds.
         const float ux = kLeft + laneW * 3.0f;
         p.setPen(QPen(c::alpha(col, 0.5f), 1, Qt::DashLine));
@@ -3851,6 +4385,187 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                 c::alpha(col, now > 0 ? 1.0f : 0.5f), 10, true, Qt::AlignRight);
     }
 
+    // The other four styles' pictures, in the same place as the ladder: what
+    // each one is doing that the ear alone may not tell a newcomer.
+    auto midiName = [](float midi) {
+        const int m = int(std::lround(midi));
+        return QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)) + QString::number(m / 12 - 1);
+    };
+    const QRectF styleBox = pc.rect(kRight - 0.22f, kTapeTop + 0.08f, kRight - 0.01f, kTop - 0.08f);
+    // The talk box: the synth's pitch over the last three seconds, the
+    // glides and scoops drawn as it slid, against the key's notes, with the
+    // note it is heading for lit.
+    if (m_preset == Talk) {
+        constexpr double kSpan = 3.0;
+        const QRectF box = styleBox;
+        p.fillRect(box, QColor(0, 0, 0, 120));
+        const float target = d[pub::TalkTarget], now = d[pub::TalkMidi];
+        const bool sounding = d[pub::TalkGate] > 0.05f;
+        const float mid = sounding ? target : 57.0f;
+        const float lo = mid - 7.5f, hi = mid + 7.5f;
+        auto yOf = [&](float m) { return box.bottom() - (m - lo) / (hi - lo) * box.height(); };
+        const Harmony hk = harmonyOf(sv);
+        for (int m = int(std::ceil(lo)); m <= int(std::floor(hi)); ++m) {
+            if (std::fabs(snapMidi(hk, m, false) - m) > 0.01)
+                continue;
+            const bool lit = sounding && std::lround(target) == m;
+            p.setPen(QPen(c::alpha(col, lit ? 0.7f : 0.12f), lit ? 2 : 1));
+            p.drawLine(QPointF(box.left() + 26, yOf(float(m))), QPointF(box.right() - 2, yOf(float(m))));
+            c::text(p, QRectF(box.left() + 2, yOf(float(m)) - 6, 24, 12), midiName(float(m)),
+                    c::alpha(col, lit ? 1.0f : 0.4f), 8, lit);
+        }
+        QPainterPath path;
+        bool started = false;
+        for (int k = 0; k < kTrail; ++k) {
+            const TrailPoint &tp = m_tkTrail[(m_tkW + k) % kTrail];
+            const double age = pc.time - tp.t;
+            if (age < 0 || age > kSpan || tp.midi <= 0 || tp.midi < lo - 3 || tp.midi > hi + 3) {
+                started = false;
+                continue;
+            }
+            const QPointF at(box.right() - 4 - age / kSpan * (box.width() - 30), yOf(clampf(tp.midi, lo, hi)));
+            if (!started)
+                path.moveTo(at);
+            else
+                path.lineTo(at);
+            started = true;
+        }
+        p.setPen(QPen(c::alpha(c::green(), 0.85f), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(path);
+        if (sounding) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(c::green());
+            p.drawEllipse(QPointF(box.right() - 4, yOf(clampf(now, lo, hi))), 4, 4);
+        }
+        const QString what = !sounding ? (m_talkKeys ? QStringLiteral("KEYS · HOLD A LANE") : QStringLiteral("SYNTH · SING"))
+                             : std::fabs(now - target) > 0.25f
+                                 ? QStringLiteral("GLIDE %1 → %2").arg(midiName(now), midiName(target))
+                                 : QStringLiteral("%1 %2").arg(m_talkKeys ? QStringLiteral("KEYS") : QStringLiteral("SYNTH"),
+                                                                midiName(target));
+        c::text(p, QRectF(box.left(), box.top() - 16, box.width(), 14), what, c::alpha(col, sounding ? 1.0f : 0.5f),
+                10, true, Qt::AlignRight);
+    }
+    // The sitar: the thirteen sympathetic strings, each lit as it rings (so
+    // the raga's notes the playing wakes can be seen), and the main string
+    // over the bridge, glowing as far as it buzzes on the jawari.
+    if (m_preset == Sitar) {
+        const QRectF box = styleBox;
+        p.fillRect(box, QColor(0, 0, 0, 120));
+        const Harmony hk = harmonyOf(sv);
+        const QRectF strings(box.left() + 6, box.top() + 6, box.width() - 12, box.height() * 0.68);
+        for (int k = 0; k < 13; ++k) {
+            const float lvl = clampf(d[pub::Taraf + k] * 12.0f, 0, 1);
+            const qreal x = strings.left() + strings.width() * (k + 0.5) / 13.0;
+            p.setPen(QPen(c::alpha(c::amber(), 0.15f + 0.85f * lvl), 1.0 + 2.5 * lvl));
+            p.drawLine(QPointF(x, strings.top()), QPointF(x, strings.bottom()));
+            if (k % 2 == 0 || lvl > 0.5f) {
+                const int m = int(std::lround(hk.midi(k, 1)));
+                c::text(p, QRectF(x - 9, strings.bottom() + 1, 18, 11),
+                        QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)), c::alpha(col, 0.35f + 0.65f * lvl),
+                        8, lvl > 0.5f, Qt::AlignCenter);
+            }
+        }
+        // The main string across the bottom, swinging by its level, and the
+        // bridge under its left end, lit by the buzz.
+        const float buzz = clampf(d[pub::SitarBuzz] / 0.45f, 0, 1), lvl = clampf(d[pub::SitarLevel] * 4.0f, 0, 1);
+        const qreal y = box.bottom() - box.height() * 0.12;
+        QPainterPath str;
+        for (int i = 0; i <= 40; ++i) {
+            const qreal u = i / 40.0;
+            const qreal x = box.left() + 8 + u * (box.width() - 16);
+            const qreal amp = 7.0 * lvl * std::sin(kPi * u) * std::sin(pc.time * 40.0 + u * 3.0);
+            if (i == 0)
+                str.moveTo(x, y + amp);
+            else
+                str.lineTo(x, y + amp);
+        }
+        p.setPen(QPen(c::alpha(col, 0.4f + 0.6f * lvl), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(str);
+        p.fillRect(QRectF(box.left() + 4, y - 3, 10, 6), c::alpha(c::amber(), 0.25f + 0.75f * buzz));
+        c::text(p, QRectF(box.left(), box.top() - 16, box.width(), 14),
+                buzz > 0.05f ? QStringLiteral("JAWARI %1% · TARAFS").arg(int(std::lround(buzz * 100)))
+                             : QStringLiteral("TARAFS · SING TO PLUCK"),
+                c::alpha(col, buzz > 0.05f ? 1.0f : 0.5f), 10, true, Qt::AlignRight);
+    }
+    // The gamelan: the gong's cycle of sixteen beats as a wheel, the gong
+    // ageng at the top, the kenong on the bars and the kempul on the half
+    // bars, the hand at the beat now, and how many beats until the gong.
+    if (m_preset == Gamelan) {
+        const QRectF box = styleBox;
+        p.fillRect(box, QColor(0, 0, 0, 120));
+        const qreal r = std::min(box.width(), box.height()) * 0.36;
+        const QPointF o(box.center().x(), box.center().y() + 4);
+        const float cyc = d[pub::GamCycle];
+        for (int b = 0; b < 16; ++b) {
+            const qreal a = kTwoPi * b / 16.0 - kPi / 2;
+            const QPointF at(o.x() + r * std::cos(a), o.y() + r * std::sin(a));
+            const bool gong = b == 0, kenong = b % 4 == 0, kempul = b % 4 == 2;
+            const bool lit = int(std::floor(cyc)) == b;
+            const qreal size = gong ? 9 : kenong ? 6 : kempul ? 4.5 : 2;
+            p.setPen(Qt::NoPen);
+            p.setBrush(lit ? QColor(Qt::white) : c::alpha(gong ? c::amber() : col, gong ? 0.8f : kenong || kempul ? 0.5f : 0.25f));
+            p.drawEllipse(at, size, size);
+            if (gong || kenong || kempul) {
+                const QPointF lab(o.x() + (r + 15) * std::cos(a), o.y() + (r + 15) * std::sin(a));
+                c::text(p, QRectF(lab.x() - 14, lab.y() - 6, 28, 12),
+                        gong ? QStringLiteral("GONG") : kenong ? QStringLiteral("N") : QStringLiteral("P"),
+                        c::alpha(col, 0.6f), 8, gong, Qt::AlignCenter);
+            }
+        }
+        const qreal a = kTwoPi * cyc / 16.0 - kPi / 2;
+        p.setPen(QPen(c::alpha(Qt::white, 0.8f), 2));
+        p.drawLine(o, QPointF(o.x() + r * 0.8 * std::cos(a), o.y() + r * 0.8 * std::sin(a)));
+        // The last bar struck, named by its degree, fading as it rings.
+        const float age = d[pub::GamStruckAge];
+        if (d[pub::GamStruck] > 0 && age < 2.0f) {
+            const QString deg = laneName(harmonyOf(sv), 0, d).section(QStringLiteral("·"), 0, 0);
+            c::text(p, QRectF(o.x() - 20, o.y() - 12, 40, 24), deg, c::alpha(c::amber(), 1.0f - age / 2.0f), 18,
+                    true, Qt::AlignCenter);
+        }
+        const int toGong = 16 - int(std::floor(cyc));
+        c::text(p, QRectF(box.left(), box.top() - 16, box.width(), 14),
+                toGong >= 16 ? QStringLiteral("GONG AGENG") : QStringLiteral("GONG IN %1 BEAT%2").arg(toGong).arg(toGong == 1 ? "" : "S"),
+                c::alpha(col, toGong >= 16 || toGong <= 2 ? 1.0f : 0.7f), 10, true, Qt::AlignRight);
+    }
+    // Screwed: the tape. The live voice at the right, the tape head behind
+    // it by how far it has fallen, the gap between them filling towards
+    // the mark where it will jump back; spinning back, it says so.
+    if (m_preset == Screwed) {
+        const QRectF box = styleBox;
+        p.fillRect(box, QColor(0, 0, 0, 120));
+        const float lag = d[pub::ScrewLag], limit = std::max(0.1f, d[pub::ScrewLimit]);
+        const bool spin = d[pub::ScrewSpin] > 0.5f;
+        const QRectF track(box.left() + 8, box.center().y() - 14, box.width() - 16, 28);
+        p.setPen(QPen(c::alpha(col, 0.3f), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(track);
+        const float u = clampf(lag / limit, 0, 1);
+        const qreal live = track.right(), head = track.right() - u * track.width();
+        p.fillRect(QRectF(head, track.top() + 1, live - head, track.height() - 2),
+                   c::alpha(u > 0.8f ? c::red() : c::violet(), 0.25f + 0.4f * u));
+        p.setPen(QPen(Qt::white, 2));
+        p.drawLine(QPointF(live, track.top() - 6), QPointF(live, track.bottom() + 6));
+        p.setPen(QPen(c::violet(), 3));
+        p.drawLine(QPointF(head, track.top() - 6), QPointF(head, track.bottom() + 6));
+        c::text(p, QRectF(live - 40, track.bottom() + 6, 40, 12), QStringLiteral("YOU"), c::alpha(col, 0.8f), 8, true,
+                Qt::AlignRight);
+        c::text(p, QRectF(head - 20, track.top() - 20, 40, 12), QStringLiteral("TAPE"), c::violet(), 8, true,
+                Qt::AlignCenter);
+        p.setPen(QPen(c::alpha(c::red(), 0.6f), 1, Qt::DashLine));
+        p.drawLine(QPointF(track.left(), track.top() - 4), QPointF(track.left(), track.bottom() + 4));
+        c::text(p, QRectF(track.left(), track.bottom() + 6, 70, 12), QStringLiteral("JUMP · 2 BARS"),
+                c::alpha(c::red(), 0.6f), 8, true, Qt::AlignLeft);
+        c::text(p, QRectF(box.left() + 6, box.bottom() - 18, box.width() - 12, 14),
+                QStringLiteral("%1 SEMITONES DOWN").arg(double(-d[pub::ScrewSemis]), 0, 'f', 1),
+                c::alpha(col, 0.5f), 9, true, Qt::AlignCenter);
+        c::text(p, QRectF(box.left(), box.top() - 16, box.width(), 14),
+                spin ? QStringLiteral("SPINNING BACK")
+                     : QStringLiteral("TAPE %1 s BEHIND").arg(double(lag), 0, 'f', 1),
+                spin ? c::amber() : c::alpha(col, lag > 0.05f ? 1.0f : 0.5f), 10, true, Qt::AlignRight);
+    }
+
     // The note sung: a trail rising up the keys, at its pitch across them.
     const Harmony hv = harmonyOf(sv);
     auto xOfMidi = [&](float midi) -> float {
@@ -3914,7 +4629,7 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     // note it would sing over yours right now; a held one lights, and
     // its note rises up the lane beside your own trail, named where it
     // changes, so a third above a tune reads as the tune it is.
-    if (harmony) {
+    if (harmony && !ownLanes) {
         auto noteName = [](double midi) {
             const int m = int(std::lround(midi));
             return QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12));
@@ -4019,9 +4734,10 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             }
             // In two styles a finger isn't a harmony: say what it does.
             if (m_preset == Gamelan)
-                label = QStringLiteral("KOTEKAN ") + label.section(QLatin1Char(' '), 0, 0);
+                label = QStringLiteral("KOTEKAN ") + laneName(hv, h.value, d);
             else if (m_preset == Screwed)
-                label = std::abs(h.value) <= 2   ? QStringLiteral("CHOP · A BEAT")
+                label = h.value <= -7            ? QStringLiteral("BACKSPIN")
+                        : std::abs(h.value) <= 2 ? QStringLiteral("CHOP · A BEAT")
                         : std::abs(h.value) <= 5 ? QStringLiteral("CHOP · 1/2")
                                                  : QStringLiteral("CHOP · 1/4");
         } else if (h.zone == Keys) {

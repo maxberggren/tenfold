@@ -1,5 +1,5 @@
 // Drums: a ten-finger beat machine. Sixteen synthesised drums in four rows
-// (the beat nearest the player, cymbals at the far edge), ten kits, and a
+// (the beat nearest the player, cymbals at the far edge), fifteen kits, and a
 // way of playing where every finger means something:
 //
 //   * a tap is a hit, as hard as it was pressed, coloured by where on the
@@ -490,7 +490,9 @@ public:
             "hold to roll, Shift for an accent, hold several together for a groove\n"
             "Up / Down\tthe loop longer or shorter, any time (as the Loop longer / shorter buttons: the loop Space "
             "last made here, in whole bars); with keys held rolling, their roll faster or slower\n"
-            "Left / Right\tthe kit: house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes\n"
+            "Left / Right\tthe kit: house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, "
+            "amapiano (log drum, wood, flute), tabla (its bols, tarang, tanpura, sitar), gamelan (saron, bonang, "
+            "gong, angklung), chiptune (a Game Boy's channels) and baile funk (atabaque, agogô, apito)\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the kits, swing, the loop shorter or longer, "
             "overdub, sounds back\n"
@@ -1791,14 +1793,19 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     c::beats(p, pc, col);
     // Below the pad, every one clickable: the clips, the swing, the loop's
     // length (↑ ↓), overdub and the drums' own sounds back on the left; the
-    // ten kits on the right, the dance floor's five over the five from beyond it.
+    // kits on the right in two rows, the first eight over the rest. A row
+    // with more kits than fit shows a window onto them that follows the
+    // kit chosen, its ends faded where there are more.
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
+    constexpr int kFirstRow = 8;
     for (int r = 0; r < 2; ++r) {
+        const int first = r ? kFirstRow : 0, last = r ? int(KitCount) : kFirstRow;
         QStringList kits;
-        for (int k = r * 5; k < r * 5 + 5 && k < KitCount; ++k)
+        for (int k = first; k < last; ++k)
             kits << QString::fromUtf8(kitName(k)).toUpper();
-        c::chips(p, pc, c::bandRow(pc, r, 0.57, 1), kits, m_kit - r * 5, &m_spots, SpotKit + r * 5);
+        const int lit = m_kit >= first && m_kit < last ? m_kit - first : -1;
+        c::chips(p, pc, c::bandRow(pc, r, 0.57, 1), kits, lit, &m_spots, SpotKit + first);
     }
     // Swing's − and + flank its gauge, which names it, so they fit in the
     // row with overdub and sounds back.

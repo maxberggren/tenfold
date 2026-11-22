@@ -336,7 +336,8 @@ private slots:
                 QVERIFY2(d.peak() > 0.01f, drums::padName(pad));
                 QVERIFY2(d.peak() < 0.6f, drums::padName(pad));
                 // Every voice ends by itself, the crash last.
-                QVERIFY2(e.voices() == 0, drums::padName(pad));
+                QVERIFY2(e.voices() == 0, qPrintable(QStringLiteral("%1 in %2").arg(drums::padName(pad, kit),
+                                                                                     drums::kitName(kit))));
             }
     }
 
@@ -348,7 +349,10 @@ private slots:
                 if (pad == drums::Kick || pad == drums::Sub)
                     continue;
                 const float other = strike(pad, kit, 1.0f, 1.0, ctx).peak();
-                QVERIFY2(other < kick, drums::padName(pad, kit));
+                QVERIFY2(other < kick, qPrintable(QStringLiteral("%1 in %2: %3 over the kick's %4")
+                                                      .arg(drums::padName(pad, kit), drums::kitName(kit))
+                                                      .arg(other)
+                                                      .arg(kick)));
             }
             for (int pad : {drums::Hat, drums::Shaker, drums::Ride, drums::Crash})
                 QVERIFY2(strike(pad, kit, 1.0f, 1.0, ctx).peak() < kick * 0.4f,
@@ -735,19 +739,20 @@ private slots:
         }
     }
 
-    // The mouse reaches what the keys do: a click on TECHNO or JUNGLE under
+    // The mouse reaches what the keys do: a click on TECHNO or BRUSHES under
     // the pad changes the kit, swing's + adds swing, a filled clip slot
     // launches.
     void theBandUnderThePadIsClickable() {
         // On the scripts' window the pad is 562.5 px high: row 0 of the band
         // is 0.048 of it under the pad, row 1 0.119. The kits fill both rows
-        // from 0.57 of the width, five across; row 1's left 0.55 holds
+        // from 0.57 of the width, five across (row 0 the first eight, row 1
+        // the rest, each a window onto its kits); row 1's left 0.55 holds
         // swing −, the swing, swing + (0.14..0.19), loop −, loop +, overdub and back.
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
         testkit::play("page 0 1\nbutton 0.2 0.70 -0.119\nend 0.5\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("jungle"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
+            QVERIFY2(s.pageStatus().contains(QStringLiteral("brushes"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
         testkit::play("page 0 1\nbutton 0.2 0.162 -0.119\nbutton 0.3 0.162 -0.119\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("58%")), qPrintable(s.pageStatus()));
@@ -1482,7 +1487,9 @@ private slots:
         // thirds through its beat at the kit's 66%, and on the straight
         // eighth once the swing is taken down to 50%.
         auto where = [](const std::string &extra) {
-            const auto take = testkit::play("page 0 1\nkey 0.1 Left\n" + extra +
+            // Brushes is the tenth kit: six to the left of house.
+            const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\nkey 0.12 Left\nkey 0.13 Left\n"
+                                            "key 0.14 Left\nkey 0.15 Left\n" + extra +
                                             "key 1.0 P down\nkey 1.0 V down\nkey 6.0 P up\nkey 6.0 V up\nend 6.2\n");
             double sum = 0;
             int n = 0;
@@ -1535,6 +1542,118 @@ private slots:
         // Every kit's swing is one the page can set.
         for (int kit = 0; kit < drums::KitCount; ++kit)
             QVERIFY(drums::kitSwing(kit) >= 0.5f && drums::kitSwing(kit) <= 0.7f);
+    }
+
+    // --- the kits from the world's music ----------------------------------------
+
+    void theWorldKitsPlayInKey() {
+        // In A minor, each kit's tuned instruments land on the notes the kit
+        // puts them on, measured below their overtones once the strike has
+        // passed: the log drum on A1 (after dropping from an octave up), the
+        // tabla tarang's low drum on A3 (its na rings the harmonics, the
+        // fundamental under them), the saron on A4 (its ombak twin only a
+        // few hertz off), the chip's blip on E5, the agogô's low bell on E5,
+        // the pan flute on A5, the sitar on A4 and the tanpura's drone on A2.
+        struct Case {
+            int pad, kit;
+            double hz, from, to;
+        };
+        const Case cases[] = {
+            {drums::Sub, drums::Amapiano, 55.0, 0.12, 0.3},   {drums::TomLo, drums::Tabla, 220.0, 0.05, 0.3},
+            {drums::TomLo, drums::Gamelan, 440.0, 0.05, 0.4}, {drums::Perc, drums::Chip, 659.26, 0.02, 0.08},
+            {drums::Bell, drums::Baile, 659.26, 0.01, 0.15},  {drums::Zap, drums::Amapiano, 880.0, 0.08, 0.3},
+            {drums::Zap, drums::Tabla, 440.0, 0.1, 0.4},      {drums::Crash, drums::Tabla, 110.0, 0.2, 0.8},
+        };
+        for (const Case &c : cases) {
+            Ctx ctx;
+            Dry d = strike(c.pad, c.kit, 1.0f, c.to + 0.05, ctx);
+            Svf lp, lp2;
+            lp.set(float(c.hz * 1.25), 0.7f, kRate);
+            lp2.set(float(c.hz * 1.25), 0.7f, kRate);
+            for (float &x : d.l)
+                x = lp2.step(lp.step(x).low).low;
+            const double got = settledHz(d.l, c.from, c.to);
+            QVERIFY2(std::fabs(got / c.hz - 1.0) < 0.02,
+                     qPrintable(QStringLiteral("%1 in %2: %3 Hz, not %4")
+                                    .arg(drums::padName(c.pad, c.kit), drums::kitName(c.kit))
+                                    .arg(got)
+                                    .arg(c.hz)));
+        }
+        // The bayan's ge rises onto its note as the heel presses, where a
+        // kick falls onto it.
+        Ctx ctx;
+        Dry ge = strike(drums::Kick, drums::Tabla, 1.0f, 0.4, ctx);
+        const double early = settledHz(ge.l, 0.01, 0.06), late = settledHz(ge.l, 0.2, 0.35);
+        QVERIFY2(early < late * 0.95, qPrintable(QStringLiteral("%1 then %2").arg(early).arg(late)));
+    }
+
+    void theWorldKitsStayUnderFullScale() {
+        // Each of the five, a groove of four held and slid up to busier,
+        // then every pad struck hard, played through the whole studio:
+        // nothing reaches 0 dBFS and nothing goes wrong.
+        for (int kit = drums::Amapiano; kit < drums::KitCount; ++kit) {
+            std::string script = "page 0 1\n";
+            for (int i = 0; i < kit; ++i)
+                script += "key " + std::to_string(0.1 + 0.02 * i) + " Right\n";
+            script += "down 1.00 1 " + at(drums::Kick) + " p=0.9\ndown 1.02 2 " + at(drums::Snare) +
+                      " p=0.9\ndown 1.04 3 " + at(drums::Hat) + " p=0.9\ndown 1.06 4 " + at(drums::Sub) +
+                      " p=0.9\nglide 1.3 1.5 1 0.125 0.25\nup 4.0 1\nup 4.0 2\nup 4.0 3\nup 4.0 4\n";
+            for (int pad = 0; pad < drums::PadCount; ++pad)
+                script += "tap " + std::to_string(4.2 + 0.12 * pad) + " " + at(pad) + " p=1.0 len=0.06\n";
+            script += "end 8\n";
+            const auto take = testkit::play(script);
+            QVERIFY(take.error.empty());
+            QCOMPARE(int(take.view.parts[0].data[34]), kit);
+            QVERIFY2(take.finite(), drums::kitName(kit));
+            QVERIFY2(take.peak() < 1.0, qPrintable(QStringLiteral("%1: %2").arg(drums::kitName(kit)).arg(take.peak())));
+            QVERIFY2(take.rms(1.5, 4.0) > 0.01, drums::kitName(kit));
+        }
+    }
+
+    void aSongKeepsAWorldKitByName() {
+        // Each new kit is saved by its name and comes back as itself.
+        for (int kit = drums::Amapiano; kit < drums::KitCount; ++kit) {
+            std::string script = "page 0 1\n";
+            for (int i = 0; i < kit; ++i)
+                script += "key " + std::to_string(0.1 + 0.02 * i) + " Right\n";
+            script += "end 1\n";
+            bool checked = false;
+            testkit::reopen(script, 0.5, [&](Session &, Session &opened, const QJsonObject &doc) {
+                const QJsonObject saved =
+                    doc[QStringLiteral("parts")].toArray()[0].toObject()[QStringLiteral("settings")].toObject();
+                QCOMPARE(saved[QStringLiteral("kit")].toString(), QString::fromLatin1(drums::kitName(kit)));
+                QCOMPARE(int(opened.view().parts[0].data[34]), kit);
+                QVERIFY(opened.pageStatus(0).contains(QString::fromLatin1(drums::kitName(kit)), Qt::CaseInsensitive));
+                checked = true;
+            });
+            QVERIFY2(checked, drums::kitName(kit));
+        }
+    }
+
+    void theWorldKitsGrooveTheirOwnWay() {
+        auto ticks = [](const drums::Pattern &p) {
+            std::vector<int> t;
+            for (int i = 0; i < p.count; ++i)
+                t.push_back(p.steps[i].tick);
+            return t;
+        };
+        // Amapiano's log drum plays a riff that walks the scale.
+        const auto log = drums::groovePattern(drums::Sub, drums::Amapiano, 1, 0);
+        QCOMPARE(ticks(log), (std::vector<int>{0, 18, 42, 60, 84}));
+        QCOMPARE(int(log.steps[2].degree), 4);
+        // The tabla plays kaharwa: ge on dha, ge and dhi, ka on its own.
+        QCOMPARE(ticks(drums::groovePattern(drums::Kick, drums::Tabla, 1, 0)), (std::vector<int>{0, 12, 72}));
+        QCOMPARE(ticks(drums::groovePattern(drums::Clap, drums::Tabla, 1, 0)), (std::vector<int>{60}));
+        // The chiptune bass jumps between root and octave on the eighths.
+        const auto chip = drums::groovePattern(drums::Sub, drums::Chip, 1, 0);
+        QCOMPARE(chip.count, 8);
+        QCOMPARE(int(chip.steps[1].degree), 7);
+        // The atabaque plays the tamborzão's three, three and two.
+        QCOMPARE(ticks(drums::groovePattern(drums::Perc, drums::Baile, 0, 0)), (std::vector<int>{0, 18, 36}));
+        // Shifted, a riff keeps its notes and moves a sixteenth.
+        const auto moved = drums::groovePattern(drums::Sub, drums::Gamelan, 1, 1);
+        QCOMPARE(ticks(moved), (std::vector<int>{6, 54}));
+        QCOMPARE(int(moved.steps[1].degree), 4);
     }
 
     void patternsAreWhatTheKitsPromise() {

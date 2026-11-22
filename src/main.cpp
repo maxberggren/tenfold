@@ -201,7 +201,7 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     tf::console::loadFonts();
     app.setApplicationName("tenfold");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion("0.2.0");
     app.setDesktopFileName("tenfold");
     app.setWindowIcon(QIcon::fromTheme("tenfold"));
     QQuickStyle::setStyle("Material");

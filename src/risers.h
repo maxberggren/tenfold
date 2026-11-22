@@ -441,9 +441,10 @@ inline const Palette kPalettes[SetCount] = {
     // figures round the chord, falling in pitch as the finger twists, and
     // which rolls its 3-3-2 faster for a build; a Memphis vocal off a
     // cassette, slowing as it speaks; a horror chord on a tape spinning up
-    // to speed; a worn tape's hiss and a record's crackle; triplet hats; an
-    // 808 clipped hard that slides from note to note; and everything
-    // through a clipper, blown out, as if dubbed off a worn tape.
+    // to speed; a worn tape's hiss, the horror chord printed through it
+    // from the next layer of tape, rewound with a squeal into the ONE;
+    // triplet hats; an 808 clipped hard that slides from note to note; and
+    // everything through a clipper, blown out, as if dubbed off a worn tape.
     {.name = "phonk", .label = "PHONK",
      .names = {"HISS", "HORROR", "BELL ROLL", "TRIPLETS", nullptr, nullptr, "808", "VOX", "COWBELL"},
      .lowpass = 9000, .wow = 0.08f, .crackle = 0.15f, .room = 0.6f, .clip = 1,
@@ -463,19 +464,20 @@ inline const Palette kPalettes[SetCount] = {
     // mids scooped, a speaker's top) on a whammy bar that never sits
     // still; amp feedback singing out of the hiss; a fuzz chord's reverb
     // played backwards into the ONE; strummed chords sustaining into a
-    // wall, the pedal and the tone opening with the build; on the drop the
-    // wall itself, the feedback swelling back up out of it; a dive-bomb;
-    // and a natural harmonic for the zap.
+    // wall, the pedal and the tone opening with the build; on the drop a
+    // palm-muted chug and the wall blooming out of it, the feedback
+    // swelling back up within the beat; a dive-bomb; and a natural
+    // harmonic for the zap.
     {.name = "shoegaze", .label = "FUZZ",
      .names = {"FEEDBACK", "GLIDE", "FUZZ", nullptr, "REVERSE", "WALL", nullptr, "DIVE", "HARMONIC"},
-     .chorus = 0.5f, .room = 1.8f, .echo = 0.2f, .echoFb = 0.45f,
+     .chorus = 0.25f, .room = 1.8f, .echo = 0.2f, .echoFb = 0.45f,
      .noise = {.lp = 0.5f, .q = 1.0f, .comb = 0, .air = 0.3f, .gain = 1.0f, .feedback = 1},
      .pitch = {.shape = 4, .oct = -1, .glide = 5, .detune = 1.0f, .fifth = 1.0f, .vib = 1, .gain = 0.9f},
      .stab = {.shape = 6, .oct = -1, .detune = 0.3f, .decay = 2.5f, .depth = 0.5f, .sub = 0, .gain = 0.8f},
      .roll = {.body = 1.2f, .oct = -1, .wires = 0.9f, .decay = 1.1f, .clap = 0.5f},
      .swell = {.cym = 0.6f, .pad = 1.0f, .gain = 2.2f, .reverse = 1},
      .impact = {.snap = 0.3f, .crash = 0, .tail = 0,
-                .pad = 0.6f, .padChord = 1, .padAttack = 0.03f, .padDecay = 3.0f, .padOpen = 5000, .gain = 0.7f, .muff = 1,
+                .pad = 0.62f, .padChord = 1, .padAttack = 0.15f, .padDecay = 3.0f, .padOpen = 5000, .gain = 0.7f, .muff = 1,
                 .feedback = 1},
      .sub = {.dive = 2, .decay = 1.2f, .swell = 0.2f},
      .down = {.noise = 0.3f, .range = 19, .len = 1.2f, .gain = 0.8f, .mode = 2},
@@ -3162,7 +3164,8 @@ private:
     // to thirty-seconds, open strokes that ring and closed ones choked on
     // the plate (the "cek"), each clash a flam of plates a few milliseconds
     // apart. Its metal is noise in two bands with a cluster of high square
-    // partials, under the 10 kHz a plate's ring stops at; every clash also
+    // partials, under the 10 kHz a plate's ring stops at, never the same
+    // cluster twice running; every clash also
     // rings two of the bars' modes, a slendro tone and the bar's partial at
     // 2.76 times it, climbing the scale with the build, so the rattle has
     // the orchestra's tuning in it.
@@ -3184,7 +3187,13 @@ private:
         const float hz = midiToHz(bell);
         v.cL.set(hz, 180.0f, m_rate);
         v.cR.set(std::min(hz * 2.756f, 0.45f * m_rate), 220.0f, m_rate);
-        static const float metal[6] = {3150.0f, 4372.0f, 5260.0f, 6711.0f, 7340.0f, 9120.0f};
+        // A pair of hand cymbals never rings the same partials twice: where
+        // the plates meet, and how hard, changes every clash. Three plate
+        // sets (the player's two pairs, and the edge of one), taken in
+        // turn, each clash a few percent sharp or flat of the last.
+        static const float metals[3][6] = {{3150.0f, 4372.0f, 5260.0f, 6711.0f, 7340.0f, 9120.0f},
+                                           {2890.0f, 4105.0f, 5585.0f, 6170.0f, 7905.0f, 8640.0f},
+                                           {3420.0f, 3980.0f, 4890.0f, 6395.0f, 7120.0f, 9480.0f}};
         const float openDecay = std::exp(-dt / (0.09f + 0.06f * I)), closedDecay = std::exp(-dt / 0.012f);
         const float fade = fallFade(v, b0 + 0.5 * bps * n);
         const float master = dbToGain(-12.0f * (1.0f - c)) * (0.7f + 0.5f * I) * fade * pressGain(v) * 0.5f *
@@ -3203,15 +3212,19 @@ private:
                 // The flam: the other plates land 4 to 9 ms later.
                 v.since = -(0.004f + 0.005f * v.rng.unit());
                 v.env3 = v.env * 0.7f;
+                v.env2 = float((j + (v.rng.unit() < 0.3f ? 1 : 0)) % 3); // the plate set
+                v.glideNote = 1.0f + 0.035f * v.rng.bipolar();            // and how far off it
             }
             if (v.since < 0.0f && v.since + dt >= 0.0f)
                 v.env = std::max(v.env, v.env3);
             v.since += dt;
             v.env *= v.env4 > 0.5f ? openDecay : closedDecay;
             float m = 0;
+            const float *metal = metals[std::clamp(int(v.env2), 0, 2)];
+            const float detune = v.glideNote > 0.5f ? v.glideNote : 1.0f;
             for (int q = 0; q < 6; ++q) {
                 float &ph = v.ph[q];
-                ph += metal[q] * dt;
+                ph += metal[q] * detune * dt;
                 ph -= std::floor(ph);
                 m += ph < 0.5f ? 1.0f : -1.0f;
             }
@@ -3230,12 +3243,18 @@ private:
         v.level = v.level * 0.8f + 0.2f * peak;
     }
 
-    // A worn tape's hiss and a record's crackle, thickening into the ONE.
-    // The hiss under a cassette's top (opening from 2 to 7 kHz as the
-    // build goes), and in it a resonance sweeping up three octaves onto the
-    // tonic, warbling with the tape. The crackle comes in ticks and pops:
-    // a few a second at first, a storm at the end, each a random size, the
-    // pops lower and longer. The tape flutters, the hiss with it.
+    // A worn Memphis tape's hiss, thickening into the ONE, and what only
+    // a tape that has been dubbed and played to death has in it. The hiss
+    // under a cassette's top (opening from 2 to 7 kHz as the build goes),
+    // and in it a resonance sweeping up three octaves onto the tonic,
+    // warbling with the tape; the crackle of the record it was dubbed from,
+    // in ticks and pops, a few a second at first and a storm at the end.
+    // Under the hiss, print-through: the HORROR chord on the next layer of
+    // tape has magnetised this one, so its ghost is heard a beat before
+    // every bar, dull and wavering, louder as the build goes. On the last
+    // beat the deck is put into rewind with the heads still touching: the
+    // ghost and the hiss race up five octaves, chopped as the program
+    // flies past, a cassette's squeal into the line.
     void renderHiss(Voice &v, float *l, float *r, int n, double b0, double bps, const Harmony &h, float p, float c) {
         const float I = v.sInt;
         const float dt = 1.0f / m_rate;
@@ -3258,6 +3277,15 @@ private:
         const uint32_t popChance = uint32_t(double(1.0f + 8.0f * c) / double(m_rate) * 4294967295.0);
         const float tickDecay = std::exp(-dt / 0.0003f), popDecay = std::exp(-dt / 0.003f);
         v.oL.set(900.0f, m_rate);
+        // The ghost: HORROR's chord (the root, third, sixth and ninth), each
+        // tone a fundamental and its octave, as a piano's are.
+        static const int chord[4] = {0, 2, 5, 8};
+        const Palette &set = palette(v.set);
+        float ghostHz[4];
+        for (int t = 0; t < 4; ++t)
+            ghostHz[t] = midiToHz(degreeNote(h, set.tuning, chord[t], 2) + 12.0f * set.pitch.oct);
+        const float ghostRing = std::exp(-dt / 0.9f), ghostSwell = 1.0f - std::exp(-dt / 0.03f);
+        const float ghostLevel = 0.3f + 0.5f * c;
         const float g0 = v.gain;
         const float g1 =
             riseGain(progressAt(v, b0 + bps * n), 15.0f, 1.4f) * pressGain(v) * fallFade(v, b0 + bps * n) * (0.9f + 0.4f * I) *
@@ -3285,7 +3313,52 @@ private:
                 v.env3 = (0.5f + 0.5f * v.rng.unit()) * (v.rng.unit() < 0.5f ? 1.0f : -1.0f);
             const float pop = v.oL.step(v.env3) * 2.0f;
             v.env3 *= popDecay;
-            const float L = (hl + tick * (1.0f - v.env4) + pop) * g, R = (hr + tick * (1.0f + v.env4) + pop) * g;
+            // Print-through: a beat before every bar the chord bleeds in
+            // under the hiss, swelling over 30 ms as a pre-echo does.
+            const double bar = std::floor((b + 1.0) / 4.0 + 1e-7);
+            if (v.lastStep < 0) {
+                v.lastStep = bar; // not on the build's first sample: on a bar's beat four
+                v.env = v.env2 = 0;
+                v.blareR.reset();
+            } else if (bar != v.lastStep && v.state == Running && b < v.end) {
+                v.lastStep = bar;
+                v.env2 = 1.0f; // the ghost's target
+            }
+            v.env += (v.env2 - v.env) * ghostSwell;
+            v.env2 *= ghostRing;
+            // The rewind: over the last beat the tape's speed climbs five
+            // octaves, its program chopped faster and faster as it flies by.
+            const float u = clampf(float(b - (v.end - 1.0)), 0.0f, 1.0f);
+            const float speed = std::exp2(5.0f * std::pow(u, 1.4f)) * (1.0f + 0.006f * sin01(v.wowPh));
+            float ghost = 0;
+            for (int t = 0; t < 4; ++t) {
+                const float hz = ghostHz[t] * speed;
+                float &ph = v.ph[t];
+                ph += std::min(hz * dt, 0.45f);
+                ph -= std::floor(ph);
+                float p2 = 2.0f * ph;
+                p2 -= std::floor(p2);
+                // Nothing over 15 kHz: a partial the rewind pushes past it fades.
+                ghost += (t == 0 ? 1.0f : 0.7f) * (sin01(ph) * clampf((15000.0f - hz) / 3000.0f, 0, 1) +
+                                                    0.45f * sin01(p2) * clampf((15000.0f - 2.0f * hz) / 3000.0f, 0, 1));
+            }
+            float squeal = 0;
+            if (u > 0.0f) {
+                v.sirenPh += (8.0f + 60.0f * u) * speed * dt;
+                v.sirenPh -= std::floor(v.sirenPh);
+                const float chop = 0.5f + 0.5f * sin01(v.sirenPh);
+                squeal = ghost * std::sqrt(u) * (0.4f + 0.6f * chop * chop) * 1.5f;
+            }
+            // Dull, as print-through is: the tape's top under 1.4 kHz, and
+            // rising with its speed.
+            if ((i & 15) == 0)
+                v.blareR.set(std::min(1400.0f * speed, 0.45f * m_rate), 0.8f, m_rate);
+            const float pr2 = v.blareR.step(ghost * v.env * ghostLevel * (1.0f - u) + squeal).low * flutter * 0.22f;
+            // The rewinding tape lifts a little off the heads: its hiss
+            // thins as the squeal takes over.
+            const float lift = 1.0f - 0.45f * u;
+            const float L = ((hl + tick * (1.0f - v.env4) + pop) * lift + pr2) * g,
+                        R = ((hr + tick * (1.0f + v.env4) + pop) * lift + pr2) * g;
             tick *= tickDecay;
             l[i] += L;
             r[i] += R;
@@ -3596,16 +3669,24 @@ private:
         const int count = std::clamp(h.chordCount, 1, 3);
         const int j = ((inv % count) + count) % count;
         const int root = h.chordTones[j];
-        const float fifth = float(h.tuning.degreeSemis(root + 4) - h.tuning.degreeSemis(root));
+        // A power chord's fifth through a fuzz is tuned pure, as a player's
+        // ear tunes it: a tempered one, two cents flat, beats against its
+        // root in every difference tone the pedal makes, and the chord
+        // smears. A tuning whose fifth is not near 7 semitones keeps its own.
+        float fifth = float(h.tuning.degreeSemis(root + 4) - h.tuning.degreeSemis(root));
+        if (std::fabs(fifth - 7.0f) < 0.15f)
+            fifth = 7.0196f;
         const float low = chordNote(h, 0, inv, 1) + 12.0f * k.oct;
         const float notes[3] = {low, low + fifth, low + 12.0f};
         v.note = low;
-        const float bend = std::exp2((0.45f + 0.55f * v.sMotion) * v.wham.step(float(n) * dt, v.rng) / 12.0f);
+        // The bar under a resting hand: never more than 15 cents either
+        // side, so the chord's notes stay notes.
+        const float bend = std::exp2((0.07f + 0.05f * v.sMotion) * v.wham.step(float(n) * dt, v.rng) / 12.0f);
         Delay *loops[6] = {&v.combL, &v.combs[0], &v.combs[1], &v.combR, &v.combs[2], &v.combs[3]};
         float period[6], fb[6];
         for (int s = 0; s < 6; ++s) {
-            // The right guitar a few cents off the left: two takes.
-            const float hz = midiToHz(notes[s % 3] + v.bend + (s >= 3 ? 0.025f : -0.015f)) * bend;
+            // The right guitar a cent or two off the left: two takes.
+            const float hz = midiToHz(notes[s % 3] + v.bend + (s >= 3 ? 0.012f : -0.008f)) * bend;
             period[s] = clampf(m_rate / hz, 8.0f, float(m_rate / 30.0f) - 4.0f);
             fb[s] = std::exp(-period[s] / ((2.5f + 2.0f * I) * m_rate));
         }
@@ -3620,6 +3701,23 @@ private:
         // dip at 1 kHz, so the wall is lows and an edge, not a honk.
         v.bL.set(1000.0f, 0.7f, m_rate);
         v.bR.set(1000.0f, 0.7f, m_rate);
+        // Tight in front of the pedal (a high-pass at 120 Hz, as a boost
+        // before a fuzz is set), so the strings' lows do not swamp the
+        // clipper and come out as a mush of difference tones; and behind it
+        // a dip of about 4 dB at 190 Hz, where two guitars' fifths and
+        // octaves pile up, and the cabinet's thump on the root itself (5 dB,
+        // narrow, following the chord), so the low end is one note and not
+        // a smear.
+        v.blareL.set(midiToHz(low + v.bend) * bend, 2.0f, m_rate);
+        v.blareR.set(midiToHz(low + v.bend) * bend, 2.0f, m_rate);
+        if (v.lastStep < 0) {
+            v.cL.set(80.0f, 0.7f, m_rate);
+            v.cR.set(80.0f, 0.7f, m_rate);
+            v.fuzzL.set(190.0f, 1.4f, m_rate);
+            v.fuzzR.set(190.0f, 1.4f, m_rate);
+            v.blareL.reset();
+            v.blareR.reset();
+        }
         const float g0 = v.gain;
         const float g1 = riseGain(progressAt(v, b0 + bps * n), 15.0f, 1.2f) * pressGain(v) * fallFade(v, b0 + bps * n) *
                          (0.85f + 0.3f * I) * 0.3f * k.gain;
@@ -3663,10 +3761,10 @@ private:
                 (s < 3 ? gl : gr) += y;
             }
             const float g = (g0 + (g1 - g0) * float(i) / float(n)) * cutAt(v, b);
-            float L = v.aL.step(v.muffL.step(0.22f * gl, hit)).low;
-            float R = v.aR.step(v.muffR.step(0.22f * gr, hit)).low;
-            L -= v.bL.step(L).band;
-            R -= v.bR.step(R).band;
+            float L = v.aL.step(v.muffL.step(0.22f * v.cL.step(gl).high, hit)).low;
+            float R = v.aR.step(v.muffR.step(0.22f * v.cR.step(gr).high, hit)).low;
+            L += 0.7f * v.blareL.step(L).band - v.bL.step(L).band - 0.4f * v.fuzzL.step(L).band;
+            R += 0.7f * v.blareR.step(R).band - v.bR.step(R).band - 0.4f * v.fuzzR.step(R).band;
             L = drive(L * g * 2.0f, v.sGrit);
             R = drive(R * g * 2.0f, v.sGrit);
             l[i] += L;
@@ -3790,6 +3888,13 @@ private:
             v.blareR.reset();
             v.blareL.set(1400.0f, 1.1f, m_rate);
             v.blareR.set(1500.0f, 1.1f, m_rate);
+            if (k.muff > 0) {
+                // The palm on the strings: the chug's chord under 700 Hz.
+                v.fuzzL.reset();
+                v.fuzzR.reset();
+                v.fuzzL.set(700.0f, 0.7f, m_rate);
+                v.fuzzR.set(740.0f, 0.7f, m_rate);
+            }
             if (k.gong > 0) {
                 static const float amp[7] = {0.6f, 0.15f, 0.5f, 0.4f, 0.3f, 0.18f, 0.1f};
                 for (int m = 0; m < 7; ++m) {
@@ -3827,7 +3932,15 @@ private:
         float padRise = 0, padFall = 1;
         if (k.pad > 0) {
             float m[3];
-            if (k.padChord > 0) {
+            if (k.muff > 0) {
+                // Guitars play a power chord into a fuzz, not a triad: the
+                // chord's root, a pure fifth and the octave, low on the
+                // neck, so the wall is one note and its colour, not mud.
+                const float root = float(h.midi(h.chordTones[0], 1)) - 12.0f + 12.0f * k.padOct;
+                m[0] = root;
+                m[1] = root + 7.0196f;
+                m[2] = root + 12.0f;
+            } else if (k.padChord > 0) {
                 for (int j = 0; j < 3; ++j)
                     m[j] = float(h.midi(h.chordTones[j % std::max(1, h.chordCount)], 2)) + 12.0f * k.padOct;
             } else {
@@ -3836,9 +3949,11 @@ private:
                 m[1] = root + float(h.tuning.degreeSemis(4) - h.tuning.degreeSemis(0));
                 m[2] = root + 12.0f;
             }
+            // Two saws to a note, 8 cents apart; two takes of a guitar only 2.
+            const float spread = k.muff > 0 ? 0.02f : 0.08f;
             for (int j = 0; j < 3; ++j) {
-                padInc[2 * j] = std::min(midiToHz(m[j] + 0.08f) / m_rate, 0.45f);
-                padInc[2 * j + 1] = std::min(midiToHz(m[j] - 0.08f) / m_rate, 0.45f);
+                padInc[2 * j] = std::min(midiToHz(m[j] + spread) / m_rate, 0.45f);
+                padInc[2 * j + 1] = std::min(midiToHz(m[j] - spread) / m_rate, 0.45f);
             }
             padRise = 1.0f - std::exp(-dt / std::max(0.002f, k.padAttack));
             padFall = std::exp(-dt / k.padDecay);
@@ -3868,22 +3983,26 @@ private:
         }
         // The wall: the pad's chord through the fuzz, its whammy bar wandering.
         if (k.muff > 0 && k.pad > 0) {
-            const float bend = std::exp2(0.6f * v.wham.step(float(n - from) / m_rate, v.rng) / 12.0f);
+            // Never more than about 15 cents either side.
+            const float bend = std::exp2(0.12f * v.wham.step(float(n - from) / m_rate, v.rng) / 12.0f);
             for (float &x : padInc)
                 x = std::min(x * bend, 0.45f);
         }
         // The amp feeding back out of the wall: the chord's root two
         // octaves up (and a string a hertz and a half off it, beating),
-        // swelling in over a beat and a half as if the tail were played
-        // backwards, then holding as long as the wall does.
+        // swelling in over the first beat as if the tail were played
+        // backwards, then holding as long as the wall does. It goes in
+        // after the pedal, as the amp's own note: in front of it the wall
+        // would swallow it until the chord had died.
         float fbInc = 0, fbInc2 = 0, fbAmp = 0;
         if (k.feedback > 0) {
             const float hz = midiToHz(float(h.midi(h.chordTones[0], 3)));
             fbInc = std::min(hz / m_rate, 0.45f);
             fbInc2 = std::min((hz + 1.5f) / m_rate, 0.45f);
-            const float u = smoothstep(v.t / (1.5f * float(60.0 / m_bpm)));
-            fbAmp = k.feedback * u * u;
+            const float u = smoothstep((v.t - 0.06f) / (0.6f * float(60.0 / m_bpm)));
+            fbAmp = k.feedback * u;
         }
+
         // A layer under the kick, not over it: the drop's weight is the
         // kick's, the impact is its size.
         const float vel = v.vel * (0.75f + 0.35f * I) * pressGain(v) * 0.42f * k.gain;
@@ -3969,7 +4088,7 @@ private:
                     xl += blare * v.blareL.step(xl).band;
                     xr += blare * v.blareR.step(xr).band;
                 }
-                if (fbAmp > 0) {
+                if (fbAmp > 0 && k.muff <= 0) {
                     v.modal[0] += fbInc;
                     v.modal[0] -= std::floor(v.modal[0]);
                     v.modal[1] += fbInc2;
@@ -3979,9 +4098,29 @@ private:
                     xr += 0.3f * fb * sin01(v.modal[1]);
                 }
                 if (k.muff > 0) {
-                    const float hit = 1.5f + 2.5f * v.padEnv;
-                    pl = v.muffL.step(0.6f * xl, hit) * g * 1.7f;
-                    pr = v.muffR.step(0.6f * xr, hit) * g * 1.7f;
+                    // A palm-muted chug on the ONE, the transient the wall
+                    // blooms out of: the raw strings under the palm, dying in
+                    // a tenth of a second, and the pick's click, into the
+                    // pedal ahead of the wall.
+                    const float since = v.t - kHitDelay;
+                    const float chug = since < 0.8f ? std::exp(-since / 0.11f) : 0.0f;
+                    const float pick = since < 0.05f ? v.rng.bipolar() * std::exp(-since / 0.004f) * 0.9f : 0.0f;
+                    const float cl0 = v.fuzzL.step(a0 + a3 + a4).low * chug, cr0 = v.fuzzR.step(a1 + a2 + a5).low * chug;
+                    const float hit = 1.5f + 2.5f * std::max(v.padEnv, chug);
+                    const float gw = 0.45f * k.pad * std::max(v.padEnv, 1.8f * chug);
+                    pl = v.muffL.step(0.6f * (xl + cl0 + pick), hit) * gw * 1.7f;
+                    pr = v.muffR.step(0.6f * (xr + cr0 + pick), hit) * gw * 1.7f;
+                    if (fbAmp > 0) {
+                        v.modal[0] += fbInc;
+                        v.modal[0] -= std::floor(v.modal[0]);
+                        v.modal[1] += fbInc2;
+                        v.modal[1] -= std::floor(v.modal[1]);
+                        // A string singing on its own, a little rough, as a
+                        // feeding-back note is.
+                        const float fb = 0.32f * fbAmp * k.pad;
+                        pl += fb * fastTanh(1.6f * sin01(v.modal[0]));
+                        pr += fb * fastTanh(1.6f * sin01(v.modal[1]));
+                    }
                 } else {
                     pl = fastTanh(k.padDrive * xl) * g;
                     pr = fastTanh(k.padDrive * xr) * g;
@@ -4549,11 +4688,26 @@ private:
         const float eighth = float(30.0 / m_bpm);
         Svf *throat[4] = {&v.aL, &v.bL, &v.cL, &v.blareL};
         static const float eh[3] = {600, 1800, 2500}, ee[3] = {290, 2250, 3000};
+        // A singer's top, recorded: the folds' closing edge rolled off over
+        // 5 kHz by the mic and the chop's own resample, so the voice is
+        // bright without the pulses' corners poking out of it.
+        v.oL.set(5000.0f, m_rate);
+        if (v.t == 0)
+            v.oL.y = 0; // not whatever this voice last played
         float peak = 0;
         for (int i = from; i < n; ++i) {
             const double b = b0 + bps * i;
             const double step = std::floor(b * 2.0 + 1e-9);
-            if (v.t == 0 || (v.held && step != v.lastStep && v.t > 0.2f)) {
+            // Held, a chop begins on an eighth only once the last one has
+            // sung to its end: cutting one off mid-vowel would drop its
+            // voice to nothing in a sample, a click. An eighth that comes
+            // while one is still singing is let go, and the next one takes it.
+            bool chop = v.t == 0;
+            if (!chop && v.held && step != v.lastStep) {
+                v.lastStep = step;
+                chop = v.since >= v.lineFrom;
+            }
+            if (chop) {
                 v.lastStep = step;
                 const int j = v.stepCount++;
                 v.line = float(h.midi(h.chordTones[j % count] + base, 1)) + 12.0f * k.oct;
@@ -4574,7 +4728,8 @@ private:
             v.since += dt;
             // The "h": breath for its first 40 ms, the voice coming in under it.
             const float voiced = smoothstep((v.since - 0.025f) / 0.03f) * smoothstep((1.0f - u) / 0.25f);
-            const float aspir = std::max(0.0f, 1.0f - v.since / 0.05f);
+            // The breath comes in over 4 ms, not on one sample.
+            const float aspir = std::max(0.0f, 1.0f - v.since / 0.05f) * std::min(1.0f, v.since / 0.004f);
             const float contour = 1.0f * std::sin(std::min(1.0f, u) * 2.5f) - 2.5f * std::max(0.0f, u - 0.6f);
             v.ph[2] += 5.5f * dt;
             v.ph[2] -= std::floor(v.ph[2]);
@@ -4585,9 +4740,9 @@ private:
             v.ph[0] -= std::floor(v.ph[0]);
             const float noise = v.rng.bipolar();
             const float src = glottal(v.ph[0], inc) * voiced + noise * (0.05f * voiced + 0.4f * aspir);
-            const float s = tract(throat, src);
+            const float s = v.oL.step(tract(throat, src));
             const float attack = std::min(1.0f, v.t * 1000.0f);
-            const float o = s * v.vel * 0.12f * (0.8f + 0.4f * I) * attack * k.gain;
+            const float o = s * v.vel * 0.1f * (0.8f + 0.4f * I) * attack * k.gain;
             l[i] += o * (1.0f - v.env4);
             r[i] += o * (1.0f + v.env4);
             peak = std::max(peak, 2.0f * std::fabs(o));

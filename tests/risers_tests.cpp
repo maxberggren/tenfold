@@ -304,6 +304,24 @@ double windowDb(const std::vector<float> &l, const std::vector<float> &r, double
     return 10 * std::log10(e / std::max(1, count) + 1e-20);
 }
 
+// The level of one frequency in a window (both sides summed), in dB: a
+// single bin of a Fourier transform, Hann-windowed, so a tone's own line is
+// told from its neighbours a few tens of hertz away.
+double toneDb(const std::vector<float> &l, const std::vector<float> &r, double hz, double t0, double t1) {
+    const size_t a = size_t(t0 * 48000), b = std::min(l.size(), size_t(t1 * 48000));
+    double re = 0, im = 0, wsum = 0;
+    for (size_t i = a; i < b; ++i) {
+        const double u = double(i - a) / double(b - a);
+        const double w = 0.5 - 0.5 * std::cos(2 * M_PI * u);
+        const double x = 0.5 * (l[i] + r[i]) * w;
+        const double ph = 2 * M_PI * hz * double(i) / 48000.0;
+        re += x * std::cos(ph);
+        im += x * std::sin(ph);
+        wsum += w;
+    }
+    return 20 * std::log10(2 * std::sqrt(re * re + im * im) / std::max(wsum, 1.0) + 1e-12);
+}
+
 // What a sound is like: its level; its colour, as the energy in eight
 // octave bands (63 Hz to 8 kHz) against its whole, so a sound only louder
 // or softer has the same colour; and its envelope in quarters, against its
@@ -1348,6 +1366,26 @@ private slots:
             QVERIFY2(fall[k].first < fall[k - 1].first, qPrintable(QString::number(fall[k].first)));
     }
 
+    // Amapiano's "ayy" held chops a new one each eighth without cutting the
+    // last one off: no sample jumps from its neighbours' line by more than
+    // a voice's own curve does (a click is a step the size of the voice).
+    void heldAyyDoesNotClick() {
+        Rig rig;
+        rig.on(5, risers::Zap, risers::SetAmapiano, 0, 0.6f);
+        rig.run(2.0);
+        rig.off(5);
+        rig.run(0.6);
+        double worst = 0, peak = 0;
+        for (const std::vector<float> *ch : {&rig.l, &rig.r})
+            for (size_t i = 2; i < ch->size(); ++i) {
+                const std::vector<float> &x = *ch;
+                worst = std::max(worst, double(std::fabs(x[i] - 2 * x[i - 1] + x[i - 2])));
+                peak = std::max(peak, double(std::fabs(x[i])));
+            }
+        QVERIFY(peak > 0.05);
+        QVERIFY2(worst < 0.01, qPrintable(QStringLiteral("%1 of %2").arg(worst).arg(peak)));
+    }
+
     // Phonk's cowbell held plays a figure with rests in it, not a note
     // every sixteenth, all of it in the key; higher in the cell, another
     // figure. Its vocal and its 808 are covered by the sets' own checks.
@@ -1404,6 +1442,58 @@ private slots:
         for (int k = 0; k < 8; ++k)
             all += QStringLiteral("%1/%2 ").arg(fuzz[k], 0, 'f', 1).arg(edm[k], 0, 'f', 1);
         QVERIFY2(fuzz[5] > edm[5] + 3 && fuzz[6] > edm[6] + 3 && fuzz[4] < fuzz[2] && fuzz[4] < fuzz[5], qPrintable(all));
+    }
+
+    // Shoegaze's wall on the drop: a palm-muted chug on the ONE that has
+    // died away before the wall blooms; its feedback (the root two octaves
+    // up, at 880 Hz in A) singing within the first beat, well over the
+    // wall's own harmonic beside it, by the end of the beat; and the chord a power chord, its
+    // root, fifth and octave lines standing clear of the gaps between them.
+    void shoegazeWallChugsAndSings() {
+        Rig rig;
+        rig.on(5, risers::Impact, risers::SetShoegaze);
+        rig.run(0.3);
+        rig.off(5);
+        rig.run(1.5);
+        const double beat = 60.0 / 124;
+        const double chug = windowDb(rig.l, rig.r, 0.025, 0.06), after = windowDb(rig.l, rig.r, 0.12, 0.16);
+        QVERIFY2(chug > after + 2, qPrintable(QStringLiteral("%1 then %2").arg(chug).arg(after)));
+        const double sing = toneDb(rig.l, rig.r, 880, 0.7 * beat, beat), beside = toneDb(rig.l, rig.r, 990, 0.7 * beat, beat);
+        QVERIFY2(sing > beside + 10, qPrintable(QStringLiteral("%1 beside %2").arg(sing).arg(beside)));
+        for (double hz : {110.0, 164.8, 220.0}) {
+            const double line = toneDb(rig.l, rig.r, hz, 0.6, 1.4);
+            const double gap = std::max(toneDb(rig.l, rig.r, hz + 27, 0.6, 1.4), toneDb(rig.l, rig.r, hz - 27, 0.6, 1.4));
+            QVERIFY2(line > gap + 20, qPrintable(QStringLiteral("%1 Hz: %2 against %3").arg(hz).arg(line).arg(gap)));
+        }
+    }
+
+    // Phonk's hiss has the horror chord printed through it: a beat before
+    // the bar its root (220 Hz in A) comes up out of the hiss, far over
+    // where it was a beat earlier; and the tape is rewound into the line,
+    // the chord racing up, so the last tenth of the beat is brighter than
+    // the hiss had ever been.
+    void phonkHissPrintsThroughAndRewinds() {
+        // A riser of two bars, so the bar's print-through comes a bar
+        // before the rewind.
+        Rig rig;
+        Command c;
+        c.type = Command::On;
+        c.id = 5;
+        c.i[0] = risers::Noise;
+        c.i[1] = 2;
+        c.i[3] = risers::SetPhonk;
+        c.f[0] = 0.6f;
+        c.f[2] = 0.7f;
+        c.f[5] = 8.0f;
+        rig.send(c);
+        const double beat = 60.0 / 124;
+        rig.run(8 * beat - 0.01);
+        const double ghost = toneDb(rig.l, rig.r, 220, 3 * beat + 0.05, 3 * beat + 0.3);
+        const double earlier = toneDb(rig.l, rig.r, 220, 2 * beat + 0.05, 2 * beat + 0.3);
+        QVERIFY2(ghost > earlier + 10, qPrintable(QStringLiteral("%1 against %2").arg(ghost).arg(earlier)));
+        const double late = windowDb(rig.l, rig.r, 7.85 * beat, 7.97 * beat) - windowDb(rig.l, rig.r, 7.85 * beat, 7.97 * beat, 2000);
+        const double mid = windowDb(rig.l, rig.r, 6.5 * beat, 6.9 * beat) - windowDb(rig.l, rig.r, 6.5 * beat, 6.9 * beat, 2000);
+        QVERIFY2(late > mid, qPrintable(QStringLiteral("%1 against %2").arg(late).arg(mid)));
     }
 
     // A loop keeps the set it was played in: zaps looped in the trap set

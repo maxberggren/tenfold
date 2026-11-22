@@ -103,7 +103,7 @@ tap 34.953 0.2470 0.10 len=0.06
 down 35.188 43 0.4375 0.12 p=0.6
 up 35.656 43
 tap 35.773 0.3125 0.12 len=0.1
-# PHONK: hiss and crackle, a horror chord on a tape spinning up, the cowbell's 3-3-2 rolled, triplet hats, a horror chord on the drop; the cowbell's busy figure, then its falling one twisted; the Memphis vocal off a slowing tape, tapped and held; an 808 line sliding.
+# PHONK: a worn tape's hiss with the horror chord printed through it and rewound with a squeal into the drop, a horror chord on a tape spinning up, the cowbell's 3-3-2 rolled, triplet hats, a horror chord on the drop; the cowbell's busy figure, then its falling one twisted; the Memphis vocal off a slowing tape, tapped and held; an 808 line sliding.
 key 37.520 Right
 tap 37.734 0.10 0.44 p=0.6 len=0.2
 tap 37.852 0.30 0.44 p=0.6 len=0.2
@@ -124,7 +124,7 @@ tap 40.578 0.2470 0.14 len=0.06
 tap 41.047 0.1478 0.14 len=0.06
 tap 41.750 0.1875 0.14 len=0.06
 tap 42.453 0.2669 0.14 len=0.06
-# SHOEGAZE: amp feedback singing, a glide guitar, fuzz chords strummed into a wall and tremolo-picked, a reversed reverb; the wall on the drop with its feedback swelling back, a dive-bomb, harmonics held.
+# SHOEGAZE: amp feedback singing, a glide guitar, fuzz chords strummed into a wall and tremolo-picked, a reversed reverb; a palm-muted chug on the drop and the wall blooming out of it, its feedback swelling back within the beat, a dive-bomb, harmonics held.
 key 45.020 Right
 tap 45.234 0.10 0.44 p=0.6 len=0.2
 tap 45.352 0.30 0.44 p=0.6 len=0.2

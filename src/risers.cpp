@@ -87,9 +87,10 @@ const char *setBlurb(int s) {
         "an arpeggio stepping by frames, a tracker's pattern with its volume column and a slide, the triangle bass "
         "(tap across it), a blip",
         "an 808 cowbell (hold it: higher plays a busier figure, twist bends it) and its 3-3-2 rolled, a Memphis vocal "
-        "off a slowing tape, a horror chord spinning up, hiss and crackle, a sliding clipped 808",
-        "fuzz guitars strummed into a wall on a restless whammy bar, feedback singing out of the hiss and the wall, a "
-        "reversed reverb, a dive-bomb",
+        "off a slowing tape, a horror chord spinning up, a worn tape's hiss with the horror chord printed through "
+        "it and rewound into the drop, a sliding clipped 808",
+        "fuzz guitars strummed into a wall of power chords on a restless whammy bar, feedback singing out of the "
+        "hiss and the wall, a reversed reverb, a palm-muted chug into the drop's wall, a dive-bomb",
     };
     static_assert(std::size(blurbs) == SetCount, "a blurb for every set");
     return blurbs[std::clamp(s, 0, int(SetCount) - 1)];

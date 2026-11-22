@@ -142,6 +142,9 @@ inline int lineOf(int id) { return isReplay(id) ? 1 + replaySlot(id) + kClipSlot
 
 struct Sound {
     const char *name = "";
+    // The music it is for, after its name in the status line, so a
+    // newcomer knows what to reach for it for.
+    const char *style = "";
     // Oscillators, mixed: a unison of saws, a pulse, a two-operator FM pair,
     // an octave-up saw layer and an octave-down square (a mono synth's
     // third oscillator, switched down to 16'; it thins out up the neck so
@@ -178,60 +181,132 @@ struct Sound {
     bool swoop = false;    // keeps a slow slur even across a step (trills smear on purpose)
     float echo = 0.15f, echoFb = 0.3f, echoBeats = 0.75f; // its own delay: send, feedback, time
     float gain = 1;
+    // What makes the tone, when it is not the oscillators above (whose
+    // levels are then 0). Each is a model of an instrument the oscillators
+    // can't imitate; the filter, the envelopes and the echo above still
+    // shape it.
+    //   String: a plucked string in a delay line (Karplus–Strong), its
+    //           bridge a curved one that the string buzzes against (a
+    //           sitar's jawari): the buzz is a formant that slides down
+    //           through the harmonics as the swing dies. Under it, a taraf
+    //           of sympathetic strings tuned to the scale, and the chikari,
+    //           high drone strings a second finger strikes.
+    //   Pan:    a struck steel pan: a few tuned modes, each a pair of
+    //           sines a hair apart; a held note is rolled in the studio's
+    //           time, every stroke striking the modes again, and a firm
+    //           stroke pings.
+    //   Sync:   two saws hard-synced to unheard masters, the note's and an
+    //           octave above it, each swept down from high on every attack
+    //           to a ratio that keeps tearing, and a resonance riding the
+    //           slave's pitch that sings the formant; pressure crossfades
+    //           into FM of the slave by its master. Run at four times the
+    //           rate.
+    //   Bow:    a bowed string: two delay lines either side of the bow and
+    //           a friction junction where the hair sticks and slips (the
+    //           string's own Helmholtz motion), at twice the rate, into a
+    //           small snakeskin body that rolls off over the top; a held
+    //           bow swells and tapers in an arc, and turns at its end.
+    //   Reed:   free reeds in an accordion's registers, chosen by the
+    //           finger's height: one reed (clarinet), a pair an octave
+    //           apart (bandoneon), or three, the outer two a fixed number
+    //           of hertz either side (musette); the bellows in the attack,
+    //           turning by the phrase.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed };
+    int model = Osc;
+    float jawari = 0;      // String: how hard the string buzzes on its bridge
+    float sympathy = 0;    // String: how loud the taraf rings
+    float chikari = 0;     // String: how loud the chikari rings when struck
+    float sustainS = 3.0f; // String, Pan: seconds the fundamental takes to fall 60 dB
+    float roll = 0;        // Pan: how strongly a held note is rolled
+    float settle = 0;      // Pan: semitones a struck note starts sharp of its pitch (a low one more)
+    float syncFrom = 1, syncTo = 1, syncTime = 0.3f; // Sync: the slave's ratio, from the attack to where it settles, and how fast
+    float syncY = 0;       // Sync: how far the finger's height moves the ratio up
+    float sync2 = 0;       // Sync: the second synced voice, an octave up
+    float syncFm = 0;      // Sync: how far a hard press crossfades into FM of the slave
+    float syncLfo = 0;     // Sync: how far a slow wander moves the held ratio
+    float scratch = 0;     // Bow: the rosin's noise
+    float beatHz = 0;      // Reed: how fast the musette's outer reeds beat against the middle one
 };
 
-constexpr int kSounds = 10;
+// The accordion's registers, by the finger's height: low on the pad the
+// clarinet (one reed, dry, tango's), in the middle the bandoneon (a reed and
+// one an octave above it), high the musette (three reeds beating, cumbia's and
+// the bal's). Each is a weight, so a finger sliding up pulls the next stop
+// in over a short stretch instead of clicking it.
+constexpr int kRegisters = 3;
+inline void registerWeights(float y, float w[kRegisters]) {
+    auto smooth = [](float a, float b, float x) {
+        const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
+    const float up1 = smooth(0.30f, 0.40f, y), up2 = smooth(0.62f, 0.72f, y);
+    w[0] = 1.0f - up1;
+    w[2] = up2;
+    w[1] = up1 - up2;
+}
+inline const char *registerName(float y) {
+    float w[kRegisters];
+    registerWeights(y, w);
+    static const char *names[kRegisters] = {"clarinet", "bandoneon", "musette"};
+    return names[w[2] >= 0.5f ? 2 : w[0] >= 0.5f ? 0 : 1];
+}
+
+// The chikari: a second finger tapped this high on the pad, while a Sitar
+// note is held, strikes the high drone strings instead of a hammer-on.
+constexpr float kChikariY = 0.8f;
+
+constexpr int kSounds = 15;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
         // The anthem lead: seven saws wide across the field and an octave
         // above for air, a filter that opens with the finger's height.
-        {.name = "Anthem", .saw = 1.0f, .layer = 0.22f, .unison = 7, .detune = 24.0f, .spread = 0.95f,
+        {.name = "Anthem", .style = "trance", .saw = 1.0f, .layer = 0.22f, .unison = 7, .detune = 24.0f, .spread = 0.95f,
          .cutoff = 0.66f, .cutoffY = 0.30f, .res = 0.12f, .envAmt = 0.26f, .envDecay = 0.55f, .keyTrack = 0.55f,
          .drive = 0.12f, .a = 0.006f, .d = 0.5f, .s = 0.82f, .r = 0.38f, .glide = 0.05f, .vibRate = 5.3f,
          .vibDepth = 0.16f, .vibDelay = 0.42f, .echo = 0.16f, .echoFb = 0.32f, .gain = 1.05f},
         // A sharp pluck: saw and pulse snapped shut by a fast filter
         // envelope, every note struck again, into a dotted-eighth echo.
-        {.name = "Pluck", .saw = 0.75f, .pulse = 0.45f, .unison = 3, .detune = 11.0f, .spread = 0.6f,
+        {.name = "Pluck", .style = "house", .saw = 0.75f, .pulse = 0.45f, .unison = 3, .detune = 11.0f, .spread = 0.6f,
          .cutoff = 0.22f, .cutoffY = 0.32f, .res = 0.32f, .envAmt = 0.78f, .envDecay = 0.17f, .keyTrack = 0.7f,
          .drive = 0.1f, .a = 0.001f, .d = 0.38f, .s = 0.0f, .r = 0.3f, .glide = 0.025f, .vibDepth = 0.0f,
          .retrig = true, .echo = 0.34f, .echoFb = 0.42f, .gain = 1.73f},
         // An FM bell: a sine struck by a modulator at three times its
         // frequency (every partial on a harmonic, so it sits in the key and
         // its strike is heard at its own pitch), fading to a glassy sine.
-        {.name = "Bell", .fm = 1.0f, .detune = 7.0f, .spread = 0.7f, .fmRatio = 3.0f, .fmIndex = 2.3f,
+        {.name = "Bell", .style = "chillout", .fm = 1.0f, .detune = 7.0f, .spread = 0.7f, .fmRatio = 3.0f, .fmIndex = 2.3f,
          .fmDecay = 0.45f, .fmFloor = 0.18f, .cutoff = 0.95f, .cutoffY = 0.08f, .a = 0.001f, .d = 1.4f, .s = 0.22f,
          .r = 0.9f, .glide = 0.035f, .vibRate = 4.8f, .vibDepth = 0.07f, .vibDelay = 0.6f, .retrig = true,
          .echo = 0.24f, .echoFb = 0.38f, .gain = 0.85f},
         // A chip lead: a narrow pulse with a slow sweep, quick portamento
         // and a fast, game-console vibrato.
-        {.name = "Chip", .pulse = 1.0f, .detune = 4.0f, .spread = 0.4f, .pw = 0.25f, .pwm = 0.12f,
+        {.name = "Chip", .style = "chiptune", .pulse = 1.0f, .detune = 4.0f, .spread = 0.4f, .pw = 0.25f, .pwm = 0.12f,
          .cutoff = 0.92f, .cutoffY = 0.10f, .a = 0.001f, .d = 0.25f, .s = 0.8f, .r = 0.07f, .glide = 0.03f,
          .porta = 0.04f, .vibRate = 6.4f, .vibDepth = 0.28f, .vibDelay = 0.22f, .echo = 0.2f, .echoBeats = 0.5f,
          .gain = 0.92f},
         // A vocal lead: saws through three vowel formants, the finger's
         // height going oo, oh, ah, eh, ee; notes scoop into pitch like a voice.
-        {.name = "Vox", .saw = 0.85f, .pulse = 0.3f, .unison = 3, .detune = 9.0f, .spread = 0.55f,
+        {.name = "Vox", .style = "eurodance", .saw = 0.85f, .pulse = 0.3f, .unison = 3, .detune = 9.0f, .spread = 0.55f,
          .formant = true, .cutoff = 0.85f, .cutoffY = 0.05f, .res = 0.05f, .envAmt = 0.08f, .envDecay = 0.5f,
          .drive = 0.18f, .a = 0.025f, .d = 0.6f, .s = 0.9f, .r = 0.28f, .glide = 0.07f, .scoop = 0.7f,
          .scoopTime = 0.045f, .vibRate = 5.4f, .vibDepth = 0.24f, .vibDelay = 0.32f, .echo = 0.14f, .gain = 0.76f},
         // A screaming saw: driven hard into a resonant filter, always
         // gliding, every attack bent up into the note.
-        {.name = "Scream", .saw = 1.0f, .pulse = 0.4f, .unison = 3, .detune = 13.0f, .cutoff = 0.48f,
+        {.name = "Scream", .style = "electro", .saw = 1.0f, .pulse = 0.4f, .unison = 3, .detune = 13.0f, .cutoff = 0.48f,
          .cutoffY = 0.36f, .res = 0.42f, .envAmt = 0.32f, .envDecay = 0.45f, .keyTrack = 0.6f, .drive = 0.85f,
          .a = 0.004f, .d = 0.5f, .s = 0.92f, .r = 0.22f, .glide = 0.08f, .porta = 0.08f, .scoop = 1.4f,
          .scoopTime = 0.055f, .vibRate = 5.9f, .vibDepth = 0.3f, .vibDelay = 0.3f, .swoop = true, .echo = 0.2f, .echoFb = 0.36f,
          .gain = 1.17f},
         // The hoover: saws and a fast-swept pulse in a wide, wobbling
         // chorus, driven, bending up into every note from well below.
-        {.name = "Hoover", .saw = 0.8f, .pulse = 0.7f, .unison = 5, .detune = 30.0f, .spread = 0.9f,
+        {.name = "Hoover", .style = "rave", .saw = 0.8f, .pulse = 0.7f, .unison = 5, .detune = 30.0f, .spread = 0.9f,
          .pwm = 0.38f, .pwmRate = 4.6f, .cutoff = 0.62f, .cutoffY = 0.3f, .res = 0.2f, .envAmt = 0.2f,
          .envDecay = 0.4f, .keyTrack = 0.5f, .drive = 0.4f, .a = 0.01f, .d = 0.6f, .s = 0.9f, .r = 0.3f,
          .glide = 0.1f, .porta = 0.1f, .scoop = 2.5f, .scoopTime = 0.09f, .vibDepth = 0.0f, .swoop = true,
          .echo = 0.15f, .gain = 1.1f},
         // The big-room lead: two squares a few cents apart and an octave
         // above, bright and short, made to cut through a festival mix.
-        {.name = "Big room", .pulse = 1.0f, .layer = 0.35f, .detune = 8.0f, .spread = 0.8f, .pulse2 = 0.9f,
+        {.name = "Big room", .style = "festival", .pulse = 1.0f, .layer = 0.35f, .detune = 8.0f, .spread = 0.8f, .pulse2 = 0.9f,
          .cutoff = 0.7f, .cutoffY = 0.25f, .res = 0.1f, .envAmt = 0.35f, .envDecay = 0.25f, .keyTrack = 0.5f,
          .drive = 0.15f, .a = 0.002f, .d = 0.3f, .s = 0.55f, .r = 0.15f, .glide = 0.03f, .vibDepth = 0.06f,
          .echo = 0.22f, .gain = 1.09f},
@@ -243,7 +318,7 @@ inline const Sound &sound(int i) {
         // sine whistle of a G-funk lead, a hard press quacks the filter
         // open on every attack. Close to mono, a hint of drive, and it
         // always glides.
-        {.name = "Mini", .saw = 0.85f, .sub = 0.1f, .unison = 2, .detune = 7.0f, .drift = 6.0f, .spread = 0.15f,
+        {.name = "Mini", .style = "G-funk", .saw = 0.85f, .sub = 0.1f, .unison = 2, .detune = 7.0f, .drift = 6.0f, .spread = 0.15f,
          .cutoff = 0.6f, .cutoffY = 0.2f, .res = 0.36f, .envAmt = 0.55f, .envDecay = 0.24f, .keyTrack = 0.9f,
          .envPress = 1.0f, .drive = 0.25f, .a = 0.003f, .d = 0.6f, .s = 0.85f, .r = 0.16f, .glide = 0.09f,
          .porta = 0.08f, .vibRate = 5.6f, .vibDepth = 0.17f, .vibDelay = 0.5f, .echo = 0.12f, .echoFb = 0.3f,
@@ -255,11 +330,105 @@ inline const Sound &sound(int i) {
         // are reedier and airier, as a real flute's are; a hard press
         // tongues a quicker attack for fast runs. One pipe, in the middle;
         // a flatter finger blows more air through it.
-        {.name = "Flute", .fm = 1.0f, .fmRatio = 1.0f, .fmIndex = 0.45f, .fmDecay = 0.15f, .fmFloor = 1.4f,
+        {.name = "Flute", .style = "lo-fi", .fm = 1.0f, .fmRatio = 1.0f, .fmIndex = 0.45f, .fmDecay = 0.15f, .fmFloor = 1.4f,
          .fmLow = 0.5f, .breath = 0.3f, .chiff = 1.4f, .cutoff = 0.7f, .cutoffY = 0.22f, .envAmt = 0.06f,
          .envDecay = 0.2f, .keyTrack = 0.6f, .a = 0.07f, .d = 0.5f, .s = 0.88f, .r = 0.2f, .aHard = 0.018f, .glide = 0.05f,
          .scoop = 0.3f, .scoopTime = 0.05f, .vibRate = 4.9f, .vibDepth = 0.1f, .vibDelay = 0.38f, .vibAmp = 0.16f,
          .echo = 0.18f, .echoFb = 0.38f, .gain = 0.92f},
+        // A sitar, for raga, raga rock and psychedelia: a plucked wire
+        // string buzzing on its curved bridge (the jawari), whose buzz is
+        // a bright formant on the stroke that sweeps down through the
+        // harmonics, a stripe across them, over the first half second or
+        // so and on as the swing dies (the sitar's "jiiing"). Under it a
+        // taraf of eleven sympathetic strings tuned to the scale shimmers
+        // with whatever is played and takes up what the string still
+        // swings once it is let go, ringing on after it; and a second
+        // finger tapped high on the pad strikes the chikari, the high
+        // drone strings, as hard as the melody string still swings. The
+        // wire rings long, as a sitar's does, so an alap's held note lives
+        // through its meend: legato, a hammer-on or a slide, bends the
+        // ringing string slowly to the next note. A flatter finger buzzes
+        // more, a higher one plucks brighter.
+        {.name = "Sitar", .style = "raga", .cutoff = 0.98f, .cutoffY = 0.06f, .keyTrack = 0.2f, .a = 0.0005f,
+         .d = 1.0f, .s = 1.0f, .r = 0.22f, .glide = 0.12f, .vibRate = 5.0f, .vibDepth = 0.06f, .vibDelay = 0.7f,
+         .swoop = true, .echo = 0.12f, .echoFb = 0.3f, .gain = 0.74f, .model = Sound::String, .jawari = 1.0f,
+         .sympathy = 0.3f, .chikari = 0.22f, .sustainS = 16.0f},
+        // A steel pan, for calypso, soca and island pop: tuned modes
+        // struck with a rubber-tipped stick, the octave blooming just
+        // after the fundamental, every mode a pair of sines a hair apart
+        // that shimmer against each other, each struck note settling down
+        // onto its pitch. A note of an eighth is one stroke; a longer one
+        // is rolled from the eighth on, as panists sustain a note, its
+        // strokes on the beat's subdivision nearest thirteen a second, the
+        // roll harder the harder the press, swelling into it over a few
+        // tenths of a second and leaning on the strokes that land on the
+        // studio's beat. Each stroke sets the note's neighbours on the pan
+        // ringing, its octave and the fifth over it, a little under it and
+        // a few cents off its partials: the halo of a real pan. A firm
+        // stroke high on the note pings off the stick, bright enough to
+        // cut through horns. Low notes are a cello pan's, their octave
+        // strong and defined.
+        {.name = "Steel pan", .style = "calypso", .cutoff = 0.95f, .cutoffY = 0.12f, .keyTrack = 0.2f, .a = 0.0008f,
+         .d = 1.0f, .s = 1.0f, .r = 0.5f, .glide = 0.03f, .vibDepth = 0.0f, .retrig = true, .echo = 0.2f,
+         .echoFb = 0.34f, .gain = 1.17f, .model = Sound::Pan, .sustainS = 2.2f, .roll = 1.0f, .settle = 0.14f},
+        // The sync lead of Italo disco and synth-pop, two oscillators deep:
+        // a saw hard-synced to the note and a second synced an octave
+        // above, each swept down from high on every attack ("yow") to a
+        // ratio where it keeps tearing, wandering slowly and moved by the
+        // vibrato and the finger's wiggle, and a resonance riding the
+        // slave's pitch sings the formant it sweeps (a "yow" as hard as the
+        // note is struck), with a second formant over it whose vowel the
+        // finger's height moves from "ow" to "ee". Height also holds the
+        // sweep up; a hard press crossfades into FM of the slave by its
+        // master, a metallic snarl none of the other leads have. Undriven,
+        // its oscillators run at four times the rate and its ladder at
+        // twice, so neither the snarl under a vibrato nor the ladder's
+        // soft clip folds anything back.
+        {.name = "Sync", .style = "Italo disco", .cutoff = 0.88f, .cutoffY = 0.1f, .res = 0.12f, .envAmt = 0.16f,
+         .envDecay = 0.35f, .keyTrack = 0.5f, .drive = 0.0f, .a = 0.002f, .d = 0.5f, .s = 0.85f, .r = 0.2f,
+         .glide = 0.04f, .vibRate = 5.5f, .vibDepth = 0.1f, .vibDelay = 0.5f, .echo = 0.18f, .echoFb = 0.4f,
+         .gain = 0.44f, .model = Sound::Sync, .syncFrom = 6.0f, .syncTo = 2.4f, .syncTime = 0.16f, .syncY = 2.0f,
+         .sync2 = 0.5f, .syncFm = 0.7f, .syncLfo = 1.0f},
+        // An erhu, the two-string fiddle of Chinese opera, film and
+        // C-pop, as a bowed string: the hair sticks to the string and
+        // slips off it every period, so the tone is the string's own
+        // Helmholtz motion, and the bow decides it: a light press is a
+        // breathy flautando that whistles or breaks, a hard one grinds
+        // toward sul ponticello; higher on the pad bows nearer the bridge.
+        // The rosin rasps in time with each slip, the python-skin body is
+        // nasal around a kilohertz, and a note played again soon after
+        // changes the bow, with the catch of the hair turning round. A held
+        // bow sings in an arc, swelling into the middle of the stroke and
+        // tapering to its end, where it turns by itself. The small body
+        // speaks little over seven kilohertz, so a hard press grinds in its
+        // middle. It slides into notes, and across a leap of more than a
+        // tone the finger travels the string (a huayin), a little past the
+        // note and back, the line lightening as it goes. Its vibrato, from
+        // a hand pressing a string that has no fingerboard, is deep, and a
+        // player's: late and narrow at first, then wider and quicker into
+        // the bow's arc (five cycles a second to six and a half), no two
+        // cycles alike.
+        {.name = "Erhu", .style = "C-pop", .cutoff = 0.9f, .cutoffY = 0.1f, .keyTrack = 0.4f, .a = 0.06f, .d = 0.6f,
+         .s = 0.9f, .r = 0.12f, .aHard = 0.025f, .glide = 0.12f, .porta = 0.07f, .scoop = 1.0f, .scoopTime = 0.07f,
+         .vibRate = 5.0f, .vibDepth = 0.5f, .vibDelay = 0.28f, .vibAmp = 0.05f, .swoop = true, .echo = 0.14f,
+         .echoFb = 0.34f, .gain = 0.36f, .model = Sound::Bow, .scratch = 1.0f},
+        // An accordion, for cumbia, vallenato, tango and the French bal,
+        // with its registers under the finger's height: low the clarinet,
+        // one dry reed (tango); the middle the bandoneon, a reed and one an
+        // octave above it; high the musette, three reeds, the outer two a
+        // five to seven hertz either side of the middle one, a wet tuning,
+        // so the note shimmers at the same speed all the way up (cumbia,
+        // the bal). Every note speaks with a key's click and the reed's sag
+        // onto pitch. The bellows turn by the phrase, as a player's do:
+        // once they have drawn their air, or unheard after a rest, never on
+        // every note of a run, and the two ways are voiced apart, as no two
+        // reed sets are: the pull's reeds edgier and its chamber's bite
+        // higher, the push's rounder. Their pressure is its swell. No
+        // vibrato but the reeds' own.
+        {.name = "Accordion", .style = "cumbia, tango", .cutoff = 0.8f, .cutoffY = 0.06f, .res = 0.04f,
+         .keyTrack = 0.3f, .a = 0.025f, .d = 0.4f, .s = 0.92f, .r = 0.08f, .aHard = 0.01f, .glide = 0.02f,
+         .scoop = -0.16f, .scoopTime = 0.05f, .vibDepth = 0.0f, .echo = 0.1f, .echoFb = 0.25f, .gain = 2.2f,
+         .model = Sound::Reed, .beatHz = 6.0f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

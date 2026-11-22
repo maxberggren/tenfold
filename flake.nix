@@ -25,7 +25,7 @@
       packages = forAll (pkgs: {
         default = pkgs.stdenv.mkDerivation {
           pname = "tenfold";
-          version = "0.3.0";
+          version = "0.3.1";
           src = self;
 
           nativeBuildInputs = [ pkgs.qt6.qmake pkgs.qt6.wrapQtAppsHook pkgs.pkg-config ];

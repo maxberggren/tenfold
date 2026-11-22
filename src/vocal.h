@@ -41,15 +41,25 @@ struct Tape {
     // The microphone's level, before any effect: an RMS per kHop samples,
     // indexed by sample / kHop. Space reads where the words are from it.
     std::vector<float> env;
+    // The voice before any style or effect, mono: what a slowed loop (the
+    // SCREWED style's) is made from, since slowing needs the singing whole.
+    std::vector<float> dry;
     std::atomic<int64_t> written{0}; // every sample before this is in the ring
 
     // A loop's audio. Until the page has copied it out of the ring (once the
     // ring holds all of it), the engine plays it from the ring; after, from
     // `data`, interleaved stereo, `length` frames. Handle 0 is never used.
+    //
+    // A slowed take (rate under 1) is made from `dry` instead: its frame k
+    // is the singing at start + k·rate, and only the `source` frames sung
+    // from `start` are in it (the rest of it is silence), so nothing sung
+    // is lost to the slowing, and nothing sung after it gets in.
     struct Take {
         std::atomic<const float *> data{nullptr};
         int64_t start = 0;
         int length = 0;
+        float rate = 1;
+        int source = 0;
     };
     Take takes[kMaxTakes];
 
@@ -57,6 +67,7 @@ struct Tape {
         wetL.assign(size_t(kRing), 0.0f);
         wetR.assign(size_t(kRing), 0.0f);
         env.assign(size_t(kEnvRing), 0.0f);
+        dry.assign(size_t(kRing), 0.0f);
     }
 };
 
@@ -305,6 +316,650 @@ private:
 
     Grain m_grains[16];
     double m_next = -1, m_mark = -1e18;
+};
+
+// --- a ceiling ------------------------------------------------------------------
+
+// A peak ceiling for a style whose peaks stand far over its loudness (a
+// resonant filter, a plucked string): a gain, never a curve, so it adds no
+// edges whose peaks would fall between the samples. It looks 1.3 ms ahead,
+// brings its gain down within about half of that, smoothly, and lets it
+// back up over 80 ms (or, for a pluck, whose peak is gone in a moment,
+// as quickly as `setRelease` asks). Kept under 0.38, a style never wakes the studio's
+// own limiter on the monitored voice (it lifts the voice 5 dB into an
+// instant one at −3 dBFS), whose quick gain would make those overs, and
+// whose bite on an uneven waveform would leave a wandering offset.
+struct Ceiling {
+    static constexpr int kAhead = 64;
+    float limit = 0.38f, peak = 0, gain = 1, fall = 0.99974f, rise = 0.0003f;
+    float buf[2][kAhead] = {};
+    uint32_t w = 0;
+    void setRelease(float seconds, float rate) {
+        fall = std::exp(-1.0f / (seconds * rate));
+        rise = 1.0f - std::exp(-1.0f / (0.8f * seconds * rate));
+    }
+    inline void step(float &l, float &r) {
+        const float pk = std::max(std::fabs(l), std::fabs(r));
+        peak = pk > peak ? pk : peak * fall;
+        const float want = peak > limit ? limit / peak : 1.0f;
+        gain += (want - gain) * (want < gain ? 0.12f : rise);
+        const uint32_t i = w++ & (kAhead - 1), o = (i + 1) & (kAhead - 1);
+        buf[0][i] = l;
+        buf[1][i] = r;
+        l = buf[0][o] * gain;
+        r = buf[1][o] * gain;
+    }
+};
+
+// --- a talk box --------------------------------------------------------------------
+
+// A talk box, as a funk player wires one: a synth's sound goes up a tube
+// into the mouth, and the mouth shapes it into words. Here the mouth is
+// measured instead. Linear prediction (order 24, the autocorrelation
+// method, on the voice tilted up 6 dB an octave so the upper formants
+// count) finds the vocal tract every 8 ms from the last 16 ms, and an
+// all-pole lattice filter with that tract shapes the synth. The lattice's
+// reflection coefficients are moved sample by sample from one frame's to
+// the next: each stays inside ±1 all the way, so the filter is stable at
+// every step, and the formants glide as a mouth's do instead of stepping
+// at the frame rate. There are two lattices on the one tract, so a synth
+// can be spread across the stereo field and still be spoken by one mouth.
+class TalkBox {
+public:
+    static constexpr int kOrder = 24, kWin = 768, kHopN = 384;
+
+    void init(float rate) {
+        m_rate = rate;
+        for (int i = 0; i < kWin; ++i)
+            m_win[i] = 0.5f - 0.5f * std::cos(kTwoPi * (float(i) + 0.5f) / float(kWin));
+        m_winSq = 0;
+        for (float w : m_win)
+            m_winSq += double(w) * w;
+        reset();
+    }
+    void reset() {
+        std::fill(std::begin(m_buf), std::end(m_buf), 0.0f);
+        std::fill(std::begin(m_k0), std::end(m_k0), 0.0f);
+        std::fill(std::begin(m_k1), std::end(m_k1), 0.0f);
+        std::fill(std::begin(m_b), std::end(m_b), 0.0f);
+        std::fill(std::begin(m_c), std::end(m_c), 0.0f);
+        m_g0 = m_g1 = 0;
+        m_pre = 0;
+        m_n = 0;
+        m_w = 0;
+    }
+    // One sample of the voice in (what the mouth is doing), one of the
+    // synth for each side (what goes up the tube); the two, spoken, out.
+    // The synth is best bright and steady: the filter puts back every
+    // formant, so a plain sawtooth comes out as a vowel.
+    inline void step(float voice, float synthL, float synthR, float &outL, float &outR) {
+        m_buf[m_w] = voice - 0.95f * m_pre;
+        m_pre = voice;
+        m_w = (m_w + 1) % kWin;
+        if (++m_n >= kHopN) {
+            m_n = 0;
+            analyse();
+        }
+        const float t = float(m_n) * (1.0f / kHopN);
+        const float g = m_g0 + (m_g1 - m_g0) * t;
+        float f = g * synthL, e = g * synthR;
+        for (int i = kOrder; i >= 1; --i) {
+            const float k = m_k0[i] + (m_k1[i] - m_k0[i]) * t;
+            f += k * m_b[i - 1];
+            m_b[i] = m_b[i - 1] - k * f;
+            e += k * m_c[i - 1];
+            m_c[i] = m_c[i - 1] - k * e;
+        }
+        // A silent voice has no tract to measure: the state can't grow,
+        // but a denormal tail shouldn't linger either.
+        m_b[0] = std::fabs(f) < 1e-20f ? 0.0f : f;
+        m_c[0] = std::fabs(e) < 1e-20f ? 0.0f : e;
+        outL = m_b[0];
+        outR = m_c[0];
+    }
+    // The same with one synth for both sides.
+    inline float step(float voice, float synth) {
+        float l, r;
+        step(voice, synth, synth, l, r);
+        return l;
+    }
+
+    // The analysis, exposed for the tests: the reflection coefficients
+    // the lattice is heading for, and the residual's level.
+    const float *target() const { return m_k1; }
+    float gain() const { return m_g1; }
+
+private:
+    void analyse() {
+        // Where the frame now ends is where it was interpolating to: start
+        // the next glide from there.
+        std::copy(std::begin(m_k1), std::end(m_k1), std::begin(m_k0));
+        m_g0 = m_g1;
+        float x[kWin];
+        for (int i = 0; i < kWin; ++i)
+            x[i] = m_buf[(m_w + i) % kWin] * m_win[i];
+        double r[kOrder + 1];
+        for (int lag = 0; lag <= kOrder; ++lag) {
+            double s = 0;
+            for (int i = lag; i < kWin; ++i)
+                s += double(x[i]) * x[i - lag];
+            // A lag window (a 40 Hz Gaussian) widens the formants a
+            // little, so a high voice's harmonics aren't taken for them.
+            const double w = kTwoPi * 40.0 / m_rate * lag;
+            r[lag] = s * std::exp(-0.5 * w * w);
+        }
+        if (r[0] < 1e-9 * kWin) {
+            std::fill(std::begin(m_k1), std::end(m_k1), 0.0f);
+            m_g1 = 0;
+            return;
+        }
+        r[0] *= 1.0001; // a hair of white noise: never a pole on the circle
+        // Levinson–Durbin: the prediction x̂[n] = Σ a[j] x[n−j], built up an
+        // order at a time, each order's reflection coefficient kept.
+        double a[kOrder + 1] = {}, na[kOrder + 1];
+        double e = r[0];
+        for (int i = 1; i <= kOrder; ++i) {
+            double acc = r[i];
+            for (int j = 1; j < i; ++j)
+                acc -= a[j] * r[i - j];
+            const double k = std::clamp(acc / e, -0.995, 0.995);
+            for (int j = 1; j < i; ++j)
+                na[j] = a[j] - k * a[i - j];
+            for (int j = 1; j < i; ++j)
+                a[j] = na[j];
+            a[i] = k;
+            m_k1[i] = float(k);
+            e *= 1.0 - k * k;
+        }
+        // The residual's level per sample: a unit synth through the filter
+        // comes out as loud as the voice was.
+        m_g1 = float(std::sqrt(std::max(0.0, e) / m_winSq));
+    }
+
+    float m_win[kWin];
+    double m_winSq = 1;
+    float m_buf[kWin];
+    float m_k0[kOrder + 1] = {}, m_k1[kOrder + 1] = {}, m_b[kOrder + 1] = {}, m_c[kOrder + 1] = {};
+    float m_g0 = 0, m_g1 = 0, m_pre = 0, m_rate = 48000;
+    int m_n = 0, m_w = 0;
+};
+
+// --- a sitar -----------------------------------------------------------------------
+
+// A plucked string on a sitar's bridge. The string is a delay line a period
+// long, its fraction an allpass (which loses nothing, so the string rings
+// for seconds and stays bright), its losses a three-tap loop filter that is
+// symmetric (its delay one sample whatever its brightness, so the string
+// stays in tune). Its length follows a pitch continuously: the string bends
+// under the finger as a sitarist's does in a meend, without a new pluck.
+//
+// The jawari is the bridge's flat, curved top: the string lies on it, and
+// the harder it swings the further along the curve it touches, so its
+// length shortens a little at the top of every swing. Modelled as Pierce
+// and Van Duyne's passive nonlinear allpass: one sample of the loop is a
+// normalised allpass (a rotation, so it neither adds nor takes energy
+// whatever it does) whose coefficient switches, sample by sample, while
+// its state is past a threshold: the string, touching, is shorter. That
+// switching scatters the string's energy into new partials every pass, up
+// into the top octaves (the buzz), and can never pump the loop. As the
+// string dies it touches less of each swing and the bright band sinks down
+// through the spectrum: the sitar's sweep. Quiet enough not to touch, the
+// bridge is one sample's delay and the string a clean one again.
+class JawariString {
+public:
+    static constexpr int kSize = 4096;
+
+    void init(float rate) {
+        m_rate = rate;
+        // The length only slews a few milliseconds to its pitch: what it
+        // follows (a meend, a little of a vibrato) is decided by whoever
+        // sets it, and the string merely mustn't step.
+        m_len.setTime(0.006f, rate);
+        m_len.reset(rate / 220.0f);
+        m_dc.r = 1.0f - kTwoPi * 3.0f / rate;
+        m_swingA = 1.0f - std::exp(-kTwoPi * 1200.0f / rate);
+        clear();
+        setHz(220.0f);
+        m_len.reset(m_want);
+    }
+    void clear() {
+        std::fill(std::begin(m_buf), std::end(m_buf), 0.0f);
+        m_w = 0;
+        m_brS = 0;
+        m_apX = m_apY = m_z1 = m_z2 = 0;
+        m_dc = DcBlock{0, 0, m_dc.r};
+        m_exc = 0;
+        m_excN = kPluck;
+    }
+    // Its pitch, followed smoothly; jump() puts it there at once (a new
+    // pluck on a new note).
+    void setHz(float hz) {
+        hz = clampf(hz, 40.0f, 2400.0f);
+        // A period less the loop filter's one sample and the bridge's.
+        m_want = clampf(m_rate / hz - 2.0f, 8.0f, float(kSize - 8));
+        m_fb = std::pow(10.0f, -3.0f / (m_t60 * hz));
+    }
+    void jump() { m_len.reset(m_want); }
+    // How long a note rings (its T60, seconds) and how much it buzzes (the
+    // jawari's reach, an allpass coefficient: 0 a plain string, 0.6 a
+    // sitar's; and the excursion past which the string touches).
+    void setDecay(float t60) { m_t60 = std::max(0.2f, t60); }
+    void setJawari(float reach, float threshold) {
+        m_reach = reach;
+        m_theta = threshold;
+    }
+    // The mizrab: the wire plectrum's stroke, a sharp push of the string
+    // and the scrape of the wire on it, a few milliseconds long. `bright`
+    // is the stroke's direction: 1 da, the stroke inwards, with the finger's
+    // weight behind it (a short, hard push and the wire's full scrape); 0
+    // ra, the stroke back out, lighter (a push twice as long, so softer at
+    // the top, and half the scrape).
+    void pluck(float amp, float bright = 1.0f) {
+        m_exc = amp;
+        m_excN = 0;
+        bright = clampf(bright, 0.0f, 1.0f);
+        m_pushN = 32.0f - 16.0f * bright;
+        m_scrapeAmt = 0.25f + 0.3f * bright;
+    }
+    inline float step(Rng &rng) {
+        const float len = m_len.step(m_want);
+        const int n = int(len - 0.5f);
+        const float d = len - float(n);
+        const float eta = (1.0f - d) / (1.0f + d);
+        const float a = m_buf[(m_w - n) & (kSize - 1)];
+        const float x = eta * (a - m_apY) + m_apX;
+        m_apX = a;
+        m_apY = x;
+        // The bridge: while the string's swing is past the threshold, on
+        // the side the bridge is, the allpass's coefficient is `reach` (a
+        // quarter sample's delay at 0.6, where it is a whole one at rest).
+        // The swing is the string's slow motion (under 1.2 kHz), not the
+        // buzz itself: touched once a period, at the top of the swing, as
+        // a string is, rather than scattering its own scatter into hiss.
+        m_swing += (x - m_swing) * m_swingA;
+        // (Eased in over a second threshold's worth, so the buzz thins out
+        // as the swing shrinks instead of stopping at a line.)
+        const float k = m_reach * clampf((m_swing - m_theta) / m_theta, 0.0f, 1.0f);
+        m_buzz = std::max(k, m_buzz * 0.9995f);
+        const float c = std::sqrt(1.0f - k * k);
+        const float bx = k * x + c * m_brS;
+        m_brS = c * x - k * m_brS;
+        float y = (m_side * (bx + m_z2) + (1.0f - 2.0f * m_side) * m_z1) * m_fb;
+        m_z2 = m_z1;
+        m_z1 = bx;
+        y = m_dc.step(y);
+        float e = 0;
+        if (m_excN < kPluck) {
+            const float t = float(m_excN);
+            // A half-sine push a third to two thirds of a millisecond long,
+            // then the wire's scrape.
+            const float push = t < m_pushN ? std::sin(kPi * t / m_pushN) : 0.0f;
+            // (Its noise smoothed a little: white noise in a lossless loop
+            // would keep its top octave, the hiss of a sampler, not a wire.)
+            m_scr += (rng.bipolar() - m_scr) * 0.45f;
+            const float scrape = m_scr * std::exp(-t / 40.0f) * m_scrapeAmt;
+            e = m_exc * (push + scrape);
+            ++m_excN;
+        }
+        m_buf[m_w] = y + e;
+        m_w = (m_w + 1) & (kSize - 1);
+        return x;
+    }
+    float hz() const { return m_rate / (m_len.y + 2.0f); }
+    // How far onto the bridge the string reached lately (0..reach): the
+    // page lights the jawari by it.
+    float buzz() const { return m_buzz; }
+
+private:
+    static constexpr int kPluck = 240;
+    float m_buf[kSize];
+    int m_w = 0, m_excN = kPluck;
+    Smooth m_len;
+    DcBlock m_dc;
+    float m_rate = 48000, m_want = 200, m_fb = 0.999f, m_t60 = 3.0f;
+    float m_apX = 0, m_apY = 0, m_z1 = 0, m_z2 = 0, m_exc = 0, m_brS = 0;
+    float m_reach = 0.6f, m_theta = 0.04f, m_side = 0.008f, m_swing = 0, m_swingA = 0.15f, m_buzz = 0, m_scr = 0;
+    float m_pushN = 20.0f, m_scrapeAmt = 0.5f;
+};
+
+// A sitar's tarafs: strings no one plucks, tuned to the raga's notes,
+// that ring when the playing has their note in it. Each is a delay line a
+// period long (its fraction an allpass, which loses nothing: an
+// interpolated read would dull the string within a second) fed back
+// through a three-tap loop filter. The filter is symmetric, so its delay
+// is one sample whatever its brightness, and the string stays in tune as
+// the brightness moves. And it moves: the louder a string rings, the
+// brighter its loop, as a jawari makes a string buzz brighter the harder it
+// swings. They ring long, four seconds high up to eight low down, as
+// tarafs do: the room fills with the raga.
+class Strings {
+public:
+    static constexpr int kCount = 13, kSize = 4096;
+
+    void init(float rate) {
+        m_rate = rate;
+        for (auto &s : m_s) {
+            std::fill(std::begin(s.buf), std::end(s.buf), 0.0f);
+            s.w = 0;
+            s.env = 0;
+            s.z1 = s.z2 = 0;
+            s.apX = s.apY = 0;
+            s.midi = -1;
+        }
+        m_sizzleHp.set(1500.0f, 0.7f, rate);
+        m_sizzleHp2.set(1500.0f, 0.7f, rate);
+        m_level = m_pre = 0;
+    }
+    // Tunes string k (a MIDI note); only a change does any work.
+    void tune(int k, float midi) {
+        S &s = m_s[k];
+        if (std::fabs(s.midi - midi) < 1e-3f)
+            return;
+        s.midi = midi;
+        const float hz = midiToHz(midi);
+        // A period, less the loop filter's one sample: whole samples, and a
+        // fraction between a half and one and a half for the allpass,
+        // where its delay is flattest.
+        const float len = clampf(m_rate / hz - 1.0f, 8.0f, float(kSize - 4));
+        s.n = int(std::floor(len - 0.5f));
+        const float d = len - float(s.n);
+        s.eta = (1.0f - d) / (1.0f + d);
+        const float t60 = clampf(7.0f - 1.0f * std::log2(hz / 110.0f), 4.0f, 8.0f);
+        s.fb = std::pow(10.0f, -3.0f / (t60 * hz));
+    }
+    // One sample in (what is played); the strings, left and right, out.
+    inline void step(float in, float &outL, float &outR) {
+        // Tilted up 6 dB an octave: these strings should ring with the
+        // whole series.
+        const float x0 = in - 0.85f * m_pre;
+        m_pre = in;
+        in = x0 * 2.5f;
+        float l = 0, r = 0;
+        for (int k = 0; k < kCount; ++k) {
+            S &s = m_s[k];
+            const float a = s.buf[(s.w - s.n) & (kSize - 1)];
+            const float x = s.eta * (a - s.apY) + s.apX;
+            s.apX = a;
+            s.apY = x;
+            s.env += (std::fabs(x) - s.env) * (std::fabs(x) > s.env ? 0.01f : 0.0004f);
+            // A dark loop (the side taps at 0.12) opening to an almost
+            // lossless one (0.02) as the string's level climbs.
+            const float side = 0.12f - 0.1f * clampf(s.env * 8.0f, 0.0f, 1.0f);
+            const float y = (side * (x + s.z2) + (1.0f - 2.0f * side) * s.z1) * s.fb;
+            s.z2 = s.z1;
+            s.z1 = x;
+            s.buf[s.w] = in + y;
+            s.w = (s.w + 1) & (kSize - 1);
+            (k & 1 ? r : l) += x;
+            (k & 1 ? l : r) += x * 0.35f;
+        }
+        // A held note in tune with several strings rings them far louder
+        // than a passing one rings one: a slow leveller keeps them under
+        // the playing, quick to duck and slow to let go, so a tail still
+        // dies away as it would.
+        const float peak = std::max(std::fabs(l), std::fabs(r));
+        m_level += (peak - m_level) * (peak > m_level ? 0.002f : 0.00002f);
+        const float g = m_level > 0.3f ? 0.3f / m_level : 1.0f;
+        l *= g;
+        r *= g;
+        // A shimmer on top: the strings' sum squared, sign kept, its low
+        // half taken off.
+        const float norm = 1.0f / (m_level + 0.03f);
+        outL = l + 0.3f * m_sizzleHp.step(l * std::fabs(l) * norm).high;
+        outR = r + 0.3f * m_sizzleHp2.step(r * std::fabs(r) * norm).high;
+    }
+    // How loud string k rings now, after the leveller: the page lights it.
+    float level(int k) const { return m_s[k].env * (m_level > 0.3f ? 0.3f / m_level : 1.0f); }
+
+private:
+    struct S {
+        float buf[kSize];
+        int w = 0;
+        int n = 100;
+        float eta = 0, apX = 0, apY = 0, fb = 0.99f, env = 0, z1 = 0, z2 = 0, midi = -1;
+    };
+    S m_s[kCount];
+    float m_rate = 48000, m_level = 0, m_pre = 0;
+    Svf m_sizzleHp, m_sizzleHp2;
+};
+
+// When a syllable starts: a fast envelope leaping over a slow one. Used by
+// the styles that play a note per syllable (the sitar's pluck, the
+// gamelan's strike).
+struct Onsets {
+    float fast = 0, slow = 0;
+    int since = 1 << 30;
+    // One sample of the voice; true on an attack, at most one per 90 ms.
+    inline bool step(float x, float rate) {
+        const float a = std::fabs(x);
+        fast += (a - fast) * (a > fast ? 0.05f : 0.003f);
+        slow += (a - slow) * (a > slow ? 0.0015f : 0.0004f);
+        if (since < (1 << 30))
+            ++since;
+        if (fast > slow * 1.8f && fast > 0.03f && since > int(rate * 0.09f)) {
+            since = 0;
+            return true;
+        }
+        return false;
+    }
+};
+
+// --- bronze ----------------------------------------------------------------------
+
+// A gamelan's bronze, by its modes: each strike rings at its own few
+// partials, every mode a decaying phasor. Every note is struck on two
+// instruments at once, one tuned a few hertz under the note and one over,
+// left and right, the way a Balinese pair is tuned to beat (ombak): the
+// note shimmers. A keyed bar hangs over a bamboo tube tuned to it, which
+// takes up the fundamental slowly and holds it long after the bar's own
+// ring: a second, slow-swelling copy of the fundamental (the difference
+// of a long decay and a short one). As a player does with the off hand, a
+// new strike damps what came before it, all but the last `keep` notes.
+// The same machine strikes the gongs, with a gong's modes, a slow pair
+// beat, and a bloom in place of the tube. A big gong struck hard rings
+// sharp and sinks a few cents as it dies (its metal stiffer the further it
+// swings): `sag`. And its pair's beat is heard in each ear, not only
+// between them (`blend`: how much of each side's partner it has), so the
+// gong ageng throbs as one does in a room.
+//
+// Twelve strikes ring at once: kotekan strikes six times a second and a
+// bar rings for well over a second and a half, so a free one is nearly
+// always there. When none is, the quietest is not written over where it
+// stands (its modes would jump, a click on every sixteenth): it is faded
+// out over 4 ms first, and the new strike begins once it has gone.
+class Bronze {
+public:
+    static constexpr int kStrikes = 12, kModes = 6;
+    struct Spec {
+        float ratio[4], amp[4], t60[4];
+        float ombak = 6.0f;               // Hz between the pair
+        float tube = 0, tubeT60 = 6, swellT60 = 0.2f; // the resonator: level, ring, how slowly it fills
+        float knock = 0.35f;              // the mallet's knock
+        int keep = 1;                     // strikes left ringing by a new one
+        float sag = 0, sagT = 2.0f;       // cents sharp at the strike, and how long it takes to sink (s)
+        float blend = 0;                  // each side's partner in it, 0..1
+    };
+
+    void init(float rate, float knockHz = 3200.0f) {
+        m_rate = rate;
+        for (auto &s : m_s)
+            s.live = false;
+        m_click.set(knockHz, 1.2f, rate);
+    }
+    void strike(float midi, float velocity, const Spec &sp) {
+        // The voice to use: a dead one, or else the quietest, faded first.
+        Strike *s = nullptr;
+        for (auto &c : m_s)
+            if (!c.live) {
+                s = &c;
+                break;
+            }
+        // Damp what came before, but the newest few: a player's other hand.
+        for (auto &c : m_s)
+            if (c.live && c.order < m_order - (sp.keep - 1))
+                c.damp = true;
+        const float v = clampf(velocity, 0.05f, 1.0f);
+        if (!s) {
+            s = &m_s[0];
+            for (auto &c : m_s)
+                if (c.level + (c.fade > 0 ? 10.0f : 0.0f) < s->level + (s->fade > 0 ? 10.0f : 0.0f))
+                    s = &c;
+            s->fade = kFade;
+            s->next = {midi, v, sp};
+            s->queued = true;
+            return;
+        }
+        arm(*s, midi, v, sp);
+    }
+    // Every strike damped, as a hand laid on the keys.
+    void dampAll() {
+        for (auto &c : m_s)
+            c.damp = c.live;
+    }
+    inline void step(Rng &rng, float &outL, float &outR) {
+        float l = 0, r = 0;
+        static const float dampR = 0.99952f; // a 0.3 s T60 at 48 kHz, on top of the mode's own
+        // A sagging strike's modes retuned every 64 samples: a few cents
+        // over seconds moves far less than a hertz a step, and the
+        // phasors themselves are kept, so nothing clicks.
+        const bool retune = (m_tick++ & 63) == 0;
+        for (auto &s : m_s) {
+            if (retune && s.live && s.bend > 0.01f) {
+                s.bend *= s.bendR;
+                const float f = std::exp2(s.bend / 1200.0f);
+                for (int side = 0; side < 2; ++side)
+                    for (int m = 0; m < kModes; ++m) {
+                        Mode &md = s.mode[side][m];
+                        md.cr = md.r * std::cos(md.w * f);
+                        md.ci = md.r * std::sin(md.w * f);
+                    }
+            }
+            if (s.fade > 0) {
+                // A stolen strike going: 60 dB down over the fade, then the
+                // strike that took it.
+                for (auto &side : s.mode)
+                    for (auto &md : side) {
+                        md.re *= kFadeR;
+                        md.im *= kFadeR;
+                    }
+                if (--s.fade == 0 && s.queued) {
+                    s.queued = false;
+                    arm(s, s.next.midi, s.next.velocity, s.next.spec);
+                }
+            }
+            if (!s.live)
+                continue;
+            float sums[2];
+            for (int side = 0; side < 2; ++side) {
+                float sum = 0;
+                for (auto &md : s.mode[side]) {
+                    const float re = md.re * md.cr - md.im * md.ci;
+                    const float im = md.re * md.ci + md.im * md.cr;
+                    md.re = re;
+                    md.im = im;
+                    sum += re;
+                }
+                sums[side] = sum;
+            }
+            l += sums[0] + s.blend * sums[1];
+            r += sums[1] + s.blend * sums[0];
+            s.level *= s.damp ? dampR * 0.99998f : 0.99998f;
+            if (s.damp)
+                for (auto &side : s.mode)
+                    for (auto &md : side) {
+                        md.re *= dampR;
+                        md.im *= dampR;
+                    }
+            // The fundamental and the tube are the longest modes: when
+            // they have died, so has the bar.
+            const Mode &f = s.mode[0][0], &t = s.mode[0][4];
+            const float e = std::fabs(f.re) + std::fabs(f.im) + std::fabs(t.re) + std::fabs(t.im);
+            if (e < 1e-5f && s.level < 0.02f && !s.queued)
+                s.live = false;
+        }
+        // The knock: a few milliseconds of band-passed noise.
+        m_tock *= 0.992f;
+        if (m_tock < 1e-5f)
+            m_tock = 0;
+        const float tock = m_tock > 0 ? m_click.step(rng.bipolar() * m_tock).band : 0.0f;
+        outL = l + tock;
+        outR = r + tock;
+    }
+
+    // Strikes sounding, for the tests.
+    int live() const {
+        int n = 0;
+        for (const auto &c : m_s)
+            n += c.live;
+        return n;
+    }
+
+private:
+    static constexpr int kFade = 192;          // 4 ms at 48 kHz
+    static constexpr float kFadeR = 0.96466f;  // 0.001^(1/192)
+    struct Mode {
+        float re = 0, im = 0, cr = 1, ci = 0, w = 0, r = 1;
+    };
+    struct Next {
+        float midi = 0, velocity = 0;
+        Spec spec;
+    };
+    struct Strike {
+        Mode mode[2][kModes];
+        bool live = false, damp = false, queued = false;
+        float level = 0, bend = 0, bendR = 1, blend = 0;
+        int order = 0, fade = 0;
+        Next next;
+    };
+    void arm(Strike &st, float midi, float v, const Spec &sp) {
+        Strike *s = &st;
+        const float hz = midiToHz(midi);
+        for (int side = 0; side < 2; ++side) {
+            const float f0 = hz + (side ? sp.ombak : -sp.ombak) * 0.5f;
+            for (int m = 0; m < kModes; ++m) {
+                Mode &md = s->mode[side][m];
+                float f, a, t60;
+                if (m < 4) {
+                    f = f0 * sp.ratio[m];
+                    a = sp.amp[m] * std::pow(v, 0.5f * float(m));
+                    t60 = sp.t60[m];
+                } else {
+                    // The tube: the fundamental again, held long (4) less
+                    // the same dying fast (5), so it swells and sustains.
+                    f = f0;
+                    a = m == 4 ? sp.tube : -sp.tube;
+                    t60 = m == 4 ? sp.tubeT60 : sp.swellT60;
+                }
+                // A mode past the top of the band would only alias.
+                if (f >= m_rate * 0.45f)
+                    a = 0;
+                const float r = std::pow(10.0f, -3.0f / (t60 * m_rate));
+                const float w = kTwoPi * f / m_rate;
+                const float bent = w * std::exp2(sp.sag * v / 1200.0f);
+                md.w = w;
+                md.r = r;
+                md.cr = r * std::cos(bent);
+                md.ci = r * std::sin(bent);
+                // Starting on the sine's zero: the bar's own swing, no step.
+                md.re = 0;
+                md.im = -a * v;
+            }
+        }
+        s->live = true;
+        s->damp = false;
+        s->level = v;
+        // (Struck harder, sharper: the sag is the velocity's share of it.)
+        s->bend = sp.sag * v;
+        s->bendR = std::exp(-64.0f / (std::max(0.05f, sp.sagT) * m_rate));
+        s->blend = sp.blend;
+        s->order = m_order++;
+        m_tock += sp.knock * v;
+    }
+    Strike m_s[kStrikes];
+    int m_order = 0;
+    uint32_t m_tick = 0;
+    float m_rate = 48000, m_tock = 0;
+    Svf m_click;
 };
 
 // --- Space: where the words are ---------------------------------------------

@@ -9,6 +9,7 @@ makedepends=('gcc' 'make')
 source=()
 sha256sums=()
 install=tenfold.install
+options=('!debug') # one package, not a separate one of debug symbols
 
 build() {
   cd "$startdir/.."

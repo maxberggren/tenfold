@@ -31,7 +31,7 @@ esac
 
 say "Finding the latest tenfold for $arch…"
 url=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" |
-    grep -o "\"browser_download_url\": *\"[^\"]*-$arch\.pkg\.tar\.zst\"" |
+    grep -o "\"browser_download_url\": *\"[^\"]*/tenfold-[0-9][^/\"]*-$arch\.pkg\.tar\.zst\"" |
     sed 's/.*"\(https[^"]*\)"$/\1/' | head -n 1) || true
 [ -n "$url" ] || fail "no release for $arch yet: https://github.com/$repo/releases"
 

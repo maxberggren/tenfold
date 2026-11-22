@@ -177,6 +177,21 @@ private slots:
             QCOMPARE(int(c.state), int(ClipView::Empty));
     }
 
+    // The right edge is freeze below its middle and stutter above, and the
+    // page names each as the engine hears it, sliding across the middle too.
+    void theRightEdgeSaysFreezeOrStutter() {
+        QString low, high, slid;
+        testkit::play(std::string(kPage) + "down 0.3 1 0.96 0.3\nend 0.5\n",
+                      [&](Session &s) { low = s.pageStatus(); });
+        testkit::play(std::string(kPage) + "down 0.3 1 0.96 0.75\nend 0.5\n",
+                      [&](Session &s) { high = s.pageStatus(); });
+        testkit::play(std::string(kPage) + "down 0.3 1 0.96 0.3\nglide 0.35 0.6 1 0.96 0.75\nend 0.8\n",
+                      [&](Session &s) { slid = s.pageStatus(); });
+        QVERIFY2(low.contains("FREEZE") && !low.contains("STUTTER"), qPrintable(low));
+        QVERIFY2(high.contains("STUTTER") && !high.contains("FREEZE"), qPrintable(high));
+        QVERIFY2(slid.contains("STUTTER") && !slid.contains("FREEZE"), qPrintable(slid));
+    }
+
     // --- Space's pick ----------------------------------------------------------------
 
     void aPhraseInsideTheBarsIsTakenOnTheBars() {

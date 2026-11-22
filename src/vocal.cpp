@@ -32,6 +32,7 @@
 #include <QPainterPath>
 #include <Qt>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -92,7 +93,10 @@ constexpr float kLeft = 0.085f, kRight = 0.915f, kBottom = 0.12f, kTop = 0.86f;
 // The keys' lower part shows the tape: what Space would take.
 constexpr float kTapeTop = 0.32f;
 
-enum Zone { Keys, Filter, Freeze, Echo, Reverb, Radio, Crush, Chop };
+// The right edge is two effects on one control (PFreeze): freeze below its
+// middle, stutter above, as the engine reads the height.
+enum Zone { Keys, Filter, Freeze, Echo, Reverb, Radio, Crush, Chop, Stutter };
+constexpr float kRightMid = 0.5f * (kBottom + kTop);
 Zone zoneAt(float x, float y) {
     if (y >= kTop)
         return x < 0.5f ? Echo : Reverb;
@@ -101,7 +105,7 @@ Zone zoneAt(float x, float y) {
     if (x <= kLeft)
         return Filter;
     if (x >= kRight)
-        return Freeze;
+        return y >= kRightMid ? Stutter : Freeze;
     if (y < kTapeTop)
         return Chop;
     return Keys;
@@ -1425,7 +1429,7 @@ public:
         const Zone held = k.key == Qt::Key_Q   ? Echo
                           : k.key == Qt::Key_W ? Reverb
                           : k.key == Qt::Key_E ? Freeze
-                          : k.key == Qt::Key_R ? Freeze
+                          : k.key == Qt::Key_R ? Stutter
                                                : Keys;
         if ((lane >= 0 || held != Keys || k.key == Qt::Key_T) && !(k.modifiers & Qt::ControlModifier)) {
             if (k.repeat)
@@ -1918,6 +1922,7 @@ private:
         case Chop: return "WORD";
         case Filter: return "FILTER";
         case Freeze: return "FREEZE";
+        case Stutter: return "STUTTER";
         case Echo: return "ECHO";
         case Reverb: return "REVERB";
         case Radio: return "RADIO";
@@ -2046,6 +2051,10 @@ private:
                 sendChop(h, true, ctx);
             }
         } else if (changed(h)) {
+            // Along the right edge the engine hears freeze or stutter by
+            // height, so the finger's name follows it across the middle.
+            if (h.zone == Freeze || h.zone == Stutter)
+                h.zone = h.y >= kRightMid ? Stutter : Freeze;
             h.lastSend = time;
             sendStrip(h, true, ctx);
         }
@@ -2113,6 +2122,7 @@ private:
             c.f[1] = p;
             break;
         case Freeze:
+        case Stutter:
             c.i[0] = PFreeze;
             c.f[0] = yIn;
             c.f[1] = p;
@@ -2139,7 +2149,7 @@ private:
         case Keys:
         case Chop: return;
         }
-        if (h.zone != Freeze)
+        if (h.zone != Freeze && h.zone != Stutter)
             c.f[2] = on ? 1 : 0;
         // A strip a second finger still holds stays on.
         if (!on)
@@ -2213,7 +2223,11 @@ private:
             anyPlaying |= sv.parts[q].playing >= 0 || sv.parts[q].queued >= 0;
         return anyPlaying ? 8 * 4 * 60.0 / std::max(1.0, sv.bpm) : 8.0;
     }
-    static bool sameStrip(Zone a, Zone b) { return a == b || ((a == Radio || a == Crush) && (b == Radio || b == Crush)); }
+    static bool sameStrip(Zone a, Zone b) {
+        auto pair = [](Zone z, Zone u, Zone v) { return z == u || z == v; };
+        return a == b || (pair(a, Radio, Crush) && pair(b, Radio, Crush)) ||
+               (pair(a, Freeze, Stutter) && pair(b, Freeze, Stutter));
+    }
     void sendTape(ControlContext &ctx) {
         const bool on = m_button || m_tapeKey;
         if (on == m_tapeSent)
@@ -2620,38 +2634,148 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                        (sv.input == StudioView::InputConnecting && m_connectingSince >= 0 &&
                         pc.time - m_connectingSince > 2.0);
 
-    // The strips.
-    auto strip = [&](float x0, float y0, float x1, float y1, const QString &label, bool lit, QColor tint) {
-        const QRectF r = pc.rect(x0, y0, x1, y1);
-        p.fillRect(r, c::alpha(tint, lit ? 0.22f : 0.06f));
-        p.setPen(QPen(c::alpha(tint, lit ? 0.8f : 0.25f), 1));
+    // The strips round the edge: each names itself in plain words, says
+    // what its finger does along it, and while held shows where it is set.
+    // Every name reads level: a strip on the side is too narrow to turn.
+    const int stripPx = int(std::clamp(H * 0.028, 10.0, 14.0));
+    const int notePx = std::max(8, stripPx - 3);
+    // The finger on a strip, if any (the latest one, as the engine hears it).
+    auto on = [&](Zone z) -> const Finger * {
+        const Finger *f = nullptr;
+        for (const Finger &h : m_fingers)
+            if (h.id >= 0 && !h.clicker && h.zone == z)
+                f = &h;
+        return f;
+    };
+    auto box = [&](const QRectF &r, bool lit, QColor tint) {
+        p.fillRect(r, c::alpha(tint, lit ? 0.2f : 0.06f));
+        p.setPen(QPen(c::alpha(tint, lit ? 0.85f : 0.3f), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRect(r.adjusted(1, 1, -1, -1));
-        if (r.width() > r.height()) {
-            c::text(p, r, label, c::alpha(tint, lit ? 1.0f : 0.6f), int(std::clamp(H * 0.026, 9.0, 13.0)), true,
-                    Qt::AlignCenter);
-        } else {
-            p.save();
-            p.translate(r.center());
-            p.rotate(-90);
-            c::text(p, QRectF(-r.height() / 2, -r.width() / 2, r.height(), r.width()), label,
-                    c::alpha(tint, lit ? 1.0f : 0.6f), int(std::clamp(H * 0.026, 9.0, 13.0)), true, Qt::AlignCenter);
-            p.restore();
+    };
+    const QColor fx = c::cyan(), warm = c::amber(), cold = c::violet();
+    // A top or bottom strip: its name on the first line, then its cells
+    // (labels spread at the places they hold), the held one lit, and a
+    // marker where the finger is.
+    auto band = [&](float x0, float y0, float x1, float y1, const QString &title, const QString &hint,
+                    const QStringList &cells, Zone z, QColor tint) {
+        const QRectF r = pc.rect(x0, y0, x1, y1);
+        const Finger *f = on(z);
+        box(r, f, tint);
+        const qreal line = stripPx + 6;
+        const QRectF head(r.left() + 8, r.top() + 4, r.width() - 16, line);
+        c::text(p, head, title, c::alpha(tint, f ? 1.0f : 0.85f), stripPx, true, Qt::AlignLeft | Qt::AlignVCenter);
+        c::text(p, head, hint, c::alpha(tint, f ? 0.85f : 0.55f), notePx, false, Qt::AlignRight | Qt::AlignVCenter);
+        const QRectF body(r.left() + 4, head.bottom() + 2, r.width() - 8, r.bottom() - head.bottom() - 6);
+        const float u = f ? clampf((f->x - x0) / (x1 - x0), 0, 0.999f) : -1;
+        const int n = int(cells.size());
+        for (int k = 0; k < n; ++k) {
+            const QRectF cell(body.left() + body.width() * k / n, body.top(), body.width() / n, body.height());
+            const bool here = u >= 0 && int(u * float(n)) == k;
+            if (here)
+                p.fillRect(cell.adjusted(1, 1, -1, -1), c::alpha(tint, 0.35f));
+            if (k > 0) {
+                p.setPen(QPen(c::alpha(tint, 0.2f), 1, Qt::DotLine));
+                p.drawLine(cell.topLeft(), cell.bottomLeft());
+            }
+            c::text(p, cell, cells[k], here ? QColor(Qt::white) : c::alpha(tint, 0.6f), notePx, here, Qt::AlignCenter);
+        }
+        if (f) {
+            const qreal x = body.left() + body.width() * qreal(u);
+            p.setPen(QPen(Qt::white, 2));
+            p.drawLine(QPointF(x, body.top()), QPointF(x, body.bottom()));
         }
     };
-    bool lit[8] = {};
-    for (const Finger &h : m_fingers)
-        if (h.id >= 0 && !h.clicker)
-            lit[h.zone] = true;
-    const QColor fx = c::cyan(), warm = c::amber(), cold = c::violet();
-    strip(0, kTop, 0.5f, 1, QStringLiteral("ECHO THROW   1/8 · 1/8. · 1/4"), lit[Echo], fx);
-    strip(0.5f, kTop, 1, 1, QStringLiteral("REVERB THROW   twist: shimmer"), lit[Reverb], fx);
-    strip(0, 0, 0.5f, kBottom, QStringLiteral("RADIO   rougher →"), lit[Radio], warm);
-    strip(0.5f, 0, 1, kBottom, QStringLiteral("CRUSH   rougher →"), lit[Crush], warm);
-    strip(0, kBottom, kLeft, kTop, QStringLiteral("FILTER · WAH"), lit[Filter], cold);
-    strip(kRight, kBottom, 1, 0.5f * (kBottom + kTop), QStringLiteral("FREEZE"), lit[Freeze] && d[pub::Freeze] > 0, cold);
-    strip(kRight, 0.5f * (kBottom + kTop), 1, kTop,
-          QStringLiteral("STUTTER %1+").arg(QString::fromLatin1(kStutterNames[m_stutter])), lit[Freeze], cold);
+    band(0, kTop, 0.5f, 1, QStringLiteral("ECHO"), QStringLiteral("press: more repeats"),
+         {QStringLiteral("1/8"), QStringLiteral("1/8."), QStringLiteral("1/4")}, Echo, fx);
+    band(0.5f, kTop, 1, 1, QStringLiteral("REVERB"), QStringLiteral("twist: shimmer"),
+         {QStringLiteral("room"), QStringLiteral("hall"), QStringLiteral("cathedral")}, Reverb, fx);
+    band(0, 0, 0.5f, kBottom, QStringLiteral("RADIO"), QStringLiteral("a tiny speaker"),
+         {QStringLiteral("radio"), QStringLiteral("phone"), QStringLiteral("blown")}, Radio, warm);
+    band(0.5f, 0, 1, kBottom, QStringLiteral("CRUSH"), QStringLiteral("fewer bits"),
+         {QStringLiteral("lo-fi"), QStringLiteral("gritty"), QStringLiteral("8-bit")}, Crush, warm);
+
+    // A side strip: its name at the top, then labels at the heights they
+    // hold, the finger's height marked across it.
+    auto column = [&](float x0, float y0, float x1, float y1, const QString &title, const QString &hint, Zone z,
+                      QColor tint, const std::function<void(const QRectF &, const Finger *)> &inside) {
+        const QRectF r = pc.rect(x0, y0, x1, y1);
+        const Finger *f = on(z);
+        box(r, f, tint);
+        const QRectF head(r.left(), r.top() + 4, r.width(), stripPx + 4);
+        c::text(p, head, title, c::alpha(tint, f ? 1.0f : 0.85f), stripPx, true, Qt::AlignCenter);
+        const QRectF sub(r.left(), head.bottom(), r.width(), notePx + 4);
+        c::text(p, sub, hint, c::alpha(tint, f ? 0.85f : 0.55f), notePx, false, Qt::AlignCenter);
+        inside(QRectF(r.left(), sub.bottom() + 4, r.width(), r.bottom() - sub.bottom() - 8), f);
+        if (f) {
+            const qreal y = std::clamp(pc.at(0, f->y).y(), r.top() + 2, r.bottom() - 2);
+            p.setPen(QPen(Qt::white, 2));
+            p.drawLine(QPointF(r.left() + 3, y), QPointF(r.right() - 3, y));
+        }
+    };
+    // Labels down a side strip at the pad heights they belong to.
+    auto mark = [&](const QRectF &area, float y, const QString &label, bool lit, QColor tint) {
+        const qreal py = pc.at(0, y).y();
+        if (py < area.top() || py > area.bottom())
+            return;
+        c::text(p, QRectF(area.left(), py - notePx, area.width(), 2 * notePx), label,
+                lit ? QColor(Qt::white) : c::alpha(tint, 0.55f), notePx, lit, Qt::AlignCenter);
+    };
+    // Filter: the cutoff, 160 Hz at the foot to 7.8 kHz at the top, as the
+    // engine sets it; pressure adds the wah's resonance.
+    column(0, kBottom, kLeft, kTop, QStringLiteral("FILTER"), QStringLiteral("press: wah"), Filter, cold,
+           [&](const QRectF &area, const Finger *f) {
+               auto hz = [](float u) { return 160.0f * std::exp2(clampf(u, 0, 1) * 5.6f); };
+               auto name = [](float v) {
+                   return v >= 1000 ? QStringLiteral("%1k").arg(double(v) / 1000, 0, 'f', v >= 9950 ? 0 : 1)
+                                    : QString::number(int(std::lround(v / 10) * 10));
+               };
+               if (f) {
+                   const float u = (f->y - kBottom) / (kTop - kBottom);
+                   mark(area, std::clamp(f->y + 0.035f, kBottom + 0.03f, kTop - 0.12f), name(hz(u)), true, cold);
+               } else {
+                   mark(area, kBottom + 0.06f, QStringLiteral("dark"), false, cold);
+                   mark(area, 0.5f * (kBottom + kTop), QStringLiteral("↕"), false, cold);
+                   mark(area, kTop - 0.14f, QStringLiteral("bright"), false, cold);
+               }
+           });
+    // Freeze: holds the last sound as a cloud you can sing over.
+    column(kRight, kBottom, 1, kRightMid, QStringLiteral("FREEZE"), QStringLiteral("hold it"), Freeze, cold,
+           [&](const QRectF &area, const Finger *f) {
+               if (f && std::fabs(f->twist) > 0.05f) {
+                   const int st = int(std::round(f->twist / 0.8f * 12.0f));
+                   mark(area, 0.5f * (kBottom + kRightMid), QStringLiteral("%1%2 st").arg(st > 0 ? "+" : "").arg(st),
+                        true, cold);
+               } else {
+                   mark(area, 0.5f * (kBottom + kRightMid) + 0.02f, QStringLiteral("twist:"), f, cold);
+                   mark(area, 0.5f * (kBottom + kRightMid) - 0.03f, QStringLiteral("pitch"), f, cold);
+               }
+           });
+    // Stutter: the last slice over and over on the grid, faster up the
+    // strip in the three steps the engine takes.
+    column(kRight, kRightMid, 1, kTop, QStringLiteral("STUTTER"), QStringLiteral("repeat"), Stutter, cold,
+           [&](const QRectF &area, const Finger *f) {
+               int held = -1;
+               if (f) {
+                   const float u = (f->y - kBottom) / (kTop - kBottom);
+                   held = u > 0.83f ? 2 : u > 0.66f ? 1 : 0;
+               }
+               const float edges[4] = {kRightMid, kBottom + 0.66f * (kTop - kBottom), kBottom + 0.83f * (kTop - kBottom),
+                                       kTop};
+               for (int k = 0; k < 3; ++k) {
+                   const int rate = std::clamp(m_stutter + k, 0, kStutterCount - 1);
+                   const float mid = 0.5f * (edges[k] + edges[k + 1]);
+                   if (k > 0) {
+                       const qreal y = pc.at(0, edges[k]).y();
+                       if (y > area.top()) {
+                           p.setPen(QPen(c::alpha(cold, 0.25f), 1, Qt::DotLine));
+                           p.drawLine(QPointF(area.left() + 3, y), QPointF(area.right() - 3, y));
+                       }
+                   }
+                   mark(area, std::min(mid, kTop - 0.1f), QString::fromLatin1(kStutterNames[rate]),
+                        held == k, cold);
+               }
+           });
 
     // The keys: a lane per harmony (what it adds to your note), or per
     // note of the key, its name at the foot, the root's lit.
@@ -2677,7 +2801,9 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         const float ux = kLeft + laneW * 3.0f;
         p.setPen(QPen(c::alpha(col, 0.5f), 1, Qt::DashLine));
         p.drawLine(pc.at(ux, kTapeTop + 0.05f), pc.at(ux, kTop));
-        c::tag(p, QPointF(pc.at(ux, kTop).x(), pc.at(0, kTop - 0.035f).y()), QStringLiteral("YOU"), col, 10, true);
+        // Until you sing; then your note is named at the line's foot.
+        if (sung <= 0)
+            c::tag(p, QPointF(pc.at(ux, kTop).x(), pc.at(0, kTop - 0.035f).y()), QStringLiteral("YOU"), col, 10, true);
     }
     for (int k = 0; k < lanes && !harmony; ++k) {
         const double midi = laneMidi(sv, k);
@@ -2691,14 +2817,14 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             p.fillRect(r, c::alpha(col, 0.16f));
         p.setPen(QPen(c::alpha(col, 0.14f), 1));
         p.drawLine(pc.at(x0, kTapeTop), pc.at(x0, kTop));
-        const QString name = QString::fromLatin1(Tuning::noteName(pc12));
+        const QString name = QString::fromUtf8(Tuning::noteName(pc12));
         c::text(p, pc.rect(x0, kTapeTop, x0 + laneW, kTapeTop + 0.045f), name,
                 c::alpha(col, root ? 0.9f : 0.5f), labelPx, root, Qt::AlignCenter);
     }
     // The throat, up the keys: giant at the foot, elf at the top.
     c::text(p, pc.rect(kLeft + 0.008f, kTop - 0.055f, kLeft + 0.25f, kTop - 0.01f), QStringLiteral("↑ ELF THROAT"),
             c::alpha(col, 0.6f), labelPx - 1, true);
-    c::text(p, pc.rect(kLeft + 0.008f, kTapeTop + 0.055f, kLeft + 0.25f, kTapeTop + 0.1f),
+    c::text(p, pc.rect(kLeft + 0.008f, kTapeTop + 0.12f, kLeft + 0.25f, kTapeTop + 0.165f),
             QStringLiteral("↓ GIANT THROAT"), c::alpha(col, 0.6f), labelPx - 1, true);
 
     // The note sung: a trail rising up the keys, at its pitch across them.
@@ -2721,6 +2847,8 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         }
         return kLeft + laneW * (float(lanes) - 0.5f) + float(midi - hi) * laneW * 0.5f;
     };
+    // In harmony lanes the trails start above the lanes' note names.
+    const float trailFoot = kTapeTop + (harmony ? 0.12f : 0.06f);
     {
         const double span = 2.5; // seconds up the keys
         QPainterPath path;
@@ -2733,7 +2861,7 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                 continue;
             }
             const float x = clampf(xOfMidi(tp.midi), kLeft, kRight);
-            const float y = kTapeTop + 0.06f + float(age / span) * (kTop - kTapeTop - 0.06f);
+            const float y = trailFoot + float(age / span) * (kTop - trailFoot);
             const QPointF at = pc.at(x, y);
             if (!started)
                 path.moveTo(at);
@@ -2745,19 +2873,87 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         p.setBrush(Qt::NoBrush);
         p.drawPath(path);
         if (sung > 0) {
-            const QPointF at = pc.at(clampf(xOfMidi(sung), kLeft, kRight), kTapeTop + 0.06f);
+            const QPointF at = pc.at(clampf(xOfMidi(sung), kLeft, kRight), trailFoot);
             p.setPen(Qt::NoPen);
             p.setBrush(c::alpha(col, 0.9f));
             p.drawEllipse(at, 6, 6);
             const double target = d[pub::LeadMidi];
             if ((m_preset == Tune || m_preset == Robot) && target > 0) {
-                const QPointF to = pc.at(clampf(xOfMidi(float(target)), kLeft, kRight), kTapeTop + 0.06f);
+                const QPointF to = pc.at(clampf(xOfMidi(float(target)), kLeft, kRight), trailFoot);
                 p.setPen(QPen(c::alpha(c::green(), 0.9f), 2));
                 p.setBrush(Qt::NoBrush);
                 p.drawEllipse(to, 9, 9);
             }
         }
     }
+    // Harmony lanes: the choir you're making, seen. Each lane says the
+    // note it would sing over yours right now; a held one lights, and
+    // its note rises up the lane beside your own trail, named where it
+    // changes, so a third above a tune reads as the tune it is.
+    if (harmony) {
+        auto noteName = [](double midi) {
+            const int m = int(std::lround(midi));
+            return QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12));
+        };
+        const double ref = d[pub::LeadMidi] > 0 ? double(d[pub::LeadMidi]) : double(sung);
+        bool held[kIntervalCount] = {};
+        for (const Finger &h : m_fingers)
+            if (h.id >= 0 && !h.clicker && h.zone == Keys && h.mode == HarmonyNote)
+                for (int k = 0; k < kIntervalCount; ++k)
+                    held[k] |= kIntervals[k] == h.value;
+        const double span = 2.5;
+        for (int k = 0; k < kIntervalCount; ++k) {
+            const float cx = kLeft + laneW * (float(k) + 0.5f);
+            const float x0 = kLeft + laneW * float(k);
+            if (ref > 0) {
+                const double m = noteMidi(hv, kIntervals[k], HarmonyNote, ref, m_follow);
+                // Latched voices hold their lanes too: a voice sounding at
+                // this lane's note.
+                for (int v = 0; v < kMaxVoices && !held[k]; ++v)
+                    held[k] = d[pub::Voices + 3 * v] > 0.5f && std::fabs(d[pub::Voices + 3 * v + 1] - m) < 0.5;
+                c::text(p, pc.rect(x0, kTapeTop + 0.05f, x0 + laneW, kTapeTop + 0.11f), noteName(m),
+                        held[k] ? QColor(Qt::white) : c::alpha(col, 0.45f), held[k] ? labelPx + 4 : labelPx,
+                        held[k], Qt::AlignCenter);
+            }
+            if (!held[k])
+                continue;
+            p.fillRect(pc.rect(x0, kTapeTop, x0 + laneW, kTop), c::alpha(col, 0.09f));
+            // Its trail: the note it sang at each moment of yours.
+            QPainterPath path;
+            bool started = false;
+            int last = INT_MIN;
+            for (int t = 0; t < kTrail; ++t) {
+                const TrailPoint &tp = m_trail[(m_trailW + t) % kTrail];
+                const double age = pc.time - tp.t;
+                if (age < 0 || age > span || tp.midi <= 0) {
+                    started = false;
+                    continue;
+                }
+                const double m = noteMidi(hv, kIntervals[k], HarmonyNote, tp.midi, m_follow);
+                const float y = trailFoot + float(age / span) * (kTop - trailFoot);
+                const QPointF at = pc.at(cx, y);
+                if (!started)
+                    path.moveTo(at);
+                else
+                    path.lineTo(at);
+                started = true;
+                const int note = int(std::lround(m));
+                if (note != last && last != INT_MIN && age > 0.15)
+                    c::text(p, QRectF(at.x() + 6, at.y() - notePx, laneW * pc.pad.width() / 2, 2 * notePx),
+                            noteName(m), c::alpha(col, float(0.85 * (1 - age / span))), notePx, true,
+                            Qt::AlignLeft | Qt::AlignVCenter);
+                last = note;
+            }
+            p.setPen(QPen(c::alpha(col, 0.8f), 3, Qt::SolidLine, Qt::RoundCap));
+            p.setBrush(Qt::NoBrush);
+            p.drawPath(path);
+        }
+        // Your own note, named on its line.
+        if (sung > 0)
+            c::tag(p, pc.at(kLeft + laneW * 3.0f, kTapeTop + 0.08f), QStringLiteral("YOU ") + noteName(sung), col,
+                   notePx + 1, true);
+    }
+
     // The voices the fingers hold (in harmony lanes, the fingers show them).
     for (int k = 0; k < kMaxVoices && !harmony; ++k) {
         if (d[pub::Voices + 3 * k] < 0.5f)
@@ -2787,12 +2983,16 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             for (int k = 0; k < kIntervalCount; ++k)
                 if (kIntervals[k] == h.value)
                     label = QString::fromUtf8(kIntervalNames[k]);
+            const double ref = d[pub::LeadMidi] > 0 ? double(d[pub::LeadMidi]) : double(sung);
+            if (ref > 0) {
+                const int m = int(std::lround(noteMidi(hv, h.value, HarmonyNote, ref, m_follow)));
+                label += QStringLiteral(" ") + QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12));
+            }
         } else if (h.zone == Keys) {
             const int m = int(std::lround(noteMidi(hv, h.value, h.mode)));
-            label = QString::fromLatin1(Tuning::noteName(((m % 12) + 12) % 12));
+            label = QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12));
         }
-        else
-            label = QString::fromLatin1(zoneName(h.zone));
+        // A finger on a strip goes unnamed: the strip it lit says it.
         c::finger(p, pc, t, h.zone == Keys ? col : c::cyan(), label, clampf(h.p, 0, 1));
     }
 

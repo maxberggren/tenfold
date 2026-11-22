@@ -531,7 +531,7 @@ private slots:
         constexpr int kBands = 5, kTimes = 3;
         const double edges[kBands + 1] = {20, 90, 300, 1000, 3000, 9000};
         const double times[kTimes] = {0.02, 0.3, 1.0};
-        std::vector<std::array<double, kBands * kTimes>> shape(size_t(bass::SoundCount));
+        std::vector<std::array<double, kBands * kTimes>> shape(static_cast<size_t>(bass::SoundCount));
         for (int s = 0; s < bass::SoundCount; ++s) {
             Rig rig;
             rig.send(noteOn(1, 0, s, 0, 0.8f, 0.5f));

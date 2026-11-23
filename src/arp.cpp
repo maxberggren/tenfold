@@ -3691,6 +3691,7 @@ public:
         p.setRenderHint(QPainter::Antialiasing, true);
         m_spots.clear();
         c::pad(p, pc, QStringLiteral("Arp"));
+        c::variation(p, pc, QString::fromUtf8(soundName(m_s.sound)));
         paintGrid(p, pc);
         paintChips(p, pc);
         paintPads(p, pc);
@@ -3698,7 +3699,7 @@ public:
         c::beats(p, pc, pc.color);
         // Space's take, while it waits for its bar line, on the pad's top edge.
         if (pc.view->recording >= 0)
-            c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
+            c::tag(p, QPointF(pc.pad.center().x(), c::edge(pc)),
                    QStringLiteral("LOOP TAKE · %1 · SPACE CALLS IT OFF").arg(takeText(*pc.view, pc.beat)),
                    std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.7f), 12, true);
         paintStrip(p, pc);

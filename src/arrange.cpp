@@ -4251,7 +4251,7 @@ void ArrangeControl::paintHeader(QPainter &p, const PaintContext &pc) {
         s += QStringLiteral("   ▸ ") + mv;
     const QFont f = c::font(12, true);
     const qreal w = std::min(console::textWidth(f, s) + 16, pc.pad.width() - 260);
-    const QRectF r(pc.pad.left() + 120, pc.pad.top() - 9, w, 18);
+    const QRectF r(pc.pad.left() + 120, c::edge(pc) - 9, w, 18);
     p.fillRect(r, QColor(0, 0, 0));
     const QColor ink = armed ? (std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.55f))
                        : m_recording ? c::red() : pc.color;

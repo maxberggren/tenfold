@@ -655,15 +655,16 @@ void VisualPage::paint(QPainter &p, const PaintContext &pc) {
     const Settings &s = m_state.settings;
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(pc.color, 2.0));
-    p.drawRect(pc.pad);
+    p.drawRect(pc.pad.adjusted(0, -console::kHead, 0, 0));
     const int w = int(std::floor(s.look.world + 0.5f)) % int(kWorlds);
-    const QString legend = QStringLiteral("VISUAL · %1").arg(QLatin1String(kWorldNames[w]));
     const QFont f = console::font(13, true);
     p.setFont(f);
-    const QRectF lr(pc.pad.left() + 16, pc.pad.top() - 9, console::textWidth(f, legend) + 16, 18);
+    const QString legend = QStringLiteral("VISUAL");
+    const QRectF lr(pc.pad.left() + 16, console::edge(pc) - 9, console::textWidth(f, legend) + 16, 18);
     p.fillRect(lr, QColor(0, 0, 0));
     p.setPen(pc.color);
     console::drawText(p, lr, Qt::AlignCenter, legend);
+    console::variation(p, pc, QLatin1String(kWorldNames[w]));
 
     if (s.markers) {
         for (const auto &fg : m_state.hand.fingers)

@@ -1,4 +1,5 @@
 #include "session.h"
+#include "console.h"
 
 #include "platform.h"
 
@@ -458,7 +459,7 @@ void Session::pointer(float x, float y, bool down, bool inside) {
 
 QRectF Session::padRect(QSizeF item, float aspect) {
     aspect = std::clamp(aspect, 1.0f, 2.4f);
-    const qreal top = 14, side = 30, bottom = kBandHeight;
+    const qreal top = 14 + console::kHead, side = 30, bottom = kBandHeight;
     const qreal availW = item.width() - 2 * side, availH = item.height() - top - bottom;
     qreal w = availW, h = w / aspect;
     if (h > availH) {

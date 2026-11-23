@@ -229,19 +229,24 @@ QColor alpha(QColor c, float a) {
 }
 
 void pad(QPainter &p, const PaintContext &pc, const QString &legend) {
-    p.fillRect(pc.pad, QColor(0, 0, 0));
+    const QRectF frame = pc.pad.adjusted(0, -kHead, 0, 0);
+    p.fillRect(frame, QColor(0, 0, 0));
     p.setBrush(Qt::NoBrush);
     p.setPen(QPen(pc.color, 2.0));
-    p.drawRect(pc.pad);
+    p.drawRect(frame);
     if (legend.isEmpty())
         return;
     const QFont f = font(13, true);
     p.setFont(f);
     const qreal w = QFontMetricsF(f).horizontalAdvance(legend) + 16;
-    const QRectF r(pc.pad.left() + 16, pc.pad.top() - 9, w, 18);
+    const QRectF r(pc.pad.left() + 16, edge(pc) - 9, w, 18);
     p.fillRect(r, QColor(0, 0, 0));
     p.setPen(pc.color);
     drawText(p, r, Qt::AlignCenter, legend);
+}
+
+qreal variation(QPainter &p, const PaintContext &pc, const QString &name) {
+    return tag(p, QPointF(pc.pad.left() + 110, edge(pc)), name.toUpper(), pc.color, 12).right() + 8;
 }
 
 QRectF tag(QPainter &p, QPointF at, const QString &s, QColor color, int px, bool centred) {
@@ -342,7 +347,7 @@ void grid(QPainter &p, const PaintContext &pc, int columns, int rows, QColor col
 void beats(QPainter &p, const PaintContext &pc, QColor color) {
     const qreal box = 14, gap = 6;
     const qreal x0 = pc.pad.right() - 16 - 4 * box - 3 * gap;
-    p.fillRect(QRectF(x0 - 6, pc.pad.top() - 10, 4 * box + 3 * gap + 12, 20), QColor(0, 0, 0));
+    p.fillRect(QRectF(x0 - 6, edge(pc) - 10, 4 * box + 3 * gap + 12, 20), QColor(0, 0, 0));
     // Until something plays or the metronome clicks, the clock is silent:
     // a moving beat would only be a guess at where the player's ONE is.
     bool audible = pc.studio && pc.studio->metronome;
@@ -351,7 +356,7 @@ void beats(QPainter &p, const PaintContext &pc, QColor color) {
     const double within = pc.beat - std::floor(pc.beat / kBeatsPerBar) * kBeatsPerBar;
     const int beat = audible ? std::clamp(int(within), 0, 3) : -1;
     for (int b = 0; b < 4; ++b) {
-        const QRectF r(x0 + b * (box + gap), pc.pad.top() - 7, box, box);
+        const QRectF r(x0 + b * (box + gap), edge(pc) - 7, box, box);
         if (b == beat) {
             p.fillRect(r, b == 0 ? color : alpha(color, 0.75f));
         } else {

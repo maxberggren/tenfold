@@ -5460,6 +5460,8 @@ QString AtmosControl::status() const {
 void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
     namespace c = console;
     c::pad(p, pc, QStringLiteral("Atmos"));
+    // The scene playing, or with none the style hand-laid layers play in.
+    c::variation(p, pc, m_scene >= 0 ? QString::fromUtf8(kScenes[m_scene].name) : QString::fromUtf8(kStyleName[m_style]));
     const float *d = pc.view->data;
     const QColor col = pc.color;
     p.save();

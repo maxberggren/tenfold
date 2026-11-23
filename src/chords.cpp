@@ -1155,12 +1155,10 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     paintRail(p, pc, d);
 
     // Along the top edge: the sound, hold, the register, overdub.
-    qreal tagsRight = pc.pad.left() + 110;
+    qreal tagsRight = c::variation(p, pc, QString::fromUtf8(styleDef(m_style).name));
     {
         qreal &x = tagsRight;
-        const qreal y = pc.pad.top();
-        // The sound's name alone; the chip row and the help say the rest.
-        x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).name), col, 12).right() + 8;
+        const qreal y = c::edge(pc);
         if (m_hold)
             x = c::tag(p, QPointF(x, y), QStringLiteral("HOLD"), c::amber(), 12).right() + 8;
         if (m_register != 0)
@@ -1179,7 +1177,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         f.setCapitalization(QFont::MixedCase);
         const QFontMetricsF fm(f);
         qreal x = pc.pad.right() - 16 - 4 * 14 - 3 * 6 - 14;
-        const qreal y = pc.pad.top();
+        const qreal y = c::edge(pc);
         for (int i = m_ribbonCount - 1; i >= 0; --i) {
             const Shape &s = m_ribbon[(m_ribbonHead - m_ribbonCount + i + 2 * kRibbon) % kRibbon];
             const QString name = chordName(t, s);

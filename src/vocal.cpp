@@ -4470,6 +4470,7 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     const StudioView &sv = *pc.studio;
     const float *d = pc.view->data;
     c::pad(p, pc, QStringLiteral("VOCAL"));
+    c::variation(p, pc, QString::fromLatin1(presetName(m_preset)));
     p.setRenderHint(QPainter::Antialiasing, true);
     const qreal H = pc.pad.height();
 

@@ -3888,48 +3888,14 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         for (const auto &sw : switches)
             c::chip(p, pc, cells[i++], sw.label, sw.lit, &m_spots, sw.id);
     }
-    // The legend again, over the column, and the sounds cut into the top
-    // edge after it.
+    // The legend again, over the column, and the sound after it.
     {
         const QFont legend = c::font(13, true);
         const qreal lw = console::textWidth(legend, QStringLiteral("Lead")) + 16;
-        const QRectF lr(pc.pad.left() + 16, pc.pad.top() - 9, lw, 18);
+        const QRectF lr(pc.pad.left() + 16, c::edge(pc) - 9, lw, 18);
         p.fillRect(lr, QColor(0, 0, 0));
         c::text(p, lr, QStringLiteral("Lead"), col, 13, true, Qt::AlignCenter);
-        // As many names as fit before the beat lights at the right,
-        // around the chosen one, taken one each side in turn; a name at an
-        // end with more beyond it is faded.
-        const QFont f = c::font(12, true);
-        auto width = [&](int s) { return console::textWidth(f, QString::fromUtf8(sound(s).name)) + 20; };
-        const qreal room = pc.pad.right() - 120 - (lr.right() + 12);
-        int first = m_sound, last = m_sound + 1;
-        qreal used = width(m_sound);
-        for (bool grew = true; grew;) {
-            grew = false;
-            if (last < kSounds && used + width(last) <= room) {
-                used += width(last++);
-                grew = true;
-            }
-            if (first > 0 && used + width(first - 1) <= room) {
-                used += width(--first);
-                grew = true;
-            }
-        }
-        qreal x = lr.right() + 12;
-        for (int s = first; s < last; ++s) {
-            const QString name = QString::fromUtf8(sound(s).name);
-            const bool more = (s == first && first > 0) || (s == last - 1 && last < kSounds);
-            if (s == m_sound) {
-                const QRectF r = c::tag(p, QPointF(x, pc.pad.top()), name, col, 12);
-                x = r.right() + 8;
-            } else {
-                const qreal w = console::textWidth(f, name) + 12;
-                p.fillRect(QRectF(x, pc.pad.top() - 9, w, 18), QColor(0, 0, 0));
-                c::text(p, QRectF(x, pc.pad.top() - 9, w, 18), name, c::alpha(col, more ? 0.22f : 0.55f), 12, true,
-                        Qt::AlignCenter);
-                x += w + 8;
-            }
-        }
+        c::variation(p, pc, QString::fromUtf8(sound(m_sound).name));
     }
 
 }

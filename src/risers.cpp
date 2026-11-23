@@ -1381,6 +1381,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     const StudioView &sv = *pc.studio;
     const double beat = pc.beat;
     c::pad(p, pc, QStringLiteral("FX"));
+    c::variation(p, pc, QString::fromUtf8(palette(m_set).label));
     p.setRenderHint(QPainter::Antialiasing, true);
 
     const double drop = d[pub::Drop];

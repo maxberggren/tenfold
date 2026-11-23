@@ -1621,6 +1621,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     const QColor col = pc.color;
     const float *data = pc.view->data;
     c::pad(p, pc, QStringLiteral("DRUMS"));
+    c::variation(p, pc, QString::fromUtf8(kitName(m_kit)));
     p.setRenderHint(QPainter::Antialiasing, true);
     const double s = std::max(0.6, double(pc.scale));
     const int label = int(std::clamp(14.0 * s, 10.0, 18.0));
@@ -1855,12 +1856,12 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                                       .arg(barsText(m_keep.length).toUpper())
                                       .arg(m_keep.slot + 1)
                                       .arg(left, 0, 'f', 1);
-        c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()), msg,
+        c::tag(p, QPointF(pc.pad.center().x(), c::edge(pc)), msg,
                std::fmod(pc.time, 0.5) < 0.25 ? col : c::alpha(col, 0.6f), 13, true);
     }
 
     if (pc.view->recording >= 0 && !m_keep.active)
-        c::tag(p, QPointF(pc.pad.center().x(), pc.pad.top()),
+        c::tag(p, QPointF(pc.pad.center().x(), c::edge(pc)),
                pc.view->takeBeats > 0
                    ? QStringLiteral("%1 INTO SLOT %2 IN %3 BEATS · SPACE CALLS IT OFF")
                          .arg(barsText(pc.view->takeBeats).toUpper())

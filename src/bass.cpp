@@ -1352,6 +1352,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     tuning.set(sv.root, sv.family, sv.brightness, sv.just);
 
     c::pad(p, pc, QStringLiteral("Bass"));
+    c::variation(p, pc, QString::fromUtf8(recipe(m_sound).name));
     paintField(p, pc, tuning);
     paintScope(p, pc);
     paintRail(p, pc);

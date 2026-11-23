@@ -477,7 +477,8 @@ ApplicationWindow {
                           : backend.padState === Backend.Starting
                             ? (backend.padNeedsPassword ? qsTr("Waiting for your password") : qsTr("Waiting for the trackpad"))
                           : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
-                          : backend.padState === Backend.Ready ? qsTr("Paused, pointer released")
+                          : backend.padState === Backend.Ready
+                            ? (backend.padAway ? qsTr("Paused until tenfold is in front again") : qsTr("Paused, pointer released"))
                           : qsTr("Standby: Take pad to play"))
                           + ((backend.pagesSilenced[backend.page] || "") !== ""
                              ? "     " + qsTr("Silent: %1 on the Song page").arg(backend.pagesSilenced[backend.page]) : "")
@@ -498,8 +499,11 @@ ApplicationWindow {
         Rectangle {
             anchors.centerIn: parent
             // The tutorial's own first step says how to take the pad (and the
-            // mouse plays meanwhile), so the dialog stays out of its way.
-            visible: !win.playing && !win.helpVisible && !backend.tutorialActive
+            // mouse plays meanwhile), so the dialog stays out of its way. Nor
+            // does it come up when the pad was put down only because tenfold
+            // went behind another window (the pointer crossing onto one, with
+            // focus following the mouse): the pad comes back with the window.
+            visible: backend.padPrompt && !win.helpVisible && !backend.tutorialActive
             width: Math.min(parent.width - 120, 620)
             height: startColumn.implicitHeight + 64
             color: "#000000"

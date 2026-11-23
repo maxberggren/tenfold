@@ -42,6 +42,10 @@ class Backend : public QObject {
     Q_PROPERTY(QString padName READ padName NOTIFY changed)
     // The pad isn't readable as this user, so taking it asks for the password.
     Q_PROPERTY(bool padNeedsPassword READ padNeedsPassword NOTIFY changed)
+    // The box that asks for the trackpad stands (padprompt.h), and the pad
+    // was put down only because tenfold went behind another window.
+    Q_PROPERTY(bool padPrompt READ padPrompt NOTIFY changed)
+    Q_PROPERTY(bool padAway READ padAway NOTIFY changed)
     Q_PROPERTY(int page READ page WRITE setPage NOTIFY pageChanged)
     Q_PROPERTY(int pageCount READ pageCount CONSTANT)
     Q_PROPERTY(QStringList pageNames READ pageNames CONSTANT)
@@ -108,6 +112,8 @@ public:
     QString error() const;
     QString padName() const;
     bool padNeedsPassword() const;
+    bool padPrompt() const;
+    bool padAway() const { return m_pausedByFocus; }
     int page() const { return m_session->page(); }
     void setPage(int page);
     int pageCount() const { return m_session->pageCount(); }
@@ -224,6 +230,10 @@ signals:
 
 private:
     void tick();
+    // Taking and putting down the pad, leaving alone whether it was put
+    // down for the player (m_pausedByFocus).
+    void take();
+    void release();
     void stopRecording();
     void recorderLoop();
 
@@ -237,6 +247,7 @@ private:
     QTimer m_timer;
     bool m_wantPlay = false;
     bool m_pausedByFocus = false;
+    bool m_inFront = true;
     bool m_simulated = false;
     uint32_t m_noticeSeq = 0;
     QString m_notice;

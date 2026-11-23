@@ -13,6 +13,7 @@
 
 #include "console.h"
 #include "offline.h"
+#include "padprompt.h"
 #include "visualizer.h"
 
 using namespace tf;
@@ -105,6 +106,10 @@ int Backend::padState() const {
     case Pad::Failed: return Failed;
     }
     return Idle;
+}
+
+bool Backend::padPrompt() const {
+    return !m_simulated && tf::padPrompt(m_touch->found(), m_touch->status(), m_pausedByFocus, m_touch->needsPermission());
 }
 
 QString Backend::error() const {
@@ -278,10 +283,14 @@ double Backend::latencyMs() const {
 double Backend::recordSeconds() const { return m_recording ? m_recordClock.elapsed() / 1000.0 : 0; }
 
 void Backend::play() {
+    m_pausedByFocus = false;
+    take();
+}
+
+void Backend::take() {
     if (!m_touch->found())
         return;
     m_wantPlay = true;
-    m_pausedByFocus = false;
     if (m_touch->status() == Pad::Idle || m_touch->status() == Pad::Failed) {
         m_touch->stop();
         m_touch->start();
@@ -291,6 +300,11 @@ void Backend::play() {
 }
 
 void Backend::giveBack() {
+    m_pausedByFocus = false;
+    release();
+}
+
+void Backend::release() {
     m_wantPlay = false;
     m_touch->grab(false);
     emit changed();
@@ -311,11 +325,14 @@ void Backend::windowActive(bool active) {
     // Never keep the pad from the rest of the desktop when tenfold isn't in
     // front: a grabbed pad with no window to answer to would leave the user
     // without a pointer.
+    // Taken again when it's back in front: until then the pad is away, and
+    // the window doesn't ask for it (padPrompt).
+    m_inFront = active;
     if (!active && (m_wantPlay || m_touch->status() == Pad::Grabbed)) {
-        giveBack();
         m_pausedByFocus = true;
+        release();
     } else if (active && m_pausedByFocus) {
-        play();
+        take();
     }
 }
 
@@ -408,6 +425,10 @@ void Backend::tick() {
         m_session->idle(monotonicSeconds());
     }
     m_session->refresh();
+    // Back in front and taken again: no longer away, so a pad lost from
+    // here on asks for itself again.
+    if (m_pausedByFocus && m_inFront && m_touch->status() == Pad::Grabbed)
+        m_pausedByFocus = false;
     if (m_visual)
         m_visual->stepLive();
     uint32_t seq = 0;

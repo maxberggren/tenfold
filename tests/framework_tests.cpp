@@ -4,6 +4,7 @@
 #include <QPainter>
 
 #include "console.h"
+#include "padprompt.h"
 #include "testkit.h"
 #ifdef __linux__
 #include "touchsource.h"
@@ -30,6 +31,28 @@ class FrameworkTests : public QObject {
     // Times the studio against the clock: bin/test runs it with the machine to itself.
     Q_CLASSINFO("alone", "theBenchRunsWellInsideRealTime")
 private slots:
+    // The box asking for the trackpad stands only when there's something to
+    // do: not because the pointer left the window and took the focus along.
+    void thePadIsAskedForOnlyWhenThePlayerHasToAct() {
+        // Never taken, given back, missing or failed: the box.
+        QVERIFY(padPrompt(true, Pad::Idle, false, false));
+        QVERIFY(padPrompt(true, Pad::Ready, false, false));
+        QVERIFY(padPrompt(true, Pad::Starting, false, false));
+        QVERIFY(padPrompt(false, Pad::Idle, false, false));
+        QVERIFY(padPrompt(true, Pad::Failed, false, false));
+        // Playing: none.
+        QVERIFY(!padPrompt(true, Pad::Grabbed, false, false));
+        // Put down while another window is in front, and on the way back
+        // when it is again: none, the pad comes back by itself.
+        QVERIFY(!padPrompt(true, Pad::Ready, true, false));
+        QVERIFY(!padPrompt(true, Pad::Starting, true, false));
+        QVERIFY(!padPrompt(true, Pad::Idle, true, true));
+        QVERIFY(!padPrompt(true, Pad::Grabbed, true, false));
+        // Unless coming back waits on the password, or fails.
+        QVERIFY(padPrompt(true, Pad::Starting, true, true));
+        QVERIFY(padPrompt(true, Pad::Failed, true, false));
+        QVERIFY(padPrompt(false, Pad::Idle, true, false));
+    }
     void spaceLoopsWhatWasJustPlayedAndSetsTheTempo() {
         const auto take = testkit::play(std::string(kBeat) + "end 8\n");
         QVERIFY(take.error.empty());

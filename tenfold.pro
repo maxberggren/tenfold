@@ -31,6 +31,7 @@ HEADERS += \
     src/fx.h \
     src/gong.h \
     src/hang.h \
+    src/slitdrum.h \
     src/offline.h \
     src/part.h \
     src/padprompt.h \

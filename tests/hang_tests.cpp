@@ -562,7 +562,7 @@ private slots:
         // knock and the nearest fields, quieter than a field but no hole.
         auto loudness = [](float x, float y) {
             const auto take = testkit::play(
-                QStringLiteral("page 0 1\nkey 0.1 Left\ntap 0.5 %1 %2 p=0.7\nend 1.5\n").arg(x).arg(y).toStdString());
+                QStringLiteral("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.5 %1 %2 p=0.7\nend 1.5\n").arg(x).arg(y).toStdString());
             return 20 * std::log10(take.peak() + 1e-9);
         };
         const double onField = loudness(0.5f, 0.535f - 0.445f * 0.62f);
@@ -626,7 +626,7 @@ private slots:
         // The ding in the middle of the pad, A3 nearest the player, A4 at the
         // far side, the gu past the rim in a corner.
         auto struck = [](float x, float y) {
-            const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\ntap 0.5 %1 %2 p=0.7\nend 0.56\n")
+            const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.5 %1 %2 p=0.7\nend 0.56\n")
                                                 .arg(x)
                                                 .arg(y)
                                                 .toStdString());
@@ -641,7 +641,7 @@ private slots:
         QCOMPARE(struck(0.5f, 0.535f - 0.445f * 0.62f), 1);
         QCOMPARE(struck(0.5f, 0.535f + 0.445f * 0.62f), 8);
         QCOMPARE(struck(0.03f, 0.95f), int(hang::kGu));
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\ntap 0.5 0.5 0.535 p=0.7\nend 2\n");
+        const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.5 0.5 0.535 p=0.7\nend 2\n");
         QVERIFY(take.finite());
         QVERIFY(take.rms(0.5, 1.5) > 1e-3);
         QVERIFY(take.peak() < 1.0);
@@ -650,7 +650,7 @@ private slots:
     void aLoopOfTheHangKeepsTheHang() {
         // Hits carry the kit: a hang loop sounds as a hang after the page
         // has gone back to house.
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\ntap 0.6 0.5 0.535 p=0.7\ntap 0.9 0.5 0.26 p=0.7\n"
+        const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.6 0.5 0.535 p=0.7\ntap 0.9 0.5 0.26 p=0.7\n"
                                         "key 1.2 Space\nkey 1.5 Right\nend 6\n");
         QVERIFY(take.finite());
         QVERIFY(take.rms(3, 6) > 1e-4);
@@ -707,7 +707,7 @@ private slots:
     void tenFingersOnTheHangStayInsideBudget() {
         // Ten fingers drumming on the hang through the whole studio, as the
         // other pages' budgets are measured.
-        std::string s = "page 0 1\nkey 0.1 Left\n";
+        std::string s = "page 0 1\nkey 0.1 Left\nkey 0.11 Left\n";
         for (int f = 0; f < 10; ++f) {
             const float x = 0.12f + 0.08f * float(f), y = 0.2f + 0.06f * float(f % 6);
             for (int k = 0; k < 12; ++k)

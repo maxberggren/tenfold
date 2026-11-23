@@ -109,6 +109,20 @@ constexpr float kHangCx = 0.5f, kHangCy = 0.535f, kHangRx = 0.47f, kHangRy = 0.4
 float hangX(float x) { return (x - kHangCx) / kHangRx; }
 float hangY(float y) { return (y - kHangCy) / kHangRy; }
 
+// The slit drum kit draws its box from above over the pad, above the
+// REPEAT strip, in slitdrum.h's metres from the middle of its top; on the
+// box but off the tongues is a knock on the box.
+constexpr float kSlitX0 = 0.025f, kSlitX1 = 0.975f, kSlitY0 = 0.09f, kSlitY1 = 0.975f;
+float slitX(float x) { return (x - 0.5f * (kSlitX0 + kSlitX1)) / (kSlitX1 - kSlitX0) * slit::boxLength(); }
+float slitY(float y) { return (y - 0.5f * (kSlitY0 + kSlitY1)) / (kSlitY1 - kSlitY0) * slit::Physics::kDepth; }
+float slitPadX(float X) { return 0.5f * (kSlitX0 + kSlitX1) + X / slit::boxLength() * (kSlitX1 - kSlitX0); }
+float slitPadY(float Y) { return 0.5f * (kSlitY0 + kSlitY1) + Y / slit::Physics::kDepth * (kSlitY1 - kSlitY0); }
+
+// The keys on the slit drum: Z X C V up the left-hand tongues, A S D F on
+// from the far right-hand one back towards the player, Q the highest again
+// and W the box; the rest double them.
+const int kSlitKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 7, slit::kFrame, 0, slit::kFrame, 4, 5, 6, 7};
+
 // The keys on the hang: Z X C V the ding and the three lowest fields, A S D
 // F the next four, Q the highest and W the gu, as the pads go up the
 // instrument; the rest double them.
@@ -524,10 +538,14 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-"djembe's call, flams and slap triplets), and the hang\n"
+"djembe's call, flams and slap triplets), the hang and the slit drum\n"
             "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
             "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
             "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
+            "the slit drum kit\tthe pad is a wooden tongue drum seen from above: tap a tongue to play it, near its tip "
+            "for the fullest note, three quarters of the way out for the purest, nearer the root for a thinner, "
+            "brighter knock, off its centre line for its twist; harder is louder and brighter; twist a tongue's "
+            "tone from a fingertip through yarn and rubber to a hard mallet; off the tongues, a knock on the box\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -697,12 +715,18 @@ private:
     };
 
     void paintHang(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+    void paintSlit(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+
+    // The kits that are one instrument over the whole pad, not a grid.
+    bool whole() const { return m_kit == Hang || m_kit == SlitDrum; }
 
     // --- where on the pad ------------------------------------------------------
 
     // The pad under a point: a cell of the grid, or on the hang the field
     // (or the gu) under it.
     int cellAt(float x, float y) const {
+        if (m_kit == SlitDrum)
+            return slitPad(slit::spotAt(slitX(x), slitY(y)).tongue);
         if (m_kit != Hang)
             return padAt(x, y);
         return hangPad(hang::spotAt(hangX(x), hangY(y)).field);
@@ -711,7 +735,22 @@ private:
     // Where on its pad a point is, 0..1 each way, for the hit: across the
     // pad's cell, or on the hang across the field's own axes (its long one,
     // then across), out to hang::kSpotReach of its rim either way.
+    // On the slit drum, along the tongue from its root (0) to its tip (1),
+    // and across it; on the box, across the box's top.
     void spotOf(int pad, float x, float y, float &sx, float &sy) const {
+        if (m_kit == SlitDrum) {
+            const int t = slitTongue(pad);
+            const float X = slitX(x), Y = slitY(y);
+            if (t == slit::kFrame) {
+                sx = clampf(0.5f + X / slit::innerLength(), 0, 1);
+                sy = clampf(0.5f + Y / slit::Physics::innerDepth(), 0, 1);
+                return;
+            }
+            const slit::Tongue tg = slit::tongue(t);
+            sx = clampf((X - tg.rootX) * float(tg.dir) / tg.length, 0, 1);
+            sy = clampf(0.5f + (Y - tg.y) / slit::Physics::kWidth, 0, 1);
+            return;
+        }
         if (m_kit == Hang) {
             const int f = hangField(pad);
             sx = sy = 0.5f;
@@ -889,6 +928,20 @@ private:
             h->x0 = h->x = f == hang::kGu ? 0.03f : kHangCx + kHangRx * (fd.x + u * fd.a * std::cos(fd.axis));
             h->y0 = h->y = f == hang::kGu ? 0.95f : kHangCy + kHangRy * (fd.y + u * fd.a * std::sin(fd.axis));
         }
+        if (m_kit == SlitDrum) {
+            // A key strikes its tongue near the tip, on its centre line, as a
+            // mallet would; the box near its front edge.
+            const int t = kSlitKey[h->pad];
+            h->pad = slitPad(t);
+            if (t == slit::kFrame) {
+                h->x0 = h->x = slitPadX(0);
+                h->y0 = h->y = slitPadY(-0.45f * slit::Physics::innerDepth());
+            } else {
+                const slit::Tongue tg = slit::tongue(t);
+                h->x0 = h->x = slitPadX(tg.rootX + float(tg.dir) * 0.85f * tg.length);
+                h->y0 = h->y = slitPadY(tg.y);
+            }
+        }
         h->vel = accent ? 1.0f : 0.78f;
         h->pressure = accent ? 0.7f : 0.45f;
         h->lastCell = h->pad;
@@ -898,7 +951,7 @@ private:
             sendSubOn(*h, now, ctx);
         else if (repeating())
             instantRoll(*h, ctx);
-        else if (m_kit == Hang)
+        else if (whole())
             hitAt(h->pad, h->vel, h->x0, h->y0, now, ctx);
         else
             hit(h->pad, h->vel, 0.5f, 0.5f, now, ctx);
@@ -916,6 +969,16 @@ private:
     // Has a finger run far enough into another pad to count as there? A
     // little way in, so a finger resting on a border doesn't chatter.
     bool wellInside(float x, float y) const {
+        if (m_kit == SlitDrum) {
+            // On the slit drum: a few millimetres inside a tongue, or off them.
+            const float X = slitX(x), Y = slitY(y);
+            const int t = slit::spotAt(X, Y).tongue;
+            for (float dx : {-0.006f, 0.006f})
+                for (float dy : {-0.006f, 0.006f})
+                    if (slit::spotAt(X + dx, Y + dy).tongue != t)
+                        return false;
+            return true;
+        }
         if (m_kit == Hang) {
             // On the hang: well within a field's rim, or well off the shell.
             const float hx = hangX(x), hy = hangY(y);
@@ -1709,8 +1772,10 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
     if (m_kit == Hang)
         paintHang(p, pc, harm, genOn);
-    // The grid of pads (none on the hang, which is one instrument).
-    for (int pad = 0; pad < (m_kit == Hang ? 0 : int(PadCount)); ++pad) {
+    if (m_kit == SlitDrum)
+        paintSlit(p, pc, harm, genOn);
+    // The grid of pads (none on the hang or the slit drum, each one instrument).
+    for (int pad = 0; pad < (whole() ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
         const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
                                     float(row + 1) / kRows)
@@ -1830,7 +1895,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
     // Pads taken out of the playing loop.
     const int playing = pc.view->playing;
-    if (m_kit != Hang && playing >= 0 && playing < kClipSlots && m_muted[playing])
+    if (!whole() && playing >= 0 && playing < kClipSlots && m_muted[playing])
         for (int pad = 0; pad < PadCount; ++pad) {
             if (!(m_muted[playing] >> pad & 1u))
                 continue;
@@ -1845,7 +1910,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         }
 
     // The 808's note while it sounds.
-    if (m_kit != Hang && data[32] > 0.002f) {
+    if (!whole() && data[32] > 0.002f) {
         const QRectF cell = pc.rect(0, 0.25f, 0.25f, 0.5f);
         const int deg = int(std::lround(data[33])) + int(std::lround(m_edit[Sub].tune));
         const int pc12 = (int(std::lround(harm.midi(deg, 0))) % 12 + 12) % 12;
@@ -2108,6 +2173,119 @@ void DrumsControl::paintHang(QPainter &p, const PaintContext &pc, const Harmony 
             p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
             const QRectF b = rim.boundingRect();
             p.drawLine(b.bottomLeft(), b.topRight());
+        }
+    }
+}
+
+// The slit drum, drawn as it is played: its box from above, the four H's
+// cut in its top, each tongue with the grain running along it and its
+// note, lit and quivering at its tip as it is struck; the box glowing
+// while its air speaks, and lit where it is knocked.
+void DrumsControl::paintSlit(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn) {
+    namespace c = console;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int label = int(std::clamp(15.0 * s, 10.0, 20.0));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    const float ring = std::min(1.0f, data[37]);
+    // A rectangle of the top (metres from its middle), in pixels.
+    auto at = [&](float X, float Y) { return pc.at(slitPadX(X), slitPadY(Y)); };
+    auto rect = [&](float x0, float y0, float x1, float y1) { return QRectF(at(x0, y0), at(x1, y1)).normalized(); };
+    const float L = slit::boxLength(), D = slit::Physics::kDepth;
+    const float Li = slit::innerLength(), Di = slit::Physics::innerDepth();
+    const int playing = pc.view->playing;
+
+    // The box: its top, brighter while the air in it rings, the walls under
+    // its edge, and lit where it is knocked.
+    {
+        const int pad = slitPad(slit::kFrame);
+        const float knock = std::max(data[pad], 0.6f * data[16 + pad]);
+        const QRectF top = rect(-0.5f * L, -0.5f * D, 0.5f * L, 0.5f * D);
+        const double round = 10 * s;
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.05f + 0.07f * ring + 0.25f * knock));
+        p.drawRoundedRect(top, round, round);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.55f + 0.35f * std::max(ring, knock)), 2.0 * s));
+        p.drawRoundedRect(top, round, round);
+        p.setPen(QPen(c::alpha(col, 0.22f), 1.0 * s, Qt::DotLine));
+        p.drawRect(rect(-0.5f * Li, -0.5f * Di, 0.5f * Li, 0.5f * Di));
+        const QColor ink = c::alpha(col, 0.45f + 0.5f * knock);
+        for (int side = 0; side < 2; ++side) {
+            const QPointF q = at((side ? 0.5f : -0.5f) * (Li - slit::Physics::kLand), 0);
+            c::text(p, QRectF(q.x() - 40 * s, q.y() - small, 80 * s, 2 * small), QStringLiteral("BOX"), ink, small, true,
+                    Qt::AlignCenter);
+        }
+        if (playing >= 0 && playing < kClipSlots && (m_muted[playing] >> pad & 1u)) {
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            p.drawLine(top.bottomLeft(), top.topRight());
+        }
+    }
+
+    // The cuts: the two sides of each H from root to root and its crossbar,
+    // dark lines in the wood.
+    const float b = slit::Physics::kWidth, kerf = slit::Physics::kKerf;
+    p.setBrush(Qt::NoBrush);
+    for (int cut = 0; cut < slit::kCuts; ++cut) {
+        const slit::Tongue a = slit::tongue(slit::leftOf(cut)), z = slit::tongue(slit::rightOf(cut));
+        p.setPen(QPen(c::alpha(col, 0.75f), std::max(1.5, 2.0 * s)));
+        for (float side : {-1.0f, 1.0f}) {
+            const float y = a.y + side * 0.5f * (b + kerf);
+            p.drawLine(at(a.rootX, y), at(z.rootX, y));
+        }
+        const float mid = 0.5f * (a.tipX() + z.tipX()), half = 0.5f * std::fabs(z.tipX() - a.tipX());
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.6f));
+        p.drawRect(rect(mid - std::max(half, 0.5f * kerf), a.y - 0.5f * b, mid + std::max(half, 0.5f * kerf), a.y + 0.5f * b));
+        p.setBrush(Qt::NoBrush);
+    }
+
+    // The tongues.
+    const int oct = drums::octaveNear(harm, slit::Physics::kRootHz);
+    for (int t = 0; t < slit::kTongues; ++t) {
+        const int pad = slitPad(t);
+        const slit::Tongue tg = slit::tongue(t);
+        const float live = data[pad], replay = data[16 + pad];
+        const float lit = std::max(live, 0.6f * replay);
+        const Gen *gen = genOn[pad];
+        const QRectF body = rect(tg.rootX, tg.y - 0.5f * b, tg.tipX(), tg.y + 0.5f * b);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.06f + 0.3f * lit));
+        p.drawRect(body);
+        // The grain, along it.
+        p.setPen(QPen(c::alpha(col, 0.12f + 0.15f * lit), 1.0 * s));
+        for (float g : {-0.28f, 0.05f, 0.31f}) {
+            const float y = tg.y + g * b;
+            p.drawLine(at(tg.rootX + float(tg.dir) * 0.04f * tg.length, y), at(tg.rootX + float(tg.dir) * 0.93f * tg.length, y));
+        }
+        // Its tip quivers as it rings.
+        if (lit > 0.02f) {
+            p.setPen(QPen(c::alpha(col, 0.7f * lit), 1.5 * s));
+            for (float d : {-1.0f, 1.0f}) {
+                const float x = tg.tipX() + d * 0.006f * lit;
+                p.drawLine(at(x, tg.y - 0.5f * b), at(x, tg.y + 0.5f * b));
+            }
+        }
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, gen ? 0.95f : 0.35f + 0.5f * lit), (gen ? 2.5 : 1.0) * s));
+        p.drawRect(body);
+        // Its note, towards the tip.
+        const int deg = t + int(std::lround(m_edit[pad].tune));
+        const int m = int(std::lround(harm.midi(deg, oct)));
+        const QString note = QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)) + QString::number(m / 12 - 1);
+        const QPointF centre = at(tg.rootX + float(tg.dir) * 0.62f * tg.length, tg.y);
+        const QColor ink = live > 0.45f ? QColor::fromRgb(c::kInk) : col;
+        const QRectF box(centre.x() - 60 * s, centre.y() - label * 0.8, 120 * s, label * 1.6);
+        c::text(p, box, note, ink, label, true, Qt::AlignCenter);
+        if (gen) {
+            const QString what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
+                                             : QString::fromUtf8(rateName(gen->rate));
+            c::text(p, box.translated(0, label * 1.1), what, c::alpha(col, 0.7f), small, true, Qt::AlignCenter);
+        }
+        if (playing >= 0 && playing < kClipSlots && (m_muted[playing] >> pad & 1u)) {
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            p.drawLine(body.bottomLeft(), body.topRight());
         }
     }
 }

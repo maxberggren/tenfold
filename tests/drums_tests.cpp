@@ -1179,9 +1179,9 @@ private slots:
     void swingLeavesThirtySecondsEven() {
         // The brushes swing a full triplet (66%), but a cross-stick rolling
         // in thirty-seconds stays even.
-        // Brushes is the tenth kit: seven to the left of house.
+        // Brushes is the tenth kit: eight to the left of house.
         const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\nkey 0.12 Left\nkey 0.13 Left\n"
-                                        "key 0.14 Left\nkey 0.15 Left\nkey 0.16 Left\n"
+                                        "key 0.14 Left\nkey 0.15 Left\nkey 0.16 Left\nkey 0.17 Left\n"
                                         "down 1.0 1 0.38 0.27 p=0.6\nglide 1.3 1.4 1 0.38 0.56\nup 4.0 1\nend 4.5\n");
         const auto on = onsets(take, 2.0, 3.9, 0.02);
         QVERIFY(on.size() >= 25);
@@ -1511,9 +1511,9 @@ private slots:
         // thirds through its beat at the kit's 66%, and on the straight
         // eighth once the swing is taken down to 50%.
         auto where = [](const std::string &extra) {
-            // Brushes is the tenth kit: seven to the left of house.
+            // Brushes is the tenth kit: eight to the left of house.
             const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\nkey 0.12 Left\nkey 0.13 Left\n"
-                                            "key 0.14 Left\nkey 0.15 Left\nkey 0.16 Left\n" + extra +
+                                            "key 0.14 Left\nkey 0.15 Left\nkey 0.16 Left\nkey 0.17 Left\n" + extra +
                                             "key 1.0 P down\nkey 1.0 V down\nkey 6.0 P up\nkey 6.0 V up\nend 6.2\n");
             double sum = 0;
             int n = 0;

@@ -1816,9 +1816,20 @@ private slots:
             std::string script = "page 0 1\n";
             for (int i = 0; i < kit; ++i)
                 script += "key " + std::to_string(0.1 + 0.02 * i) + " Right\n";
-            script += "down 1.00 1 " + at(drums::Kick) + " p=0.9\ndown 1.02 2 " + at(drums::Snare) +
-                      " p=0.9\ndown 1.04 3 " + at(drums::Hat) + " p=0.9\ndown 1.06 4 " + at(drums::Sub) +
-                      " p=0.9\nglide 1.3 1.5 1 0.125 0.25\nup 4.0 1\nup 4.0 2\nup 4.0 3\nup 4.0 4\n";
+            if (kit == drums::Cuica) {
+                // The cuíca is played, not grooved: the cloth drawn back and
+                // forth hard along the stick, a thumb pressing in and out.
+                script += "down 1.00 1 0.5 0.53 p=0.9\ndown 1.00 2 0.86 0.6 p=0.9\n";
+                for (int k = 0; k < 15; ++k)
+                    script += "glide " + std::to_string(1.0 + 0.2 * k) + " " + std::to_string(1.2 + 0.2 * k) + " 1 " +
+                              (k % 2 ? "0.5" : "0.2") + " 0.53 p=0.9\nglide " + std::to_string(1.0 + 0.2 * k) + " " +
+                              std::to_string(1.2 + 0.2 * k) + " 2 0.86 " + (k % 2 ? "0.6" : "0.53") + " p=1.0\n";
+                script += "up 4.0 1\nup 4.0 2\n";
+            } else {
+                script += "down 1.00 1 " + at(drums::Kick) + " p=0.9\ndown 1.02 2 " + at(drums::Snare) +
+                          " p=0.9\ndown 1.04 3 " + at(drums::Hat) + " p=0.9\ndown 1.06 4 " + at(drums::Sub) +
+                          " p=0.9\nglide 1.3 1.5 1 0.125 0.25\nup 4.0 1\nup 4.0 2\nup 4.0 3\nup 4.0 4\n";
+            }
             for (int pad = 0; pad < drums::PadCount; ++pad)
                 script += "tap " + std::to_string(4.2 + 0.12 * pad) + " " + at(pad) + " p=1.0 len=0.06\n";
             script += "end 8\n";

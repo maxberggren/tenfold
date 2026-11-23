@@ -229,6 +229,31 @@ void tablaHome(int stroke, float &x, float &y) {
 const int kTablaKey[PadCount] = {tabla::Ge, tabla::Ka, tabla::Tun, tabla::Na, tabla::Ge, tabla::Ka, tabla::Tin, tabla::Na,
                                  tabla::Ge, tabla::Ge, tabla::Tun, tabla::Tin, tabla::Ge, tabla::Ka, tabla::Na, tabla::Na};
 
+// The cuíca kit draws the instrument too, in two views: on the left its
+// shell from the side, open end at the left, the stick standing in it from
+// the knot in the head at the right; a finger there is the hand drawing the
+// damp cloth along the stick, where it is along the stick and how fast it
+// moves the stroke, how hard it presses the grip. On the right the head
+// from outside, the knot in its middle: a finger there is the thumb, closer
+// to the knot and harder pressing higher.
+constexpr float kCuicaStickL = 0.04f, kCuicaStickR = 0.70f, kCuicaAxisY = 0.53f, kCuicaShellRy = 0.3f;
+constexpr float kCuicaHeadX = 0.86f, kCuicaHeadY = 0.53f, kCuicaHeadRx = 0.13f, kCuicaHeadRy = 0.4f;
+constexpr float kCuicaHeadFrom = 0.74f; // fingers right of this are thumbs on the head
+// A finger's place along the stick, 0 at the knot.
+float cuicaAlong(float x) { return clampf((kCuicaStickR - x) / (kCuicaStickR - kCuicaStickL), 0, 1); }
+// A thumb's distance from the knot, in the head's radii. The drawn head is
+// the middle of the real one, close up, its middle most of all (the note
+// climbs steeply in the last centimetre or two to the knot): the drawing's
+// half-way ring is a quarter of the way out.
+float cuicaR(float x, float y) {
+    const float dx = (x - kCuicaHeadX) / kCuicaHeadRx, dy = (y - kCuicaHeadY) / kCuicaHeadRy;
+    const float d = clampf(std::sqrt(dx * dx + dy * dy), 0, 1);
+    return d * d;
+}
+// How hard: the cloth's grip and the thumb's push, from the finger's pressure.
+float cuicaGrip(float pressure) { return clampf(0.1f + 1.1f * (pressure - 0.1f), 0.08f, 1.0f); }
+float cuicaPush(float pressure) { return clampf(0.15f + 1.2f * (pressure - 0.2f), 0.1f, 1.0f); }
+
 // The keyboard is a second pad: the left hand's three rows mirror the
 // bottom three rows of the trackpad, U I O P are the cymbal row, and the
 // right hand gets the two rows that matter most again.
@@ -274,6 +299,14 @@ public:
 
     void frame(const Frame &f, ControlContext &ctx) override {
         m_frame = f;
+        if (m_kit == Cuica) {
+            // Every finger is on the cuíca: no rolls, grooves or fills
+            // under it (keys still play its strokes, and roll).
+            cuicaFrame(f, ctx);
+            m_button = f.button;
+            resolve(f.t, ctx);
+            return;
+        }
 
         // Lifts first, so a finger that left and one that landed in the
         // same frame don't meet.
@@ -493,6 +526,7 @@ public:
         for (auto &h : m_holders)
             if (h.used)
                 release(h, ctx.now(), ctx, false);
+        cuicaLetGo(ctx.now(), ctx);
         m_frame = Frame{};
         m_button = false;
         m_repeatKeys = 0;
@@ -640,7 +674,7 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes, the khishba, the udu and the tabla pair\n"
+"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes, the khishba, the udu, the tabla pair and the cuica\n"
             "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
             "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
             "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
@@ -665,6 +699,11 @@ public:
             "edge is na, the open maidan tin, the black syahi tun; on the bayan, past its syahi is ge, the near part "
             "ka, the hand flat; a finger left down rests on the skin and damps it (te), and on the bayan slides "
             "away from you to press the heel in and bend the ge up, an octave at most; REPEAT rolls\n"
+            "the cuica kit\tthe pad is a cuica: on the left its shell from the side with the stick in it, on the right "
+            "its head; draw a finger along the stick, back and forth, and the damp cloth rubs it (faster is louder; "
+            "press hard and draw slowly for its low grunt); a second finger on the head is the thumb pressing it, nearer the "
+            "knot in the middle and harder for higher, sliding for the cuica's laugh; the keys play its strokes "
+            "(oom, ka, kee, the laugh up and the fall)\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -733,6 +772,17 @@ public:
                 if (m_muted[m_playing] >> p & 1u)
                     out << QString::fromUtf8(padName(p, m_kit)).toUpper();
             parts << QStringLiteral("%1 out of loop %2").arg(out.join('+')).arg(m_playing + 1);
+        }
+        if (m_kit == Cuica) {
+            int cloth = 0, thumbs = 0;
+            for (const auto &c : m_cuica)
+                if (c.used)
+                    (c.thumb ? thumbs : cloth) += 1;
+            if (cloth)
+                parts << (thumbs ? QStringLiteral("drawing the cloth, the thumb on the head")
+                                 : QStringLiteral("drawing the cloth along the stick"));
+            else if (thumbs)
+                parts << QStringLiteral("the thumb on the head: draw the cloth to sound it");
         }
         parts << QStringLiteral("%1, swing %2%").arg(kitTitle(m_kit, false)).arg(int(std::lround(m_swing * 100)));
         return parts.join(QStringLiteral(" · "));
@@ -859,7 +909,7 @@ private:
 
     // The kits that are one instrument over the whole pad, not a grid.
     bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba || m_kit == Udu ||
-                                 m_kit == TablaPair; }
+                                 m_kit == TablaPair || m_kit == Cuica; }
 
     // --- where on the pad ------------------------------------------------------
 
@@ -951,7 +1001,8 @@ private:
     // Does a finger on this pad stay in the sound while it is down (an On,
     // its Moves, an Off)? The 808, held and gliding; and on the tabla pair
     // every finger, which rests on the skin while it stays.
-    bool held(const Holder &h) const { return h.pad == Sub || m_kit == TablaPair; }
+    // (the cuíca's 808 pad is a stroke like the rest)
+    bool held(const Holder &h) const { return (h.pad == Sub && m_kit != Cuica) || m_kit == TablaPair; }
 
     // --- holders ---------------------------------------------------------------
 
@@ -2137,6 +2188,13 @@ private:
         for (auto &h : m_holders)
             if (h.used && h.covering)
                 sendCover(h, 0, 0, ctx.now(), ctx);
+        // The cuíca's fingers and the other kits' don't carry across.
+        if (m_kit == Cuica && kit != Cuica)
+            cuicaLetGo(ctx.now(), ctx);
+        if (kit == Cuica && m_kit != Cuica)
+            for (auto &h : m_holders)
+                if (h.used && !h.key)
+                    release(h, ctx.now(), ctx, false);
         m_kit = kit;
         m_swing = kitSwing(kit);
         Command c;
@@ -2194,6 +2252,100 @@ private:
     uint32_t m_muted[kClipSlots] = {};  // per slot, the pads taken out of its loop
     uint32_t m_hits = 0, m_padsHit = 0, m_rolls = 0, m_grooves = 0, m_keeps = 0; // for the tutorial
     Frame m_frame;
+
+    // --- the cuíca ---------------------------------------------------------------
+
+    // A finger on the cuíca: the cloth hand on the stick, or a thumb on the
+    // head; what was last sent for it.
+    struct CuicaFinger {
+        bool used = false, thumb = false;
+        int id = -1;
+        float x = 0, y = 0, pressure = 0.5f;
+        float sentWhere = -1, sentHow = -1;
+        double sentAt = 0;
+    };
+    std::array<CuicaFinger, 12> m_cuica{};
+    float m_cuicaRubbed = 0; // how far fingers have drawn the cloth, for the tutorial
+
+    void cuicaFrame(const Frame &f, ControlContext &ctx) {
+        for (auto &c : m_cuica) {
+            if (!c.used)
+                continue;
+            bool still = false;
+            for (int i = 0; i < f.count; ++i)
+                still |= f.touches[i].id == c.id;
+            if (!still) {
+                cuicaSend(c, Command::Off, f.t, ctx);
+                c = CuicaFinger{};
+            }
+        }
+        for (int i = 0; i < f.count; ++i) {
+            const Touch &t = f.touches[i];
+            CuicaFinger *c = nullptr;
+            for (auto &o : m_cuica)
+                if (o.used && o.id == t.id)
+                    c = &o;
+            if (!c) {
+                for (auto &o : m_cuica)
+                    if (!o.used) {
+                        c = &o;
+                        break;
+                    }
+                if (!c)
+                    continue;
+                *c = CuicaFinger{};
+                c->used = true;
+                c->id = t.id;
+                c->thumb = t.x > kCuicaHeadFrom;
+                c->x = t.x;
+                c->y = t.y;
+                c->pressure = t.pressure;
+                cuicaSend(*c, Command::On, f.t, ctx);
+                continue;
+            }
+            if (!c->thumb)
+                m_cuicaRubbed += std::fabs(cuicaAlong(t.x) - cuicaAlong(c->x));
+            c->x = t.x;
+            c->y = t.y;
+            c->pressure = t.pressure;
+            // Every frame that changes something (the engine draws the arm
+            // smoothly between them), at most two hundred a second.
+            const float where = c->thumb ? cuicaR(c->x, c->y) : cuicaAlong(c->x);
+            const float how = c->thumb ? cuicaPush(c->pressure) : cuicaGrip(c->pressure);
+            if ((std::fabs(where - c->sentWhere) > 0.0015f || std::fabs(how - c->sentHow) > 0.01f) &&
+                f.t - c->sentAt >= 0.005)
+                cuicaSend(*c, Command::Move, f.t, ctx);
+        }
+    }
+
+    void cuicaSend(CuicaFinger &c, uint16_t type, double t, ControlContext &ctx) {
+        Command m;
+        m.type = type;
+        m.id = c.id & 0xFFFFFF;
+        m.t = t;
+        m.i[0] = c.thumb ? kCuicaThumb : kCuicaHand;
+        m.i[2] = Cuica + 1;
+        c.sentWhere = c.thumb ? cuicaR(c.x, c.y) : cuicaAlong(c.x);
+        c.sentHow = c.thumb ? cuicaPush(c.pressure) : cuicaGrip(c.pressure);
+        c.sentAt = t;
+        m.f[0] = c.sentHow;
+        m.f[1] = c.sentWhere;
+        ctx.send(m);
+        if (type == Command::On) {
+            ++m_hits;
+            m_padsHit |= 1u << m.i[0];
+        }
+    }
+
+    void cuicaLetGo(double t, ControlContext &ctx) {
+        for (auto &c : m_cuica)
+            if (c.used) {
+                cuicaSend(c, Command::Off, t, ctx);
+                c = CuicaFinger{};
+            }
+    }
+
+    void paintCuica(QPainter &p, const PaintContext &pc);
 };
 
 // --- drawing -------------------------------------------------------------------
@@ -2232,7 +2384,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         paintUdu(p, pc, harm, genOn);
     if (m_kit == TablaPair)
         paintTabla(p, pc, harm, genOn);
-    // The grid of pads (none on the hang, the slit drum, the pipes, the khishba, the udu or the tabla pair, each one
+    if (m_kit == Cuica)
+        paintCuica(p, pc);
+    // The grid of pads (none on the hang, the slit drum, the pipes, the khishba, the udu, the tabla pair or the cuíca, each one
     // instrument).
     for (int pad = 0; pad < (whole() ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
@@ -2379,8 +2533,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     }
 
     // The REPEAT strip along the near edge, its rates left to right; lit
-    // under a resting thumb. B or N held lights the whole of it.
-    {
+    // under a resting thumb. B or N held lights the whole of it. (The cuíca
+    // has none: every finger is on it.)
+    if (m_kit != Cuica) {
         int thumb = -1;
         for (const auto &h : m_holders)
             if (h.used && h.mode == Mode::Repeat)
@@ -2403,6 +2558,11 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         const Touch &t = m_frame.touches[i];
         QString what;
         float glow = 0;
+        for (const auto &c : m_cuica)
+            if (c.used && c.id == t.id) {
+                what = c.thumb ? QStringLiteral("THUMB") : QStringLiteral("CLOTH");
+                glow = std::min(1.0f, data[230] * 1.5f);
+            }
         for (const auto &h : m_holders) {
             if (!h.used || h.key || h.src != t.id)
                 continue;
@@ -3280,6 +3440,108 @@ void DrumsControl::paintTabla(QPainter &p, const PaintContext &pc, const Harmony
             c::text(p, QRectF(q.x() - 100 * s, q.y() - label * 1.8, 200 * s, label * 1.4), text,
                     c::alpha(col, bend > 0.05f ? 0.95f : 0.6f), small, true, Qt::AlignCenter);
         }
+    }
+}
+
+// The cuíca, drawn as it is played: on the left its shell from the side,
+// the stick standing in it from the knot, the cloth hands on it; on the
+// right its head from outside, the knot in its middle, rings running out
+// of it as it sounds and the thumbs where they press.
+void DrumsControl::paintCuica(QPainter &p, const PaintContext &pc) {
+    namespace c = console;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    const float sound = std::min(1.0f, data[230]);
+    const float press = std::min(1.0f, data[231]);
+
+    // The shell, from the side: a cylinder, open at the left.
+    {
+        const QPointF tl = pc.at(kCuicaStickL - 0.01f, kCuicaAxisY + kCuicaShellRy);
+        const QPointF br = pc.at(kCuicaStickR, kCuicaAxisY - kCuicaShellRy);
+        const QRectF body(QPointF(std::min(tl.x(), br.x()), std::min(tl.y(), br.y())),
+                          QPointF(std::max(tl.x(), br.x()), std::max(tl.y(), br.y())));
+        p.setPen(Qt::NoPen);
+        QLinearGradient shine(body.topLeft(), body.bottomLeft());
+        shine.setColorAt(0.0, c::alpha(col, 0.05f));
+        shine.setColorAt(0.3, c::alpha(col, 0.13f + 0.08f * sound));
+        shine.setColorAt(1.0, c::alpha(col, 0.03f));
+        p.setBrush(shine);
+        p.drawRect(body);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.5f), 1.6 * s));
+        p.drawLine(body.topLeft(), body.topRight());
+        p.drawLine(body.bottomLeft(), body.bottomRight());
+        // The open end, and the head edge on at the right.
+        const double w = body.width() * 0.035;
+        p.setPen(QPen(c::alpha(col, 0.35f), 1.2 * s, Qt::DashLine));
+        p.drawEllipse(QRectF(body.left() - w, body.top(), 2 * w, body.height()));
+        p.setPen(QPen(c::alpha(col, 0.6f + 0.35f * sound), 2.2 * s));
+        p.drawEllipse(QRectF(body.right() - w, body.top(), 2 * w, body.height()));
+        c::text(p, QRectF(body.left(), body.top() - 18 * s, body.width(), 16 * s),
+                QStringLiteral("DRAW THE CLOTH ALONG THE STICK"), c::alpha(col, 0.55f), small, true,
+                Qt::AlignLeft | Qt::AlignVCenter);
+        c::text(p, QRectF(body.left(), body.bottom() + 2 * s, body.width(), 16 * s), QStringLiteral("OPEN END"),
+                c::alpha(col, 0.35f), small, true, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+
+    // The stick, trembling as it sounds, from the knot to its free end.
+    {
+        const QPointF knot = pc.at(kCuicaStickR, kCuicaAxisY), end = pc.at(kCuicaStickL + 0.03f, kCuicaAxisY);
+        const double shake = 1.5 * s * sound * std::sin(pc.time * 97.0);
+        p.setPen(QPen(c::alpha(col, 0.75f + 0.25f * sound), 4.0 * s, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(knot, end + QPointF(0, shake));
+        // The cloth hands: a damp wad round the stick.
+        for (const auto &f : m_cuica) {
+            if (!f.used || f.thumb)
+                continue;
+            const float along = cuicaAlong(f.x);
+            const QPointF at = pc.at(kCuicaStickR - along * (kCuicaStickR - kCuicaStickL), kCuicaAxisY);
+            const double r = (10.0 + 10.0 * cuicaGrip(f.pressure)) * s;
+            p.setPen(QPen(c::alpha(col, 0.9f), 1.5 * s));
+            p.setBrush(c::alpha(col, 0.25f + 0.5f * sound));
+            p.drawRoundedRect(QRectF(at.x() - r * 0.6, at.y() - r, r * 1.2, 2 * r), 4 * s, 4 * s);
+        }
+    }
+
+    // The head from outside: the knot in the middle, rings while it sounds.
+    {
+        const QPointF mid = pc.at(kCuicaHeadX, kCuicaHeadY);
+        const QPointF edge = pc.at(kCuicaHeadX + kCuicaHeadRx, kCuicaHeadY + kCuicaHeadRy);
+        const double rx = std::fabs(edge.x() - mid.x()), ry = std::fabs(edge.y() - mid.y());
+        QRadialGradient glow(mid, std::max(rx, ry));
+        glow.setColorAt(0.0, c::alpha(col, 0.16f + 0.3f * sound));
+        glow.setColorAt(1.0, c::alpha(col, 0.04f + 0.06f * press));
+        p.setPen(QPen(c::alpha(col, 0.6f + 0.3f * sound), 2.5 * s));
+        p.setBrush(glow);
+        p.drawEllipse(mid, rx, ry);
+        // A ring where the press is half-way up the head's range.
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.25f), 1.0 * s, Qt::DotLine));
+        p.drawEllipse(mid, rx * 0.5, ry * 0.5);
+        for (int k = 1; k <= 3 && sound > 0.02f; ++k) {
+            const double grow = std::fmod(pc.time * 2.5 + k / 3.0, 1.0);
+            p.setPen(QPen(c::alpha(col, 0.5f * sound * float(1.0 - grow)), 1.3 * s));
+            p.drawEllipse(mid, rx * (0.1 + 0.85 * grow), ry * (0.1 + 0.85 * grow));
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.9f));
+        p.drawEllipse(mid, 4.5 * s, 4.5 * s);
+        // The thumbs, a dimple as deep as they press.
+        for (const auto &f : m_cuica) {
+            if (!f.used || !f.thumb)
+                continue;
+            const QPointF at = pc.at(f.x, f.y);
+            const double r = (9.0 + 14.0 * cuicaPush(f.pressure)) * s;
+            p.setPen(QPen(c::alpha(col, 0.9f), 1.5 * s));
+            p.setBrush(c::alpha(col, 0.2f + 0.4f * press));
+            p.drawEllipse(at, r, r);
+        }
+        c::text(p, QRectF(mid.x() - rx, mid.y() - ry - 34 * s, 2 * rx, 16 * s), QStringLiteral("THE HEAD: A THUMB HERE"),
+                c::alpha(col, 0.55f), small, true, Qt::AlignCenter);
+        c::text(p, QRectF(mid.x() - rx, mid.y() - ry - 19 * s, 2 * rx, 16 * s),
+                QStringLiteral("NEARER THE KNOT, HARDER: HIGHER"), c::alpha(col, 0.4f), small, false, Qt::AlignCenter);
     }
 }
 

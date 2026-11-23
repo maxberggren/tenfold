@@ -36,6 +36,7 @@ HEADERS += \
     src/khishba.h \
     src/udu.h \
     src/tabla.h \
+    src/cuica.h \
     src/offline.h \
     src/part.h \
     src/padprompt.h \

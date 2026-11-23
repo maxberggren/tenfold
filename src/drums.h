@@ -137,6 +137,11 @@
 // After it, the tabla pair (tabla.h): the whole pad the dayan and the
 // bayan, two goatskin heads loaded with the syahi and simulated as they
 // are made, struck, damped and bent by where the fingers land and stay.
+//
+// And last a cuíca (cuica.h), the whole pad one friction drum: a damp cloth
+// drawn along a bamboo stick tied to the middle of a goatskin head,
+// stick–slip driving the skin, a thumb on the head bending it, the shell's
+// air giving it its voice.
 
 #include <algorithm>
 #include <array>
@@ -146,6 +151,7 @@
 
 #include "dsp.h"
 #include "electro.h"
+#include "cuica.h"
 #include "hang.h"
 #include "slitdrum.h"
 #include "pipedrum.h"
@@ -176,7 +182,7 @@ enum Pad : int {
 // the end and no kit is ever renamed.
 enum Kit : int {
     House, Techno, Trap, Breaks, Garage, BoomBap, Jungle, Linn, Cr78, Brushes,
-    Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, SlitDrum, Pipes, Khishba, Udu, TablaPair, KitCount
+    Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, SlitDrum, Pipes, Khishba, Udu, TablaPair, Cuica, KitCount
 };
 
 // The tabla pair's strokes are pads of their own, by where they land: the
@@ -324,6 +330,41 @@ inline float uduSpotX(float X) { return std::clamp(0.5f + 0.5f * X / kUduReach, 
 inline float uduSpotY(float Y) { return std::clamp(0.5f + 0.5f * (Y - kUduLift) / kUduReach, 0.0f, 1.0f); }
 inline float uduX(float sx) { return (sx - 0.5f) * 2.0f * kUduReach; }
 inline float uduY(float sy) { return (sy - 0.5f) * 2.0f * kUduReach + kUduLift; }
+// On the cuíca every pad is a stroke (a key or a groove plays one): how far
+// and how fast the cloth draws, how hard it grips, and where and how hard
+// the thumb presses the head (from, to: a glide). The page's fingers play
+// it directly instead: the cloth hand (kCuicaHand) and the thumb
+// (kCuicaThumb), held and moved.
+struct CuicaStroke {
+    const char *name;
+    float length, seconds, grip;  // m drawn, s, 0..1
+    float r0, r1, thumb0, thumb1; // the thumb: from the knot (0..1 of the head) and how hard (0..1), start to end
+};
+inline const CuicaStroke &cuicaStroke(int pad) {
+    // (a force of 0 is no thumb; about 190 Hz open, 250 Hz at r 0.2 pressed
+    // well, 330 Hz beside the knot (r 0.1) at half force, 365 Hz and more
+    // pressed hard there)
+    static const CuicaStroke strokes[PadCount] = {
+        {"oom", 0.07f, 0.16f, 0.6f, 0, 0, 0, 0},                // kick: the open note, a long pull
+        {"ka", 0.04f, 0.08f, 0.55f, 0.15f, 0.15f, 0.6f, 0.6f},  // snare: a short pressed stroke
+        {"kee", 0.035f, 0.07f, 0.55f, 0.13f, 0.13f, 0.9f, 0.9f}, // clap: high, by the knot
+        {"tik", 0.02f, 0.045f, 0.5f, 0.1f, 0.1f, 1, 1},               // hat: a squeak, as high as it goes
+        {"laugh", 0.1f, 0.3f, 0.6f, 0.35f, 0.1f, 0.3f, 1},          // 808: up as the thumb slides in
+        {"pip", 0.02f, 0.05f, 0.5f, 0.2f, 0.2f, 0.5f, 0.5f},    // rim
+        {"hum", 0.05f, 0.12f, 0.5f, 0.3f, 0.3f, 0.4f, 0.4f},    // shaker
+        {"fall", 0.09f, 0.26f, 0.6f, 0.1f, 0.35f, 1, 0.3f},          // open: down as it slides out
+        {"low", 0.09f, 0.22f, 0.65f, 0, 0, 0, 0},               // tom lo
+        {"mid", 0.06f, 0.14f, 0.55f, 0.1f, 0.1f, 0.5f, 0.5f},   // tom mid
+        {"hi", 0.05f, 0.12f, 0.55f, 0.1f, 0.1f, 0.85f, 0.85f}, // tom hi
+        {"rise", 0.07f, 0.18f, 0.6f, 0.2f, 0.1f, 0.4f, 0.9f},  // conga
+        {"wail", 0.14f, 0.5f, 0.65f, 0.4f, 0.1f, 0.3f, 1},          // crash: a long laugh up
+        {"whoop", 0.08f, 0.14f, 0.6f, 0.3f, 0.1f, 0.2f, 1},         // ride: a quick one
+        {"top", 0.06f, 0.1f, 0.7f, 0.1f, 0.1f, 1, 1},                 // bell: as high as it goes
+        {"bark", 0.05f, 0.08f, 1.0f, 0, 0, 0, 0},               // zap: gripped hard and fast
+    };
+    return strokes[std::clamp(pad, 0, PadCount - 1)];
+}
+inline constexpr int kCuicaHand = Snare, kCuicaThumb = Clap;
 
 inline const char *padName(int pad) {
     static const char *names[PadCount] = {"kick", "snare", "clap", "hat", "808",   "rim",  "shaker", "open",
@@ -347,6 +388,8 @@ inline const char *padName(int pad, int kit) {
         static const char *names[khishba::kStrokes] = {"dum", "tek", "ka", "wood"};
         return names[khishbaStroke(pad)];
     }
+    if (kit == Cuica)
+        return cuicaStroke(pad).name;
     if (kit == Hang) {
         static const char *names[hang::kFields + 1] = {"ding",   "field 1", "field 2", "field 3", "field 4",
                                                        "field 5", "field 6", "field 7", "field 8", "gu"};
@@ -445,7 +488,7 @@ inline const char *kitName(int kit) {
                                           "boom bap", "jungle", "linn",    "cr-78",    "brushes",
                                           "amapiano", "tabla",  "gamelan", "chiptune", "djembe",
                                           "hang",     "slit drum", "pipes",  "khishba",
-                                          "udu",      "tabla pair"};
+                                          "udu",      "tabla pair", "cuica"};
     return names[std::clamp(kit, 0, KitCount - 1)];
 }
 
@@ -470,6 +513,7 @@ inline const char *kitCharacter(int kit, bool pelog) {
     case Khishba: return "hacha'a";
     case Udu: return "clay and air";
     case TablaPair: return "skin and iron";
+    case Cuica: return "friction";
     default: return "";
     }
 }
@@ -479,7 +523,7 @@ inline const char *kitCharacter(int kit, bool pelog) {
 // they roll in sixteenths.
 inline float kitSwing(int kit) {
     // (The khishba's 0.54: the hacha'a's lilt, the dancer's step a hair late.)
-    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f, 0.6f, 0.54f, 0.5f, 0.5f, 0.56f, 0.54f, 0.54f, 0.56f, 0.54f, 0.56f, 0.54f};
+    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f, 0.6f, 0.54f, 0.5f, 0.5f, 0.56f, 0.54f, 0.54f, 0.56f, 0.54f, 0.56f, 0.54f, 0.56f};
     return swing[std::clamp(kit, 0, KitCount - 1)];
 }
 
@@ -489,7 +533,7 @@ inline float kitSwing(int kit) {
 // level too.
 inline float kitTrim(int kit) {
     // (The khishba and the udu set their own levels, in their Knobs::level.)
-    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f, 0.0f, -5.4f, 0.0f, 0.0f, 0.0f, 0.0f};
+    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f, 0.0f, -5.4f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     static const auto gain = [] {
         std::array<float, KitCount> g{};
         for (int k = 0; k < KitCount; ++k)
@@ -504,23 +548,23 @@ inline float kitTrim(int kit) {
 inline float displayDecay(int pad, int kit) {
     kit = std::clamp(kit, 0, KitCount - 1);
     static const float table[PadCount][KitCount] = {
-        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, amapiano, tabla, gamelan, chiptune, djembe, hang, slit drum, pipes, khishba, udu, tabla pair
-        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f, 0.24f, 0.5f, 0.22f, 0.12f, 0.22f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f, 1.0f}, // kick
-        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f, 0.03f, 0.4f, 0.08f, 0.09f, 0.08f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // snare
-        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f, 0.15f, 0.014f, 0.25f, 0.08f, 0.16f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // clap
-        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f, 0.03f, 0.025f, 0.1f, 0.025f, 0.02f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // hat
-        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f, 0.8f, 0.7f, 1.4f, 1.0f, 0.45f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f, 1.0f}, // 808
-        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f, 0.01f, 0.07f, 0.07f, 0.015f, 0.35f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // rim
-        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f, 0.04f, 0.06f, 2.2f, 0.04f, 0.06f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // shaker
-        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f, 0.26f, 0.3f, 2.4f, 0.2f, 0.1f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // open
-        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.5f, 1.0f}, // tom lo
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f, 1.0f}, // tom mid
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.5f, 1.0f}, // tom hi
-        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f, 0.09f, 0.7f, 0.6f, 0.06f, 0.28f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // hand drum
-        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f, 1.0f, 1.7f, 2.2f, 0.6f, 0.3f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // crash
-        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f, 0.8f, 1.0f, 0.25f, 0.3f, 0.6f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // ride
-        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f, 0.55f, 1.1f, 1.1f, 0.35f, 0.22f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // bell
-        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f, 0.9f, 0.6f, 0.4f, 0.15f, 1.1f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f}, // zap
+        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, amapiano, tabla, gamelan, chiptune, djembe, hang, slit drum, pipes, khishba, udu, tabla pair, cuica
+        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f, 0.24f, 0.5f, 0.22f, 0.12f, 0.22f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f, 1.0f, 0.12f}, // kick
+        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f, 0.03f, 0.4f, 0.08f, 0.09f, 0.08f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // snare
+        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f, 0.15f, 0.014f, 0.25f, 0.08f, 0.16f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // clap
+        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f, 0.03f, 0.025f, 0.1f, 0.025f, 0.02f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // hat
+        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f, 0.8f, 0.7f, 1.4f, 1.0f, 0.45f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f, 1.0f, 0.12f}, // 808
+        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f, 0.01f, 0.07f, 0.07f, 0.015f, 0.35f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // rim
+        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f, 0.04f, 0.06f, 2.2f, 0.04f, 0.06f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // shaker
+        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f, 0.26f, 0.3f, 2.4f, 0.2f, 0.1f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // open
+        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.5f, 1.0f, 0.12f}, // tom lo
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f, 1.0f, 0.12f}, // tom mid
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.5f, 1.0f, 0.12f}, // tom hi
+        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f, 0.09f, 0.7f, 0.6f, 0.06f, 0.28f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // hand drum
+        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f, 1.0f, 1.7f, 2.2f, 0.6f, 0.3f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // crash
+        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f, 0.8f, 1.0f, 0.25f, 0.3f, 0.6f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // ride
+        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f, 0.55f, 1.1f, 1.1f, 0.35f, 0.22f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // bell
+        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f, 0.9f, 0.6f, 0.4f, 0.15f, 1.1f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f, 1.0f, 0.12f}, // zap
     };
     return table[std::clamp(pad, 0, PadCount - 1)][kit];
 }
@@ -535,9 +579,10 @@ inline bool tonal(int pad) {
 // On the slit drum every tongue is (the box has no pitch); on the pipes,
 // every pipe. The khishba has no notes: its tune is the skin's tension, in
 // semitones; nor has the udu, one pot sized to the key: its pads move by
-// semitones (a bigger or smaller pot).
+// semitones (a bigger or smaller pot). The cuíca's strokes have no scale
+// degree either: the thumb is its pitch.
 inline bool tonal(int pad, int kit) {
-    if (kit == Khishba || kit == Udu || kit == TablaPair)
+    if (kit == Khishba || kit == Udu || kit == TablaPair || kit == Cuica)
         return false;
     return kit == Pipes || (kit == Hang ? !isHangGu(pad) : kit == SlitDrum ? !isSlitFrame(pad) : tonal(pad));
 }
@@ -1151,6 +1196,15 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
         const bool triplets = (kit == Trap && (pad == Hat || pad == Shaker)) || kit == Brushes;
         const int rate = density == 3 ? (triplets ? 4 : 3) : 5;
         return rollPattern(rate);
+    }
+    if (kit == Cuica) {
+        // The cuíca's part in a samba: its strokes on the sixteenths,
+        // pushing and pulling, leaning on the second and fourth of each
+        // beat; each pad plays it as its own stroke.
+        static const char *rows[3] = {"x..X..x.x..X..x.", "x.xX.xx.x.xX.xxX", "xxxXxxxXxxxXxxxX"};
+        detail::addSixteenths(p, rows[density], shift);
+        p.sort();
+        return p;
     }
     if (pad == Hat && kit == Trap) {
         // Eighths, with the trap programmer's signature: a triplet burst at
@@ -4649,6 +4703,7 @@ public:
         m_khishba.init(rate);
         m_udu.init(rate);
         m_tabla.init(rate);
+        m_cuica.init(rate);
         applyKit();
     }
 
@@ -4662,6 +4717,18 @@ public:
         case Command::On: {
             const int pad = std::clamp(c.i[0], 0, PadCount - 1);
             const int64_t at = int64_t(m_sample) + delay;
+            if (c.type == Command::On && c.i[2] - 1 == Cuica) {
+                // A hand or a thumb on the cuíca: held until its Off, the
+                // live one and a loop's both on the stick.
+                if (replay && (m_muted[(c.id >> 24) & 7] >> pad & 1u))
+                    return;
+                Pending p;
+                p.wait = delay;
+                p.cmd = c;
+                p.replay = replay;
+                push(p, ctx);
+                break;
+            }
             if (replay && (m_muted[(c.id >> 24) & 7] >> pad & 1u))
                 return; // this pad's lane is silenced in the loop that sent it
             if (replay) {
@@ -4726,6 +4793,15 @@ public:
             if (v.active)
                 v.render(l, r, room, n);
         m_sub.render(l, r, n, ctx.harmony());
+        if (m_cuica.active()) {
+            float cl[kBlock] = {}, cr[kBlock] = {};
+            m_cuica.render(cl, cr, n);
+            for (int i = 0; i < n; ++i) {
+                l[i] += cl[i];
+                r[i] += cr[i];
+                room[i] += kCuicaRoom * (cl[i] + cr[i]);
+            }
+        }
         if (m_hang.active()) {
             float hz[hang::kFields];
             hangTuning(ctx.harmony(), hz);
@@ -4840,6 +4916,7 @@ public:
             m_khishba.silence();
             m_udu.silence();
             m_tabla.silence();
+            m_cuica.silence();
         } else {
             m_hang.mute(0.04f);
             m_slit.mute(0.04f);
@@ -4847,6 +4924,7 @@ public:
             m_khishba.mute(0.04f);
             m_udu.mute(0.04f);
             m_tabla.mute(0.04f);
+            m_cuica.mute(0.04f);
         }
         for (auto &v : m_voices) {
             if (hard)
@@ -4866,7 +4944,8 @@ public:
     // pipes, [40 + 3 * pad ..] each pad's edit (tune, decay, tone) as the engine has it, [96 +
     // pipe] how loud each pipe rings, [200] the khishba, [210] the udu, [211] [212] how open its
     // side hole and mouth are, [220] [221] how loud the dayan and the bayan ring, [222]
-    // how far the bayan's heel bends it (semitones).
+    // how far the bayan's heel bends it (semitones), [230] the cuíca, [231] how hard
+    // its thumb presses (0..1).
     void publish(float *data) override {
         for (int p = 0; p < PadCount; ++p) {
             data[p] = m_flash[p];
@@ -4888,6 +4967,8 @@ public:
         data[220] = m_tabla.level(tabla::Dayan);
         data[221] = m_tabla.level(tabla::Bayan);
         data[222] = m_tabla.bend();
+        data[230] = m_cuica.level();
+        data[231] = m_cuica.active() ? m_cuica.pressNow() : 0.0f;
         for (int p = 0; p < PadCount; ++p) {
             data[40 + 3 * p] = m_edit[p].tune;
             data[41 + 3 * p] = m_edit[p].decay;
@@ -4902,7 +4983,7 @@ public:
     int voices() const override {
         int n = (m_sub.active ? 1 : 0) + (m_hang.active() ? 1 : 0) + (m_slit.active() ? 1 : 0) + (m_pipes.active() ? 1 : 0) +
                 (m_khishba.active() ? 1 : 0) + (m_udu.active() ? 1 : 0) +
-                (m_tabla.active() ? 1 : 0);
+                (m_tabla.active() ? 1 : 0) + (m_cuica.active() ? 1 : 0);
         for (auto &v : m_voices)
             n += v.active;
         return n;
@@ -4934,6 +5015,10 @@ public:
             strikeTabla(s, h, 0, 0);
             return;
         }
+        if ((s.kit >= 0 ? s.kit : m_kit) == Cuica) {
+            strokeCuica(s, h, 0);
+            return;
+        }
         if (s.pad == Sub) {
             m_sub.start(0, s.degrees, s.vel, std::max(0.05f, s.hold), s.kit >= 0 ? s.kit : m_kit,
                         Edit{0, s.decay, s.tone}, 0, m_rate);
@@ -4962,6 +5047,8 @@ public:
     udu::Pot &uduPot() { return m_udu; }
     const tabla::Body &tablaBody() const { return m_tabla; }
     tabla::Body &tablaBody() { return m_tabla; }
+    const cuica::Body &cuicaBody() const { return m_cuica; }
+    cuica::Body &cuicaBody() { return m_cuica; }
 
 private:
     struct Pending {
@@ -4987,8 +5074,8 @@ private:
         if (c.type != Hit && c.type != Command::On)
             return 0;
         const int kit = c.i[2] > 0 ? c.i[2] - 1 : m_kit;
-        if (kit == Hang || kit == SlitDrum || kit == Pipes || kit == Khishba || kit == Udu || kit == TablaPair)
-            return 0; // the hang, the slit drum, the pipes, the khishba, the udu and the tabla pair ring under the mix, they don't push it
+        if (kit == Hang || kit == SlitDrum || kit == Pipes || kit == Khishba || kit == Udu || kit == TablaPair || kit == Cuica)
+            return 0; // the hang, the slit drum, the pipes, the khishba, the udu, the tabla pair and the cuíca sing under the mix, they don't push it
         if (c.i[0] == Kick)
             return clampf(0.35f + 0.75f * c.f[0], 0.0f, 1.0f);
         if (c.i[0] == Sub)
@@ -5012,12 +5099,24 @@ private:
             s.decay = c.f[4];
             s.tone = c.f[6];
             s.kit = c.i[2] > 0 ? std::clamp(c.i[2] - 1, 0, KitCount - 1) : m_kit;
+            if (s.kit == Cuica && c.type == Command::On) {
+                // f[0] how hard (the cloth's grip, the thumb's push), f[1]
+                // where (along the stick from the knot; the thumb's distance
+                // from it, of the head's radius).
+                if (pad == kCuicaThumb)
+                    m_cuica.press(c.id, c.f[1], c.f[0], offset);
+                else
+                    m_cuica.grip(c.id, c.f[1], c.f[0], offset);
+                break;
+            }
             if (s.kit == Udu && c.type == Command::On) {
                 // A hand coming to rest over the udu's openings.
                 m_udu.cover(c.id, c.f[0], c.f[1], c.f[2], offset);
                 break;
             }
-            if (s.kit == SlitDrum) {
+            if (s.kit == Cuica) {
+                strokeCuica(s, ctx.harmony(), offset);
+            } else if (s.kit == SlitDrum) {
                 strikeSlit(s, ctx.harmony(), offset);
             } else if (s.kit == Hang) {
                 strikeHang(s, ctx.harmony(), offset);
@@ -5049,6 +5148,9 @@ private:
             break;
         }
         case Command::Move:
+            // The cuíca's hand drawing, or its thumb pressing: f[0], f[1] as On.
+            m_cuica.slide(c.id, c.f[1], c.f[0]);
+            m_cuica.movePress(c.id, c.f[1], c.f[0]);
             // The tabla's held finger: where it is, how far it has pushed
             // (the bayan's heel), and once it has stayed, resting.
             m_tabla.move(c.id, (clampf(c.f[1], 0, 1) - 0.5f) * 2.0f, (clampf(c.f[2], 0, 1) - 0.5f) * 2.0f,
@@ -5068,6 +5170,8 @@ private:
             break;
         case Command::Off:
             m_sub.off(c.id);
+            m_cuica.letGo(c.id);
+            m_cuica.lift(c.id);
             m_udu.uncover(c.id, offset);
             if (c.i[0] == kKhishbaRest)
                 m_khishba.lift(c.id);
@@ -5278,11 +5382,35 @@ private:
         m_tabla.strike(tablaStroke(s.pad), s.vel, x, y, clampf(s.tone, -1, 1), offset, id);
     }
 
+    // A stroke on the cuíca, as a pad plays it: the pad's stroke, drawn
+    // the other way from the last (a player's arm goes back and forth),
+    // gripped and drawn harder the harder it is played; its decay edit
+    // draws it longer or shorter, its tune presses the thumb further.
+    void strokeCuica(const Strike &s, const Harmony &, int offset) {
+        const CuicaStroke &k = cuicaStroke(s.pad);
+        const float v = clampf(s.vel, 0.05f, 1.0f);
+        cuica::Stroke st;
+        st.grip = clampf(k.grip * (0.4f + 0.6f * v), 0.05f, 1.0f);
+        const float len = k.length * (0.55f + 0.45f * v);
+        st.length = m_cuicaPull ? len : -len;
+        st.seconds = k.seconds * std::exp2(0.5f * clampf(s.decay, -2, 2));
+        st.from = m_cuicaPull ? 0.25f : 0.25f + len / (0.8f * cuica::Physics::kStickLength);
+        m_cuicaPull = !m_cuicaPull;
+        const float bend = clampf(s.semis / 12.0f, -1, 1);
+        st.thumbR = k.r0;
+        st.thumbR1 = k.r1;
+        st.thumb0 = k.thumb0 > 0 || bend > 0 ? clampf(k.thumb0 + bend, 0.02f, 1) : 0.0f;
+        st.thumb1 = k.thumb1 > 0 || bend > 0 ? clampf(k.thumb1 + bend, 0.02f, 1) : 0.0f;
+        if (st.thumb0 > 0 && st.thumb1 <= 0)
+            st.thumb1 = 0.01f;
+        m_cuica.stroke(st, offset);
+    }
+
     void applyKit() {
         // Boom bap and the CR-78 are dry; jungle's breaks and the jazz kit
         // keep their room.
-        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f, 0.6f, 0.9f, 1.3f, 0.25f, 0.6f, 1.1f, 0.9f, 1.2f, 0.8f, 0.8f, 0.8f}; // (the khishba's: a diwan's room, a little live)
-        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f, 0.22f, 0.26f, 0.3f, 0.06f, 0.18f, 0.2f, 0.18f, 0.34f, 0.18f, 0.16f, 0.16f};
+        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f, 0.6f, 0.9f, 1.3f, 0.25f, 0.6f, 1.1f, 0.9f, 1.2f, 0.8f, 0.8f, 0.8f, 0.7f}; // (the khishba's: a diwan's room, a little live)
+        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f, 0.22f, 0.26f, 0.3f, 0.06f, 0.18f, 0.2f, 0.18f, 0.34f, 0.18f, 0.16f, 0.16f, 0.16f};
         m_room.set(t60[m_kit], wet[m_kit]);
     }
 
@@ -5298,6 +5426,10 @@ private:
     khishba::Body m_khishba;
     // How much of the khishba the room hears: a chalghi plays in a room.
     static constexpr float kKhishbaRoom = 0.3f;
+    cuica::Body m_cuica;
+    bool m_cuicaPull = true;
+    // How much of the cuíca the room hears.
+    static constexpr float kCuicaRoom = 0.25f;
     // How much of the hang the room hears: a hang is played in one.
     static constexpr float kHangRoom = 0.35f;
     pipedrum::Body m_pipes;

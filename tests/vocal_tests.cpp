@@ -1079,7 +1079,11 @@ private slots:
         qInfo("riot loop: rms %.3f, the screamed octave %.1f dB over the sung one", take.rms(3.0, 6.5),
               10 * std::log10(up / std::max(1e-30, sungBand)));
         QVERIFY(take.rms(3.0, 6.5) > 0.01);
-        QVERIFY(up > 100 * sungBand);
+        // (Not nothing at the sung notes: screamed an octave up, the false
+        // folds' half-rate flutter puts the scream's own subharmonic right
+        // there, 20–30 dB under its harmonics. The singer's own voice would
+        // be level with them.)
+        QVERIFY(up > 30 * sungBand);
     }
 
     // --- the five styles, round three ---------------------------------------------

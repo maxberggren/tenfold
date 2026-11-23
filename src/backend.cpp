@@ -36,10 +36,9 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         QDir().mkpath(cache);
         m_session->setDebugLog(cache + "/debug.log");
         m_audio->start();
-        // The song kept when tenfold last quit is offered, quietly: a notice,
-        // not a dialog, since most starts are for something new.
-        if (m_songs->hasAutosave())
-            m_session->say(QStringLiteral("Ctrl+Shift+O picks up where you left off"));
+        // The song kept when tenfold last quit stays one Ctrl+Shift+O away
+        // (listed in the help); a notice at start would sit over the
+        // trackpad prompt.
     }
 
     if (live) {

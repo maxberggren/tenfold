@@ -98,6 +98,7 @@ constexpr float kFirmPressure = 0.45f;
 constexpr double kLookahead = 0.06;    // how far ahead rolls are scheduled
 constexpr float kLadderStep = 0.07f;   // pad heights of travel per rate or density step
 constexpr int kKeyBit = 1 << 20;       // holders for keys, apart from finger ids
+constexpr int kCoverBit = 1 << 21;     // a finger's cover of the udu's openings, apart from its other sounds
 
 int padAt(float x, float y) {
     const int col = std::clamp(int(x * kCols), 0, kCols - 1);
@@ -150,6 +151,29 @@ const khishba::Stroke kKhishbaKey[PadCount] = {khishba::Dum, khishba::Tek, khish
                                                khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood,
                                                khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood,
                                                khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood};
+
+// The udu kit draws its pot over the whole pad, seen from the front and a
+// little above, in udu.h's units of its belly's radius: the belly above
+// the REPEAT strip, the neck rising to the mouth at the top.
+constexpr float kUduCx = 0.5f, kUduCy = 0.40f, kUduRx = 0.30f, kUduRy = 0.36f;
+float potX(float x) { return (x - kUduCx) / kUduRx; }
+float potY(float y) { return (y - kUduCy) / kUduRy; }
+
+// The keys on the udu: Z the hole slapped, X the mouth, C V the body by the
+// hole and below it, A the neck's lip, S D F more of the body; the rest
+// double them. Each is a place and where on the pot.
+struct UduKey {
+    int place;
+    float X, Y;
+};
+const UduKey kUduKey[PadCount] = {
+    {udu::Hole, udu::kHoleX, udu::kHoleY}, {udu::Mouth, 0.0f, udu::kMouthY}, {udu::Body, -0.05f, 0.35f},
+    {udu::Body, 0.3f, -0.45f},            {udu::Neck, 0.15f, 1.25f},        {udu::Body, 0.55f, 0.2f},
+    {udu::Body, -0.3f, -0.6f},            {udu::Body, 0.7f, -0.2f},         {udu::Hole, udu::kHoleX, udu::kHoleY},
+    {udu::Mouth, 0.0f, udu::kMouthY},     {udu::Neck, -0.1f, 1.2f},         {udu::Body, 0.1f, 0.55f},
+    {udu::Body, -0.05f, 0.35f},           {udu::Body, 0.3f, -0.45f},        {udu::Neck, 0.15f, 1.25f},
+    {udu::Body, 0.55f, 0.2f},
+};
 
 // The keyboard is a second pad: the left hand's three rows mirror the
 // bottom three rows of the trackpad, U I O P are the cymbal row, and the
@@ -234,6 +258,7 @@ public:
             click(f.t, ctx);
         m_button = f.button;
 
+        covers(f.t, ctx);
         resolve(f.t, ctx);
     }
 
@@ -561,7 +586,7 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes and the khishba\n"
+"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes, the khishba and the udu\n"
             "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
             "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
             "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
@@ -579,6 +604,9 @@ public:
             "corners; harder is louder and brighter, the rim's crack where a finger catches it; a finger left lying on "
             "the skin damps it, harder for more; alternate two fingers fast for a roll (rash); fingers landing together "
             "and staying groove the hacha'a\n"
+            "the udu kit\tthe pad is a clay pot: tap its side hole for the bass, which glides up an octave as the palm "
+            "leaves; hold the finger there and it stays low, slide it off and the pitch rises; rest a finger over the "
+            "mouth at the top (or part of it) and the bass falls; tap the body or the neck for the clay's own tones\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -686,6 +714,7 @@ private:
         Sweep,   // run across the pads
         Loop,    // closed a phrase into a loop: nothing more to do
         Kept,    // its roll or groove was kept: it plays on by itself
+        Cover,   // resting over the udu's hole or mouth: it covers it, nothing more
         Repeat,  // a thumb in the REPEAT strip: pads roll as they land
         Paddle,  // the pipes: a held finger keeps its paddle on the pipe's mouth
         Rest,    // the khishba: a finger lying on the skin, damping it
@@ -697,6 +726,10 @@ private:
         int src = -1;
         int pad = 0;
         Mode mode = Mode::Pending;
+        // On the udu: how much of the side hole and the mouth it covers, as
+        // last sent, and whether it is covering either.
+        bool covering = false;
+        float coverHole = 0, coverMouth = 0;
         double t0 = 0;
         float x0 = 0, y0 = 0, x = 0, y = 0;
         float angle0 = 0, angle = 0;
@@ -758,12 +791,13 @@ private:
     };
 
     void paintHang(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+    void paintUdu(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintSlit(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintPipes(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintKhishba(QPainter &p, const PaintContext &pc, const Gen *const *genOn);
 
     // The kits that are one instrument over the whole pad, not a grid.
-    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba; }
+    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba || m_kit == Udu; }
 
     // --- where on the pad ------------------------------------------------------
 
@@ -776,6 +810,8 @@ private:
             return pipePad(pipedrum::spotAt(x, y).pipe);
         if (m_kit == Khishba)
             return khishbaPad(khishba::strokeAt(khishbaX(x), khishbaY(y)));
+        if (m_kit == Udu)
+            return uduPad(udu::placeAt(potX(x), potY(y)));
         if (m_kit != Hang)
             return padAt(x, y);
         return hangPad(hang::spotAt(hangX(x), hangY(y)).field);
@@ -812,6 +848,12 @@ private:
             // On the khishba: where on the head, whatever the stroke.
             sx = khishbaSpot(khishbaX(x));
             sy = khishbaSpot(khishbaY(y));
+            return;
+        }
+        if (m_kit == Udu) {
+            // On the udu: where on the pot, whatever the place.
+            sx = uduSpotX(potX(x));
+            sy = uduSpotY(potY(y));
             return;
         }
         if (m_kit == Hang) {
@@ -996,6 +1038,12 @@ private:
             const float u = f == hang::kGu ? 0.0f : 0.3f;
             h->x0 = h->x = f == hang::kGu ? 0.03f : kHangCx + kHangRx * (fd.x + u * fd.a * std::cos(fd.axis));
             h->y0 = h->y = f == hang::kGu ? 0.95f : kHangCy + kHangRy * (fd.y + u * fd.a * std::sin(fd.axis));
+        } else if (m_kit == Udu) {
+            // A key plays its place on the pot, where a hand would.
+            const UduKey &k = kUduKey[h->pad];
+            h->pad = uduPad(k.place);
+            h->x0 = h->x = kUduCx + kUduRx * k.X;
+            h->y0 = h->y = kUduCy + kUduRy * k.Y;
         }
         if (m_kit == SlitDrum) {
             // A key strikes its tongue near the tip, on its centre line, as a
@@ -1075,6 +1123,12 @@ private:
             return std::fabs(r - khishba::kDumRadius) > 0.06f && std::fabs(r - khishba::kWoodFrom) > 0.05f &&
                    (r < khishba::kDumRadius || std::fabs(hx) > 0.1f);
         }
+        if (m_kit == Udu) {
+            // On the udu: well over an opening, a hand's middle on it.
+            const float X = potX(x), Y = potY(y);
+            return udu::coverOf(udu::Hole, X, Y) > 0.6f || udu::coverOf(udu::Mouth, X, Y) > 0.6f ||
+                   !isUduOpening(cellAt(x, y));
+        }
         if (m_kit == Hang) {
             // On the hang: well within a field's rim, or well off the shell.
             const float hx = hangX(x), hy = hangY(y);
@@ -1091,6 +1145,13 @@ private:
         switch (h.mode) {
         case Mode::Pending:
         case Mode::Sweep: {
+            // (On the udu a finger sliding over the pot covers what it passes
+            // over: it plays nothing more, and once it is over the hole or
+            // the mouth it is a hand resting there.)
+            if (m_kit == Udu) {
+                slideOntoOpening(h);
+                break;
+            }
             // Running across pads before it settles: a fill, each pad as
             // it's crossed.
             const int cell = cellAt(h.x, h.y);
@@ -1106,6 +1167,10 @@ private:
             break;
         }
         case Mode::Roll:
+            if (m_kit == Udu && slideOntoOpening(h))
+                break;
+            shapeGen(h);
+            break;
         case Mode::Groove:
             shapeGen(h);
             break;
@@ -1196,7 +1261,7 @@ private:
                 g.setRoll(rate);
             if (tonal(g.pad, m_kit))
                 g.degrees = std::clamp(int(std::lround(dx * 20.0f)), -7, 7);
-            else
+            else if (m_kit != Udu) // (the udu is one pot: a sliding finger covers, it doesn't resize it)
                 g.semis = clampf(dx * 40.0f, -12.0f, 12.0f);
         }
         if (!h.key) {
@@ -1237,6 +1302,8 @@ private:
             sendLanding(h, ctx);
         if (h.mode == Mode::Rest || h.rested)
             sendRest(h, Command::Off, now, ctx);
+        if (h.covering)
+            sendCover(h, 0, 0, now, ctx);
         if (h.pad == Sub && (h.mode == Mode::Pending || h.mode == Mode::Bass || h.mode == Mode::Edit ||
                              h.mode == Mode::Loop))
             sendOff(h, now, ctx);
@@ -1263,8 +1330,16 @@ private:
             // Wait for the rest of a hand that is still landing.
             int together = 0;
             bool waiting = false;
+            // A finger over the udu's hole or mouth only covers it: it stays
+            // there, and it isn't part of a hand that grooves.
+            if (coversUdu(h)) {
+                if (h.landing)
+                    sendLanding(h, ctx);
+                h.mode = Mode::Cover;
+                continue;
+            }
             for (const auto &o : m_holders) {
-                if (!o.used || o.cluster != h.cluster)
+                if (!o.used || o.cluster != h.cluster || coversUdu(o))
                     continue;
                 if (o.mode == Mode::Pending) {
                     ++together;
@@ -1303,6 +1378,71 @@ private:
                 becomeRoll(h, now, ctx);
             }
         }
+    }
+
+    // A finger on the udu's clay that slides well onto its hole or mouth
+    // stops playing the clay (a roll it held stops) and rests there.
+    bool slideOntoOpening(Holder &h) {
+        if (h.key || isUduOpening(h.pad))
+            return false;
+        const int cell = cellAt(h.x, h.y);
+        if (!isUduOpening(cell) || !wellInside(h.x, h.y))
+            return false;
+        if (h.gen >= 0) {
+            Gen &g = m_gens[size_t(h.gen)];
+            if (g.holder == indexOf(h))
+                g.active = false;
+            h.gen = -1;
+        }
+        h.landing = false;
+        h.pad = cell;
+        h.lastCell = cell;
+        h.mode = Mode::Cover;
+        return true;
+    }
+
+    bool coversUdu(const Holder &h) const { return m_kit == Udu && !h.key && h.used && isUduOpening(h.pad); }
+
+    // The udu's openings under the fingers: each finger on the pot covers
+    // what of the side hole and the mouth its hand would, pressing as it
+    // presses. Sent as the sound of its own: On as it starts covering, Move
+    // as it slides, Off as it lifts or slides off, so a loop keeps it.
+    void covers(double now, ControlContext &ctx) {
+        for (auto &h : m_holders) {
+            if (!h.used || h.key || h.mode == Mode::Repeat)
+                continue;
+            float hole = 0, mouth = 0;
+            if (m_kit == Udu) {
+                // A firmer, flatter finger is more of a hand.
+                const float reach = udu::kHand * std::clamp(0.75f + 0.25f * h.size, 0.7f, 1.3f);
+                hole = udu::coverOf(udu::Hole, potX(h.x), potY(h.y), reach);
+                mouth = udu::coverOf(udu::Mouth, potX(h.x), potY(h.y), reach);
+                hole = hole < 0.03f ? 0.0f : std::round(hole * 50.0f) / 50.0f;
+                mouth = mouth < 0.03f ? 0.0f : std::round(mouth * 50.0f) / 50.0f;
+            }
+            if (hole == h.coverHole && mouth == h.coverMouth)
+                continue;
+            sendCover(h, hole, mouth, now, ctx);
+        }
+    }
+
+    void sendCover(Holder &h, float hole, float mouth, double t, ControlContext &ctx) {
+        const bool on = hole > 0 || mouth > 0;
+        if (!on && !h.covering)
+            return;
+        Command c;
+        c.type = !on ? Command::Off : h.covering ? Command::Move : Command::On;
+        c.id = kCoverBit | (h.src & 0xFFFFF);
+        c.t = h.covering ? t : std::max(t, h.t0);
+        c.i[0] = uduPad(hole >= mouth ? udu::Hole : udu::Mouth);
+        c.i[2] = Udu + 1;
+        c.f[0] = hole;
+        c.f[1] = mouth;
+        c.f[2] = clampf((h.pressure - 0.15f) / 0.5f, 0.0f, 1.0f);
+        ctx.send(c);
+        h.covering = on;
+        h.coverHole = hole;
+        h.coverMouth = mouth;
     }
 
     bool anyGen() const {
@@ -1858,6 +1998,10 @@ private:
 
     // say: tell the player (a song being opened sets the kit quietly).
     void setKit(int kit, ControlContext &ctx, bool say = true) {
+        // Fingers covering the udu's openings let go of them.
+        for (auto &h : m_holders)
+            if (h.used && h.covering)
+                sendCover(h, 0, 0, ctx.now(), ctx);
         m_kit = kit;
         m_swing = kitSwing(kit);
         Command c;
@@ -1949,7 +2093,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         paintPipes(p, pc, harm, genOn);
     if (m_kit == Khishba)
         paintKhishba(p, pc, genOn);
-    // The grid of pads (none on the hang, the slit drum, the pipes or the khishba, each one instrument).
+    if (m_kit == Udu)
+        paintUdu(p, pc, harm, genOn);
+    // The grid of pads (none on the hang, the slit drum, the pipes, the khishba or the udu, each one instrument).
     for (int pad = 0; pad < (whole() ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
         const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
@@ -2150,6 +2296,10 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 break;
             case Mode::Paddle: what = h.bend > 0.02f ? QStringLiteral("OPENING") : QStringLiteral("SHUT"); break;
             case Mode::Sweep: what = QStringLiteral("FILL"); break;
+            case Mode::Cover:
+                what = h.coverHole >= h.coverMouth ? QStringLiteral("HOLE %1%").arg(int(std::lround(h.coverHole * 100)))
+                                                   : QStringLiteral("MOUTH %1%").arg(int(std::lround(h.coverMouth * 100)));
+                break;
             case Mode::Loop: what = QStringLiteral("LOOP"); break;
             case Mode::Kept: what = QStringLiteral("KEPT"); break;
             case Mode::Repeat: break; // the strip under it says so
@@ -2719,6 +2869,156 @@ void DrumsControl::paintKhishba(QPainter &p, const PaintContext &pc, const Gen *
         p.setBrush(c::alpha(col, 0.25f));
         p.drawEllipse(q, r, r);
     }
+}
+
+// The udu, drawn as it is played: its clay belly, the neck rising to the
+// mouth, the side hole with its collar; each opening dark as far as it is
+// open (a hand over it fills it), the air breathing out of them while the
+// bass sounds, and the clay lit where it was struck.
+void DrumsControl::paintUdu(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn) {
+    namespace c = console;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int label = int(std::clamp(15.0 * s, 10.0, 20.0));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    const float ring = std::min(1.0f, data[210]);
+    const float holeOpen = clampf(data[211], 0, 1), mouthOpen = clampf(data[212], 0, 1);
+    const int holePad = uduPad(udu::Hole), mouthPad = uduPad(udu::Mouth), bodyPad = uduPad(udu::Body),
+              neckPad = uduPad(udu::Neck);
+    auto lit = [&](int pad) { return std::max(data[pad], 0.6f * data[16 + pad]); };
+    // A point of the pot, in pixels.
+    auto at = [&](float X, float Y) { return pc.at(kUduCx + kUduRx * X, kUduCy + kUduRy * Y); };
+    auto oval = [&](float x, float y, float a, float b) {
+        QPainterPath path;
+        for (int i = 0; i <= 72; ++i) {
+            const float t = kTwoPi * float(i) / 72.0f;
+            const QPointF q = at(x + a * std::cos(t), y + b * std::sin(t));
+            if (i == 0)
+                path.moveTo(q);
+            else
+                path.lineTo(q);
+        }
+        path.closeSubpath();
+        return path;
+    };
+
+    // The pot: the belly, and the neck flaring a little to its lip.
+    QPainterPath pot = oval(0, 0, 1.0f, udu::kBodyRy);
+    {
+        QPainterPath neck;
+        neck.moveTo(at(-udu::kNeckR, 0.5f));
+        neck.cubicTo(at(-udu::kNeckR, 1.0f), at(-0.95f * udu::kMouthR, 1.15f), at(-1.12f * udu::kMouthR, udu::kMouthY));
+        neck.lineTo(at(1.12f * udu::kMouthR, udu::kMouthY));
+        neck.cubicTo(at(0.95f * udu::kMouthR, 1.15f), at(udu::kNeckR, 1.0f), at(udu::kNeckR, 0.5f));
+        neck.closeSubpath();
+        pot = pot.united(neck);
+    }
+    {
+        QRadialGradient glow(at(-0.3f, 0.35f), std::max(pc.pad.width() * kUduRx, pc.pad.height() * kUduRy) * 1.1);
+        glow.setColorAt(0.0, c::alpha(col, 0.12f + 0.10f * ring + 0.15f * lit(bodyPad)));
+        glow.setColorAt(0.7, c::alpha(col, 0.05f + 0.05f * ring + 0.06f * lit(bodyPad)));
+        glow.setColorAt(1.0, c::alpha(col, 0.02f));
+        p.setPen(Qt::NoPen);
+        p.setBrush(glow);
+        p.drawPath(pot);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.55f + 0.35f * ring), 2.0 * s));
+        p.drawPath(pot);
+    }
+    // The potter's marks: a band of raised dots round the shoulder, and the
+    // neck's lit lip when it is struck.
+    {
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.22f + 0.2f * lit(bodyPad)));
+        const double dot = 2.2 * s;
+        for (int i = 0; i < 17; ++i) {
+            const float t = kPi * (0.1f + 0.8f * float(i) / 16.0f);
+            const float X = -std::cos(t) * 0.86f, Y = 0.52f - 0.10f * std::sin(t);
+            if (std::hypot(X - udu::kHoleX, Y - udu::kHoleY) < udu::kHoleR * 1.35f)
+                continue;
+            p.drawEllipse(at(X, Y), dot, dot);
+        }
+        const float neck = lit(neckPad);
+        if (neck > 0.02f) {
+            QPainterPath n;
+            n.moveTo(at(-udu::kNeckR, 0.85f));
+            n.lineTo(at(-1.05f * udu::kMouthR, udu::kMouthY - 0.05f));
+            n.lineTo(at(1.05f * udu::kMouthR, udu::kMouthY - 0.05f));
+            n.lineTo(at(udu::kNeckR, 0.85f));
+            n.closeSubpath();
+            p.setBrush(c::alpha(col, 0.35f * neck));
+            p.drawPath(n);
+        }
+    }
+    // An opening: its rim, dark inside as far as it is open, the hand over
+    // it as far as it covers, a slap's flash, and the air breathing out of
+    // it while the bass sounds.
+    auto opening = [&](float x, float y, float r, float squash, float open, int pad, float collar) {
+        const float hit = lit(pad);
+        const QPainterPath rim = oval(x, y, r * collar, r * collar * squash);
+        const QPainterPath hole = oval(x, y, r, r * squash);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.10f + 0.25f * hit));
+        p.drawPath(rim);
+        p.setBrush(QColor(0, 0, 0, int(200 * open)));
+        p.drawPath(hole);
+        p.setBrush(c::alpha(col, 0.08f + 0.5f * (1.0f - open) + 0.3f * hit));
+        p.drawPath(hole);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, genOn[pad] ? 0.95f : 0.5f + 0.45f * hit), (genOn[pad] ? 2.5 : 1.5) * s));
+        p.drawPath(rim);
+        p.setPen(QPen(c::alpha(col, 0.35f + 0.4f * hit), 1.0 * s));
+        p.drawPath(hole);
+        const float breath = ring * open;
+        if (breath > 0.02f)
+            for (int k = 1; k <= 3; ++k) {
+                const float grow = collar + 0.2f * float(k) * (1.0f + 0.3f * float(std::fmod(pc.time * 2.0, 1.0)));
+                p.setPen(QPen(c::alpha(col, 0.45f * breath / float(k)), 1.2 * s));
+                p.drawPath(oval(x, y, r * grow, r * grow * squash));
+            }
+    };
+    opening(0.0f, udu::kMouthY, udu::kMouthR, udu::kMouthTilt, mouthOpen, mouthPad, 1.18f);
+    opening(udu::kHoleX, udu::kHoleY, udu::kHoleR, 1.0f, holeOpen, holePad, 1.22f);
+
+    // The names, and the bass's notes: open, and with the hole held.
+    static const float held = [] {
+        udu::Pot pot;
+        pot.init(48000);
+        return pot.heardHz(0, 1) / pot.heardHz(1, 1);
+    }();
+    auto note = [&](float hz) {
+        const int m = int(std::lround(69.0 + 12.0 * std::log2(double(hz) / 440.0)));
+        return QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)) + QString::number(m / 12 - 1);
+    };
+    const float open = uduHz(harm, m_edit[holePad].tune);
+    auto name = [&](float X, float Y, const QString &what, int pad, float glow) {
+        const QPointF q = at(X, Y);
+        const QRectF box(q.x() - 80 * s, q.y() - label * 0.8, 160 * s, label * 1.6);
+        c::text(p, box, what, glow > 0.45f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.85f), label, true, Qt::AlignCenter);
+        if (const Gen *gen = genOn[pad]) {
+            const QString how = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
+                                            : QString::fromUtf8(rateName(gen->rate));
+            c::text(p, box.translated(0, label * 1.2), how, c::alpha(col, 0.7f), small, true, Qt::AlignCenter);
+        }
+        const int playing = pc.view->playing;
+        if (playing >= 0 && playing < kClipSlots && (m_muted[playing] >> pad & 1u)) {
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            p.drawLine(box.bottomLeft() + QPointF(40 * s, 0), box.topRight() - QPointF(40 * s, 0));
+        }
+    };
+    name(udu::kHoleX, udu::kHoleY - udu::kHoleR * 1.22f - 0.16f, QStringLiteral("HOLE"), holePad, 0);
+    {
+        const QPointF q = at(udu::kHoleX, udu::kHoleY);
+        c::text(p, QRectF(q.x() - 60 * s, q.y() - small * 0.7, 120 * s, small * 1.4), note(holeOpen > 0.5f ? open : open * held),
+                lit(holePad) > 0.45f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.75f), small, true, Qt::AlignCenter);
+    }
+    name(udu::kMouthR * 2.6f, udu::kMouthY, QStringLiteral("MOUTH"), mouthPad, 0);
+    name(0.0f, 1.08f, QStringLiteral("NECK"), neckPad, lit(neckPad));
+    name(0.35f, -0.35f, QStringLiteral("BODY"), bodyPad, lit(bodyPad));
+    c::text(p, QRectF(at(0.35f, -0.35f).x() - 90 * s, at(0.35f, -0.35f).y() + label * 0.7, 180 * s, small * 1.4),
+            QStringLiteral("BASS %1 · HELD %2").arg(note(open), note(open * held)), c::alpha(col, 0.6f), small, true,
+            Qt::AlignCenter);
 }
 
 PartSpec makeDrums() {

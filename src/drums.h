@@ -127,6 +127,12 @@
 // coupled to the air in its wooden body, the pad its head seen from above.
 // A dum in the middle, a tek or a ka at the rim, a knock on the wood past
 // it; a finger left lying on the skin damps it.
+//
+// After it, the udu (udu.h): the whole pad an Igbo clay pot drum, its air
+// and clay simulated as they are. Slapped over its side hole it sounds the
+// deep "whoop" that glides up an octave as the palm leaves; a finger
+// resting over the hole or the mouth shades it and bends that bass; the
+// fingers on its body ring the clay.
 
 #include <algorithm>
 #include <array>
@@ -141,6 +147,7 @@
 #include "pipedrum.h"
 #include "khishba.h"
 #include "part.h"
+#include "udu.h"
 
 namespace tf::drums {
 
@@ -159,12 +166,12 @@ enum Pad : int {
 // gated snare, the Roland CR-78 rhythm box, and a jazz kit played with
 // brushes; then five from the world's other music: amapiano, tabla,
 // gamelan, a Game Boy's chiptune and a djembe ensemble; and the hang, the
-// slit drum, the pipes and the khishba, each the whole pad one instrument. Songs save a kit by
+// slit drum, the pipes, the khishba and the udu, each the whole pad one instrument. Songs save a kit by
 // its name (kitName), and a clip's hits carry the index, so new kits go at
 // the end and no kit is ever renamed.
 enum Kit : int {
     House, Techno, Trap, Breaks, Garage, BoomBap, Jungle, Linn, Cr78, Brushes,
-    Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, SlitDrum, Pipes, Khishba, KitCount
+    Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, SlitDrum, Pipes, Khishba, Udu, KitCount
 };
 
 // The hang's ding, eight fields and gu are pads of their own: the ones
@@ -259,6 +266,37 @@ inline khishba::Stroke khishbaStroke(int pad) {
     }
 }
 
+// The udu's side hole, mouth, body and neck are pads of their own, as the
+// hang's fields are: the hole a palm slaps for the bass, the mouth, the
+// clay of the body and the neck's lip.
+inline constexpr int kUduPads[udu::kPlaces] = {TomLo, TomHi, Perc, Bell};
+inline int uduPad(int place) { return kUduPads[std::clamp(place, 0, udu::kPlaces - 1)]; }
+// The place a pad plays on the udu; the pads it doesn't use land on the
+// nearest sense of themselves (the kick and the 808 on the hole, the
+// cymbals on the neck, the rest on the body).
+inline int uduPlace(int pad) {
+    for (int p = 0; p < udu::kPlaces; ++p)
+        if (kUduPads[p] == pad)
+            return p;
+    switch (pad) {
+    case Kick:
+    case Sub: return udu::Hole;
+    case TomMid: return udu::Mouth;
+    case Crash:
+    case Ride:
+    case Zap: return udu::Neck;
+    default: return udu::Body;
+    }
+}
+inline bool isUduOpening(int pad) { return uduPlace(pad) == udu::Hole || uduPlace(pad) == udu::Mouth; }
+// Where on the pot a hit lands, carried in its 0..1 spot: the drawing's X
+// and Y over ±kUduReach round the belly's middle (lifted to the neck a little).
+constexpr float kUduReach = 1.6f, kUduLift = 0.3f;
+inline float uduSpotX(float X) { return std::clamp(0.5f + 0.5f * X / kUduReach, 0.0f, 1.0f); }
+inline float uduSpotY(float Y) { return std::clamp(0.5f + 0.5f * (Y - kUduLift) / kUduReach, 0.0f, 1.0f); }
+inline float uduX(float sx) { return (sx - 0.5f) * 2.0f * kUduReach; }
+inline float uduY(float sy) { return (sy - 0.5f) * 2.0f * kUduReach + kUduLift; }
+
 inline const char *padName(int pad) {
     static const char *names[PadCount] = {"kick", "snare", "clap", "hat", "808",   "rim",  "shaker", "open",
                                           "tom lo", "tom mid", "tom hi", "conga", "crash", "ride", "bell", "zap"};
@@ -290,6 +328,10 @@ inline const char *padName(int pad, int kit) {
         static const char *names[pipedrum::kPipes] = {"pipe 1", "pipe 2", "pipe 3", "pipe 4", "pipe 5",
                                                       "pipe 6", "pipe 7", "pipe 8", "pipe 9", "pipe 10"};
         return names[pipeOf(pad)];
+    }
+    if (kit == Udu) {
+        static const char *names[udu::kPlaces] = {"hole", "mouth", "body", "neck"};
+        return names[uduPlace(pad)];
     }
     if (kit == Tabla) {
         static const char *names[PadCount] = {"ge",        "na",     "ka",        "te",      "bayan",   "tak",
@@ -370,7 +412,8 @@ inline const char *kitName(int kit) {
     static const char *names[KitCount] = {"house",    "techno", "trap",    "breaks",   "garage",
                                           "boom bap", "jungle", "linn",    "cr-78",    "brushes",
                                           "amapiano", "tabla",  "gamelan", "chiptune", "djembe",
-                                          "hang",     "slit drum", "pipes",  "khishba"};
+                                          "hang",     "slit drum", "pipes",  "khishba",
+                                          "udu"};
     return names[std::clamp(kit, 0, KitCount - 1)];
 }
 
@@ -393,6 +436,7 @@ inline const char *kitCharacter(int kit, bool pelog) {
     case SlitDrum: return "wood and air";
     case Pipes: return "pvc and air";
     case Khishba: return "hacha'a";
+    case Udu: return "clay and air";
     default: return "";
     }
 }
@@ -402,7 +446,7 @@ inline const char *kitCharacter(int kit, bool pelog) {
 // they roll in sixteenths.
 inline float kitSwing(int kit) {
     // (The khishba's 0.54: the hacha'a's lilt, the dancer's step a hair late.)
-    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f, 0.6f, 0.54f, 0.5f, 0.5f, 0.56f, 0.54f, 0.54f, 0.56f, 0.54f};
+    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f, 0.6f, 0.54f, 0.5f, 0.5f, 0.56f, 0.54f, 0.54f, 0.56f, 0.54f, 0.56f};
     return swing[std::clamp(kit, 0, KitCount - 1)];
 }
 
@@ -411,8 +455,8 @@ inline float kitSwing(int kit) {
 // kit never jumps the mix. Every hit carries its kit, so a loop keeps its
 // level too.
 inline float kitTrim(int kit) {
-    // (The khishba sets its own level, khishba::Knobs::level.)
-    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f, 0.0f, -5.4f, 0.0f, 0.0f};
+    // (The khishba and the udu set their own levels, in their Knobs::level.)
+    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f, 0.0f, -5.4f, 0.0f, 0.0f, 0.0f};
     static const auto gain = [] {
         std::array<float, KitCount> g{};
         for (int k = 0; k < KitCount; ++k)
@@ -427,23 +471,23 @@ inline float kitTrim(int kit) {
 inline float displayDecay(int pad, int kit) {
     kit = std::clamp(kit, 0, KitCount - 1);
     static const float table[PadCount][KitCount] = {
-        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, amapiano, tabla, gamelan, chiptune, djembe, hang, slit drum, pipes, khishba
-        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f, 0.24f, 0.5f, 0.22f, 0.12f, 0.22f, 2.0f, 1.0f, 1.2f, 0.15f}, // kick
-        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f, 0.03f, 0.4f, 0.08f, 0.09f, 0.08f, 2.0f, 1.0f, 1.2f, 0.05f}, // snare
-        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f, 0.15f, 0.014f, 0.25f, 0.08f, 0.16f, 2.0f, 1.0f, 1.2f, 0.05f}, // clap
-        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f, 0.03f, 0.025f, 0.1f, 0.025f, 0.02f, 2.0f, 1.0f, 1.2f, 0.05f}, // hat
-        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f, 0.8f, 0.7f, 1.4f, 1.0f, 0.45f, 2.0f, 1.0f, 1.2f, 0.15f}, // 808
-        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f, 0.01f, 0.07f, 0.07f, 0.015f, 0.35f, 2.0f, 1.0f, 1.2f, 0.05f}, // rim
-        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f, 0.04f, 0.06f, 2.2f, 0.04f, 0.06f, 2.0f, 1.0f, 1.2f, 0.05f}, // shaker
-        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f, 0.26f, 0.3f, 2.4f, 0.2f, 0.1f, 2.0f, 1.0f, 1.2f, 0.05f}, // open
-        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f}, // tom lo
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f}, // tom mid
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f}, // tom hi
-        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f, 0.09f, 0.7f, 0.6f, 0.06f, 0.28f, 2.0f, 1.0f, 1.2f, 0.05f}, // hand drum
-        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f, 1.0f, 1.7f, 2.2f, 0.6f, 0.3f, 2.0f, 1.0f, 1.2f, 0.05f}, // crash
-        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f, 0.8f, 1.0f, 0.25f, 0.3f, 0.6f, 2.0f, 1.0f, 1.2f, 0.05f}, // ride
-        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f, 0.55f, 1.1f, 1.1f, 0.35f, 0.22f, 2.0f, 1.0f, 1.2f, 0.05f}, // bell
-        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f, 0.9f, 0.6f, 0.4f, 0.15f, 1.1f, 2.0f, 1.0f, 1.2f, 0.05f}, // zap
+        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, amapiano, tabla, gamelan, chiptune, djembe, hang, slit drum, pipes, khishba, udu
+        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f, 0.24f, 0.5f, 0.22f, 0.12f, 0.22f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f}, // kick
+        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f, 0.03f, 0.4f, 0.08f, 0.09f, 0.08f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // snare
+        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f, 0.15f, 0.014f, 0.25f, 0.08f, 0.16f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // clap
+        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f, 0.03f, 0.025f, 0.1f, 0.025f, 0.02f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // hat
+        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f, 0.8f, 0.7f, 1.4f, 1.0f, 0.45f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f}, // 808
+        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f, 0.01f, 0.07f, 0.07f, 0.015f, 0.35f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // rim
+        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f, 0.04f, 0.06f, 2.2f, 0.04f, 0.06f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // shaker
+        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f, 0.26f, 0.3f, 2.4f, 0.2f, 0.1f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // open
+        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.5f}, // tom lo
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.3f}, // tom mid
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f, 1.2f, 0.15f, 0.5f}, // tom hi
+        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f, 0.09f, 0.7f, 0.6f, 0.06f, 0.28f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // hand drum
+        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f, 1.0f, 1.7f, 2.2f, 0.6f, 0.3f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // crash
+        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f, 0.8f, 1.0f, 0.25f, 0.3f, 0.6f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // ride
+        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f, 0.55f, 1.1f, 1.1f, 0.35f, 0.22f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // bell
+        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f, 0.9f, 0.6f, 0.4f, 0.15f, 1.1f, 2.0f, 1.0f, 1.2f, 0.05f, 0.3f}, // zap
     };
     return table[std::clamp(pad, 0, PadCount - 1)][kit];
 }
@@ -457,9 +501,10 @@ inline bool tonal(int pad) {
 // has no pitch to move).
 // On the slit drum every tongue is (the box has no pitch); on the pipes,
 // every pipe. The khishba has no notes: its tune is the skin's tension, in
-// semitones.
+// semitones; nor has the udu, one pot sized to the key: its pads move by
+// semitones (a bigger or smaller pot).
 inline bool tonal(int pad, int kit) {
-    if (kit == Khishba)
+    if (kit == Khishba || kit == Udu)
         return false;
     return kit == Pipes || (kit == Hang ? !isHangGu(pad) : kit == SlitDrum ? !isSlitFrame(pad) : tonal(pad));
 }
@@ -614,6 +659,13 @@ inline void pipeTuning(const Harmony &h, float *hz) {
     const int oct = octaveNear(h, 125.0f);
     for (int n = 0; n < pipedrum::kPipes; ++n)
         hz[n] = midiToHz(h.midi(n, oct));
+}
+
+// The udu's open bass in a key: on the root nearest 140 Hz, so the pot is
+// one of the sizes udus are made in (the measured one, 10 litres, sounds
+// 134 Hz), from about 3 to 25 litres; a pad's tuning moves it by semitones.
+inline float uduHz(const Harmony &h, float semis = 0) {
+    return midiToHz(h.midi(0, octaveNear(h, 140.0f))) * std::exp2(std::clamp(semis, -12.0f, 12.0f) / 12.0f);
 }
 
 // --- grooves ----------------------------------------------------------------
@@ -889,8 +941,8 @@ inline const char *part(int pad, int kit, int density) {
         none, // and the chiptune's bass jumps octaves (below)
         none, // the balafon plays a melody of its own (below)
     };
-    if (kit == Hang || kit == SlitDrum || kit == Pipes)
-        return nullptr; // the hang's, the slit drum's and the pipes' grooves are melodies (groovePattern)
+    if (kit == Hang || kit == SlitDrum || kit == Pipes || kit == Udu)
+        return nullptr; // the hang's, the slit drum's and the pipes' grooves are melodies, the udu's euclidean (groovePattern)
     if (kit == Khishba)
         return khishbaPart(khishbaStroke(pad), d);
     switch (pad) {
@@ -4552,6 +4604,7 @@ public:
         m_slit.init(rate);
         m_pipes.init(rate);
         m_khishba.init(rate);
+        m_udu.init(rate);
         applyKit();
     }
 
@@ -4682,6 +4735,16 @@ public:
                 room[i] += kKhishbaRoom * (kl[i] + kr[i]);
             }
         }
+        {
+            float ul[kBlock] = {}, ur[kBlock] = {};
+            m_udu.render(ul, ur, n);
+            if (m_udu.active())
+                for (int i = 0; i < n; ++i) {
+                    l[i] += ul[i];
+                    r[i] += ur[i];
+                    room[i] += kUduRoom * (ul[i] + ur[i]);
+                }
+        }
         // The trim sits the kit where the studio's master expects a part,
         // with room for the bass and the chords: a full-velocity kick peaks
         // around −10 dBFS before the bus glue.
@@ -4719,11 +4782,13 @@ public:
             m_slit.silence();
             m_pipes.silence();
             m_khishba.silence();
+            m_udu.silence();
         } else {
             m_hang.mute(0.04f);
             m_slit.mute(0.04f);
             m_pipes.mute(0.04f);
             m_khishba.mute(0.04f);
+            m_udu.mute(0.04f);
         }
         for (auto &v : m_voices) {
             if (hard)
@@ -4741,7 +4806,8 @@ public:
     // for hits a clip played, [32] the 808's level, [33] its degree, [34]
     // the kit, [35] voices sounding, [36] how loud the hang rings, [37] the slit drum, [38] the
     // pipes, [40 + 3 * pad ..] each pad's edit (tune, decay, tone) as the engine has it, [96 +
-    // pipe] how loud each pipe rings.
+    // pipe] how loud each pipe rings, [200] the khishba, [210] the udu, [211] [212] how open its
+    // side hole and mouth are.
     void publish(float *data) override {
         for (int p = 0; p < PadCount; ++p) {
             data[p] = m_flash[p];
@@ -4757,6 +4823,9 @@ public:
         for (int n = 0; n < pipedrum::kPipes; ++n)
             data[96 + n] = m_pipes.level(n);
         data[200] = m_khishba.level();
+        data[210] = m_udu.level();
+        data[211] = m_udu.openness(udu::Hole);
+        data[212] = m_udu.openness(udu::Mouth);
         for (int p = 0; p < PadCount; ++p) {
             data[40 + 3 * p] = m_edit[p].tune;
             data[41 + 3 * p] = m_edit[p].decay;
@@ -4770,7 +4839,7 @@ public:
 
     int voices() const override {
         int n = (m_sub.active ? 1 : 0) + (m_hang.active() ? 1 : 0) + (m_slit.active() ? 1 : 0) + (m_pipes.active() ? 1 : 0) +
-                (m_khishba.active() ? 1 : 0);
+                (m_khishba.active() ? 1 : 0) + (m_udu.active() ? 1 : 0);
         for (auto &v : m_voices)
             n += v.active;
         return n;
@@ -4792,6 +4861,10 @@ public:
         }
         if ((s.kit >= 0 ? s.kit : m_kit) == Khishba) {
             strikeKhishba(s, 0);
+            return;
+        }
+        if ((s.kit >= 0 ? s.kit : m_kit) == Udu) {
+            strikeUdu(s, h, 0);
             return;
         }
         if (s.pad == Sub) {
@@ -4818,6 +4891,8 @@ public:
     }
     const khishba::Body &khishbaBody() const { return m_khishba; }
     khishba::Body &khishbaBody() { return m_khishba; }
+    const udu::Pot &uduPot() const { return m_udu; }
+    udu::Pot &uduPot() { return m_udu; }
 
 private:
     struct Pending {
@@ -4843,8 +4918,8 @@ private:
         if (c.type != Hit && c.type != Command::On)
             return 0;
         const int kit = c.i[2] > 0 ? c.i[2] - 1 : m_kit;
-        if (kit == Hang || kit == SlitDrum || kit == Pipes || kit == Khishba)
-            return 0; // the hang, the slit drum, the pipes and the khishba ring under the mix, they don't push it
+        if (kit == Hang || kit == SlitDrum || kit == Pipes || kit == Khishba || kit == Udu)
+            return 0; // the hang, the slit drum, the pipes, the khishba and the udu ring under the mix, they don't push it
         if (c.i[0] == Kick)
             return clampf(0.35f + 0.75f * c.f[0], 0.0f, 1.0f);
         if (c.i[0] == Sub)
@@ -4868,6 +4943,11 @@ private:
             s.decay = c.f[4];
             s.tone = c.f[6];
             s.kit = c.i[2] > 0 ? std::clamp(c.i[2] - 1, 0, KitCount - 1) : m_kit;
+            if (s.kit == Udu && c.type == Command::On) {
+                // A hand coming to rest over the udu's openings.
+                m_udu.cover(c.id, c.f[0], c.f[1], c.f[2], offset);
+                break;
+            }
             if (s.kit == SlitDrum) {
                 strikeSlit(s, ctx.harmony(), offset);
             } else if (s.kit == Hang) {
@@ -4880,6 +4960,8 @@ private:
                     restKhishba(c, offset);
                 else
                     strikeKhishba(s, offset);
+            } else if (s.kit == Udu) {
+                strikeUdu(s, ctx.harmony(), offset);
             } else if (pad == Sub) {
                 // A hit on the 808 (a groove's) lets go by itself; an On is
                 // held until its Off.
@@ -4894,6 +4976,10 @@ private:
             break;
         }
         case Command::Move:
+            if (c.i[2] > 0 && c.i[2] - 1 == Udu) {
+                m_udu.cover(c.id, c.f[0], c.f[1], c.f[2], offset);
+                break;
+            }
             if (c.i[0] == kKhishbaRest)
                 m_khishba.restMove(c.id, khishbaAt(c.f[1]), khishbaAt(c.f[2]), c.f[0]);
             if (m_sub.active && m_sub.id == c.id) {
@@ -4905,6 +4991,7 @@ private:
             break;
         case Command::Off:
             m_sub.off(c.id);
+            m_udu.uncover(c.id, offset);
             if (c.i[0] == kKhishbaRest)
                 m_khishba.lift(c.id);
             break;
@@ -5071,11 +5158,41 @@ private:
         m_khishba.rest(c.id, khishbaAt(c.f[1]), khishbaAt(c.f[2]), c.f[0], offset, c.i[3] == 1);
     }
 
+    // A hit on the udu: a palm on its hole or mouth, or a fingertip on its
+    // clay, where on the pot it landed, how hard, the hand's hardness, how
+    // long the clay rings; the pot sized to the key and the pad's tuning.
+    void strikeUdu(const Strike &s, const Harmony &h, int offset) {
+        m_udu.tune(uduHz(h, s.semis));
+        m_udu.setDecay(s.decay);
+        const int place = uduPlace(s.pad);
+        const float X = uduX(clampf(s.sx, 0, 1)), Y = uduY(clampf(s.sy, 0, 1));
+        const float tone = clampf(s.tone, -1, 1);
+        if (place == udu::Hole || place == udu::Mouth) {
+            // (a spot the page didn't say, the middle: squarely over it)
+            const bool middle = std::fabs(s.sx - 0.5f) < 1e-4f && std::fabs(s.sy - 0.5f) < 1e-4f;
+            m_udu.slap(place, s.vel, tone, middle ? 1.0f : std::max(0.3f, udu::coverOf(place, X, Y)), offset);
+        } else {
+            m_udu.strike(place, placedX(place, s, X), placedY(place, s, Y), s.vel, tone, offset);
+        }
+    }
+    // A stroke the page didn't place lands where a player's would: the body
+    // below the hole, the neck near its lip.
+    static float placedX(int place, const Strike &s, float X) {
+        if (std::fabs(s.sx - 0.5f) > 1e-4f || std::fabs(s.sy - 0.5f) > 1e-4f)
+            return X;
+        return place == udu::Neck ? 0.2f : 0.25f;
+    }
+    static float placedY(int place, const Strike &s, float Y) {
+        if (std::fabs(s.sx - 0.5f) > 1e-4f || std::fabs(s.sy - 0.5f) > 1e-4f)
+            return Y;
+        return place == udu::Neck ? 1.25f : -0.35f;
+    }
+
     void applyKit() {
         // Boom bap and the CR-78 are dry; jungle's breaks and the jazz kit
         // keep their room.
-        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f, 0.6f, 0.9f, 1.3f, 0.25f, 0.6f, 1.1f, 0.9f, 1.2f, 0.8f}; // (the khishba's: a diwan's room, a little live)
-        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f, 0.22f, 0.26f, 0.3f, 0.06f, 0.18f, 0.2f, 0.18f, 0.34f, 0.18f};
+        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f, 0.6f, 0.9f, 1.3f, 0.25f, 0.6f, 1.1f, 0.9f, 1.2f, 0.8f, 0.8f}; // (the khishba's: a diwan's room, a little live)
+        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f, 0.22f, 0.26f, 0.3f, 0.06f, 0.18f, 0.2f, 0.18f, 0.34f, 0.18f, 0.16f};
         m_room.set(t60[m_kit], wet[m_kit]);
     }
 
@@ -5096,6 +5213,8 @@ private:
     pipedrum::Body m_pipes;
     // The pipes are played outdoors as often as in: less of a room.
     static constexpr float kPipesRoom = 0.7f;
+    udu::Pot m_udu;
+    static constexpr float kUduRoom = 0.25f;
     Room m_room;
     Pending m_pending[kPending];
     int m_pendingCount = 0;

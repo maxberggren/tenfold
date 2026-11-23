@@ -259,8 +259,15 @@ QImage VisualRenderer::frame() {
     m_rc->endFrame();
     QImage img(reinterpret_cast<const uchar *>(rb.data.constData()), rb.pixelSize.width(), rb.pixelSize.height(),
                QImage::Format_RGBA8888);
-    if (rhi->isYUpInFramebuffer())
+    if (rhi->isYUpInFramebuffer()) {
+        // flipped() arrived in Qt 6.9 and mirrored() is deprecated there;
+        // the bundles still build on 6.8.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
         return img.flipped(Qt::Vertical);
+#else
+        return img.mirrored(false, true);
+#endif
+    }
     return img.copy();
 }
 

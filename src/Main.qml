@@ -543,17 +543,34 @@ ApplicationWindow {
                     font.pixelSize: 15
                     wrapMode: Text.Wrap
                 }
-                Text {
+                // The words change while the pad is being taken (the password
+                // prompt takes focus, which pauses), so the box keeps the
+                // height of its longest wording instead of jumping about
+                // around its centre.
+                Item {
                     Layout.fillWidth: true
-                    text: backend.padState === Backend.Ready
-                          ? qsTr("The trackpad is yours again and the sound keeps playing. Take it back with the button below.")
-                          : qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Esc gives it back at any time. Meanwhile the mouse plays the pad too.")
-                            + (backend.padNeedsPassword && backend.padState !== Backend.Starting
-                               ? " " + qsTr("Reading the trackpad needs your password, once each time tenfold starts.") : "")
-                    color: win.amber
-                    font.family: win.mono
-                    font.pixelSize: 15
-                    wrapMode: Text.Wrap
+                    Layout.preferredHeight: Math.max(intro.implicitHeight, introLongest.implicitHeight)
+                    Text {
+                        id: intro
+                        width: parent.width
+                        text: backend.padState === Backend.Ready
+                              ? qsTr("The trackpad is yours again and the sound keeps playing. Take it back with the button below.")
+                              : introLongest.text
+                        color: win.amber
+                        font.family: win.mono
+                        font.pixelSize: 15
+                        wrapMode: Text.Wrap
+                    }
+                    Text {
+                        id: introLongest
+                        visible: false
+                        width: parent.width
+                        text: qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Esc gives it back at any time. Meanwhile the mouse plays the pad too.")
+                              + (backend.padNeedsPassword
+                                 ? " " + qsTr("Reading the trackpad needs your password, once each time tenfold starts.") : "")
+                        font: intro.font
+                        wrapMode: Text.Wrap
+                    }
                 }
                 PanelButton {
                     Layout.fillWidth: true

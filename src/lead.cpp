@@ -30,6 +30,7 @@
 
 #include "console.h"
 #include "electro.h"
+#include "gong.h"
 #include "lead.h"
 #include "parts.h"
 
@@ -197,6 +198,11 @@ constexpr float kHaloPan[2] = {0.7f, -0.7f};
 // harder the strokes on the beat land.
 constexpr float kRollSwellS = 0.35f;
 constexpr float kRollAccent = 1.5f;
+// Gong: what a gong's pressure (Pa at a metre) is worth on the page, per kind
+// (bossed, opera, tam-tam), so each speaks as loud as the other leads.
+constexpr float kGongLevel[gong::kKinds] = {0.27f, 0.85f, 0.3f};
+// Gong: how many tam-tams may ring at once.
+constexpr int kTamTams = 4;
 
 // An accordion's bellows: how much air one way holds (seconds of sound at
 // an ordinary press), and how long a rest is a breath, long enough to turn
@@ -383,6 +389,10 @@ struct Bank {
     Svf thudLp;
     SyncOsc sync[2], sync2[2];
     ReedOsc reeds[4];
+    // Gong: the voice's gong (each voice of a line its own, as a gong
+    // chime's are), and whether it has been hung and struck for this note.
+    gong::Gong gong;
+    bool gongLive = false;
 };
 
 struct Voice {
@@ -463,6 +473,11 @@ public:
         }
         for (auto &d : m_sym)
             d.init(size_t(rate / 90.0f));
+        // The gongs' designs are built once, here, never on the audio thread.
+        gong::prepare();
+        for (auto &v : m_voices)
+            for (auto &k : v.banks)
+                k.gong.init(rate);
         for (auto &c : m_chik) {
             c.string.init(size_t(rate / 150.0f));
             c.jawF.set(3000.0f, 4.0f, rate);
@@ -740,7 +755,7 @@ private:
                 release(*v);
             v->owner = -1;
         }
-        const int vi = allocate();
+        const int vi = allocate(snd);
         line.voice = vi;
         start(m_voices[size_t(vi)], li, snd, n, ctx);
     }
@@ -806,7 +821,25 @@ private:
         return false;
     }
 
-    int allocate() {
+    int allocate(int snd) {
+        // A percussionist has a few tam-tams, not eight: a fifth note
+        // takes the quietest of the four already ringing that nobody holds.
+        if (sound(snd).model == Sound::Gong && sound(snd).gong == gong::TamTam) {
+            int ringing = 0, best = -1;
+            float quiet = 1e9f;
+            for (size_t i = 0; i < m_voices.size(); ++i) {
+                const Voice &v = m_voices[i];
+                if (!v.active || v.sound != snd)
+                    continue;
+                ++ringing;
+                if ((v.owner < 0 || v.releasing) && v.level < quiet) {
+                    quiet = v.level;
+                    best = int(i);
+                }
+            }
+            if (ringing >= kTamTams && best >= 0)
+                return best;
+        }
         for (size_t i = 0; i < m_voices.size(); ++i)
             if (!m_voices[i].active)
                 return int(i);
@@ -917,6 +950,9 @@ private:
             }
             k.bloom = k.thud = k.settle = k.ping = 0;
             k.pingLeft = 0;
+            k.gongLive = false;
+            if (s.model == Sound::Gong)
+                k.gong.silence();
             k.thudLp.reset();
             k.pingF.reset();
             k.pingLp.reset();
@@ -1005,8 +1041,11 @@ private:
         v.chiff = v.chiffFast = 1.0f;
         v.syncEnv = v.syncEnv2 = 1.0f;
         // A string is plucked, a pan struck, in every voice of the line.
-        for (auto &k : v.banks) {
+        for (int b = 0; b < Voice::kBanks; ++b) {
+            Bank &k = v.banks[b];
             k.pluck = -1; // its length is worked out at its own pitch, when it sounds
+            if (s.model == Sound::Gong && (b == 0 || k.want > 0 || k.level > 0))
+                gongStrike(v, k, b, vel, 1.0f);
             if (s.model == Sound::Pan)
                 hit(k, vel, v.y, 1.0f, false);
             if (s.model == Sound::Reed)
@@ -1026,6 +1065,26 @@ private:
         if (scoop)
             v.scoop = -s.scoop * (0.7f + 0.6f * vel);
         v.vel = vel;
+    }
+
+    // A gong struck: hung (tuned to its voice's pitch) if it isn't yet,
+    // then the mallet lands. Where is the finger's height: the lower half
+    // of the pad is the middle (the boss, the dome), higher strikes further
+    // out toward the rim. A flatter finger is a softer, fatter beater. Each
+    // voice of a line strikes its own gong at its own place round it.
+    void gongStrike(Voice &v, Bank &k, int b, float vel, float stroke) {
+        const Sound &s = sound(v.sound);
+        const float hz = clampf(midiToHz(clampf(k.pitch, 0.0f, 140.0f)) * std::exp2(s.gongOct), 20.0f, 9000.0f);
+        if (!k.gongLive) {
+            k.gong.start(gong::Kind(s.gong), hz);
+            k.gongLive = true;
+        } else {
+            k.gong.setPitch(hz);
+        }
+        const float out = clampf((v.y - 0.5f) / 0.5f, 0.0f, 1.0f);
+        const float where = 0.03f + 0.67f * out * out * (3.0f - 2.0f * out);
+        const float angle = 0.7f + 1.37f * float(b) + 0.4f * float(v.rollHand);
+        k.gong.strike(clampf(vel * stroke, 0.0f, 1.0f), where, angle, 0, clampf(v.fat, 0.0f, 1.0f));
     }
 
     // A pan's note struck. The stick's first stroke gives every mode the
@@ -1078,6 +1137,10 @@ private:
         v.releasing = true;
         v.amp.gate(false);
         v.filt.gate(false);
+        // A gong let go has a hand laid on it.
+        if (sound(v.sound).model == Sound::Gong)
+            for (auto &k : v.banks)
+                k.gong.mute(sound(v.sound).hand);
         // An accordion's key coming back up closes its pallet: a softer click.
         if (sound(v.sound).model == Sound::Reed) {
             v.banks[0].pluck = -1;
@@ -1632,6 +1695,56 @@ private:
                 }
             }
         }
+        // Gong: each voice's gong follows its pitch (a glide, the bend, a
+        // twist: the whole gong, in time) and rings the segment out on its
+        // own; a harmony voice coming in hangs its gong and strikes it. A
+        // held tam-tam is rolled with soft beaters on the studio's grid, as
+        // the pan is, slower: it begins once the note has been held a beat
+        // (a single stroke left to ring is held too), swells into it, and
+        // the press is how hard it is rolled. A gong's loudness is the
+        // physics' (a small gong struck as hard against its size radiates
+        // more), evened out across the neck so a line is one instrument.
+        if (model == Sound::Gong) {
+            if (s.roll > 0 && !v.releasing && v.held > m_spb) {
+                const float spb = m_spb;
+                int per = 2;
+                for (int p : {3, 4, 6, 8})
+                    if (std::fabs(float(p) / spb - s.rollHz) < std::fabs(float(per) / spb - s.rollHz))
+                        per = p;
+                const double grid = m_beat * double(per);
+                if (v.rollSlot < 0)
+                    v.rollSlot = int64_t(std::floor(grid));
+                v.rollAge += dt;
+                const int64_t slot = int64_t(std::floor(grid - double(v.rollLate)));
+                if (slot > v.rollSlot) {
+                    v.rollSlot = slot;
+                    v.rollHand ^= 1;
+                    const float firm = clampf((v.press - 0.1f) / 0.75f, 0.0f, 1.0f);
+                    const float into = clampf(v.rollAge / 1.5f, 0.0f, 1.0f);
+                    const float swell = 0.3f + 0.7f * into * into * (3.0f - 2.0f * into);
+                    const float stroke = s.roll * (0.2f + 0.6f * firm) * (v.rollHand ? 0.9f : 1.0f) *
+                                         (1.0f + 0.12f * v.rng.bipolar()) * swell;
+                    v.rollLate = 0.08f * v.rng.bipolar();
+                    for (int b = 0; b < Voice::kBanks; ++b)
+                        if (live[b])
+                            gongStrike(v, v.banks[b], b, 1.0f, stroke);
+                }
+            }
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                Bank &k = v.banks[b];
+                std::fill(m_gongL[b], m_gongL[b] + n, 0.0f);
+                std::fill(m_gongR[b], m_gongR[b] + n, 0.0f);
+                if (!live[b])
+                    continue;
+                if (!k.gongLive && !v.releasing)
+                    gongStrike(v, k, b, v.vel, 1.0f);
+                if (!k.gongLive)
+                    continue;
+                k.gong.setPitch(clampf(inc1[b] * rate, 8.0f, 18000.0f) * std::exp2(s.gongOct));
+                const float even = std::pow(clampf(inc1[b] * rate * std::exp2(s.gongOct) / 330.0f, 0.5f, 2.5f), -0.75f);
+                k.gong.render(m_gongL[b], m_gongR[b], n, kGongLevel[std::clamp(s.gong, 0, gong::kKinds - 1)] * even);
+            }
+        }
         // Sync: each slave's ratio sweeps down from the attack to where it
         // settles, never all the way to the note, so the tear holds; height
         // and pressure lift it, a slow wander moves it, and so does the
@@ -2047,6 +2160,10 @@ private:
                     }
                     break;
                 }
+                case Sound::Gong:
+                    bl += m_gongL[b][i];
+                    br += m_gongR[b][i];
+                    break;
                 case Sound::Sync: {
                     // At four times the rate: four quarter steps, the second
                     // voice's master an octave up, through two half-band
@@ -2282,7 +2399,10 @@ private:
             // only lets the note go, and the bow's arc shapes it, the weight
             // a player leans into the middle of the stroke. The bellows
             // turning round push a swell through the reeds as they catch.
-            const float env = model == Sound::Bow ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t) : a;
+            // A gong's level is its own: a hand stills it, not an envelope.
+            const float env = model == Sound::Bow    ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
+                              : model == Sound::Gong ? 1.0f
+                                                     : a;
             const float jerk = model == Sound::Reed ? 1.0f + 0.5f * (jerk0 + (jerk1 - jerk0) * t) * std::min(1.0f, v.held / 0.03f) : 1.0f;
             const float level = model == Sound::Bow ? bowGain0 + (outGain - bowGain0) * t : outGain;
             const float g2 = env * level * gate * jerk * (amp0 + (amp1 - amp0) * t);
@@ -2316,8 +2436,16 @@ private:
         // A released voice is done once it's 70 dB down; the envelope's own
         // idea of silence is far below anything audible, and every voice
         // still ringing costs its full price.
-        if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f))
+        if (model == Sound::Gong) {
+            // Done once every gong of the voice has rung out.
+            bool ringing = false;
+            for (const auto &k : v.banks)
+                ringing |= k.gongLive && k.gong.active();
+            if (v.releasing && !ringing)
+                v.active = false;
+        } else if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f)) {
             v.active = false;
+        }
     }
 
     // The sitar's other strings, which no finger stops: the taraf, eleven
@@ -2495,6 +2623,7 @@ private:
         Svf jawF;
     };
     float m_symSend[kBlock] = {};
+    float m_gongL[Voice::kBanks][kBlock] = {}, m_gongR[Voice::kBanks][kBlock] = {};
     Delay m_sym[kTaraf];
     float m_symLp[kTaraf] = {};
     Chikari m_chik[kChikari];
@@ -2953,7 +3082,11 @@ public:
             "ring with it), Sync (Italo disco: two hard-synced saws that keep tearing, their formant sung on a "
             "vowel), Erhu (a bowed Chinese fiddle; a held bow swells and turns by itself, its vibrato comes "
             "late and widens with the bow, and a legato leap slides, huayin), Accordion (cumbia, tango: three "
-            "registers; the bellows turn by the phrase, or in a rest, and the pull bites harder than the push); "
+            "registers; the bellows turn by the phrase, or in a rest, and the pull bites harder than the push), "
+            "Gong (gamelan: a bossed gong, every voice its own, its octave beating against the smith's, the ombak), "
+            "Opera gong (Chinese opera: low on the neck the big flat gongs, sharp when struck hard and gliding down; "
+            "high the small domed ones, gliding up), Tam-tam (film score: a thud an octave down that, struck hard, "
+            "blossoms over a second into a shimmer; held, it is rolled); "
             "the row under the pad shows the ones around the chosen "
             "sound, faded at an end with more beyond; the status line says what music each is for\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
@@ -2975,12 +3108,13 @@ public:
             "higher on the pad\tbrighter (on Vox, the vowel: oo, oh, ah, eh, ee; on Sync, the sweep held higher and "
             "the vowel from ow to ee; on "
             "Erhu, bowed nearer the bridge; on Accordion, the register: clarinet low, bandoneon in the middle, musette "
-            "high, and the bandoneon from the keys)\n"
+            "high, and the bandoneon from the keys; on the gongs, the strike moves out from the middle toward the rim)\n"
             "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
             "on Flute, a quicker attack; on Steel pan, a harder roll, and high on the note a ping; on Sync, a snarl of FM into the sync; on Erhu, "
-            "the bow's weight: a light touch whistles, a hard one grinds)\n"
+            "the bow's weight: a light touch whistles, a hard one grinds; on the gongs, a harder mallet: further glides, "
+            "a stronger ombak, a brighter blossom, and a harder tam-tam roll)\n"
             "flatten the finger\tfatter: the unison spreads (on Flute, breathier; on Sitar, more buzz; "
-            "on Accordion, a wetter musette)\n"
+            "on Accordion, a wetter musette; on the gongs, a softer beater)\n"
             "twist the finger\tbend up or down one step of the scale\n"
             "click the pad\tleap an octave up while held\n"
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"

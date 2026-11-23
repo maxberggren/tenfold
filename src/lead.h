@@ -211,7 +211,11 @@ struct Sound {
     //           apart (bandoneon), or three, the outer two a fixed number
     //           of hertz either side (musette); the bellows in the attack,
     //           turning by the phrase.
-    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed };
+    //   Gong:   a gong as physics (gong.h): a bronze sheet's modes and the
+    //           membrane stress that couples them, struck by a padded
+    //           mallet; every voice of the line its own gong, tuned to its
+    //           note. The kind (bossed, opera, tam-tam) is the sound's.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong };
     int model = Osc;
     float jawari = 0;      // String: how hard the string buzzes on its bridge
     float sympathy = 0;    // String: how loud the taraf rings
@@ -226,6 +230,10 @@ struct Sound {
     float syncLfo = 0;     // Sync: how far a slow wander moves the held ratio
     float scratch = 0;     // Bow: the rosin's noise
     float beatHz = 0;      // Reed: how fast the musette's outer reeds beat against the middle one
+    int gong = 0;          // Gong: which kind (gong::Kind: bossed, opera, tam-tam)
+    float gongOct = 0;     // Gong: octaves the gong sounds from the note (a tam-tam's thud an octave under it)
+    float hand = 1.0f;     // Gong: seconds a hand laid on it takes to still it once the finger lifts
+    float rollHz = 13.0f;  // Pan, Gong: the strokes a second a held note is rolled at, near enough
 };
 
 // The accordion's registers, by the finger's height: low on the pad the
@@ -255,7 +263,7 @@ inline const char *registerName(float y) {
 // note is held, strikes the high drone strings instead of a hammer-on.
 constexpr float kChikariY = 0.8f;
 
-constexpr int kSounds = 15;
+constexpr int kSounds = 18;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -429,6 +437,47 @@ inline const Sound &sound(int i) {
          .keyTrack = 0.3f, .a = 0.025f, .d = 0.4f, .s = 0.92f, .r = 0.08f, .aHard = 0.01f, .glide = 0.02f,
          .scoop = -0.16f, .scoopTime = 0.05f, .vibDepth = 0.0f, .echo = 0.1f, .echoFb = 0.25f, .gain = 2.2f,
          .model = Sound::Reed, .beatHz = 6.0f},
+        // A bossed gong, the kempul and bonang of the gamelan and the
+        // kulintang's row of them: a thick bronze face with a raised boss,
+        // which the smith has tuned so its two ringing axisymmetric modes
+        // stand an octave apart, less a few hertz. Struck on the boss with
+        // a padded mallet it hums its note for seconds; the boss's own
+        // stretching sounds the note's octave too, which beats against the
+        // smith's octave a few times a second (the ombak), and its twelfth
+        // beats with the sum of the two. Higher on the pad strikes off the
+        // boss, onto the face: a clang with less of the note. Lifting the
+        // finger lays a hand on it, as a bonang player stills each kettle.
+        {.name = "Gong", .style = "gamelan", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.0005f,
+         .d = 1.0f, .s = 1.0f, .r = 4.0f, .glide = 0.03f, .vibDepth = 0.0f, .retrig = true, .echo = 0.12f,
+         .echoFb = 0.3f, .gain = 1.0f, .model = Sound::Gong, .gong = 0, .hand = 1.2f},
+        // A Chinese opera gong: a thin bronze disc in a stiff conical
+        // flange, struck hard with a padded stick. Its pitch moves as it
+        // rings, by how far the sheet swings against its thickness: the
+        // big gongs low on the neck are flat in the middle, stretch as
+        // they swing and start up to a minor third sharp, gliding down as
+        // they die (the daluo); the small ones high on the neck are domed
+        // by a millimetre, give as they swing and start flat, gliding up
+        // (the xiaoluo, the opera's "jjang"). The harder it is struck the
+        // further it glides; a light touch is nearly pure. Higher on the pad
+        // strikes off the middle, brighter.
+        {.name = "Opera gong", .style = "Chinese opera", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f,
+         .a = 0.0005f, .d = 1.0f, .s = 1.0f, .r = 4.0f, .glide = 0.03f, .vibDepth = 0.0f, .retrig = true,
+         .echo = 0.1f, .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Gong, .gong = 1, .hand = 0.9f},
+        // A tam-tam, the orchestra's great flat gong: a thin hammered
+        // sheet struck in its middle with a heavy soft beater, sounding an
+        // octave under the note. Struck softly it is a deep thud; struck
+        // hard, the sheet swings further than its thickness and the
+        // stretching passes the energy up out of the thud into ever higher
+        // modes, so over a second the sound blossoms into a shimmer that
+        // outlasts the thud by seconds. A note held past a beat is rolled
+        // with soft beaters, swelling as the press grows: the tam-tam's
+        // crescendo. Higher on the pad strikes further out, less thud and
+        // more shimmer. Lifting the finger lets it ring on, ten seconds and
+        // more, a hand only resting on it.
+        {.name = "Tam-tam", .style = "film score", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.0005f,
+         .d = 1.0f, .s = 1.0f, .r = 4.0f, .glide = 0.05f, .vibDepth = 0.0f, .retrig = true, .echo = 0.08f,
+         .echoFb = 0.25f, .gain = 1.0f, .model = Sound::Gong, .roll = 1.0f, .gong = 2, .gongOct = -1.0f, .hand = 12.0f,
+         .rollHz = 9.0f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

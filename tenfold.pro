@@ -33,6 +33,7 @@ HEADERS += \
     src/hang.h \
     src/slitdrum.h \
     src/pipedrum.h \
+    src/khishba.h \
     src/offline.h \
     src/part.h \
     src/padprompt.h \

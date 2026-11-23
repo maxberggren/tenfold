@@ -339,7 +339,9 @@ private slots:
                 const Dry d = strike(pad, kit, 1.0f, longest ? 16.0 : 9.0, ctx, &e);
                 QVERIFY2(d.finite(), drums::padName(pad));
                 QVERIFY2(d.peak() > 0.01f, drums::padName(pad));
-                QVERIFY2(d.peak() < 0.6f, drums::padName(pad));
+                // (The khishba's first cycle is an acoustic drum's: 17–24 dB
+                // over its body, under the master's −1 dBFS ceiling.)
+                QVERIFY2(d.peak() < (kit == drums::Khishba ? 0.85f : 0.6f), drums::padName(pad));
                 // Every voice ends by itself, the crash last.
                 QVERIFY2(e.voices() == 0, qPrintable(QStringLiteral("%1 in %2").arg(drums::padName(pad, kit),
                                                                                      drums::kitName(kit))));
@@ -1179,9 +1181,9 @@ private slots:
     void swingLeavesThirtySecondsEven() {
         // The brushes swing a full triplet (66%), but a cross-stick rolling
         // in thirty-seconds stays even.
-        // Brushes is the tenth kit: nine to the left of house.
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\nkey 0.12 Left\nkey 0.13 Left\n"
-                                        "key 0.14 Left\nkey 0.15 Left\nkey 0.16 Left\nkey 0.17 Left\nkey 0.18 Left\n"
+        // Brushes is the tenth kit: nine to the right of house.
+        const auto take = testkit::play("page 0 1\nkey 0.1 Right\nkey 0.11 Right\nkey 0.12 Right\nkey 0.13 Right\n"
+                                        "key 0.14 Right\nkey 0.15 Right\nkey 0.16 Right\nkey 0.17 Right\nkey 0.18 Right\n"
                                         "down 1.0 1 0.38 0.27 p=0.6\nglide 1.3 1.4 1 0.38 0.56\nup 4.0 1\nend 4.5\n");
         const auto on = onsets(take, 2.0, 3.9, 0.02);
         QVERIFY(on.size() >= 25);
@@ -1437,6 +1439,13 @@ private slots:
             all += QStringLiteral(" %1 %2").arg(drums::kitName(kit)).arg(loudness(grooveTake(kit, ctx)) - house, 0, 'f', 1);
         for (int kit = 0; kit < drums::KitCount; ++kit) {
             const double d = loudness(grooveTake(kit, ctx)) - house;
+            // (The khishba is a small, dry drum: its strokes are 17–24 dB
+            // below their own peaks, so as loud as house's groove its first
+            // cycles would ride the master's limiter. It sits a few dB under.)
+            if (kit == drums::Khishba) {
+                QVERIFY2(d > -6.0 && d < 2.0, qPrintable(QStringLiteral("%1:%2").arg(drums::kitName(kit), all)));
+                continue;
+            }
             QVERIFY2(std::fabs(d) < 2.0, qPrintable(QStringLiteral("%1:%2").arg(drums::kitName(kit), all)));
         }
     }
@@ -1511,9 +1520,10 @@ private slots:
         // thirds through its beat at the kit's 66%, and on the straight
         // eighth once the swing is taken down to 50%.
         auto where = [](const std::string &extra) {
-            // Brushes is the tenth kit: nine to the left of house.
-            const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\nkey 0.12 Left\nkey 0.13 Left\n"
-                                            "key 0.14 Left\nkey 0.15 Left\nkey 0.16 Left\nkey 0.17 Left\nkey 0.18 Left\n" + extra +
+            // Brushes is the tenth kit: nine to the right of house.
+            const auto take = testkit::play("page 0 1\nkey 0.1 Right\nkey 0.11 Right\nkey 0.12 Right\nkey 0.13 Right\n"
+                                            "key 0.14 Right\nkey 0.15 Right\nkey 0.16 Right\nkey 0.17 Right\n"
+                                            "key 0.18 Right\n" + extra +
                                             "key 1.0 P down\nkey 1.0 V down\nkey 6.0 P up\nkey 6.0 V up\nend 6.2\n");
             double sum = 0;
             int n = 0;

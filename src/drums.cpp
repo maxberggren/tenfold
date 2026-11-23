@@ -136,6 +136,21 @@ const int kHangKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 8, hang::kGu, 0, hang::k
 // lowest first; the rest double the top ones.
 const int kPipeKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 5, 6, 6, 7, 8, 9};
 
+// The khishba kit draws its head over the whole pad as the hang's shell:
+// the skin, the wooden rim round it, and past the rim, in the corners, the
+// body. In khishba.h's units of the head's radius.
+constexpr float kClosedSize = 1.6f; // a contact this many fingertips wide lands flat: a closed stroke
+constexpr float kKhishbaCx = 0.5f, kKhishbaCy = 0.535f, kKhishbaRx = 0.42f, kKhishbaRy = 0.4f;
+float khishbaX(float x) { return (x - kKhishbaCx) / kKhishbaRx; }
+float khishbaY(float y) { return (y - kKhishbaCy) / kKhishbaRy; }
+
+// The keys on the khishba: each row of keys dum, tek, ka and the wood, left
+// to right, as the hands lie on it.
+const khishba::Stroke kKhishbaKey[PadCount] = {khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood,
+                                               khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood,
+                                               khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood,
+                                               khishba::Dum, khishba::Tek, khishba::Ka, khishba::Wood};
+
 // The keyboard is a second pad: the left hand's three rows mirror the
 // bottom three rows of the trackpad, U I O P are the cymbal row, and the
 // right hand gets the two rows that matter most again.
@@ -546,7 +561,7 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-"djembe's call, flams and slap triplets), the hang, the slit drum and the pipes\n"
+"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes and the khishba\n"
             "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
             "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
             "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
@@ -559,6 +574,11 @@ public:
             "plastic, less air); hold the finger down and the paddle stays on the mouth, closing it: the pipe drops to "
             "its closed note, near an octave lower, and slides up again as you slide the finger off the mouth or lift "
             "it; the REPEAT strip still rolls, and fingers landing together still groove\n"
+            "the khishba kit\tthe pad is the head of the long Iraqi goblet drum: a dum in the middle (its boom is the "
+            "air in the body), a tek at the rim on the right, a ka on the left, a knock on the wood past the rim in the "
+            "corners; harder is louder and brighter, the rim's crack where a finger catches it; a finger left lying on "
+            "the skin damps it, harder for more; alternate two fingers fast for a roll (rash); fingers landing together "
+            "and staying groove the hacha'a\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -594,6 +614,7 @@ public:
                 saron |= h.pad == TomMid;
                 break;
             case Mode::Edit: parts << QStringLiteral("shaping %1").arg(name); break;
+            case Mode::Rest: parts << QStringLiteral("a finger damps the skin"); break;
             case Mode::Bass: parts << QStringLiteral("%1 held").arg(name); break;
             case Mode::Paddle:
                 parts << (h.bend > 0.02f ? QStringLiteral("%1's paddle tilted open").arg(name)
@@ -667,6 +688,7 @@ private:
         Kept,    // its roll or groove was kept: it plays on by itself
         Repeat,  // a thumb in the REPEAT strip: pads roll as they land
         Paddle,  // the pipes: a held finger keeps its paddle on the pipe's mouth
+        Rest,    // the khishba: a finger lying on the skin, damping it
     };
 
     // A finger or a key on a pad.
@@ -687,6 +709,8 @@ private:
         int degree = 0; // the 808's glide, in degrees
         float bend = 0; // the tabla's bayan: its heel pressed in, semitones (the pipes: the paddle's tilt)
         bool paddleDown = false; // the pipes: the hand has put the paddle back on
+        float restX = 0, restY = 0, restP = 0; // the khishba: where a resting finger last told the engine it lay
+        bool rested = false; // the khishba: a flat finger that stayed on the skin from its stroke (a closed stroke)
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
         double seen = 0; // the time of the last frame it was in
@@ -736,9 +760,10 @@ private:
     void paintHang(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintSlit(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintPipes(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+    void paintKhishba(QPainter &p, const PaintContext &pc, const Gen *const *genOn);
 
     // The kits that are one instrument over the whole pad, not a grid.
-    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes; }
+    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba; }
 
     // --- where on the pad ------------------------------------------------------
 
@@ -749,6 +774,8 @@ private:
             return slitPad(slit::spotAt(slitX(x), slitY(y)).tongue);
         if (m_kit == Pipes)
             return pipePad(pipedrum::spotAt(x, y).pipe);
+        if (m_kit == Khishba)
+            return khishbaPad(khishba::strokeAt(khishbaX(x), khishbaY(y)));
         if (m_kit != Hang)
             return padAt(x, y);
         return hangPad(hang::spotAt(hangX(x), hangY(y)).field);
@@ -779,6 +806,12 @@ private:
             const pipedrum::Spot sp = pipedrum::spotOn(pipeOf(pad), x, y);
             sx = clampf(0.5f + 0.5f * sp.u / pipedrum::kSpotReach, 0, 1);
             sy = clampf(0.5f + 0.5f * sp.w / pipedrum::kSpotReach, 0, 1);
+            return;
+        }
+        if (m_kit == Khishba) {
+            // On the khishba: where on the head, whatever the stroke.
+            sx = khishbaSpot(khishbaX(x));
+            sy = khishbaSpot(khishbaY(y));
             return;
         }
         if (m_kit == Hang) {
@@ -933,6 +966,12 @@ private:
             sendSubOn(h, h.t0, ctx);
         else
             hitAt(h.pad, h.vel, h.x0, h.y0, h.t0, ctx);
+        // On the khishba a finger landing flat stays on the skin as it
+        // strikes: a closed stroke (the pa, the sak), damped at once.
+        if (m_kit == Khishba && !h.key && h.size >= kClosedSize && !h.rested) {
+            h.rested = true;
+            sendRest(h, Command::On, h.t0 + 0.002, ctx, true);
+        }
     }
 
     void pressKey(int index, bool accent, ControlContext &ctx) {
@@ -979,6 +1018,16 @@ private:
             h->x0 = h->x = m.x;
             h->y0 = h->y = m.y;
         }
+        if (m_kit == Khishba) {
+            // A key strikes where a hand would: a dum a little off the
+            // middle, a tek or a ka a finger in from the rim.
+            const khishba::Stroke st = kKhishbaKey[h->pad];
+            h->pad = khishbaPad(st);
+            float kx, ky;
+            khishba::strokeSpot(st, kx, ky);
+            h->x0 = h->x = kKhishbaCx + kKhishbaRx * kx;
+            h->y0 = h->y = kKhishbaCy + kKhishbaRy * ky;
+        }
         h->vel = accent ? 1.0f : 0.78f;
         h->pressure = accent ? 0.7f : 0.45f;
         h->lastCell = h->pad;
@@ -1018,6 +1067,14 @@ private:
         }
         if (m_kit == Pipes)
             return pipedrum::spotAt(x, y).rho < 0.9f; // well within a mouth
+        if (m_kit == Khishba) {
+            // On the khishba: clear of the line between the dum and the
+            // rim, of the middle line between the tek's side and the ka's,
+            // and of the rim's outer edge.
+            const float hx = khishbaX(x), hy = khishbaY(y), r = std::sqrt(hx * hx + hy * hy);
+            return std::fabs(r - khishba::kDumRadius) > 0.06f && std::fabs(r - khishba::kWoodFrom) > 0.05f &&
+                   (r < khishba::kDumRadius || std::fabs(hx) > 0.1f);
+        }
         if (m_kit == Hang) {
             // On the hang: well within a field's rim, or well off the shell.
             const float hx = hangX(x), hy = hangY(y);
@@ -1082,6 +1139,12 @@ private:
             }
             break;
         }
+        case Mode::Rest:
+            // Lying still, it says nothing; moved or pressed harder, where
+            // it lies now.
+            if (std::hypot(h.x - h.restX, h.y - h.restY) > 0.01f || std::fabs(h.pressure - h.restP) > 0.05f)
+                sendRest(h, Command::Move, now, ctx);
+            break;
         case Mode::Bass: {
             const int deg = std::clamp(int(std::lround((h.x - h.x0) * 20.0f)), -7, 7);
             // The tabla's bayan: up the pad, the heel presses into the
@@ -1172,6 +1235,8 @@ private:
     void release(Holder &h, double now, ControlContext &ctx, bool countTap) {
         if (countTap && h.landing)
             sendLanding(h, ctx);
+        if (h.mode == Mode::Rest || h.rested)
+            sendRest(h, Command::Off, now, ctx);
         if (h.pad == Sub && (h.mode == Mode::Pending || h.mode == Mode::Bass || h.mode == Mode::Edit ||
                              h.mode == Mode::Loop))
             sendOff(h, now, ctx);
@@ -1216,7 +1281,16 @@ private:
             if (h.landing)
                 sendLanding(h, ctx);
             if (together >= 2 || grooving) {
+                if (h.rested) {
+                    sendRest(h, Command::Off, now, ctx);
+                    h.rested = false;
+                }
                 becomeGroove(h, now, ctx);
+            } else if (m_kit == Khishba && !h.key) {
+                // On the khishba a finger left lying on the skin damps it.
+                h.mode = Mode::Rest;
+                if (!h.rested)
+                    sendRest(h, Command::On, now, ctx);
             } else if (h.pad == Sub) {
                 h.mode = Mode::Bass;
             } else if (m_kit == Pipes) {
@@ -1690,6 +1764,27 @@ private:
         ctx.send(c);
     }
 
+    // A finger lying on the khishba's skin: On as it settles, Move as it
+    // shifts or presses, Off as it lifts; how hard it presses (f[0]) and
+    // where (f[1], f[2]), as a hit says where it landed.
+    void sendRest(Holder &h, uint16_t type, double t, ControlContext &ctx, bool closed = false) {
+        Command c;
+        c.type = type;
+        c.i[3] = closed ? 1 : 0;
+        c.id = h.src & 0xFFFFFF;
+        c.t = t;
+        c.i[0] = kKhishbaRest;
+        c.f[0] = h.pressure;
+        c.f[1] = khishbaSpot(khishbaX(h.x));
+        c.f[2] = khishbaSpot(khishbaY(h.y));
+        h.restX = h.x;
+        h.restY = h.y;
+        h.restP = h.pressure;
+        if (type == Command::On)
+            stamp(c);
+        ctx.send(c);
+    }
+
     void sendEdit(int pad, ControlContext &ctx) {
         Command c;
         c.type = Command::Param;
@@ -1852,7 +1947,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         paintSlit(p, pc, harm, genOn);
     if (m_kit == Pipes)
         paintPipes(p, pc, harm, genOn);
-    // The grid of pads (none on the hang, the slit drum or the pipes, each one instrument).
+    if (m_kit == Khishba)
+        paintKhishba(p, pc, genOn);
+    // The grid of pads (none on the hang, the slit drum, the pipes or the khishba, each one instrument).
     for (int pad = 0; pad < (whole() ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
         const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
@@ -2460,6 +2557,167 @@ void DrumsControl::paintPipes(QPainter &p, const PaintContext &pc, const Harmony
             p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
             p.drawLine(centre + QPointF(-R, R), centre + QPointF(R, -R));
         }
+    }
+}
+
+// The khishba, drawn as it is played, its head seen from above: the skin,
+// the dum's circle in its middle, the tek's half of the rim on the right and
+// the ka's on the left, the wooden rim round it and the body past that in
+// the corners; a ring running out over the skin as it is struck, and a dot
+// where a finger lies damping it.
+void DrumsControl::paintKhishba(QPainter &p, const PaintContext &pc, const Gen *const *genOn) {
+    namespace c = console;
+    namespace k = khishba;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int label = int(std::clamp(15.0 * s, 10.0, 20.0));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    const float ring = std::min(1.0f, data[200]);
+    auto at = [&](float hx, float hy) { return pc.at(kKhishbaCx + kKhishbaRx * hx, kKhishbaCy + kKhishbaRy * hy); };
+    auto circle = [&](float r) {
+        QPainterPath path;
+        for (int i = 0; i <= 96; ++i) {
+            const float t = kTwoPi * float(i) / 96.0f;
+            const QPointF q = at(r * std::cos(t), r * std::sin(t));
+            if (i == 0)
+                path.moveTo(q);
+            else
+                path.lineTo(q);
+        }
+        path.closeSubpath();
+        return path;
+    };
+    auto lit = [&](k::Stroke st) {
+        const int pad = khishbaPad(st);
+        return std::max(data[pad], 0.6f * data[16 + pad]);
+    };
+    const int playing = pc.view->playing;
+    auto out = [&](k::Stroke st) {
+        return playing >= 0 && playing < kClipSlots && (m_muted[playing] >> khishbaPad(st) & 1u);
+    };
+    // Under a stroke's name: what its roll or groove plays, or that the loop
+    // leaves it out.
+    auto caption = [&](k::Stroke st, const QRectF &box) {
+        const Gen *gen = genOn[khishbaPad(st)];
+        QString what;
+        if (gen)
+            what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper() : QString::fromUtf8(rateName(gen->rate));
+        else if (out(st))
+            what = QStringLiteral("OUT OF LOOP");
+        if (!what.isEmpty())
+            c::text(p, box.translated(0, label * 1.2), what, c::alpha(out(st) ? c::red() : col, 0.75f), small, true,
+                    Qt::AlignCenter);
+    };
+
+    // The body, past the rim in the corners: wood, lit by a knock.
+    {
+        const float wood = lit(k::Wood);
+        QPainterPath body;
+        body.addRect(pc.rect(0, kStripY, 1, 1));
+        body = body.subtracted(circle(k::kWoodFrom));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.03f + 0.3f * wood));
+        p.drawPath(body);
+        const QColor ink = c::alpha(col, 0.45f + 0.5f * wood);
+        const double w = 80 * s, h = 18 * s;
+        const QPointF corners[4] = {pc.at(0.0f, 1.0f), pc.at(1.0f, 1.0f), pc.at(0.0f, kStripY), pc.at(1.0f, kStripY)};
+        for (int i = 0; i < 4; ++i) {
+            const QPointF q = corners[i];
+            const QRectF r(i % 2 ? q.x() - w - 8 * s : q.x() + 8 * s, i < 2 ? q.y() + 6 * s : q.y() - h - 6 * s, w, h);
+            c::text(p, r, QStringLiteral("WOOD"), ink, small, true, (i % 2 ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
+        }
+    }
+
+    // The rim: a ring of wood round the skin, the tek's side brighter when
+    // struck there, the ka's on the other.
+    {
+        QPainterPath rim = circle(k::kWoodFrom).subtracted(circle(1.0f));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.16f + 0.1f * ring));
+        p.drawPath(rim);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.55f), 1.5 * s));
+        p.drawPath(circle(k::kWoodFrom));
+    }
+
+    // The skin: brighter while it rings.
+    {
+        const QPainterPath skin = circle(1.0f);
+        QRadialGradient glow(at(0, 0), std::max(pc.pad.width() * kKhishbaRx, pc.pad.height() * kKhishbaRy));
+        glow.setColorAt(0.0, c::alpha(col, 0.12f + 0.16f * ring));
+        glow.setColorAt(0.8, c::alpha(col, 0.06f + 0.06f * ring));
+        glow.setColorAt(1.0, c::alpha(col, 0.03f));
+        p.setPen(Qt::NoPen);
+        p.setBrush(glow);
+        p.drawPath(skin);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.6f + 0.3f * ring), 2.0 * s));
+        p.drawPath(skin);
+    }
+
+    // The tek's half of the rim and the ka's, parted top and bottom.
+    {
+        const float tek = lit(k::Tek), ka = lit(k::Ka);
+        auto half = [&](bool right) {
+            QPainterPath band = circle(1.0f).subtracted(circle(k::kDumRadius));
+            QPainterPath side;
+            side.addRect(right ? QRectF(at(0, -1.3f), at(1.3f, 1.3f)).normalized() : QRectF(at(-1.3f, -1.3f), at(0, 1.3f)).normalized());
+            return band.intersected(side);
+        };
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.03f + 0.3f * tek));
+        p.drawPath(half(true));
+        p.setBrush(c::alpha(col, 0.03f + 0.3f * ka));
+        p.drawPath(half(false));
+        p.setPen(QPen(c::alpha(col, 0.25f), 1.0 * s, Qt::DotLine));
+        p.drawLine(at(0, -1.0f), at(0, -k::kDumRadius));
+        p.drawLine(at(0, k::kDumRadius), at(0, 1.0f));
+        const QPointF right = at(0.78f, 0), left = at(-0.78f, 0);
+        const QRectF rb(right.x() - 50 * s, right.y() - label * 0.8, 100 * s, label * 1.6);
+        const QRectF lb(left.x() - 50 * s, left.y() - label * 0.8, 100 * s, label * 1.6);
+        c::text(p, rb, QStringLiteral("TEK"), tek > 0.45f ? QColor::fromRgb(c::kInk) : col, label, true, Qt::AlignCenter);
+        c::text(p, lb, QStringLiteral("KA"), ka > 0.45f ? QColor::fromRgb(c::kInk) : col, label, true, Qt::AlignCenter);
+        caption(k::Tek, rb);
+        caption(k::Ka, lb);
+        // A ring running in from the rim where it was struck.
+        if (tek > 0.02f) {
+            p.setPen(QPen(c::alpha(col, 0.7f * tek), 1.5 * s));
+            p.drawPath(circle(1.0f - 0.35f * (1.0f - tek)));
+        }
+        if (ka > 0.02f) {
+            p.setPen(QPen(c::alpha(col, 0.7f * ka), 1.5 * s));
+            p.drawPath(circle(1.0f - 0.35f * (1.0f - ka)));
+        }
+    }
+
+    // The dum, in the middle: a ring running out as it booms.
+    {
+        const float dum = lit(k::Dum);
+        p.setPen(QPen(c::alpha(col, 0.3f + 0.5f * dum), 1.2 * s, Qt::DashLine));
+        p.setBrush(c::alpha(col, 0.04f + 0.3f * dum));
+        p.drawPath(circle(k::kDumRadius));
+        if (dum > 0.02f) {
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(col, 0.7f * dum), 1.5 * s));
+            p.drawPath(circle(k::kDumRadius * (1.0f + 0.7f * (1.0f - dum))));
+        }
+        const QPointF mid = at(0, 0);
+        const QRectF box(mid.x() - 60 * s, mid.y() - label * 0.8, 120 * s, label * 1.6);
+        c::text(p, box, QStringLiteral("DUM"), dum > 0.45f ? QColor::fromRgb(c::kInk) : col, int(label * 1.1), true,
+                Qt::AlignCenter);
+        caption(k::Dum, box);
+    }
+
+    // Fingers lying on the skin, damping it.
+    for (const auto &h : m_holders) {
+        if (!h.used || h.mode != Mode::Rest)
+            continue;
+        const QPointF q = pc.at(h.x, h.y);
+        const double r = (8 + 10 * double(h.pressure)) * s;
+        p.setPen(QPen(c::alpha(col, 0.8f), 1.5 * s));
+        p.setBrush(c::alpha(col, 0.25f));
+        p.drawEllipse(q, r, r);
     }
 }
 

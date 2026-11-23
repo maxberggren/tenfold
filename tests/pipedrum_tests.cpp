@@ -16,6 +16,18 @@ using namespace tf;
 
 namespace {
 
+// The page on the pipes: Left from house (round to the last kit) as many times as it is
+// kits from the end (so kits added after it don't move it).
+std::string toPipes() {
+    std::string s = "page 0 1\n";
+    for (int i = 0; i < drums::KitCount - drums::Pipes; ++i) {
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "key %.3f Left\n", 0.1 + 0.004 * i);
+        s += buf;
+    }
+    return s;
+}
+
 constexpr float kRate = 48000;
 
 template <typename... A>
@@ -530,7 +542,7 @@ private slots:
         // The lowest pipe at the left of the near row, the highest at the
         // right of the far one; anywhere plays the nearest mouth.
         auto struck = [](float x, float y) {
-            const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\ntap 0.5 %1 %2 p=0.7 len=0.05\nend 0.56\n")
+            const auto take = testkit::play(toPipes() + QStringLiteral("tap 0.5 %1 %2 p=0.7 len=0.05\nend 0.56\n")
                                                 .arg(x)
                                                 .arg(y)
                                                 .toStdString());
@@ -546,7 +558,7 @@ private slots:
         QCOMPARE(struck(hi.x, hi.y), 9);
         QCOMPARE(struck(mid.x, mid.y), 5);
         QCOMPARE(struck(0.02f, 0.1f), 0);
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\ntap 0.5 0.095 0.36 p=0.7 len=0.05\nend 2\n");
+        const auto take = testkit::play(toPipes() + "tap 0.5 0.095 0.36 p=0.7 len=0.05\nend 2\n");
         QVERIFY(take.finite());
         QVERIFY(take.rms(0.5, 1.5) > 1e-3);
         QVERIFY(take.peak() < 1.0);
@@ -564,14 +576,14 @@ private slots:
                 x[i] = 0.5f * (t.left[i] + t.right[i]);
             return x;
         };
-        const auto tap = testkit::play(fmt("page 0 1\nkey 0.1 Left\ntap 0.5 %.3f %.3f p=0.7 len=0.14\nend 1.4\n", m.x, m.y));
+        const auto tap = testkit::play(fmt((toPipes() + "tap 0.5 %.3f %.3f p=0.7 len=0.14\nend 1.4\n").c_str(), m.x, m.y));
         const auto y = mono(tap);
         double open = 0, top = -1e9;
         for (double f = 80; f < 400; f += 0.5)
             if (const double l = levelAt(y, 0.6, 0.4, f); l > top)
                 top = l, open = f;
         open = peakHz(y, 0.6, 0.4, open, 10);
-        const auto held = testkit::play(fmt("page 0 1\nkey 0.1 Left\ndown 0.5 1 %.3f %.3f p=0.7\nup 1.6 1\nend 2.4\n", m.x, m.y));
+        const auto held = testkit::play(fmt((toPipes() + "down 0.5 1 %.3f %.3f p=0.7\nup 1.6 1\nend 2.4\n").c_str(), m.x, m.y));
         QVERIFY(held.finite());
         const auto x = mono(held);
         const double closed = peakHz(x, 1.0, 0.5, 0.53 * open, 120);
@@ -585,7 +597,7 @@ private slots:
     void aLoopOfThePipesKeepsThePipes() {
         // Hits carry the kit: a loop of the pipes sounds as pipes after the
         // page has gone back to house.
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\ntap 0.6 0.095 0.36 p=0.7 len=0.05\n"
+        const auto take = testkit::play(toPipes() + "tap 0.6 0.095 0.36 p=0.7 len=0.05\n"
                                         "tap 0.9 0.545 0.74 p=0.7 len=0.05\nkey 1.2 Space\nkey 1.5 Right\nend 6\n");
         QVERIFY(take.finite());
         QVERIFY(take.rms(3, 6) > 1e-4);
@@ -637,7 +649,7 @@ private slots:
     void tenFingersOnThePipesStayInsideBudget() {
         // Ten fingers drumming on the pipes through the whole studio, as the
         // other pages' budgets are measured, then all ten held down.
-        std::string s = "page 0 1\nkey 0.1 Left\n";
+        std::string s = toPipes();
         for (int f = 0; f < 10; ++f) {
             const pipedrum::Mouth m = pipedrum::mouth(f);
             for (int k = 0; k < 12; ++k)

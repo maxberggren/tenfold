@@ -174,6 +174,60 @@ const UduKey kUduKey[PadCount] = {
     {udu::Body, -0.05f, 0.35f},           {udu::Body, 0.3f, -0.45f},        {udu::Neck, 0.15f, 1.25f},
     {udu::Body, 0.55f, 0.2f},
 };
+// The tabla pair draws the two drums over the whole pad, as the player
+// sits at them: the bayan on the left, the dayan on the right, each a
+// circle on the trackpad's glass (16 : 10), their heads in tabla.h's units
+// of each one's radius (x to the right, y away from the player).
+constexpr float kTablaCy = 0.53f;
+constexpr float kTablaCx[2] = {0.775f, 0.28f};  // the dayan, the bayan
+constexpr float kTablaRy[2] = {0.33f, 0.42f};
+constexpr float kTablaAspect = 10.0f / 16.0f;
+float tablaRx(int d) { return kTablaRy[d] * kTablaAspect; }
+
+// Where on the pair a point of the pad is: which drum (the one it is
+// nearer the middle of, for its size), where on its head, and the stroke
+// that lands there: the dayan's kinar (na), maidan (tin) or syahi (tun);
+// on the bayan, the near part where the hand lies flat (ka), past it ge.
+// Off both, the nearer one's rim.
+struct TablaSpot {
+    int drum = 0, stroke = 0;
+    float hx = 0, hy = 0;
+};
+TablaSpot tablaAt(float x, float y) {
+    TablaSpot sp;
+    float best = 1e9f;
+    for (int d = 0; d < 2; ++d) {
+        const float hx = (x - kTablaCx[d]) / tablaRx(d), hy = (y - kTablaCy) / kTablaRy[d];
+        const float r = std::sqrt(hx * hx + hy * hy);
+        if (r < best) {
+            best = r;
+            sp.drum = d;
+            sp.hx = hx;
+            sp.hy = hy;
+        }
+    }
+    if (best > 0.97f) {
+        sp.hx *= 0.97f / best;
+        sp.hy *= 0.97f / best;
+        best = 0.97f;
+    }
+    sp.stroke = tabla::strokeAt(sp.drum, sp.hx, sp.hy);
+    return sp;
+}
+// A stroke's own place on its drum, for a key: na on the kinar, tin on the
+// maidan, tun on the syahi, ge past the bayan's syahi a little off its
+// diameter at the syahi's far edge, ka over the near half.
+void tablaHome(int stroke, float &x, float &y) {
+    float hx, hy;
+    tabla::strokeHome(stroke, hx, hy);
+    const int d = tabla::drumOf(stroke);
+    x = kTablaCx[d] + tablaRx(d) * hx;
+    y = kTablaCy + kTablaRy[d] * hy;
+}
+// The keys on the pair: the left two columns the bayan, the right two the
+// dayan, as the pads lie.
+const int kTablaKey[PadCount] = {tabla::Ge, tabla::Ka, tabla::Tun, tabla::Na, tabla::Ge, tabla::Ka, tabla::Tin, tabla::Na,
+                                 tabla::Ge, tabla::Ge, tabla::Tun, tabla::Tin, tabla::Ge, tabla::Ka, tabla::Na, tabla::Na};
 
 // The keyboard is a second pad: the left hand's three rows mirror the
 // bottom three rows of the trackpad, U I O P are the cymbal row, and the
@@ -586,7 +640,7 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes, the khishba and the udu\n"
+"djembe's call, flams and slap triplets), the hang, the slit drum, the pipes, the khishba, the udu and the tabla pair\n"
             "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
             "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
             "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
@@ -607,6 +661,10 @@ public:
             "the udu kit\tthe pad is a clay pot: tap its side hole for the bass, which glides up an octave as the palm "
             "leaves; hold the finger there and it stays low, slide it off and the pitch rises; rest a finger over the "
             "mouth at the top (or part of it) and the bass falls; tap the body or the neck for the clay's own tones\n"
+            "the tabla pair kit\tthe pad is the dayan (right) and the bayan (left): on the dayan, the kinar at its "
+            "edge is na, the open maidan tin, the black syahi tun; on the bayan, past its syahi is ge, the near part "
+            "ka, the hand flat; a finger left down rests on the skin and damps it (te), and on the bayan slides "
+            "away from you to press the heel in and bend the ge up, an octave at most; REPEAT rolls\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -740,10 +798,11 @@ private:
         int rate = 0, density = 1;
         int lastCell = 0;
         int degree = 0; // the 808's glide, in degrees
-        float bend = 0; // the tabla's bayan: its heel pressed in, semitones (the pipes: the paddle's tilt)
+        float bend = 0; // the tabla's bayan: its heel pressed in, semitones (the pipes: the paddle's tilt; the pair: 0..1)
         bool paddleDown = false; // the pipes: the hand has put the paddle back on
         float restX = 0, restY = 0, restP = 0; // the khishba: where a resting finger last told the engine it lay
         bool rested = false; // the khishba: a flat finger that stayed on the skin from its stroke (a closed stroke)
+        float sx = -1, sy = -1; // the pair: where on its head it last said it was
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
         double seen = 0; // the time of the last frame it was in
@@ -796,8 +855,11 @@ private:
     void paintPipes(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintKhishba(QPainter &p, const PaintContext &pc, const Gen *const *genOn);
 
+    void paintTabla(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+
     // The kits that are one instrument over the whole pad, not a grid.
-    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba || m_kit == Udu; }
+    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba || m_kit == Udu ||
+                                 m_kit == TablaPair; }
 
     // --- where on the pad ------------------------------------------------------
 
@@ -812,6 +874,8 @@ private:
             return khishbaPad(khishba::strokeAt(khishbaX(x), khishbaY(y)));
         if (m_kit == Udu)
             return uduPad(udu::placeAt(potX(x), potY(y)));
+        if (m_kit == TablaPair)
+            return tablaPad(tablaAt(x, y).stroke);
         if (m_kit != Hang)
             return padAt(x, y);
         return hangPad(hang::spotAt(hangX(x), hangY(y)).field);
@@ -856,6 +920,13 @@ private:
             sy = uduSpotY(potY(y));
             return;
         }
+        if (m_kit == TablaPair) {
+            // Where on its head, ±1 across 0..1.
+            const TablaSpot sp = tablaAt(x, y);
+            sx = clampf(0.5f + 0.5f * sp.hx, 0, 1);
+            sy = clampf(0.5f + 0.5f * sp.hy, 0, 1);
+            return;
+        }
         if (m_kit == Hang) {
             const int f = hangField(pad);
             sx = sy = 0.5f;
@@ -876,6 +947,11 @@ private:
         spotOf(pad, x, y, sx, sy);
         hit(pad, vel, sx, sy, t, ctx);
     }
+
+    // Does a finger on this pad stay in the sound while it is down (an On,
+    // its Moves, an Off)? The 808, held and gliding; and on the tabla pair
+    // every finger, which rests on the skin while it stays.
+    bool held(const Holder &h) const { return h.pad == Sub || m_kit == TablaPair; }
 
     // --- holders ---------------------------------------------------------------
 
@@ -1004,7 +1080,7 @@ private:
         h.landing = false;
         h.vel = landingVelocity(h.peak, h.size);
         h.p0 = h.peak;
-        if (h.pad == Sub)
+        if (held(h))
             sendSubOn(h, h.t0, ctx);
         else
             hitAt(h.pad, h.vel, h.x0, h.y0, h.t0, ctx);
@@ -1076,12 +1152,22 @@ private:
             h->x0 = h->x = kKhishbaCx + kKhishbaRx * kx;
             h->y0 = h->y = kKhishbaCy + kKhishbaRy * ky;
         }
+        if (m_kit == TablaPair) {
+            // A key strikes its stroke where a hand would.
+            const int stroke = kTablaKey[h->pad];
+            h->pad = tablaPad(stroke);
+            tablaHome(stroke, h->x0, h->y0);
+            h->x = h->x0;
+            h->y = h->y0;
+        }
         h->vel = accent ? 1.0f : 0.78f;
         h->pressure = accent ? 0.7f : 0.45f;
         h->lastCell = h->pad;
         h->cluster = clusterFor(now);
         h->landing = false;
-        if (h->pad == Sub)
+        if (repeating() && m_kit == TablaPair)
+            instantRoll(*h, ctx);
+        else if (held(*h))
             sendSubOn(*h, now, ctx);
         else if (repeating())
             instantRoll(*h, ctx);
@@ -1142,6 +1228,14 @@ private:
 
     // A finger moves.
     void follow(Holder &h, double now, ControlContext &ctx) {
+        // On the tabla pair a finger down stays where it struck: it slides
+        // on the skin (on the bayan, the heel pushing in) rather than
+        // running across into other strokes.
+        if (m_kit == TablaPair && (h.mode == Mode::Pending || h.mode == Mode::Bass)) {
+            if (!h.landing)
+                moveTabla(h, now, ctx);
+            return;
+        }
         switch (h.mode) {
         case Mode::Pending:
         case Mode::Sweep: {
@@ -1236,6 +1330,36 @@ private:
         }
     }
 
+    // A finger staying on the tabla pair: where it is now, and how far it
+    // has slid away from the player since it struck, which on the bayan is
+    // the heel pushing into the skin and sliding toward the syahi (a third
+    // of the pad's height is all the way, the ge an octave up; the depth
+    // goes as the square root of the slide, so the stretch, and nearly the
+    // bend, grow evenly along it); once it has stayed (Bass), it rests.
+    void moveTabla(Holder &h, double now, ControlContext &ctx) {
+        float sx, sy;
+        spotOf(h.pad, h.x, h.y, sx, sy);
+        const float press =
+            tabla::drumOf(tablaStroke(h.pad)) == tabla::Bayan ? std::sqrt(clampf((h.y - h.y0) / 0.3f, 0, 1)) : 0.0f;
+        const bool resting = h.mode == Mode::Bass;
+        if (std::fabs(press - h.bend) < 0.01f && resting == (h.degree != 0) && std::fabs(sx - h.sx) + std::fabs(sy - h.sy) < 0.01f)
+            return;
+        h.bend = press;
+        h.degree = resting ? 1 : 0;
+        h.sx = sx;
+        h.sy = sy;
+        Command mv;
+        mv.type = Command::Move;
+        mv.id = h.src & 0xFFFFFF;
+        mv.t = now;
+        mv.i[0] = h.pad;
+        mv.i[3] = resting ? 1 : 0;
+        mv.f[0] = press;
+        mv.f[1] = sx;
+        mv.f[2] = sy;
+        ctx.send(mv);
+    }
+
     // A roll's or a groove's finger: up and down climbs the ladder,
     // sideways bends (a roll) or shifts (a groove), twist sets the decay,
     // pressure the loudness.
@@ -1304,7 +1428,7 @@ private:
             sendRest(h, Command::Off, now, ctx);
         if (h.covering)
             sendCover(h, 0, 0, now, ctx);
-        if (h.pad == Sub && (h.mode == Mode::Pending || h.mode == Mode::Bass || h.mode == Mode::Edit ||
+        if (held(h) && (h.mode == Mode::Pending || h.mode == Mode::Bass || h.mode == Mode::Edit ||
                              h.mode == Mode::Loop))
             sendOff(h, now, ctx);
         if (h.mode == Mode::Paddle && h.paddleDown)
@@ -1355,7 +1479,7 @@ private:
                 grooving |= o.used && o.mode == Mode::Groove;
             if (h.landing)
                 sendLanding(h, ctx);
-            if (together >= 2 || grooving) {
+            if ((together >= 2 || grooving) && m_kit != TablaPair) {
                 if (h.rested) {
                     sendRest(h, Command::Off, now, ctx);
                     h.rested = false;
@@ -1366,8 +1490,11 @@ private:
                 h.mode = Mode::Rest;
                 if (!h.rested)
                     sendRest(h, Command::On, now, ctx);
-            } else if (h.pad == Sub) {
+            } else if (held(h)) {
+                // The 808 glides under it; on the pair it rests on the skin.
                 h.mode = Mode::Bass;
+                if (m_kit == TablaPair)
+                    moveTabla(h, now, ctx);
             } else if (m_kit == Pipes) {
                 // A finger that stays keeps the paddle on: the slap bounced
                 // off, and the hand puts it back down and holds it there
@@ -1504,7 +1631,7 @@ private:
     }
 
     void becomeGroove(Holder &h, double now, ControlContext &ctx) {
-        if (h.pad == Sub)
+        if (held(h))
             sendOff(h, now, ctx);
         Gen *g = newGen(h, now, ctx);
         h.mode = Mode::Groove;
@@ -1561,7 +1688,7 @@ private:
     void keepHeld(double now, ControlContext &ctx, bool fresh = false) {
         for (auto &h : m_holders)
             if (h.used && !h.key && h.mode == Mode::Pending) {
-                if (h.pad == Sub)
+                if (held(h))
                     sendOff(h, now, ctx);
                 h.mode = Mode::Kept;
             }
@@ -1585,7 +1712,7 @@ private:
             h.editFrom = m_edit[h.pad];
             rebase(h);
             // It plays on every beat while it's shaped, so the change is heard.
-            if (h.pad != Sub)
+            if (!held(h) || m_kit == TablaPair)
                 if (Gen *g = newGen(h, now, ctx)) {
                     g->preview = true;
                     g->setRoll(0);
@@ -1871,13 +1998,21 @@ private:
         m_padsHit |= 1u << pad;
     }
 
+    // A held finger's sound starts: the 808's note, or a stroke on the
+    // tabla pair that stays (where it landed, as a hit says it).
     void sendSubOn(const Holder &h, double t, ControlContext &ctx) {
         Command c;
         c.type = Command::On;
+        c.flags = m_kit == TablaPair ? Command::Quantize : 0;
         c.id = h.src & 0xFFFFFF;
         c.t = t;
-        c.i[0] = Sub;
+        c.i[0] = h.pad;
         c.f[0] = h.vel;
+        if (m_kit == TablaPair) {
+            spotOf(h.pad, h.x0, h.y0, c.f[1], c.f[2]);
+            ++m_hits;
+            m_padsHit |= 1u << h.pad;
+        }
         stamp(c);
         ctx.send(c);
     }
@@ -1900,7 +2035,7 @@ private:
         c.type = Command::Off;
         c.id = h.src & 0xFFFFFF;
         c.t = t;
-        c.i[0] = Sub;
+        c.i[0] = h.pad;
         ctx.send(c);
     }
 
@@ -2095,7 +2230,10 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         paintKhishba(p, pc, genOn);
     if (m_kit == Udu)
         paintUdu(p, pc, harm, genOn);
-    // The grid of pads (none on the hang, the slit drum, the pipes, the khishba or the udu, each one instrument).
+    if (m_kit == TablaPair)
+        paintTabla(p, pc, harm, genOn);
+    // The grid of pads (none on the hang, the slit drum, the pipes, the khishba, the udu or the tabla pair, each one
+    // instrument).
     for (int pad = 0; pad < (whole() ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
         const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
@@ -2290,9 +2428,10 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 break;
             }
             case Mode::Bass:
-                what = QString::fromUtf8(padName(Sub, m_kit)).toUpper();
-                if (h.bend > 0.05f)
-                    what += QStringLiteral(" +%1").arg(double(h.bend), 0, 'f', 1);
+                what = QString::fromUtf8(padName(m_kit == TablaPair ? h.pad : int(Sub), m_kit)).toUpper();
+                // (on the pair the heel's bend as the bayan sounds it, in semitones)
+                if (const float bend = m_kit == TablaPair ? (h.bend > 0.01f ? data[222] : 0.0f) : h.bend; bend > 0.05f)
+                    what += QStringLiteral(" +%1").arg(double(bend), 0, 'f', 1);
                 break;
             case Mode::Paddle: what = h.bend > 0.02f ? QStringLiteral("OPENING") : QStringLiteral("SHUT"); break;
             case Mode::Sweep: what = QStringLiteral("FILL"); break;
@@ -3019,6 +3158,129 @@ void DrumsControl::paintUdu(QPainter &p, const PaintContext &pc, const Harmony &
     c::text(p, QRectF(at(0.35f, -0.35f).x() - 90 * s, at(0.35f, -0.35f).y() + label * 0.7, 180 * s, small * 1.4),
             QStringLiteral("BASS %1 · HELD %2").arg(note(open), note(open * held)), c::alpha(col, 0.6f), small, true,
             Qt::AlignCenter);
+}
+
+// The tabla pair, drawn as it is played: the bayan on the left, the dayan
+// on the right, seen from above. On the dayan the kinar's ring, the open
+// maidan and the syahi, each lit as it is struck; on the bayan its syahi
+// off centre away from the player, the near part where the hand lies flat
+// for ka, and the bend while the heel presses.
+void DrumsControl::paintTabla(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn) {
+    namespace c = console;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int label = int(std::clamp(15.0 * s, 10.0, 20.0));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    auto at = [&](int d, float hx, float hy) { return pc.at(kTablaCx[d] + tablaRx(d) * hx, kTablaCy + kTablaRy[d] * hy); };
+    auto disc = [&](int d, float cx, float cy, float r) {
+        QPainterPath path;
+        for (int i = 0; i <= 72; ++i) {
+            const float t = kTwoPi * float(i) / 72.0f;
+            const QPointF q = at(d, cx + r * std::cos(t), cy + r * std::sin(t));
+            if (i == 0)
+                path.moveTo(q);
+            else
+                path.lineTo(q);
+        }
+        path.closeSubpath();
+        return path;
+    };
+    auto lit = [&](int stroke) {
+        const int pad = tablaPad(stroke);
+        return std::max(data[pad], 0.6f * data[16 + pad]);
+    };
+    const int playing = pc.view->playing;
+    auto out = [&](int stroke) {
+        return playing >= 0 && playing < kClipSlots && (m_muted[playing] >> tablaPad(stroke) & 1u);
+    };
+    auto word = [&](int d, float hx, float hy, const QString &w, int stroke, bool big) {
+        const QPointF q = at(d, hx, hy);
+        const QRectF box(q.x() - 60 * s, q.y() - label * 0.8, 120 * s, label * 1.6);
+        const float l = lit(stroke);
+        c::text(p, box, w, l > 0.45f ? QColor::fromRgb(c::kInk) : c::alpha(col, 0.55f + 0.45f * l), big ? label : small,
+                true, Qt::AlignCenter);
+        if (const Gen *g = genOn[tablaPad(stroke)])
+            c::text(p, box.translated(0, label * 1.1), QString::fromUtf8(g->groove ? densityName(g->density) : rateName(g->rate)),
+                    c::alpha(col, 0.7f), small, true, Qt::AlignCenter);
+        if (out(stroke)) {
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            p.drawLine(box.bottomLeft(), box.topRight());
+        }
+    };
+
+    for (int d = 0; d < 2; ++d) {
+        const auto &dsn = tabla::built(d).design;
+        const float ring = std::min(1.0f, data[220 + (d == tabla::Dayan ? 0 : 1)]);
+        const QPainterPath head = disc(d, 0, 0, 1.0f);
+        // The head, brighter while it rings, and the shell's rim round it.
+        QRadialGradient glow(at(d, 0, 0), std::max(pc.pad.width() * tablaRx(d), pc.pad.height() * kTablaRy[d]));
+        glow.setColorAt(0.0, c::alpha(col, 0.08f + 0.12f * ring));
+        glow.setColorAt(1.0, c::alpha(col, 0.03f + 0.04f * ring));
+        p.setPen(Qt::NoPen);
+        p.setBrush(glow);
+        p.drawPath(head);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.55f + 0.35f * ring), 2.5 * s));
+        p.drawPath(head);
+        // The kinar: a ring of skin laid over the edge (the dayan's na).
+        {
+            QPainterPath band = head.subtracted(disc(d, 0, 0, float(dsn.kinarFrom)));
+            p.setPen(Qt::NoPen);
+            p.setBrush(c::alpha(col, 0.07f + (d == tabla::Dayan ? 0.35f * lit(tabla::Na) : 0.0f)));
+            p.drawPath(band);
+        }
+        // The syahi: the black paste, layered.
+        const float sx = d == tabla::Bayan ? 0.0f : 0.0f, sy = d == tabla::Bayan ? float(-dsn.offset) : 0.0f;
+        const float r0 = float(dsn.syahi);
+        for (int layer = 0; layer < 3; ++layer) {
+            const float r = r0 * (1.0f - 0.22f * float(layer));
+            p.setPen(QPen(c::alpha(col, 0.35f), 1.0 * s));
+            p.setBrush(c::alpha(col, 0.10f + 0.07f * float(layer) +
+                                         0.3f * (d == tabla::Dayan ? lit(tabla::Tun) : lit(tabla::Ge))));
+            p.drawPath(disc(d, sx, sy, r));
+        }
+        if (d == tabla::Dayan) {
+            // The maidan between them, lit by tin.
+            const float l = lit(tabla::Tin);
+            if (l > 0.02f) {
+                p.setPen(QPen(c::alpha(col, 0.7f * l), 1.5 * s));
+                p.setBrush(Qt::NoBrush);
+                p.drawPath(disc(d, 0, 0, 0.5f * float(dsn.kinarFrom + dsn.syahi) * (1.0f + 0.2f * (1.0f - l))));
+            }
+            word(d, 0.0f, 0.0f, QStringLiteral("TUN"), tabla::Tun, true);
+            word(d, 0.0f, 0.5f * float(dsn.kinarFrom + dsn.syahi), QStringLiteral("TIN"), tabla::Tin, true);
+            word(d, 0.0f, -0.5f * float(1.0 + dsn.kinarFrom), QStringLiteral("NA"), tabla::Na, true);
+            // Its Sa.
+            const int m = int(std::lround(harm.midi(0, drums::octaveNear(harm, 290.0f))));
+            const QString note = QStringLiteral("DAYAN · SA ") + QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)) +
+                                 QString::number(m / 12 - 1);
+            const QPointF q = at(d, 0.0f, 1.0f);
+            c::text(p, QRectF(q.x() - 100 * s, q.y() - label * 1.8, 200 * s, label * 1.4), note, c::alpha(col, 0.6f), small,
+                    true, Qt::AlignCenter);
+        } else {
+            // Where the hand lies flat for ka, the heel's side.
+            const float l = lit(tabla::Ka);
+            QPainterPath near = head.intersected([&] {
+                QPainterPath r;
+                r.addRect(QRectF(at(d, -1.2f, -1.2f), at(d, 1.2f, -0.45f)).normalized());
+                return r;
+            }());
+            p.setPen(QPen(c::alpha(col, 0.3f), 1.0 * s, Qt::DotLine));
+            p.setBrush(c::alpha(col, 0.04f + 0.35f * l));
+            p.drawPath(near);
+            word(d, 0.0f, float(-dsn.offset), QStringLiteral("GE"), tabla::Ge, true);
+            word(d, 0.0f, -0.72f, QStringLiteral("KA"), tabla::Ka, true);
+            // The heel's bend, while it presses.
+            const float bend = data[222];
+            QString text = QStringLiteral("BAYAN");
+            if (bend > 0.05f)
+                text += QStringLiteral(" · GE +%1").arg(double(bend), 0, 'f', 1);
+            const QPointF q = at(d, 0.0f, 1.0f);
+            c::text(p, QRectF(q.x() - 100 * s, q.y() - label * 1.8, 200 * s, label * 1.4), text,
+                    c::alpha(col, bend > 0.05f ? 0.95f : 0.6f), small, true, Qt::AlignCenter);
+        }
+    }
 }
 
 PartSpec makeDrums() {

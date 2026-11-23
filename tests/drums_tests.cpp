@@ -1827,7 +1827,10 @@ private slots:
             QCOMPARE(int(take.view.parts[0].data[34]), kit);
             QVERIFY2(take.finite(), drums::kitName(kit));
             QVERIFY2(take.peak() < 1.0, qPrintable(QStringLiteral("%1: %2").arg(drums::kitName(kit)).arg(take.peak())));
-            QVERIFY2(take.rms(1.5, 4.0) > 0.01, drums::kitName(kit));
+            // (On the tabla pair a held hand rests on the skins: it is the
+            // taps that sound.)
+            const bool pair = kit == drums::TablaPair;
+            QVERIFY2(take.rms(pair ? 4.2 : 1.5, pair ? 6.2 : 4.0) > 0.01, drums::kitName(kit));
         }
     }
 

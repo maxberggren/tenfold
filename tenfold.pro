@@ -35,6 +35,7 @@ HEADERS += \
     src/pipedrum.h \
     src/khishba.h \
     src/udu.h \
+    src/tabla.h \
     src/offline.h \
     src/part.h \
     src/padprompt.h \

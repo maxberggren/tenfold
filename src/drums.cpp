@@ -1856,12 +1856,12 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                                       .arg(barsText(m_keep.length).toUpper())
                                       .arg(m_keep.slot + 1)
                                       .arg(left, 0, 'f', 1);
-        c::tag(p, QPointF(pc.pad.center().x(), c::edge(pc)), msg,
+        c::tag(p, QPointF(pc.pad.center().x(), c::tabY(pc)), msg,
                std::fmod(pc.time, 0.5) < 0.25 ? col : c::alpha(col, 0.6f), 13, true);
     }
 
     if (pc.view->recording >= 0 && !m_keep.active)
-        c::tag(p, QPointF(pc.pad.center().x(), c::edge(pc)),
+        c::tag(p, QPointF(pc.pad.center().x(), c::tabY(pc)),
                pc.view->takeBeats > 0
                    ? QStringLiteral("%1 INTO SLOT %2 IN %3 BEATS · SPACE CALLS IT OFF")
                          .arg(barsText(pc.view->takeBeats).toUpper())

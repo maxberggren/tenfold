@@ -3699,7 +3699,7 @@ public:
         c::beats(p, pc, pc.color);
         // Space's take, while it waits for its bar line, on the pad's top edge.
         if (pc.view->recording >= 0)
-            c::tag(p, QPointF(pc.pad.center().x(), c::edge(pc)),
+            c::tag(p, QPointF(pc.pad.center().x(), c::tabY(pc)),
                    QStringLiteral("LOOP TAKE · %1 · SPACE CALLS IT OFF").arg(takeText(*pc.view, pc.beat)),
                    std::fmod(pc.time, 0.5) < 0.25 ? c::red() : c::alpha(c::red(), 0.7f), 12, true);
         paintStrip(p, pc);
@@ -4677,7 +4677,7 @@ void ArpControl::paintChips(QPainter &p, const PaintContext &pc) {
     const QColor col = pc.color;
     for (int i = 0; i < PatternCount; ++i) {
         const float x0 = kSplit * float(i) / PatternCount, x1 = kSplit * float(i + 1) / PatternCount;
-        const QRectF r = pc.rect(x0, kChipsTop, x1, 1.0f).adjusted(4, 12, -4, -5);
+        const QRectF r = pc.rect(x0, kChipsTop, x1, 1.0f).adjusted(4, 4, -4, -5);
         const bool lit = m_s.pattern == i;
         if (lit) {
             p.fillRect(r, col);
@@ -4792,7 +4792,7 @@ void ArpControl::paintPads(QPainter &p, const PaintContext &pc) {
     tuning.set(pc.studio->root, pc.studio->family, pc.studio->brightness, pc.studio->just);
     for (int pad = 0; pad < PadCount; ++pad) {
         const QRectF a = padArea(pad);
-        const QRectF r = pc.rect(float(a.left()), float(a.top()), float(a.right()), float(a.bottom())).adjusted(6, 12, -6, -6);
+        const QRectF r = pc.rect(float(a.left()), float(a.top()), float(a.right()), float(a.bottom())).adjusted(6, 6, -6, -6);
         bool touched = false, shaping = false;
         for (const auto &k : m_knobs)
             if (k.touch >= 0 && k.pad == pad) {

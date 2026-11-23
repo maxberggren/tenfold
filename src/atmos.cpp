@@ -5699,7 +5699,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
     {
         const int px = std::max(10, int(12 * pc.scale));
         const QFont fnt = c::font(px, true);
-        qreal x = pc.pad.left() + 12, y = pc.pad.top() + 16;
+        qreal x = pc.pad.left() + 12, y = pc.pad.top() + 11;
         // Readouts run left to right and wrap onto a second row on a narrow pad.
         auto room = [&](qreal w) {
             if (x + w > pc.pad.right() - 10) {

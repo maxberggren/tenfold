@@ -660,7 +660,7 @@ void VisualPage::paint(QPainter &p, const PaintContext &pc) {
     const QFont f = console::font(13, true);
     p.setFont(f);
     const QString legend = QStringLiteral("VISUAL");
-    const QRectF lr(pc.pad.left() + 16, console::edge(pc) - 9, console::textWidth(f, legend) + 16, 18);
+    const QRectF lr(pc.pad.left() + 16, console::tabY(pc) - 9, console::textWidth(f, legend) + 16, 18);
     p.fillRect(lr, QColor(0, 0, 0));
     p.setPen(pc.color);
     console::drawText(p, lr, Qt::AlignCenter, legend);

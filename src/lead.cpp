@@ -3892,7 +3892,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
     {
         const QFont legend = c::font(13, true);
         const qreal lw = console::textWidth(legend, QStringLiteral("Lead")) + 16;
-        const QRectF lr(pc.pad.left() + 16, c::edge(pc) - 9, lw, 18);
+        const QRectF lr(pc.pad.left() + 16, c::tabY(pc) - 9, lw, 18);
         p.fillRect(lr, QColor(0, 0, 0));
         c::text(p, lr, QStringLiteral("Lead"), col, 13, true, Qt::AlignCenter);
         c::variation(p, pc, QString::fromUtf8(sound(m_sound).name));

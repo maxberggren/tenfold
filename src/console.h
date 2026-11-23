@@ -62,10 +62,13 @@ void pad(QPainter &p, const PaintContext &pc, const QString &legend);
 // A lit tag: a filled box with dark ink, its left edge at x (or centred
 // on it), its middle at y. Returns where it went.
 QRectF tag(QPainter &p, QPointF at, const QString &text, QColor color, int px = 13, bool centred = false);
-// The pad's frame runs this far above the pad itself: a band of its own
-// for the legend and the tags cut into the top edge, clear of the content.
-constexpr qreal kHead = 12;
+// The pad's frame runs this far above the pad itself, the same gap as at
+// its sides; the legend and the tags sit on the top edge as tabs, mostly
+// above it, so they stay clear of the content.
+constexpr qreal kHead = 5;
 inline qreal edge(const PaintContext &pc) { return pc.pad.top() - kHead; }
+// Where a tab on that edge is centred: a little above the line.
+inline qreal tabY(const PaintContext &pc) { return edge(pc) - 4; }
 // The page's active variation, cut into the pad's top edge a little after
 // its legend (INSTRUMENT ── VARIATION); returns where the next tag goes.
 qreal variation(QPainter &p, const PaintContext &pc, const QString &name);

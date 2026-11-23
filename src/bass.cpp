@@ -1543,7 +1543,7 @@ void Control::paintRail(QPainter &p, const PaintContext &pc) {
     // LOOP: the take of the moment, whoever started it (Space, this button
     // or Enter), from the studio's own view of it.
     {
-        const QRectF r = pc.rect(0, kField, kLoopW, 1.0f).adjusted(6, 14, -6, -6);
+        const QRectF r = pc.rect(0, kField, kLoopW, 1.0f).adjusted(6, 6, -6, -6);
         const int taking = pc.view->recording;
         QString title = QStringLiteral("LOOP"), body = QStringLiteral("SPACE");
         QColor col = pc.color;

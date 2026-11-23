@@ -30,6 +30,7 @@ HEADERS += \
     src/electro.h \
     src/fx.h \
     src/hang.h \
+    src/slitdrum.h \
     src/offline.h \
     src/part.h \
     src/padprompt.h \

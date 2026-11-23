@@ -115,7 +115,9 @@
 // The last kit is not a kit: the whole pad becomes a hang (hang.h), one
 // instrument of steel and air simulated as it is built, its ding on the
 // key's root and its eight fields up the key's scale, played where and as
-// hard as the fingers land.
+// hard as the fingers land. After it, a slit drum (slitdrum.h): the pad is
+// a wooden tongue box seen from above, its eight tongues up the key's
+// scale, struck where and as hard as the mallet lands.
 
 #include <algorithm>
 #include <array>
@@ -126,6 +128,7 @@
 #include "dsp.h"
 #include "electro.h"
 #include "hang.h"
+#include "slitdrum.h"
 #include "part.h"
 
 namespace tf::drums {
@@ -144,13 +147,13 @@ enum Pad : int {
 // dusty sampler's boom bap, jungle's chopped breaks, an 80s LinnDrum with its
 // gated snare, the Roland CR-78 rhythm box, and a jazz kit played with
 // brushes; then five from the world's other music: amapiano, tabla,
-// gamelan, a Game Boy's chiptune and a djembe ensemble; and the hang, the
-// whole pad one instrument. Songs save a kit by
+// gamelan, a Game Boy's chiptune and a djembe ensemble; and the hang and
+// the slit drum, the whole pad one instrument. Songs save a kit by
 // its name (kitName), and a clip's hits carry the index, so new kits go at
 // the end and no kit is ever renamed.
 enum Kit : int {
     House, Techno, Trap, Breaks, Garage, BoomBap, Jungle, Linn, Cr78, Brushes,
-    Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, KitCount
+    Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, SlitDrum, KitCount
 };
 
 // The hang's ding, eight fields and gu are pads of their own: the ones
@@ -176,6 +179,25 @@ inline int hangField(int pad) {
 }
 inline bool isHangGu(int pad) { return hangField(pad) == hang::kGu; }
 
+// The slit drum's eight tongues and its box are pads the same way: tongue
+// 0–7 lowest to highest, then the box.
+inline constexpr int kSlitPads[slit::kTongues + 1] = {Snare, Clap, Rim, Shaker, TomLo, TomMid, TomHi, Perc, Ride};
+inline int slitPad(int tongue) { return kSlitPads[std::clamp(tongue, 0, slit::kTongues)]; }
+inline int slitTongue(int pad) {
+    for (int t = 0; t <= slit::kTongues; ++t)
+        if (kSlitPads[t] == pad)
+            return t;
+    switch (pad) {
+    case Kick: return 0;
+    case Sub: case Crash: return slit::kFrame;
+    case Hat: return 3;
+    case Open: return 5;
+    case Bell: return 6;
+    default: return 7;
+    }
+}
+inline bool isSlitFrame(int pad) { return slitTongue(pad) == slit::kFrame; }
+
 inline const char *padName(int pad) {
     static const char *names[PadCount] = {"kick", "snare", "clap", "hat", "808",   "rim",  "shaker", "open",
                                           "tom lo", "tom mid", "tom hi", "conga", "crash", "ride", "bell", "zap"};
@@ -189,6 +211,11 @@ inline const char *padName(int pad, int kit) {
     // the tabla (a bol), a piece of the gamelan, a drum or rattle of the
     // djembe's ensemble; amapiano keeps the kit's kick, hats and cymbals.
     pad = std::clamp(pad, 0, PadCount - 1);
+    if (kit == SlitDrum) {
+        static const char *names[slit::kTongues + 1] = {"tongue 1", "tongue 2", "tongue 3", "tongue 4", "tongue 5",
+                                                        "tongue 6", "tongue 7", "tongue 8", "box"};
+        return names[slitTongue(pad)];
+    }
     if (kit == Hang) {
         static const char *names[hang::kFields + 1] = {"ding",   "field 1", "field 2", "field 3", "field 4",
                                                        "field 5", "field 6", "field 7", "field 8", "gu"};
@@ -273,7 +300,7 @@ inline const char *kitName(int kit) {
     static const char *names[KitCount] = {"house",    "techno", "trap",    "breaks",   "garage",
                                           "boom bap", "jungle", "linn",    "cr-78",    "brushes",
                                           "amapiano", "tabla",  "gamelan", "chiptune", "djembe",
-                                          "hang"};
+                                          "hang",     "slit drum"};
     return names[std::clamp(kit, 0, KitCount - 1)];
 }
 
@@ -293,6 +320,7 @@ inline const char *kitCharacter(int kit, bool pelog) {
     case Chip: return "dmg";
     case Djembe: return "kuku";
     case Hang: return "steel and air";
+    case SlitDrum: return "wood and air";
     default: return "";
     }
 }
@@ -301,7 +329,7 @@ inline const char *kitCharacter(int kit, bool pelog) {
 // shuffle. The brushes' own parts are written in triplets; this swings what
 // they roll in sixteenths.
 inline float kitSwing(int kit) {
-    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f, 0.6f, 0.54f, 0.5f, 0.5f, 0.56f, 0.54f};
+    static const float swing[KitCount] = {0.54f, 0.5f, 0.5f, 0.56f, 0.62f, 0.6f, 0.52f, 0.5f, 0.5f, 0.66f, 0.6f, 0.54f, 0.5f, 0.5f, 0.56f, 0.54f, 0.54f};
     return swing[std::clamp(kit, 0, KitCount - 1)];
 }
 
@@ -310,7 +338,7 @@ inline float kitSwing(int kit) {
 // kit never jumps the mix. Every hit carries its kit, so a loop keeps its
 // level too.
 inline float kitTrim(int kit) {
-    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f, 0.0f};
+    static const float db[KitCount] = {0.0f, -2.2f, 2.6f, 0.0f, 2.4f, 2.8f, 3.4f, -0.4f, 2.2f, 2.7f, 0.0f, 1.6f, 3.0f, 5.2f, 1.5f, 0.0f, -5.4f};
     static const auto gain = [] {
         std::array<float, KitCount> g{};
         for (int k = 0; k < KitCount; ++k)
@@ -325,23 +353,23 @@ inline float kitTrim(int kit) {
 inline float displayDecay(int pad, int kit) {
     kit = std::clamp(kit, 0, KitCount - 1);
     static const float table[PadCount][KitCount] = {
-        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, amapiano, tabla, gamelan, chiptune, djembe, hang
-        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f, 0.24f, 0.5f, 0.22f, 0.12f, 0.22f, 2.0f}, // kick
-        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f, 0.03f, 0.4f, 0.08f, 0.09f, 0.08f, 2.0f}, // snare
-        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f, 0.15f, 0.014f, 0.25f, 0.08f, 0.16f, 2.0f}, // clap
-        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f, 0.03f, 0.025f, 0.1f, 0.025f, 0.02f, 2.0f}, // hat
-        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f, 0.8f, 0.7f, 1.4f, 1.0f, 0.45f, 2.0f}, // 808
-        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f, 0.01f, 0.07f, 0.07f, 0.015f, 0.35f, 2.0f}, // rim
-        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f, 0.04f, 0.06f, 2.2f, 0.04f, 0.06f, 2.0f}, // shaker
-        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f, 0.26f, 0.3f, 2.4f, 0.2f, 0.1f, 2.0f}, // open
-        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f}, // tom lo
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f}, // tom mid
-        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f}, // tom hi
-        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f, 0.09f, 0.7f, 0.6f, 0.06f, 0.28f, 2.0f}, // hand drum
-        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f, 1.0f, 1.7f, 2.2f, 0.6f, 0.3f, 2.0f}, // crash
-        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f, 0.8f, 1.0f, 0.25f, 0.3f, 0.6f, 2.0f}, // ride
-        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f, 0.55f, 1.1f, 1.1f, 0.35f, 0.22f, 2.0f}, // bell
-        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f, 0.9f, 0.6f, 0.4f, 0.15f, 1.1f, 2.0f}, // zap
+        // house, techno, trap, breaks, garage, boom bap, jungle, linn, cr-78, brushes, amapiano, tabla, gamelan, chiptune, djembe, hang, slit drum
+        {0.15f, 0.21f, 0.16f, 0.09f, 0.11f, 0.12f, 0.085f, 0.19f, 0.09f, 0.2f, 0.24f, 0.5f, 0.22f, 0.12f, 0.22f, 2.0f, 1.0f}, // kick
+        {0.085f, 0.06f, 0.07f, 0.13f, 0.07f, 0.1f, 0.075f, 0.2f, 0.06f, 0.12f, 0.03f, 0.4f, 0.08f, 0.09f, 0.08f, 2.0f, 1.0f}, // snare
+        {0.11f, 0.08f, 0.09f, 0.14f, 0.1f, 0.05f, 0.08f, 0.2f, 0.12f, 0.25f, 0.15f, 0.014f, 0.25f, 0.08f, 0.16f, 2.0f, 1.0f}, // clap
+        {0.034f, 0.028f, 0.018f, 0.045f, 0.03f, 0.04f, 0.022f, 0.04f, 0.025f, 0.05f, 0.03f, 0.025f, 0.1f, 0.025f, 0.02f, 2.0f, 1.0f}, // hat
+        {1.0f, 1.2f, 2.6f, 0.8f, 1.1f, 0.9f, 1.6f, 0.7f, 0.5f, 0.45f, 0.8f, 0.7f, 1.4f, 1.0f, 0.45f, 2.0f, 1.0f}, // 808
+        {0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.011f, 0.02f, 0.01f, 0.07f, 0.07f, 0.015f, 0.35f, 2.0f, 1.0f}, // rim
+        {0.045f, 0.045f, 0.03f, 0.045f, 0.045f, 0.045f, 0.035f, 0.045f, 0.03f, 0.06f, 0.04f, 0.06f, 2.2f, 0.04f, 0.06f, 2.0f, 1.0f}, // shaker
+        {0.24f, 0.2f, 0.17f, 0.34f, 0.22f, 0.22f, 0.2f, 0.3f, 0.12f, 0.4f, 0.26f, 0.3f, 2.4f, 0.2f, 0.1f, 2.0f, 1.0f}, // open
+        {0.23f, 0.23f, 0.35f, 0.17f, 0.23f, 0.17f, 0.13f, 0.36f, 0.12f, 0.3f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f}, // tom lo
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.1f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f}, // tom mid
+        {0.2f, 0.2f, 0.3f, 0.15f, 0.2f, 0.15f, 0.11f, 0.32f, 0.09f, 0.26f, 0.13f, 0.4f, 1.1f, 0.15f, 0.32f, 2.0f, 1.0f}, // tom hi
+        {0.13f, 0.055f, 0.07f, 0.11f, 0.13f, 0.13f, 0.2f, 0.13f, 0.06f, 0.7f, 0.09f, 0.7f, 0.6f, 0.06f, 0.28f, 2.0f, 1.0f}, // hand drum
+        {1.1f, 1.1f, 0.8f, 1.3f, 1.1f, 0.7f, 0.85f, 1.25f, 0.6f, 1.35f, 1.0f, 1.7f, 2.2f, 0.6f, 0.3f, 2.0f, 1.0f}, // crash
+        {0.8f, 0.8f, 0.56f, 0.8f, 0.8f, 0.6f, 0.8f, 0.9f, 0.4f, 1.4f, 0.8f, 1.0f, 0.25f, 0.3f, 0.6f, 2.0f, 1.0f}, // ride
+        {0.15f, 0.09f, 0.15f, 0.15f, 0.15f, 0.15f, 0.15f, 0.12f, 0.12f, 1.2f, 0.55f, 1.1f, 1.1f, 0.35f, 0.22f, 2.0f, 1.0f}, // bell
+        {0.13f, 0.13f, 0.13f, 0.13f, 0.13f, 0.12f, 0.35f, 0.33f, 0.03f, 0.13f, 0.9f, 0.6f, 0.4f, 0.15f, 1.1f, 2.0f, 1.0f}, // zap
     };
     return table[std::clamp(pad, 0, PadCount - 1)][kit];
 }
@@ -353,7 +381,10 @@ inline bool tonal(int pad) {
 }
 // On the hang every field is: a degree more is the next field up (the gu
 // has no pitch to move).
-inline bool tonal(int pad, int kit) { return kit == Hang ? !isHangGu(pad) : tonal(pad); }
+// On the slit drum every tongue is (the box has no pitch).
+inline bool tonal(int pad, int kit) {
+    return kit == Hang ? !isHangGu(pad) : kit == SlitDrum ? !isSlitFrame(pad) : tonal(pad);
+}
 
 // --- the command protocol ---------------------------------------------------
 //
@@ -486,6 +517,14 @@ inline void hangTuning(const Harmony &h, float *hz) {
     hz[0] = midiToHz(h.midi(0, oct));
     for (int f = 1; f < hang::kFields; ++f)
         hz[f] = midiToHz(h.midi(first + f - 1, oct));
+}
+
+// The slit drum's tuning in a key: its eight tongues on eight degrees of
+// the scale up from the root near G3, as a maker tunes a box to a scale.
+inline void slitTuning(const Harmony &h, float *hz) {
+    const int oct = octaveNear(h, slit::Physics::kRootHz);
+    for (int t = 0; t < slit::kTongues; ++t)
+        hz[t] = midiToHz(h.midi(t, oct));
 }
 
 // --- grooves ----------------------------------------------------------------
@@ -746,8 +785,8 @@ inline const char *part(int pad, int kit, int density) {
         none, // and the chiptune's bass jumps octaves (below)
         none, // the balafon plays a melody of its own (below)
     };
-    if (kit == Hang)
-        return nullptr; // the hang's grooves are melodies (groovePattern)
+    if (kit == Hang || kit == SlitDrum)
+        return nullptr; // the hang's and the slit drum's grooves are melodies (groovePattern)
     switch (pad) {
     case Kick: return kick[kit].p[d];
     case Snare: return snare[kit].p[d];
@@ -1017,6 +1056,9 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
     // The hang's fields interlock round the instrument, the ding on the one.
     if (kit == Hang)
         rot = (hangField(pad) * 5) % 16;
+    // The slit drum's tongues answer each other across the box.
+    if (kit == SlitDrum)
+        rot = (slitTongue(pad) * 3) % 16;
     // A melody of chord tones for the tuned ones: root, fifth, third, octave.
     // The brushes' run on the triplet grid, twelve to the bar, so they
     // swing with the rest of the kit.
@@ -1027,7 +1069,9 @@ inline Pattern groovePattern(int pad, int kit, int density, int shift) {
     int n = 0;
     for (int s = 0; s < steps; ++s)
         if (euclid(pulses[density], steps, rot + shift, s)) {
-            const bool tuned = kit == Hang ? !isHangGu(pad) : pad == Perc || pad == Bell || pad == Zap;
+            const bool tuned = kit == Hang       ? !isHangGu(pad)
+                               : kit == SlitDrum ? !isSlitFrame(pad)
+                                                 : pad == Perc || pad == Bell || pad == Zap;
             p.add(triplets ? detail::tripletTick(s) : s * 6, n == 0 ? 1.0f : 0.75f, tuned ? walk[n % 4] : 0);
             ++n;
         }
@@ -4395,6 +4439,7 @@ public:
         m_rate = rate;
         m_room.init(rate);
         m_hang.init(rate);
+        m_slit.init(rate);
         applyKit();
     }
 
@@ -4483,6 +4528,20 @@ public:
                 room[i] += kHangRoom * (hl[i] + hr[i]);
             }
         }
+        if (m_slit.active()) {
+            float hz[slit::kTongues];
+            slitTuning(ctx.harmony(), hz);
+            m_slit.tune(hz);
+            float sl[kBlock] = {}, sr[kBlock] = {};
+            m_slit.render(sl, sr, n);
+            // (The drum is physics at a metre; the trim sits it with the kits.)
+            const float trim = kitTrim(SlitDrum);
+            for (int i = 0; i < n; ++i) {
+                l[i] += trim * sl[i];
+                r[i] += trim * sr[i];
+                room[i] += kSlitRoom * trim * (sl[i] + sr[i]);
+            }
+        }
         // The trim sits the kit where the studio's master expects a part,
         // with room for the bass and the chords: a full-velocity kick peaks
         // around −10 dBFS before the bus glue.
@@ -4519,6 +4578,10 @@ public:
             m_hang.silence();
         else
             m_hang.mute(0.04f);
+        if (hard)
+            m_slit.silence();
+        else
+            m_slit.mute(0.04f);
         for (auto &v : m_voices) {
             if (hard)
                 v.active = false;
@@ -4533,7 +4596,7 @@ public:
 
     // data[0..15] how hard each pad was just hit (live), [16..31] the same
     // for hits a clip played, [32] the 808's level, [33] its degree, [34]
-    // the kit, [35] voices sounding, [36] how loud the hang rings, [40 + 3 * pad ..] each pad's edit
+    // the kit, [35] voices sounding, [36] how loud the hang rings, [37] the slit drum, [40 + 3 * pad ..] each pad's edit
     // (tune, decay, tone) as the engine has it.
     void publish(float *data) override {
         for (int p = 0; p < PadCount; ++p) {
@@ -4545,6 +4608,7 @@ public:
         data[34] = float(m_kit);
         data[35] = float(voices());
         data[36] = m_hang.level();
+        data[37] = m_slit.level();
         for (int p = 0; p < PadCount; ++p) {
             data[40 + 3 * p] = m_edit[p].tune;
             data[41 + 3 * p] = m_edit[p].decay;
@@ -4557,7 +4621,7 @@ public:
     bool layersDropDoubles() const override { return true; }
 
     int voices() const override {
-        int n = (m_sub.active ? 1 : 0) + (m_hang.active() ? 1 : 0);
+        int n = (m_sub.active ? 1 : 0) + (m_hang.active() ? 1 : 0) + (m_slit.active() ? 1 : 0);
         for (auto &v : m_voices)
             n += v.active;
         return n;
@@ -4567,6 +4631,10 @@ public:
     void strike(const Strike &s, const Harmony &h) {
         if ((s.kit >= 0 ? s.kit : m_kit) == Hang) {
             strikeHang(s, h, 0);
+            return;
+        }
+        if ((s.kit >= 0 ? s.kit : m_kit) == SlitDrum) {
+            strikeSlit(s, h, 0);
             return;
         }
         if (s.pad == Sub) {
@@ -4580,6 +4648,8 @@ public:
     int kit() const { return m_kit; }
     const hang::Body &hangBody() const { return m_hang; }
     hang::Body &hangBody() { return m_hang; }
+    const slit::Body &slitBody() const { return m_slit; }
+    slit::Body &slitBody() { return m_slit; }
 
 private:
     struct Pending {
@@ -4604,8 +4674,9 @@ private:
     float pumpOf(const Command &c) const {
         if (c.type != Hit && c.type != Command::On)
             return 0;
-        if ((c.i[2] > 0 ? c.i[2] - 1 : m_kit) == Hang)
-            return 0; // the hang rings under the mix, it doesn't push it
+        const int kit = c.i[2] > 0 ? c.i[2] - 1 : m_kit;
+        if (kit == Hang || kit == SlitDrum)
+            return 0; // the hang and the slit drum ring under the mix, they don't push it
         if (c.i[0] == Kick)
             return clampf(0.35f + 0.75f * c.f[0], 0.0f, 1.0f);
         if (c.i[0] == Sub)
@@ -4629,7 +4700,9 @@ private:
             s.decay = c.f[4];
             s.tone = c.f[6];
             s.kit = c.i[2] > 0 ? std::clamp(c.i[2] - 1, 0, KitCount - 1) : m_kit;
-            if (s.kit == Hang) {
+            if (s.kit == SlitDrum) {
+                strikeSlit(s, ctx.harmony(), offset);
+            } else if (s.kit == Hang) {
                 strikeHang(s, ctx.harmony(), offset);
             } else if (pad == Sub) {
                 // A hit on the 808 (a groove's) lets go by itself; an On is
@@ -4755,11 +4828,30 @@ private:
         m_hang.strike(field, s.vel, u, w, clampf(s.tone, -1, 1), offset);
     }
 
+    // A hit on the slit drum: which tongue (a degree more is the next one
+    // up), where on it (the page sends along it from the root, 0, to the
+    // tip, 1, and across it; on the box, across the top), how hard, the
+    // mallet's hardness, and how long that tongue rings.
+    void strikeSlit(const Strike &s, const Harmony &h, int offset) {
+        float hz[slit::kTongues];
+        slitTuning(h, hz);
+        m_slit.tune(hz);
+        int t = slitTongue(s.pad);
+        if (t == slit::kFrame) {
+            m_slit.strike(t, s.vel, clampf(s.sx, 0, 1) * 2.0f - 1.0f, clampf(s.sy, 0, 1) * 2.0f - 1.0f,
+                          clampf(s.tone, -1, 1), offset);
+            return;
+        }
+        t = std::clamp(t + s.degrees, 0, slit::kTongues - 1);
+        m_slit.setDecay(t, s.decay);
+        m_slit.strike(t, s.vel, clampf(s.sx, 0, 1), clampf(s.sy, 0, 1) * 2.0f - 1.0f, clampf(s.tone, -1, 1), offset);
+    }
+
     void applyKit() {
         // Boom bap and the CR-78 are dry; jungle's breaks and the jazz kit
         // keep their room.
-        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f, 0.6f, 0.9f, 1.3f, 0.25f, 0.6f, 1.1f};
-        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f, 0.22f, 0.26f, 0.3f, 0.06f, 0.18f, 0.2f};
+        static const float t60[KitCount] = {0.55f, 0.45f, 0.4f, 0.9f, 0.5f, 0.35f, 0.7f, 0.8f, 0.4f, 0.75f, 0.6f, 0.9f, 1.3f, 0.25f, 0.6f, 1.1f, 0.9f};
+        static const float wet[KitCount] = {0.22f, 0.18f, 0.14f, 0.32f, 0.22f, 0.14f, 0.28f, 0.3f, 0.12f, 0.26f, 0.22f, 0.26f, 0.3f, 0.06f, 0.18f, 0.2f, 0.18f};
         m_room.set(t60[m_kit], wet[m_kit]);
     }
 
@@ -4769,6 +4861,9 @@ private:
     Voice m_voices[kVoices];
     Sub808 m_sub;
     hang::Body m_hang;
+    slit::Body m_slit;
+    // How much of the slit drum the room hears.
+    static constexpr float kSlitRoom = 0.3f;
     // How much of the hang the room hears: a hang is played in one.
     static constexpr float kHangRoom = 0.35f;
     Room m_room;

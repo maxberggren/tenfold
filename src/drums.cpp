@@ -101,6 +101,19 @@ int padAt(float x, float y) {
     return row * kCols + col;
 }
 
+// The hang kit draws one instrument over the whole pad: its shell an
+// ellipse above the REPEAT strip (a round hang seen a little from the
+// front), in hang.h's units of the shell's radius. Past its rim, round the
+// corners, the hand is under it at the gu.
+constexpr float kHangCx = 0.5f, kHangCy = 0.535f, kHangRx = 0.47f, kHangRy = 0.445f;
+float hangX(float x) { return (x - kHangCx) / kHangRx; }
+float hangY(float y) { return (y - kHangCy) / kHangRy; }
+
+// The keys on the hang: Z X C V the ding and the three lowest fields, A S D
+// F the next four, Q the highest and W the gu, as the pads go up the
+// instrument; the rest double them.
+const int kHangKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 8, hang::kGu, 0, hang::kGu, 5, 6, 7, 8};
+
 // The keyboard is a second pad: the left hand's three rows mirror the
 // bottom three rows of the trackpad, U I O P are the cymbal row, and the
 // right hand gets the two rows that matter most again.
@@ -452,7 +465,7 @@ public:
             // The ranges a finger can shape to: a tonal drum tunes by whole
             // scale degrees, the others by semitones.
             Edit edit;
-            edit.tune = tonal(p) ? std::round(number("tune", 7)) : number("tune", 12);
+            edit.tune = tonal(p, m_kit) ? std::round(number("tune", 7)) : number("tune", 12);
             edit.decay = number("decay", 2);
             edit.tone = number("tone", 1);
             m_edit[p] = edit;
@@ -511,7 +524,10 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-            "djembe's call, flams and slap triplets)\n"
+"djembe's call, flams and slap triplets), and the hang\n"
+            "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
+            "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
+            "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -680,6 +696,43 @@ private:
         int slot = 0;
     };
 
+    void paintHang(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+
+    // --- where on the pad ------------------------------------------------------
+
+    // The pad under a point: a cell of the grid, or on the hang the field
+    // (or the gu) under it.
+    int cellAt(float x, float y) const {
+        if (m_kit != Hang)
+            return padAt(x, y);
+        return hangPad(hang::spotAt(hangX(x), hangY(y)).field);
+    }
+
+    // Where on its pad a point is, 0..1 each way, for the hit: across the
+    // pad's cell, or on the hang across the field's own axes (its long one,
+    // then across), out to hang::kSpotReach of its rim either way.
+    void spotOf(int pad, float x, float y, float &sx, float &sy) const {
+        if (m_kit == Hang) {
+            const int f = hangField(pad);
+            sx = sy = 0.5f;
+            if (f == hang::kGu)
+                return;
+            const hang::Spot sp = hang::spotOn(f, hangX(x), hangY(y));
+            sx = clampf(0.5f + 0.5f * sp.u / hang::kSpotReach, 0, 1);
+            sy = clampf(0.5f + 0.5f * sp.w / hang::kSpotReach, 0, 1);
+            return;
+        }
+        sx = clampf(x * kCols - float(pad % kCols), 0, 1);
+        sy = clampf(y * kRows - float(pad / kCols), 0, 1);
+    }
+
+    // A hit at a point of the pad.
+    void hitAt(int pad, float vel, float x, float y, double t, ControlContext &ctx) {
+        float sx, sy;
+        spotOf(pad, x, y, sx, sy);
+        hit(pad, vel, sx, sy, t, ctx);
+    }
+
     // --- holders ---------------------------------------------------------------
 
     Holder *holderFor(int src, bool key) {
@@ -715,7 +768,7 @@ private:
             h->rate = stripRate(t.x);
             return;
         }
-        h->pad = padAt(t.x, t.y);
+        h->pad = cellAt(t.x, t.y);
         h->t0 = h->seen = now;
         h->x0 = h->x = t.x;
         h->y0 = h->y = t.y;
@@ -786,7 +839,7 @@ private:
             t = heardAt(k + 1);
             cursor = (k + 1) * stepBeats + 1e-6;
         }
-        hit(h.pad, h.vel, h.x0 * kCols - float(h.pad % kCols), h.y0 * kRows - float(h.pad / kCols), t, ctx);
+        hitAt(h.pad, h.vel, h.x0, h.y0, t, ctx);
         Gen *g = newGen(h, ctx.now(), ctx);
         h.mode = Mode::Roll;
         ++m_rolls;
@@ -810,7 +863,7 @@ private:
         if (h.pad == Sub)
             sendSubOn(h, h.t0, ctx);
         else
-            hit(h.pad, h.vel, h.x0 * kCols - float(h.pad % kCols), h.y0 * kRows - float(h.pad / kCols), h.t0, ctx);
+            hitAt(h.pad, h.vel, h.x0, h.y0, h.t0, ctx);
     }
 
     void pressKey(int index, bool accent, ControlContext &ctx) {
@@ -826,6 +879,16 @@ private:
         h->t0 = now;
         h->x0 = h->x = (float(h->pad % kCols) + 0.5f) / kCols;
         h->y0 = h->y = (float(h->pad / kCols) + 0.5f) / kRows;
+        if (m_kit == Hang) {
+            // A key strikes its field a little off the middle, where a
+            // finger would, so the octave speaks.
+            const int f = kHangKey[h->pad];
+            h->pad = hangPad(f);
+            const hang::Field fd = hang::field(std::min(f, hang::kFields - 1));
+            const float u = f == hang::kGu ? 0.0f : 0.3f;
+            h->x0 = h->x = f == hang::kGu ? 0.03f : kHangCx + kHangRx * (fd.x + u * fd.a * std::cos(fd.axis));
+            h->y0 = h->y = f == hang::kGu ? 0.95f : kHangCy + kHangRy * (fd.y + u * fd.a * std::sin(fd.axis));
+        }
         h->vel = accent ? 1.0f : 0.78f;
         h->pressure = accent ? 0.7f : 0.45f;
         h->lastCell = h->pad;
@@ -835,6 +898,8 @@ private:
             sendSubOn(*h, now, ctx);
         else if (repeating())
             instantRoll(*h, ctx);
+        else if (m_kit == Hang)
+            hitAt(h->pad, h->vel, h->x0, h->y0, now, ctx);
         else
             hit(h->pad, h->vel, 0.5f, 0.5f, now, ctx);
     }
@@ -850,7 +915,13 @@ private:
 
     // Has a finger run far enough into another pad to count as there? A
     // little way in, so a finger resting on a border doesn't chatter.
-    static bool wellInside(float x, float y) {
+    bool wellInside(float x, float y) const {
+        if (m_kit == Hang) {
+            // On the hang: well within a field's rim, or well off the shell.
+            const float hx = hangX(x), hy = hangY(y);
+            const hang::Spot sp = hang::spotAt(hx, hy);
+            return sp.field == hang::kGu ? hx * hx + hy * hy > 1.1f : sp.rho < 0.9f;
+        }
         const float cx = x * kCols, cy = y * kRows;
         const float fx = cx - std::floor(cx), fy = cy - std::floor(cy);
         return std::min({fx, 1.0f - fx, fy, 1.0f - fy}) >= 0.12f;
@@ -863,7 +934,7 @@ private:
         case Mode::Sweep: {
             // Running across pads before it settles: a fill, each pad as
             // it's crossed.
-            const int cell = padAt(h.x, h.y);
+            const int cell = cellAt(h.x, h.y);
             if (cell == h.lastCell || !wellInside(h.x, h.y))
                 break;
             if (h.landing)
@@ -872,8 +943,7 @@ private:
                 sendOff(h, now, ctx);
             h.mode = Mode::Sweep;
             h.lastCell = cell;
-            hit(cell, landingVelocity(h.pressure, h.size) * 0.92f, h.x * kCols - float(cell % kCols),
-                h.y * kRows - float(cell / kCols), now, ctx);
+            hitAt(cell, landingVelocity(h.pressure, h.size) * 0.92f, h.x, h.y, now, ctx);
             break;
         }
         case Mode::Roll:
@@ -948,7 +1018,7 @@ private:
             const int rate = std::clamp(h.rate + steps, 0, kRates - 1);
             if (rate != g.rate)
                 g.setRoll(rate);
-            if (tonal(g.pad))
+            if (tonal(g.pad, m_kit))
                 g.degrees = std::clamp(int(std::lround(dx * 20.0f)), -7, 7);
             else
                 g.semis = clampf(dx * 40.0f, -12.0f, 12.0f);
@@ -973,7 +1043,7 @@ private:
     void shapeSound(Holder &h, ControlContext &ctx) {
         Edit e = h.editFrom;
         const float dx = h.x - h.x0, dy = h.y - h.y0;
-        e.tune = tonal(h.pad) ? std::clamp(std::round(h.editFrom.tune + dx * 20.0f), -7.0f, 7.0f)
+        e.tune = tonal(h.pad, m_kit) ? std::clamp(std::round(h.editFrom.tune + dx * 20.0f), -7.0f, 7.0f)
                               : clampf(h.editFrom.tune + dx * 40.0f, -12.0f, 12.0f);
         e.decay = clampf(h.editFrom.decay + dy * 5.0f, -2.0f, 2.0f);
         e.tone = clampf(h.editFrom.tone + twistBetween(h.angle0, h.angle) * 1.2f, -1.0f, 1.0f);
@@ -1057,8 +1127,7 @@ private:
             const double swung = double(m_swing - 0.5f) * 0.5;
             g.cursor = std::max(ctx.beatAt(h.t0 + kFirstStepSecs) - swung, ctx.beatAt(now - 0.008));
             g.start = g.cursor;
-            g.sx = std::clamp(h.x0 * kCols - float(h.pad % kCols), 0.0f, 1.0f);
-            g.sy = std::clamp(h.y0 * kRows - float(h.pad / kCols), 0.0f, 1.0f);
+            spotOf(h.pad, h.x0, h.y0, g.sx, g.sy);
             g.dyn = heldVelocity(h);
             h.gen = int(i);
             return &g;
@@ -1383,7 +1452,7 @@ private:
         const int pad = std::clamp(c.i[0], 0, PadCount - 1);
         const Edit &e = m_edit[pad];
         c.i[2] = m_kit + 1;
-        if (tonal(pad))
+        if (tonal(pad, m_kit))
             c.i[1] += int(std::lround(e.tune));
         else
             c.f[3] += e.tune;
@@ -1638,7 +1707,10 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
     const double barPos = pc.beat / kBeatsPerBar - std::floor(pc.beat / kBeatsPerBar);
 
-    for (int pad = 0; pad < PadCount; ++pad) {
+    if (m_kit == Hang)
+        paintHang(p, pc, harm, genOn);
+    // The grid of pads (none on the hang, which is one instrument).
+    for (int pad = 0; pad < (m_kit == Hang ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
         const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
                                     float(row + 1) / kRows)
@@ -1758,7 +1830,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
 
     // Pads taken out of the playing loop.
     const int playing = pc.view->playing;
-    if (playing >= 0 && playing < kClipSlots && m_muted[playing])
+    if (m_kit != Hang && playing >= 0 && playing < kClipSlots && m_muted[playing])
         for (int pad = 0; pad < PadCount; ++pad) {
             if (!(m_muted[playing] >> pad & 1u))
                 continue;
@@ -1773,7 +1845,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         }
 
     // The 808's note while it sounds.
-    if (data[32] > 0.002f) {
+    if (m_kit != Hang && data[32] > 0.002f) {
         const QRectF cell = pc.rect(0, 0.25f, 0.25f, 0.5f);
         const int deg = int(std::lround(data[33])) + int(std::lround(m_edit[Sub].tune));
         const int pc12 = (int(std::lround(harm.midi(deg, 0))) % 12 + 12) % 12;
@@ -1825,7 +1897,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 const Edit &e = m_edit[h.pad];
                 what = QStringLiteral("%1%2 · LEN %3%4")
                            .arg(e.tune >= 0 ? "+" : "")
-                           .arg(double(e.tune), 0, 'f', tonal(h.pad) ? 0 : 1)
+                           .arg(double(e.tune), 0, 'f', tonal(h.pad, m_kit) ? 0 : 1)
                            .arg(e.decay >= 0 ? "+" : "")
                            .arg(double(e.decay), 0, 'f', 1);
                 glow = 0.5f;
@@ -1873,7 +1945,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     // Below the pad, every one clickable: the clips, the swing, the loop's
     // length (↑ ↓), overdub and the drums' own sounds back on the left; the
     // kits on the right, the ten drum kits in the first row and the five
-    // from the world's music in the second, both rows over the same width
+    // from the world's music and the hang in the second, both rows over the same width
     // so their chips line up, each fading at its ends where it can't show
     // every kit.
     m_spots.clear();
@@ -1913,6 +1985,131 @@ void DrumsControl::paintKits(QPainter &p, const PaintContext &pc, const QRectF &
         names << QString::fromUtf8(kitName(k)).toUpper();
     const int lit = m_kit >= first && m_kit < last ? m_kit - first : -1;
     console::chips(p, pc, row, names, lit, &m_spots, SpotKit + first);
+}
+
+// The hang, drawn as it is played: its shell, the ding in the middle, the
+// eight fields round it each with its hammered dimple and its note, a
+// ripple running out of a field as it is struck, and the gu's corners.
+void DrumsControl::paintHang(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn) {
+    namespace c = console;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int label = int(std::clamp(15.0 * s, 10.0, 20.0));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    const float ring = std::min(1.0f, data[36]);
+    // A point of the hang, in pixels.
+    auto at = [&](float hx, float hy) { return pc.at(kHangCx + kHangRx * hx, kHangCy + kHangRy * hy); };
+    // An ellipse of the hang (centre, semi-axes, axis), as the pad squashes it.
+    auto oval = [&](float x, float y, float a, float b, float axis) {
+        QPainterPath path;
+        const float ca = std::cos(axis), sa = std::sin(axis);
+        for (int i = 0; i <= 72; ++i) {
+            const float t = kTwoPi * float(i) / 72.0f;
+            const float u = a * std::cos(t), w = b * std::sin(t);
+            const QPointF q = at(x + u * ca - w * sa, y + u * sa + w * ca);
+            if (i == 0)
+                path.moveTo(q);
+            else
+                path.lineTo(q);
+        }
+        path.closeSubpath();
+        return path;
+    };
+
+    // The gu, under the instrument: the corners past its rim, lit by a slap.
+    {
+        const float gu = data[hangPad(hang::kGu)], guLoop = data[16 + hangPad(hang::kGu)];
+        QPainterPath outside;
+        outside.addRect(pc.rect(0, kStripY, 1, 1));
+        outside = outside.subtracted(oval(0, 0, 1.0f, 1.0f, 0));
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.025f + 0.35f * gu + 0.15f * guLoop));
+        p.drawPath(outside);
+        const QColor ink = c::alpha(col, 0.45f + 0.5f * gu);
+        const double w = 70 * s, h = 18 * s;
+        const QPointF corners[4] = {pc.at(0.0f, 1.0f), pc.at(1.0f, 1.0f), pc.at(0.0f, kStripY), pc.at(1.0f, kStripY)};
+        for (int i = 0; i < 4; ++i) {
+            const QPointF q = corners[i];
+            const QRectF r(i % 2 ? q.x() - w - 8 * s : q.x() + 8 * s, i < 2 ? q.y() + 6 * s : q.y() - h - 6 * s, w, h);
+            c::text(p, r, QStringLiteral("GU"), ink, small, true, (i % 2 ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
+        }
+    }
+
+    // The shell: a lens of steel, brighter while it rings, with the seam
+    // where the two shells are glued just inside its rim.
+    {
+        const QPainterPath shell = oval(0, 0, 1.0f, 1.0f, 0);
+        const QPointF mid = at(0, 0);
+        QRadialGradient glow(mid, std::max(pc.pad.width() * kHangRx, pc.pad.height() * kHangRy));
+        glow.setColorAt(0.0, c::alpha(col, 0.10f + 0.10f * ring));
+        glow.setColorAt(0.75, c::alpha(col, 0.05f + 0.05f * ring));
+        glow.setColorAt(1.0, c::alpha(col, 0.02f));
+        p.setPen(Qt::NoPen);
+        p.setBrush(glow);
+        p.drawPath(shell);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, 0.55f + 0.35f * ring), 2.0 * s));
+        p.drawPath(shell);
+        p.setPen(QPen(c::alpha(col, 0.22f), 1.0 * s, Qt::DotLine));
+        p.drawPath(oval(0, 0, 0.955f, 0.955f, 0));
+    }
+
+    // The ding and the fields.
+    const int oct = drums::octaveNear(harm, 150.0f);
+    const int per = harm.tuning.degreesPerOctave();
+    int first = 1;
+    while (first < per && harm.tuning.degreeSemis(first) < 6.5)
+        ++first;
+    const int playing = pc.view->playing;
+    for (int f = 0; f < hang::kFields; ++f) {
+        const int pad = hangPad(f);
+        const hang::Field fd = hang::field(f);
+        const float live = data[pad], replay = data[16 + pad];
+        const float lit = std::max(live, 0.6f * replay);
+        const Gen *gen = genOn[pad];
+        // The field's rim, where the hammering stopped.
+        const QPainterPath rim = oval(fd.x, fd.y, fd.a, fd.b, fd.axis);
+        p.setPen(Qt::NoPen);
+        p.setBrush(c::alpha(col, 0.05f + 0.25f * lit));
+        p.drawPath(rim);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, gen ? 0.95f : 0.4f + 0.5f * lit), (gen ? 2.5 : 1.3) * s));
+        p.drawPath(rim);
+        // Its dimple (on the ding, the dome's crown).
+        const float in = f == 0 ? 0.5f : 0.58f;
+        p.setPen(QPen(c::alpha(col, 0.25f + 0.5f * lit), 1.0 * s));
+        p.setBrush(c::alpha(col, 0.04f + 0.3f * lit));
+        p.drawPath(oval(fd.x, fd.y, fd.a * in, fd.b * in, fd.axis));
+        // A ripple running out from the strike.
+        if (lit > 0.02f) {
+            const float grow = 1.0f + 0.45f * (1.0f - lit);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(c::alpha(col, 0.7f * lit), 1.5 * s));
+            p.drawPath(oval(fd.x, fd.y, fd.a * grow, fd.b * grow, fd.axis));
+        }
+        // Its note.
+        const int deg = (f == 0 ? 0 : first + f - 1) + int(std::lround(m_edit[pad].tune));
+        const double midi = harm.midi(deg, oct);
+        const int m = int(std::lround(midi));
+        const QString note = QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)) + QString::number(m / 12 - 1);
+        const QPointF centre = at(fd.x, fd.y);
+        const QColor ink = live > 0.45f ? QColor::fromRgb(c::kInk) : col;
+        const QRectF box(centre.x() - 60 * s, centre.y() - label * 0.8, 120 * s, label * 1.6);
+        c::text(p, box, f == 0 ? QStringLiteral("DING ") + note : note, ink, f == 0 ? int(label * 1.1) : label, true,
+                Qt::AlignCenter);
+        if (gen) {
+            const QString what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
+                                             : QString::fromUtf8(rateName(gen->rate));
+            c::text(p, box.translated(0, label * 1.2), what, c::alpha(col, 0.7f), small, true, Qt::AlignCenter);
+        }
+        // Out of the loop that plays.
+        if (playing >= 0 && playing < kClipSlots && (m_muted[playing] >> pad & 1u)) {
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            const QRectF b = rim.boundingRect();
+            p.drawLine(b.bottomLeft(), b.topRight());
+        }
+    }
 }
 
 PartSpec makeDrums() {

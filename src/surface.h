@@ -7,7 +7,7 @@
 
 #include "backend.h"
 
-// The pad as the player sees it: the trackpad's own shape, drawn by the page
+// The pad as the player sees it, as large as the item allows, drawn by the page
 // that is showing, with room under it for the page's clip slots.
 class Surface : public QQuickPaintedItem {
     Q_OBJECT

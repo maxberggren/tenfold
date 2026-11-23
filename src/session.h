@@ -87,10 +87,12 @@ public:
     // The mouse over the page in item pixels (for lighting controls drawn
     // around the pad), and a click outside the pad: true if the page used it.
     void mouseAt(QPointF at, bool over);
-    // Where the pad is drawn in an item of this size: the trackpad's own
-    // proportions, as large as fits, with a band under it for the page's
-    // controls and clip slots and a margin over it for its legend.
-    static QRectF padRect(QSizeF item, float aspect);
+    // Where the pad is drawn in an item of this size: all of it, but for a
+    // band under it for the page's controls and clip slots, a margin over it
+    // for its legend and one at each side. The pad takes the window's shape
+    // rather than the trackpad's: a finger is placed by how far across and
+    // up the trackpad it is, whatever the two shapes.
+    static QRectF padRect(QSizeF item);
     static constexpr double kBandHeight = 96; // under the pad: two rows of controls (console::bandRow)
     bool clickAt(QPointF at);
     // A right click (the page's menu, if it has one), a left click while

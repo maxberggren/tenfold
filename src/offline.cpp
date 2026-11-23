@@ -28,10 +28,9 @@ struct Finger {
     float x = 0, y = 0, p = 0.6f, size = 1.0f, twist = 0;
 };
 
-// The window a script's `button` clicks are made in: the size of the
-// screenshots' pad area, at a MacBook trackpad's proportions.
-constexpr double kButtonItemW = 960, kButtonItemH = 720;
-constexpr float kButtonAspect = 1.6f;
+// The window a script's `button` clicks are made in: its pad 900 x 562.5,
+// a MacBook trackpad's proportions, as the scripts were written for.
+constexpr double kButtonItemW = 960, kButtonItemH = 562.5 + 14 + 5 + 96;
 
 struct Event {
     double t = 0, t2 = 0;
@@ -445,7 +444,7 @@ void ScriptPlayer::tick(double t, Session &session) {
             // The page is drawn first, as the window would have, so the
             // controls it lays out are where the click lands.
             const QSizeF item(kButtonItemW, kButtonItemH);
-            const QRectF pad = Session::padRect(item, kButtonAspect);
+            const QRectF pad = Session::padRect(item);
             QImage canvas(item.toSize(), QImage::Format_ARGB32_Premultiplied);
             canvas.fill(Qt::black);
             {

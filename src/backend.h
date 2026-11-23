@@ -174,7 +174,6 @@ public:
     int tutorialState() const { return int(m_session->tutorial().state()); }
 
     tf::Session *session() const { return m_session.get(); }
-    float padAspect() const { return m_touch->aspect(); }
 
     Q_INVOKABLE void play();     // take the trackpad
     Q_INVOKABLE void giveBack(); // let go of it, sound keeps going

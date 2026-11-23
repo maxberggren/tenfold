@@ -38,7 +38,7 @@ void Surface::geometryChange(const QRectF &now, const QRectF &old) {
 }
 
 QRectF Surface::padRect() const {
-    return Session::padRect(QSizeF(width(), height()), m_backend ? m_backend->padAspect() : 1.6f);
+    return Session::padRect(QSizeF(width(), height()));
 }
 
 void Surface::paint(QPainter *p) {

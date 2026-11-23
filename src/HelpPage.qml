@@ -43,7 +43,8 @@ Rectangle {
         property color tint: page.tint
         spacing: 16
         Text {
-            Layout.preferredWidth: 300
+            // A narrow window: a narrower column of keys.
+            Layout.preferredWidth: Math.min(300, page.width * 0.3)
             // Arrows and key symbols are the console's own drawings.
             textFormat: Text.StyledText
             text: backend.rich(line.split("\t")[0], tint, 16)
@@ -67,7 +68,7 @@ Rectangle {
 
     Flickable {
         anchors.fill: parent
-        anchors.margins: 40
+        anchors.margins: page.width < 1000 ? 16 : 40
         contentHeight: column.implicitHeight
         clip: true
 

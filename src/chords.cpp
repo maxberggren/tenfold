@@ -151,7 +151,8 @@ QString roman(const Tuning &t, int degree) {
 
 // Chips as the console draws them, each as wide as its label needs: the
 // width a row of them needs, and the row laid out across r with the room
-// left over shared out evenly.
+// left over shared out evenly (or, on a pad too narrow for them, each
+// narrowed alike, its label cut short).
 qreal chipWidth(const QString &label) { return console::textWidth(console::font(12, true), label) + 10; }
 
 qreal chipsWidth(const QStringList &labels, qreal gap) {
@@ -166,10 +167,12 @@ void fitChips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStrin
     const qsizetype n = labels.size();
     if (n == 0)
         return;
-    const qreal extra = std::max<qreal>(0, r.width() - chipsWidth(labels, gap)) / qreal(n);
+    const qreal gaps = gap * qreal(n - 1), need = chipsWidth(labels, gap);
+    const qreal extra = std::max<qreal>(0, r.width() - need) / qreal(n);
+    const qreal narrow = need > r.width() ? std::max<qreal>(0, r.width() - gaps) / (need - gaps) : 1;
     qreal x = r.left();
     for (qsizetype i = 0; i < n; ++i) {
-        const qreal w = i == n - 1 ? r.right() - x : chipWidth(labels[i]) + extra;
+        const qreal w = i == n - 1 ? r.right() - x : chipWidth(labels[i]) * narrow + extra;
         console::chip(p, pc, QRectF(x, r.top(), w, r.height()), labels[i], lit.value(i), spots, ids.value(i, -1));
         x += w + gap;
     }

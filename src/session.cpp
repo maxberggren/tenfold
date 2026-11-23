@@ -457,16 +457,9 @@ void Session::pointer(float x, float y, bool down, bool inside) {
     deliver(withMouse(f));
 }
 
-QRectF Session::padRect(QSizeF item, float aspect) {
-    aspect = std::clamp(aspect, 1.0f, 2.4f);
+QRectF Session::padRect(QSizeF item) {
     const qreal top = 14 + console::kHead, side = 30, bottom = kBandHeight;
-    const qreal availW = item.width() - 2 * side, availH = item.height() - top - bottom;
-    qreal w = availW, h = w / aspect;
-    if (h > availH) {
-        h = availH;
-        w = h * aspect;
-    }
-    return QRectF((item.width() - w) / 2, top, w, h);
+    return QRectF(side, top, std::max<qreal>(1, item.width() - 2 * side), std::max<qreal>(1, item.height() - top - bottom));
 }
 
 void Session::mouseAt(QPointF at, bool over) {

@@ -472,6 +472,10 @@ public:
         m_unvoiced = 1 << 30;
         m_sung = 0;
         m_away = 0;
+        m_octAway = 0;
+        m_movedAway = 0;
+        m_startHz = 0;
+        m_startAgree = 0;
         m_deemph = 0;
         m_preX = 0;
         m_burst = 0.5f;
@@ -517,7 +521,8 @@ public:
         // the pitch the spectrum shows (the best harmonic comb within a
         // fifth of the phrase's note, to a quarter tone), not on the last.
         const bool early = !m_inVoiced && nearNote() && m_unvoiced < int(0.25f * m_rate);
-        float target = early ? m_harmHz * std::exp2(float(m_oct)) : m_sung > 0 ? m_sung * std::exp2(float(m_oct)) : m_f0;
+        const float earlyHz = m_acPeak > kAcPeriodic ? m_acHz : m_harmHz;
+        float target = early ? earlyHz * std::exp2(float(m_oct)) : m_sung > 0 ? m_sung * std::exp2(float(m_oct)) : m_f0;
         // No throat screams over about C6 or under 150 Hz: a phrase that
         // runs off the register folds back by an octave there.
         while (target > 1300.0f)
@@ -561,14 +566,15 @@ private:
     // The tracker is followed only where it is sure, and its octave is
     // checked against the singer's spectrum (octaveFix): it slips an
     // octave up at the end of a syllable and down at the start of one, as
-    // sure of itself either way. A reading still an octave or two off the
-    // note held is taken as that note (folded back onto it; a singer's own
-    // octave leap is lost, to a scream that moves everything by octaves
-    // anyway), and the phrase's octave never changes. Any other leap of
-    // more than a fourth counts at once if the tracker is all but certain
-    // of it, and otherwise once it has lasted 15 ms (the edge of a
-    // syllable, where the first guesses wander; until then the throat is
-    // quiet, and the consonant and the breath go on).
+    // sure of itself either way. The phrase's octave never changes. A
+    // reading still an octave or two off the note held keeps the old note
+    // sounding, and is the singer's octave interval (sung) only once it
+    // has lasted 40 ms: a slip is shorter. Any other leap of more than a
+    // fourth counts at once if the tracker is all but certain of it and
+    // the spectrum's own pitch agrees, and otherwise once it has lasted
+    // 15 ms (the edge of a syllable, where the first guesses wander; until
+    // then the throat is quiet, and the consonant and the breath go on).
+
     // The octave that brings the phrase's note nearest a screamer's, and
     // how far up the tract is drawn with it: the larynx raised and a
     // shorter, more open mouth (a man's moved further, as his voice is).
@@ -590,6 +596,18 @@ private:
         if (fresh) {
             if (m_inClarity < 0.7f)
                 return;
+            // (If the spectrum moved the reading's octave, three readings
+            // must agree before the phrase takes its octave from them.)
+            const float fix = reading / m_inHz;
+            if (fix != 1.0f) {
+                if (std::fabs(std::log2(reading / std::max(m_startHz, 1.0f))) > 0.1f)
+                    m_startAgree = 0;
+                m_startHz = reading;
+                if (++m_startAgree < 3)
+                    return;
+            }
+            m_startHz = 0;
+            m_startAgree = 0;
             m_sung = reading;
             m_away = 0;
             m_phraseAge = 0;
@@ -602,13 +620,55 @@ private:
             return;
         const float semis = 12.0f * std::log2(reading / m_sung);
         const float octs = std::round(semis / 12.0f);
+        const bool octave = octs != 0 && std::fabs(octs) <= 2.0f && std::fabs(semis - 12.0f * octs) < 0.8f;
+        if (!octave)
+            m_octAway = 0;
+        // A leap is taken at once only if the tracker is all but certain
+        // and the spectrum's own pitch agrees with it.
+        // (A reading whose octave the spectrum moved must last 40 ms: at a
+        // syllable's onset the window still holds the consonant's noise.)
+        const bool moved = std::fabs(reading - m_inHz) > 0.01f * m_inHz;
+        const bool agreed = !moved && m_inClarity >= 0.93f && m_harmonic > kHarmonic && m_harmHz > 0 &&
+                            std::fabs(12.0f * std::log2(m_harmHz / reading)) < 1.0f;
+        const int wait = int((moved ? 0.04f : kLeapWait) * m_rate);
+        if (moved) {
+            // The held note goes on sounding; the moved reading replaces it
+            // only once it has lasted 40 ms.
+            m_away = 0;
+            if (std::fabs(semis) < 0.5f)
+                m_movedAway = 0;
+            else if ((m_movedAway += n) > wait) {
+                m_sung = reading;
+                m_movedAway = 0;
+            }
+            return;
+        }
+        m_movedAway = 0;
         if (std::fabs(semis) <= 5.0f) {
             m_sung = reading;
             m_away = 0;
-        } else if (octs != 0 && std::fabs(octs) <= 2.0f && std::fabs(semis - 12.0f * octs) < 0.8f) {
-            m_sung = reading * std::exp2(-octs);
+        } else if (octave) {
+            // An octave off: the old note goes on. If the new octave lasts
+            // 40 ms and the spectrum clearly has it (up: nothing at all
+            // half way between its harmonics; down: its odd harmonics
+            // plainly there), it is the singer's interval, sung; if it
+            // can't be told, it was the tracker.
             m_away = 0;
-        } else if ((m_inClarity >= 0.93f && m_harmonic > kHarmonic) || (m_away += n) > int(kLeapWait * m_rate)) {
+            float halfRatio, oddRatio;
+            octaveFix(reading, halfRatio, oddRatio);
+            const bool clear = octs > 0 ? halfRatio < 0.25f : oddRatio > 0.3f;
+            const bool early = m_phraseAge < int(0.15f * m_rate);
+            if (!clear)
+                m_octAway = 0;
+            else if (early || (m_octAway += n) > int(0.04f * m_rate)) {
+                m_sung = reading;
+                m_octAway = 0;
+                // (In a phrase's first moments it was the first reading
+                // that was off: the phrase takes its octave from this.)
+                if (early)
+                    choose();
+            }
+        } else if (agreed || (m_away += n) > wait) {
             m_sung = reading;
             m_away = 0;
             // In a phrase's first moments a new note means the first
@@ -623,33 +683,122 @@ private:
     // the phrase's note: a vowel the throat can start on before the tracker
     // has it (a leap waits for the tracker, so it starts on its note).
     bool nearNote() const {
+        if (m_sung > 0 && m_acPeak > kAcPeriodic)
+            return true;
         return m_sung > 0 && m_harmHz > 0 && m_harmonic > kHarmonic &&
                std::fabs(12.0f * std::log2(m_harmHz / m_sung)) <= 2.5f;
+    }
+    // Every 2 ms, over the last two periods only (the analysis's 25 ms
+    // window still holds a consonant's hiss well into the vowel after
+    // it): how periodic the voice is at a period within a tone of the
+    // phrase's note, and at which (the normalised autocorrelation's peak).
+    void periodicity() {
+        m_acPeak = 0;
+        if (m_sung <= 0)
+            return;
+        const float T0 = m_inner / m_sung;
+        const int lo = std::max(8, int(T0 * 0.89f)), hi = int(T0 * 1.13f) + 1;
+        const int W = std::min(int(2.0f * T0), kBufN - hi - 2);
+        if (W < 16)
+            return;
+        const int step = hi - lo > 24 ? 2 : 1;
+        float best = 0;
+        int bestL = 0;
+        auto ac = [&](int L) {
+            float xy = 0, xx = 0, yy = 0;
+            for (int i = 0; i < W; ++i) {
+                const float a = m_buf[(m_w - 1 - uint32_t(i)) & (kBufN - 1)];
+                const float b = m_buf[(m_w - 1 - uint32_t(i + L)) & (kBufN - 1)];
+                xy += a * b;
+                xx += a * a;
+                yy += b * b;
+            }
+            return xx > 1e-14f && yy > 1e-14f ? xy / std::sqrt(xx * yy) : 0.0f;
+        };
+        for (int L = lo; L <= hi; L += step) {
+            const float c = ac(L);
+            if (c > best)
+                best = c, bestL = L;
+        }
+        if (step > 1 && bestL > 0)
+            for (int L = bestL - 1; L <= bestL + 1; L += 2) {
+                const float c = ac(L);
+                if (c > best)
+                    best = c, bestL = L;
+            }
+        m_acPeak = best;
+        m_acHz = bestL > 0 ? m_inner / float(bestL) : 0.0f;
     }
 
     // The tracker's octave, checked against the spectrum it came from (the
     // last 25 ms, at most 4 ms old), by subharmonic summation, as a
     // listener hears a pitch: if the odd multiples of half the reading are
     // there, it read the voice's second harmonic; if the reading's own odd
-    // harmonics are missing, it read half the voice.
+    // harmonics are all missing, it read half the voice.
     float octaveFix(float r) const {
+        float halfRatio, oddRatio;
+        return octaveFix(r, halfRatio, oddRatio);
+    }
+    // (And how clear it is: the half-harmonics' level re the harmonics',
+    // and the odd harmonics' re the even, each 1 where it can't be told.)
+    float octaveFix(float r, float &halfRatio, float &oddRatio) const {
+        halfRatio = oddRatio = 1.0f;
         const float hzPerBin = m_inner / float(kN);
         auto at = [&](float f) {
             const int b = int(f / hzPerBin + 0.5f);
             if (b < 1 || b >= kN / 2)
                 return 0.0f;
-            return std::max({m_lastP[b - 1], m_lastP[b], m_lastP[b + 1]});
+            // (On the voice as it is, taken back from the pre-emphasis: that
+            // takes 20 dB off a man's first harmonic.)
+            return std::max({m_lastP[b - 1] * m_deemphW[b - 1], m_lastP[b] * m_deemphW[b],
+                             m_lastP[b + 1] * m_deemphW[b + 1]});
         };
-        auto series = [&](float f0, int first, int step) {
+        // On magnitudes, harmonic by harmonic. Whether the reading is its
+        // voice's second harmonic is asked with geometric means (every
+        // harmonic counting the same in dB, so one strong harmonic, a
+        // belter's second with F1 on it, can't hide the rest); whether it
+        // is half its voice, with plain means (a weak odd harmonic or two
+        // shouldn't make the voice an octave higher).
+        auto mean = [&](float f0, int first, int step, int &count, bool geometric) {
             float sum = 0;
-            for (int k = first; float(k) * f0 < 4000.0f && k <= 15; k += step)
-                sum += at(float(k) * f0);
-            return sum;
+            count = 0;
+            for (int k = first; float(k) * f0 < 4000.0f && k <= 8; k += step, ++count) {
+                const float p = at(float(k) * f0);
+                sum += geometric ? 0.5f * std::log(p + 1e-20f) : std::sqrt(p);
+            }
+            if (!count)
+                return 0.0f;
+            return geometric ? std::exp(sum / float(count)) : sum / float(count);
         };
-        if (r * 0.5f >= 70.0f && series(r * 0.5f, 1, 2) > 0.5f * series(r, 1, 1))
-            return 0.5f;
-        if (r * 2.0f <= 1000.0f && series(r, 1, 2) < 0.1f * series(r, 2, 2))
-            return 2.0f;
+        int nhalf = 0, no = 0, ne = 0;
+        // (Only where the 25 ms window can tell a half-harmonic from the
+        // skirts of its neighbours: half the reading 4 bins or more, from
+        // 250 Hz up. Its third, fifth and seventh, away from the bottom
+        // where the window's leakage from the first harmonic is.)
+        if (r >= 250.0f) {
+            // Each against the two harmonics either side of it, so the
+            // vowel's own envelope (a back vowel's low formants right on
+            // the half-way points) cancels out.
+            float sum = 0;
+            for (int k = 3; k <= 7 && float(k) * r * 0.5f < 4000.0f; k += 2, ++nhalf)
+                sum += 0.5f * std::log(at(float(k) * r * 0.5f) + 1e-20f) -
+                       0.25f * std::log(at(float(k - 1) * r * 0.5f) + 1e-20f) -
+                       0.25f * std::log(at(float(k + 1) * r * 0.5f) + 1e-20f);
+            if (nhalf >= 2) {
+                halfRatio = std::exp(sum / float(nhalf));
+                if (halfRatio > 0.5f)
+                    return 0.5f;
+            }
+        }
+        if (r * 2.0f <= 1000.0f) {
+            const float odd = mean(r, 1, 2, no, false), even = mean(r, 2, 2, ne, false);
+            if (no >= 2 && ne >= 2)
+                oddRatio = odd / std::max(even, 1e-20f);
+            // Every odd harmonic missing, the first and third each too.
+            if (no >= 2 && ne >= 2 && odd < 0.12f * even && std::sqrt(at(r)) < 0.2f * even &&
+                std::sqrt(at(3.0f * r)) < 0.2f * even)
+                return 2.0f;
+        }
         return 1.0f;
     }
 
@@ -666,6 +815,8 @@ private:
             m_hopAt = 0;
             analyse();
         }
+        if ((m_hopAt & 31) == 0)
+            periodicity();
         const float t = float(m_hopAt) / float(kHop);
         // The lungs: the voice's level (fast up, slower down) as pressure.
         const float ax = std::fabs(x);
@@ -696,13 +847,14 @@ private:
         const bool vowel = inPhrase && m_envFast > 0.2f * m_envPeak && m_envLow > 0.6f * m_envFast && nearNote();
         // (And never on a hiss or a burst the tracker calls voiced: what
         // sounds must be periodic.)
-        const bool sounding = ((m_inVoiced && m_sung > 0) || vowel) && m_away == 0 && m_harmonic > kPeriodic;
+        const bool sounding = ((m_inVoiced && m_sung > 0) || vowel) && m_away == 0 &&
+                              (m_harmonic > kPeriodic || m_acPeak > kAcPeriodic);
         // A screamer's attack: up in 2 ms, down over 10.
         m_voicing += ((sounding ? 1.0f : 0.0f) - m_voicing) * (sounding ? 0.03f : 0.006f);
         // The pitch glides to the note in 2.5 ms (no step when the tracker
         // steps).
         if (target > 0)
-            m_f0 = m_f0 > 0 ? m_f0 * std::exp2(std::log2(target / m_f0) * 0.025f) : target;
+            m_f0 = m_f0 > 0 && m_voicing > 0.05f ? m_f0 * std::exp2(std::log2(target / m_f0) * 0.025f) : target;
 
         // The singer's residual: what the mouth was given.
         float e;
@@ -1149,7 +1301,8 @@ private:
     static constexpr float kSlowRate = 1.0f / 16000.0f; // matched over a second
     static constexpr int kF1Grid = 49;
     static constexpr float kHarmonic = 0.5f;
-    static constexpr float kPeriodic = 0.4f; // and the least of it for the throat to sound at all     // a vowel's share of energy on its harmonics                  // 200 Hz to 1.4 kHz by 25
+    static constexpr float kPeriodic = 0.4f;
+    static constexpr float kAcPeriodic = 0.8f; // a vowel's two periods are this alike, a hiss's are not // and the least of it for the throat to sound at all     // a vowel's share of energy on its harmonics                  // 200 Hz to 1.4 kHz by 25
 
     float m_rate = 48000, m_inner = 16000;
     int m_decim = 3, m_phase = 0;
@@ -1183,8 +1336,10 @@ private:
     float m_airAmp = 0, m_airAmp0 = 0, m_consGate = 0, m_consGate0 = 0;
     int m_oct = 0, m_unvoiced = 1 << 30;
     float m_inHz = 0, m_sung = 0, m_inClarity = 0;
-    float m_lastP[kN / 2 + 1] = {}, m_harmonic = 0, m_harmHz = 0;
-    int m_away = 0, m_phraseAge = 0;
+    float m_lastP[kN / 2 + 1] = {}, m_harmonic = 0, m_harmHz = 0, m_acPeak = 0, m_acHz = 0;
+    int m_away = 0, m_phraseAge = 0, m_octAway = 0, m_movedAway = 0;
+    float m_startHz = 0;
+    int m_startAgree = 0;
     bool m_inVoiced = false, m_inSure = false;
     Rng m_rng{0xB1C1u}, m_airRng{0xA1E5u};
 };

@@ -18,7 +18,8 @@ covers what it was measured against, how it works and how it was checked.
   - **ROOM:** three metres off in a small room.
   - **CLOSE:** the scream with nothing around it.
 - **Fingers:** a lane held is another screamer at that harmony, through the
-  same mouth: a gang shout. Up to four are heard.
+  same mouth: a gang shout. Up to four are heard, each as loud as the lead
+  at full pressure, and all in the middle (one mouth, one place).
 - **Effort:** sing louder and the throat strains more. The false folds come
   in, with more rasp and more noise.
 - **Pitch:**
@@ -119,7 +120,11 @@ still a spectrum, so the poles are always stable.
   carry through this mouth is computed every 4 ms and set to your level in
   the same window. The voice's level over the last 8 ms corrects it by up to
   12 dB, so a vowel comes in as fast as it is sung. A one-second match takes
-  out what is left. Without this, an /u/ would be 10 dB quieter than the /u/
+  out what is left. This is a loudness follower, not physiology: the scream
+  is as loud as you sing it, by design. The harmonic profile is the
+  throat's at full effort. Softer, its highs fall a little, so the
+  prediction is a dB or two generous there, and the one-second match takes
+  that out. Without this, an /u/ would be 10 dB quieter than the /u/
   you sang: the pre-emphasised level counts low resonances for little.
 
 ### The throat
@@ -129,30 +134,55 @@ loudness.
 
 **Pitch.** It is the tracker's reading, but the tracker's octave is not
 trusted.
-- **The octave check.** Each reading is checked against your spectrum by
-  subharmonic summation:
-  - if the odd multiples of half the reading are there, the tracker read
-    your second harmonic;
-  - if the reading's own odd harmonics are missing, it read half of you.
+- **The octave check.** Each reading is checked against your spectrum
+  (de-emphasised, as your voice is) by subharmonic summation, harmonic by
+  harmonic on magnitudes, so one strong harmonic can't outvote the rest:
+  - **Halving.** If the points half way between the reading's harmonics (at
+    1.5, 2.5 and 3.5 times it) stand within 6 dB of the harmonics either
+    side of each, the tracker read your second harmonic. Each is compared
+    with its own neighbours, so a vowel's formants cancel out. This is
+    asked only from 250 Hz up, where the 25 ms window can tell a half-way
+    point from its neighbours' skirts.
+  - **Doubling.** If the reading's odd harmonics are all missing (their
+    mean, and the first and third each), it read half of you.
+  - **The belter's case.** H2 strong, with F1 on it and H1 7–16 dB under,
+    is neither.
 - **Starting a phrase.** A phrase starts on a reading of clarity ≥ 0.7 and
-  takes the octave nearest 540 Hz.
-- **Octave slips.** A reading an octave or two off the held note is folded
-  back onto it, so a slip changes nothing.
+  takes the octave nearest 540 Hz. If the check moved the first reading's
+  octave, three readings must agree first.
+- **A moved reading.** A reading whose octave the check moved is taken only
+  once it has lasted 40 ms, while the held note goes on sounding. At a
+  syllable's onset the window still holds the consonant.
+- **Octave intervals.** A reading an octave off the held note keeps the old
+  note sounding. It becomes the new note, so the singer's octave interval
+  is sung, if it lasts 40 ms and the spectrum clearly has it:
+  - going up, nothing half way between its harmonics;
+  - going down, its odd harmonics plainly there.
+
+  Otherwise it was a slip, and is folded back onto the note.
 - **Other leaps.** A leap of more than a fourth counts at once if the
-  tracker is sure (clarity ≥ 0.93), and otherwise once it has lasted 15 ms.
-  Until then the throat is quiet and the consonant goes on.
+  tracker is sure (clarity ≥ 0.93) and the spectrum's own pitch agrees
+  within a semitone. Otherwise it counts once it has lasted 15 ms. Until
+  then the throat is quiet and the consonant goes on.
 - **Re-choosing the octave.** In a phrase's first 150 ms, a confirmed new
   note chooses the octave again, because a phrase's first reading is often
   a guess.
+- **Starting from silence.** The throat starts on its target pitch; it
+  only glides when it is already sounding.
 
 **When it sounds.**
 - **Voicing.** The throat sounds while the tracker says you are voicing.
 - **Before the tracker.** Inside a phrase it also sounds as soon as your
-  voice is up, its energy is low (under 900 Hz) and it is periodic, with at
-  least half its energy on the harmonics of a pitch within a tone of your
-  last note (found to a quarter tone). It starts on that pitch, so a
-  repeated or nearby note after a consonant is screamed from its start.
-  A leap waits for the tracker, so it starts on its own note.
+  voice is up, its energy is low (under 900 Hz) and it is periodic at a
+  pitch within a tone of your last note. Periodic means one of two things:
+  - over its last two periods only, checked every 2 ms, its normalised
+    autocorrelation is over 0.8;
+  - or, over the 25 ms window, at least half its energy is on the harmonics
+    of that pitch (found to a quarter tone).
+
+  It starts on that pitch, so a repeated or nearby note after a consonant
+  is screamed from its start. A leap waits for the tracker, so it starts on
+  its own note.
 - **Never on noise.** It never sounds on a hiss or burst that the tracker
   calls voiced. Harmonicity has to be over 0.4: a vowel is 0.85–0.97, an /h/
   0.36–0.42.
@@ -281,8 +311,10 @@ Against the NATURAL style on the same inputs:
 | **Onset** (input voiced → scream within 6 dB of its steady level) | median 20–25 ms and at most 35–50 ms, against NATURAL's 5. The tracker's first reading of a phrase, or of a leap, takes 17–25 ms. A nearby note inside a phrase starts on the vowel's periodicity. |
 | **Pitch at a syllable's edge** | the throat's own pitch in a syllable's first 40 ms against the 70 ms after: median 56–135 cents on the test singers (the man's p90 426). On real speech the median is 251, much of it the speech's own glide. Octave relation to the sung note: 0–4 % of frames off on the test singers, 11–17 % on real speech and the high singer, where the reference pitch estimator itself is unsure. |
 | **Register** | real speech p10/p50/p90 395/493/565 Hz; the man and the woman 521/692/795 Hz (twice the sung note, and four times for the man) |
+| **The octave, against the score** (each base pitch's own melody, rising to a minor seventh; the throat's pitch against the notes written) | the share of sounding frames at the phrase's octave: men 100–180 Hz 97–100 %, shouted speech 120–160 Hz 100 %, a woman 200–500 Hz 98–100 %, the /æ/ wail 300–500 Hz 100 %. At 600 and 700 Hz, 93 % and 88 %: those melodies reach 1.07 and 1.25 kHz, over the tracker's 1 kHz ceiling. |
+| **Octave intervals** (0, 12, 0, 7, −5, 12, 0, 9, 0, 12, 5, 0 from 220 Hz) | every note within 22 cents of the score, the octaves up and down sung |
 
-**Cost.** One screamer is 0.5 % of a core, and four more add 0.25 %
+**Cost.** One screamer is 0.65 % of a core, and four more add 0.25 %
 (best of five, on a machine shared with seven other builds). In the app, a
 128-frame callback costs about 0.8 percentage points more than NATURAL.
 

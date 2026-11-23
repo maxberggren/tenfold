@@ -586,7 +586,7 @@ private slots:
         // The box seen from above: the lowest tongue nearest the player on
         // the left, the highest on the right, the box round the edges.
         auto struck = [](float x, float y) {
-            const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\ntap 0.5 %1 %2 p=0.7\nend 0.56\n")
+            const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.5 %1 %2 p=0.7\nend 0.56\n")
                                                 .arg(x)
                                                 .arg(y)
                                                 .toStdString());
@@ -607,7 +607,7 @@ private slots:
         QCOMPARE(struck(0.5f, padY(-0.48f * slit::Physics::kDepth)), int(slit::kFrame));
         QVERIFY(slit::tongue(0).rootX < 0 && slit::tongue(0).y < 0);
         QVERIFY(slit::tongue(7).rootX > 0 && slit::tongue(7).y < 0);
-        const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\ntap 0.5 %1 %2 p=0.7\nend 2\n")
+        const auto take = testkit::play(QStringLiteral("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.5 %1 %2 p=0.7\nend 2\n")
                                             .arg(padX(slit::tongue(2).rootX + 0.8f * slit::tongue(2).length))
                                             .arg(padY(slit::tongue(2).y))
                                             .toStdString());
@@ -619,7 +619,7 @@ private slots:
     void aLoopOfTheSlitDrumKeepsTheSlitDrum() {
         // Hits carry the kit: a slit drum loop sounds as one after the page
         // has gone back to house.
-        const auto take = testkit::play("page 0 1\nkey 0.1 Left\ntap 0.6 0.2 0.25 p=0.7\ntap 0.9 0.8 0.25 p=0.7\n"
+        const auto take = testkit::play("page 0 1\nkey 0.1 Left\nkey 0.11 Left\ntap 0.6 0.2 0.25 p=0.7\ntap 0.9 0.8 0.25 p=0.7\n"
                                         "key 1.2 Space\nkey 1.5 Right\nend 6\n");
         QVERIFY(take.finite());
         QVERIFY(take.rms(3, 6) > 1e-5);
@@ -672,7 +672,7 @@ private slots:
 
     void tenMalletsOnTheSlitDrumStayInsideBudget() {
         // Ten fingers drumming on the slit drum through the whole studio.
-        std::string s = "page 0 1\nkey 0.1 Left\n";
+        std::string s = "page 0 1\nkey 0.1 Left\nkey 0.11 Left\n";
         for (int f = 0; f < 10; ++f) {
             const float x = 0.12f + 0.08f * float(f), y = 0.2f + 0.06f * float(f % 6);
             for (int k = 0; k < 12; ++k)

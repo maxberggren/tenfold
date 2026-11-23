@@ -32,6 +32,7 @@ HEADERS += \
     src/gong.h \
     src/hang.h \
     src/slitdrum.h \
+    src/pipedrum.h \
     src/offline.h \
     src/part.h \
     src/padprompt.h \

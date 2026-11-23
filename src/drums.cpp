@@ -60,6 +60,10 @@ constexpr int kCols = 4, kRows = 4;
 constexpr double kHoldSecs = 0.08;
 constexpr double kFirstStepSecs = 0.2;
 constexpr double kFirstLeadSecs = 0.012;
+// On the pipes a held finger puts the paddle back on the mouth, once it has
+// been down as long as a roll's first step would wait: a relaxed tap never
+// slaps twice.
+constexpr double kPaddleSecs = 0.2;
 // A held step must go out before its time comes, so the lead is at least
 // the longest recent gap between ticks (250 Hz live: 4 ms; a still finger
 // or a held key gets no frames) plus a margin, and never over 25 ms.
@@ -127,6 +131,10 @@ const int kSlitKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 7, slit::kFrame, 0, slit
 // F the next four, Q the highest and W the gu, as the pads go up the
 // instrument; the rest double them.
 const int kHangKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 8, hang::kGu, 0, hang::kGu, 5, 6, 7, 8};
+
+// The keys on the pipes: Z X C V A S D F Q W the ten pipes along the rack,
+// lowest first; the rest double the top ones.
+const int kPipeKey[PadCount] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 5, 6, 6, 7, 8, 9};
 
 // The keyboard is a second pad: the left hand's three rows mirror the
 // bottom three rows of the trackpad, U I O P are the cymbal row, and the
@@ -538,7 +546,7 @@ public:
             "and the saron in a groove and they interlock, a kotekan, below), chiptune (a Game Boy's channels and its output "
             "stage; the hat's far edge is the long noise's hiss) and djembe (bass, tone, slap, the three dunun and their bells, talking drum, kese, shekere, "
             "karinyan, sesse, krin, kora, balafon; slide the slap's groove up to busy and it becomes the lead "
-"djembe's call, flams and slap triplets), the hang and the slit drum\n"
+"djembe's call, flams and slap triplets), the hang, the slit drum and the pipes\n"
             "the hang kit\tthe pad is a hang: tap the ding in the middle or a field round it, off a field's middle "
             "for more of its octave (along it) or fifth (across it), harder for a brighter, blooming strike; between "
             "the fields, the shoulder's knock; past the rim, round the corners, a slap on the gu underneath\n"
@@ -546,6 +554,11 @@ public:
             "for the fullest note, three quarters of the way out for the purest, nearer the root for a thinner, "
             "brighter knock, off its centre line for its twist; harder is louder and brighter; twist a tongue's "
             "tone from a fingertip through yarn and rubber to a hard mallet; off the tongues, a knock on the box\n"
+            "the pipes kit\tthe pad is a rack of ten PVC pipes seen end-on, lowest at the left: tap a mouth to slap it "
+            "with a flip-flop, harder for a louder, brighter pop; off its middle the paddle glances off the rim (more "
+            "plastic, less air); hold the finger down and the paddle stays on the mouth, closing it: the pipe drops to "
+            "its closed note, near an octave lower, and slides up again as you slide the finger off the mouth or lift "
+            "it; the REPEAT strip still rolls, and fingers landing together still groove\n"
             "R + W held together (gamelan)\tthe bonang (R) and the saron (W) grooving together play the kotekan, one "
             "line from two players; holding only one, the status line asks for the other\n"
             "Shift+Left / Right (or [ ])\tless or more swing\n"
@@ -582,6 +595,10 @@ public:
                 break;
             case Mode::Edit: parts << QStringLiteral("shaping %1").arg(name); break;
             case Mode::Bass: parts << QStringLiteral("%1 held").arg(name); break;
+            case Mode::Paddle:
+                parts << (h.bend > 0.02f ? QStringLiteral("%1's paddle tilted open").arg(name)
+                                         : QStringLiteral("%1 held shut by its paddle").arg(name));
+                break;
             case Mode::Sweep: parts << QStringLiteral("fill"); break;
             default: break;
             }
@@ -649,6 +666,7 @@ private:
         Loop,    // closed a phrase into a loop: nothing more to do
         Kept,    // its roll or groove was kept: it plays on by itself
         Repeat,  // a thumb in the REPEAT strip: pads roll as they land
+        Paddle,  // the pipes: a held finger keeps its paddle on the pipe's mouth
     };
 
     // A finger or a key on a pad.
@@ -667,7 +685,8 @@ private:
         int rate = 0, density = 1;
         int lastCell = 0;
         int degree = 0; // the 808's glide, in degrees
-        float bend = 0; // the tabla's bayan: its heel pressed in, semitones
+        float bend = 0; // the tabla's bayan: its heel pressed in, semitones (the pipes: the paddle's tilt)
+        bool paddleDown = false; // the pipes: the hand has put the paddle back on
         bool landing = true; // its first hit waits a moment for the pressure's peak
         float peak = 0;
         double seen = 0; // the time of the last frame it was in
@@ -716,9 +735,10 @@ private:
 
     void paintHang(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
     void paintSlit(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
+    void paintPipes(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
 
     // The kits that are one instrument over the whole pad, not a grid.
-    bool whole() const { return m_kit == Hang || m_kit == SlitDrum; }
+    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes; }
 
     // --- where on the pad ------------------------------------------------------
 
@@ -727,6 +747,8 @@ private:
     int cellAt(float x, float y) const {
         if (m_kit == SlitDrum)
             return slitPad(slit::spotAt(slitX(x), slitY(y)).tongue);
+        if (m_kit == Pipes)
+            return pipePad(pipedrum::spotAt(x, y).pipe);
         if (m_kit != Hang)
             return padAt(x, y);
         return hangPad(hang::spotAt(hangX(x), hangY(y)).field);
@@ -749,6 +771,14 @@ private:
             const slit::Tongue tg = slit::tongue(t);
             sx = clampf((X - tg.rootX) * float(tg.dir) / tg.length, 0, 1);
             sy = clampf(0.5f + (Y - tg.y) / slit::Physics::kWidth, 0, 1);
+            return;
+        }
+        if (m_kit == Pipes) {
+            // On the pipes: across and along the pad from the mouth's middle,
+            // out to pipedrum::kSpotReach of its radius either way.
+            const pipedrum::Spot sp = pipedrum::spotOn(pipeOf(pad), x, y);
+            sx = clampf(0.5f + 0.5f * sp.u / pipedrum::kSpotReach, 0, 1);
+            sy = clampf(0.5f + 0.5f * sp.w / pipedrum::kSpotReach, 0, 1);
             return;
         }
         if (m_kit == Hang) {
@@ -942,6 +972,13 @@ private:
                 h->y0 = h->y = slitPadY(tg.y);
             }
         }
+        if (m_kit == Pipes) {
+            // A key slaps the middle of its pipe's mouth.
+            const pipedrum::Mouth m = pipedrum::mouth(kPipeKey[h->pad]);
+            h->pad = pipePad(kPipeKey[h->pad]);
+            h->x0 = h->x = m.x;
+            h->y0 = h->y = m.y;
+        }
         h->vel = accent ? 1.0f : 0.78f;
         h->pressure = accent ? 0.7f : 0.45f;
         h->lastCell = h->pad;
@@ -979,6 +1016,8 @@ private:
                         return false;
             return true;
         }
+        if (m_kit == Pipes)
+            return pipedrum::spotAt(x, y).rho < 0.9f; // well within a mouth
         if (m_kit == Hang) {
             // On the hang: well within a field's rim, or well off the shell.
             const float hx = hangX(x), hy = hangY(y);
@@ -1032,6 +1071,17 @@ private:
         case Mode::Edit:
             shapeSound(h, ctx);
             break;
+        case Mode::Paddle: {
+            // Sliding the held finger off the mouth tilts the paddle up off
+            // the rim: the closed pipe's note glides up toward the open one.
+            const float d = std::hypot(h.x - h.x0, (h.y - h.y0) * 0.6f);
+            const float gap = std::round(clampf((d - 0.015f) / 0.12f, 0, 1) * 20.0f) / 20.0f;
+            if (h.paddleDown && std::fabs(gap - h.bend) > 0.01f) {
+                h.bend = gap;
+                sendPaddle(h, PaddleOpen, gap, now, ctx);
+            }
+            break;
+        }
         case Mode::Bass: {
             const int deg = std::clamp(int(std::lround((h.x - h.x0) * 20.0f)), -7, 7);
             // The tabla's bayan: up the pad, the heel presses into the
@@ -1125,6 +1175,8 @@ private:
         if (h.pad == Sub && (h.mode == Mode::Pending || h.mode == Mode::Bass || h.mode == Mode::Edit ||
                              h.mode == Mode::Loop))
             sendOff(h, now, ctx);
+        if (h.mode == Mode::Paddle && h.paddleDown)
+            sendPaddle(h, PaddleLift, 0, now, ctx);
         if (h.gen >= 0) {
             Gen &g = m_gens[size_t(h.gen)];
             if (g.holder == indexOf(h))
@@ -1135,6 +1187,11 @@ private:
 
     // Fingers that have been down long enough decide what they are.
     void resolve(double now, ControlContext &ctx) {
+        for (auto &h : m_holders)
+            if (h.used && h.mode == Mode::Paddle && !h.paddleDown && now - h.t0 >= kPaddleSecs) {
+                h.paddleDown = true;
+                sendPaddle(h, PaddleHold, h.vel, now, ctx);
+            }
         for (auto &h : m_holders) {
             if (!h.used || h.mode != Mode::Pending || now - h.t0 < kHoldSecs)
                 continue;
@@ -1162,6 +1219,12 @@ private:
                 becomeGroove(h, now, ctx);
             } else if (h.pad == Sub) {
                 h.mode = Mode::Bass;
+            } else if (m_kit == Pipes) {
+                // A finger that stays keeps the paddle on: the slap bounced
+                // off, and the hand puts it back down and holds it there
+                // (at kPaddleSecs, below).
+                h.mode = Mode::Paddle;
+                h.bend = 0;
             } else {
                 becomeRoll(h, now, ctx);
             }
@@ -1605,6 +1668,19 @@ private:
         ctx.send(c);
     }
 
+    // A held finger's paddle on its pipe: put down, tilted open, or lifted.
+    void sendPaddle(const Holder &h, int act, float amount, double t, ControlContext &ctx) {
+        Command c;
+        c.type = Paddle;
+        c.id = h.src & 0xFFFFFF;
+        c.t = t;
+        c.i[0] = h.pad;
+        c.i[3] = act;
+        c.f[0] = amount;
+        stamp(c);
+        ctx.send(c);
+    }
+
     void sendOff(const Holder &h, double t, ControlContext &ctx) {
         Command c;
         c.type = Command::Off;
@@ -1774,7 +1850,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
         paintHang(p, pc, harm, genOn);
     if (m_kit == SlitDrum)
         paintSlit(p, pc, harm, genOn);
-    // The grid of pads (none on the hang or the slit drum, each one instrument).
+    if (m_kit == Pipes)
+        paintPipes(p, pc, harm, genOn);
+    // The grid of pads (none on the hang, the slit drum or the pipes, each one instrument).
     for (int pad = 0; pad < (whole() ? 0 : int(PadCount)); ++pad) {
         const int row = pad / kCols, column = pad % kCols;
         const QRectF cell = pc.rect(float(column) / kCols, float(row) / kRows, float(column + 1) / kCols,
@@ -1973,6 +2051,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 if (h.bend > 0.05f)
                     what += QStringLiteral(" +%1").arg(double(h.bend), 0, 'f', 1);
                 break;
+            case Mode::Paddle: what = h.bend > 0.02f ? QStringLiteral("OPENING") : QStringLiteral("SHUT"); break;
             case Mode::Sweep: what = QStringLiteral("FILL"); break;
             case Mode::Loop: what = QStringLiteral("LOOP"); break;
             case Mode::Kept: what = QStringLiteral("KEPT"); break;
@@ -2286,6 +2365,100 @@ void DrumsControl::paintSlit(QPainter &p, const PaintContext &pc, const Harmony 
         if (playing >= 0 && playing < kClipSlots && (m_muted[playing] >> pad & 1u)) {
             p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
             p.drawLine(body.bottomLeft(), body.topRight());
+        }
+    }
+}
+
+// The pipes, drawn as the player sees them: ten mouths of PVC end-on in
+// their rack, lowest at the left, zig-zagging between a near row and a far
+// one. Down each bore, the far end's daylight: smaller the longer the pipe.
+// A slap rings out from the rim; a paddle held on a mouth covers it.
+void DrumsControl::paintPipes(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn) {
+    namespace c = console;
+    const QColor col = pc.color;
+    const float *data = pc.view->data;
+    const double s = std::max(0.6, double(pc.scale));
+    const int label = int(std::clamp(15.0 * s, 10.0, 20.0));
+    const int small = int(std::clamp(11.0 * s, 8.0, 14.0));
+    // A mouth's radius in pixels: round whatever the pad's shape.
+    const double R = 0.9 * std::min(pipedrum::kMouthRx * pc.pad.width(), pipedrum::kMouthRy * pc.pad.height());
+    const double wall = std::max(2.0, R * pipedrum::Physics::kThick / pipedrum::Physics::kOuter * 2.2);
+
+    // The rack's two rails, behind the mouths.
+    for (float y : pipedrum::kRows) {
+        const QPointF a = pc.at(0.02f, y), b = pc.at(0.98f, y);
+        p.setPen(QPen(c::alpha(col, 0.14f), std::max(3.0, R * 0.35), Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(a, b);
+    }
+
+    const int oct = drums::octaveNear(harm, 125.0f);
+    const int playing = pc.view->playing;
+    for (int n = 0; n < pipedrum::kPipes; ++n) {
+        const int pad = pipePad(n);
+        const pipedrum::Mouth m = pipedrum::mouth(n);
+        const QPointF centre = pc.at(m.x, m.y);
+        const float live = data[pad], replay = data[16 + pad];
+        const float lit = std::max(live, 0.6f * replay);
+        const float ring = std::min(1.0f, data[96 + n] * 1.5f);
+        const Gen *gen = genOn[pad];
+        const int deg = n + int(std::lround(m_edit[pad].tune));
+        // How long it is cut: the textbook's half wave less two end corrections.
+        const float f1 = midiToHz(harm.midi(deg, oct));
+        const float len = pipedrum::Physics::kC / (2.0f * f1) - 2.0f * pipedrum::Physics::kEnd * pipedrum::Physics::kRadius;
+
+        // The bore: dark, lit from inside while the air rings.
+        const double bore = R - wall;
+        QRadialGradient dark(centre, bore);
+        dark.setColorAt(0.0, c::alpha(col, 0.02f + 0.18f * ring));
+        dark.setColorAt(1.0, c::alpha(col, 0.08f + 0.2f * lit));
+        p.setPen(Qt::NoPen);
+        p.setBrush(dark);
+        p.drawEllipse(centre, bore, bore);
+        // The far end's daylight, a pipe's length away, the pipe falling
+        // away and down from the player.
+        const double far = bore * 0.3 / (0.3 + double(len));
+        const QPointF sky = centre + QPointF(0, bore * (0.42 + 0.18 * double(len) / (0.6 + double(len))));
+        p.setBrush(c::alpha(col, 0.22f + 0.35f * ring));
+        p.drawEllipse(sky, far, far);
+        // The wall: the PVC's cut rim, bright where a slap lands.
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(c::alpha(col, gen ? 0.95f : 0.5f + 0.45f * lit), wall));
+        p.drawEllipse(centre, R - 0.5 * wall, R - 0.5 * wall);
+        // A slap rings out from the rim.
+        if (lit > 0.02f) {
+            const double grow = R * (1.0 + 0.5 * (1.0 - lit));
+            p.setPen(QPen(c::alpha(col, 0.7f * lit), 1.5 * s));
+            p.drawEllipse(centre, grow, grow);
+        }
+        // Its note, and how long it is.
+        const int midi = int(std::lround(harm.midi(deg, oct)));
+        const QString note = QString::fromUtf8(Tuning::noteName(((midi % 12) + 12) % 12)) + QString::number(midi / 12 - 1);
+        const QColor ink = live > 0.45f ? QColor::fromRgb(c::kInk) : col;
+        const QRectF box(centre.x() - 60 * s, centre.y() - label * 0.8, 120 * s, label * 1.6);
+        c::text(p, box, note, ink, label, true, Qt::AlignCenter);
+        c::text(p, box.translated(0, R + 0.4 * label), QStringLiteral("%1 m").arg(double(len), 0, 'f', 2),
+                c::alpha(col, 0.55f), small, false, Qt::AlignCenter);
+        if (gen) {
+            const QString what = gen->groove ? QString::fromUtf8(densityName(gen->density)).toUpper()
+                                             : QString::fromUtf8(rateName(gen->rate));
+            c::text(p, box.translated(0, label * 1.2), what, c::alpha(col, 0.7f), small, true, Qt::AlignCenter);
+        }
+        // A paddle held on it: the sole over the mouth, tilted up as the
+        // finger slides off.
+        for (const auto &h : m_holders) {
+            if (!h.used || h.mode != Mode::Paddle || h.pad != pad)
+                continue;
+            const double lift = double(h.bend) * R * 0.8;
+            QPainterPath sole;
+            sole.addRoundedRect(QRectF(centre.x() - R * 1.25, centre.y() - R * 1.25 - lift, R * 2.5, R * 2.5), R * 0.9, R * 0.9);
+            p.setPen(QPen(c::alpha(col, 0.85f), 2.0 * s));
+            p.setBrush(c::alpha(col, 0.28f - 0.12f * h.bend));
+            p.drawPath(sole);
+        }
+        // Out of the loop that plays.
+        if (playing >= 0 && playing < kClipSlots && (m_muted[playing] >> pad & 1u)) {
+            p.setPen(QPen(c::alpha(c::red(), 0.7f), 2));
+            p.drawLine(centre + QPointF(-R, R), centre + QPointF(R, -R));
         }
     }
 }

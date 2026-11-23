@@ -927,11 +927,15 @@ private:
         }
         const float v = m_voicing;
         // The gain is the window's; the voice's level over the last 8 ms
-        // corrects it by up to 12 dB either way, so a vowel comes in as
-        // fast as it is sung and a closure falls as fast.
+        // corrects it, so a vowel comes in as fast as it is sung and a
+        // closure falls as fast.
         m_fastPow += (x * x - m_fastPow) * 0.008f;
         const float winPow = m_winPow0 + (m_winPow - m_winPow0) * t;
-        const float fast = clampf(std::sqrt((m_fastPow + 1e-14f) / (winPow + 1e-14f)), 0.25f, 4.0f);
+        // (Up by at most half again: just after a stop's closure the
+        // window still holds the silence, and a larger lift would pop every
+        // vowel after a /t/ or a /b/ 6–9 dB over itself. Down as far as
+        // 12 dB, so a closure falls at once.)
+        const float fast = clampf(std::sqrt((m_fastPow + 1e-14f) / (winPow + 1e-14f)), 0.25f, 1.5f);
         // (Followed through 8 ms, not stepped hop by hop: a gain that moved
         // every 4 ms would ring sidebands 250 Hz either side of every
         // harmonic.)

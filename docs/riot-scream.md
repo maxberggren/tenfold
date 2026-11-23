@@ -307,7 +307,7 @@ Against the NATURAL style on the same inputs:
 |---|---|
 | **Level** (active, 200 Hz–6 kHz) | within ±2 dB on all six inputs |
 | **Per-vowel level** | spread 7.7–7.9 dB across /a e ʌ æ i o u/ (the singer's own vowels differ by about 5 dB). /i/ is within 1 dB of the vowels' mean, /u/ −5 |
-| **Consonants** | burst or hiss re the following vowel within 5 dB of NATURAL's ratio for all twelve, /r b l g s t n w ʃ k d h/ |
+| **Consonants** | burst or hiss re the following vowel against NATURAL's ratio, /r b l g s t n w ʃ k d h/: within ±5 dB for the wail and the woman, and for the man except /t/ (−8 dB) and /k/ (−5.5) |
 | **Onset** (input voiced → scream within 6 dB of its steady level) | median 20–25 ms and at most 35–50 ms, against NATURAL's 5. The tracker's first reading of a phrase, or of a leap, takes 17–25 ms. A nearby note inside a phrase starts on the vowel's periodicity. |
 | **Pitch at a syllable's edge** | the throat's own pitch in a syllable's first 40 ms against the 70 ms after: median 56–135 cents on the test singers (the man's p90 426). On real speech the median is 251, much of it the speech's own glide. Octave relation to the sung note: 0–4 % of frames off on the test singers, 11–17 % on real speech and the high singer, where the reference pitch estimator itself is unsure. |
 | **Register** | real speech p10/p50/p90 395/493/565 Hz; the man and the woman 521/692/795 Hz (twice the sung note, and four times for the man) |
@@ -318,4 +318,70 @@ Against the NATURAL style on the same inputs:
 (best of five, on a machine shared with seven other builds). In the app, a
 128-frame callback costs about 0.8 percentage points more than NATURAL.
 
-The review's verdict and the deviations it accepted are below.
+## The review
+
+A reviewer was briefed to be hard to impress and to sign off only if
+WOWed. It judged three things: whether this is the reference's distant,
+screamed riot-grrrl voice, whether it is physically grounded, and what it
+costs. Over three rounds it measured its own renders against the
+reference: through the studio, through a harness, and against score-based
+ground truth for 41 phrases and about 490 notes.
+
+**Round one** found:
+- phrases screamed in the wrong octave;
+- the singer's own buzz between syllables;
+- 50 ms onsets;
+- closed vowels 18 dB down;
+- an EQ dressed as a jaw;
+- nothing above 6.7 kHz.
+
+**Round two** found:
+- an octave check that halved belted voices;
+- octave intervals folded away.
+
+All of these are fixed as described above.
+
+**Round three** passed the pitch: every note in the right octave, median
+error 10 cents or less, except one each in the man at 150 and 180 Hz and
+the speech at 100 Hz, and notes over the tracker's ceiling. It also passed
+the reference itself fed through RIOT: 505 Hz, H1/H3/H4/H5 at
+−7/−13/−8/−9 against the reference's −7/−14/−7/−13. And it passed:
+
+| Check | Result |
+|---|---|
+| Leak | none |
+| Bands on real speech | −17/−30/−28 against −17/−29/−28 |
+| Physics | sound throughout |
+
+It held back sign-off on one blocking item: every vowel after a stop popped
+6–9 dB. The 8 ms level correction could lift the gain ×4 while the analysis
+window still held the closure. Its upward side is now capped at ×1.5, the
+fix it tested. Since then the wail's and the woman's stops are all within
+±5 dB of NATURAL, and the render no longer meets the page's ceiling at
+every onset.
+
+That was the third and last round the work was given, so the verdict
+stands at "not yet" on that item, now fixed but not re-reviewed.
+
+**Still open:**
+- short (~5 ms) wrong-pitch fragments where a syllable starts on the last
+  note just before a leap;
+- onsets after a fricative plus a leap reaching 40–55 ms;
+- the man's /t/ and /k/ 5–8 dB soft against NATURAL;
+- real speech's harmonics-to-noise at 13–14 dB against 16.6;
+- a man's loud singing period-doubled in 14–18 % of frames against 6 %;
+- a sample or two touching the page's ceiling in some renders;
+- notes over the tracker's 1 kHz ceiling.
+
+**Accepted deviations:**
+- a phrase's first syllable about 20 ms late (the tracker's first reading);
+- a darker slope on the synthetic /æ/ (real speech matches);
+- the synthetic singers' H1 under the reference's (the reference's is
+  under its drums);
+- the man's darker 6–12 kHz;
+- ROOM in wide stereo;
+- the gang voices centred;
+- the loudness follower;
+- the 18 dB guard;
+- the tracker's ceiling;
+- octave intervals taken about 40 ms late.

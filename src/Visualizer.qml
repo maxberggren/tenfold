@@ -117,6 +117,9 @@ Item {
         readonly property vector4d n2: root.u.n2
         readonly property vector4d n3: root.u.n3
         readonly property vector4d debug: Qt.vector4d(root.stage, root.fingers ? 1 : 0, 0, 0)
+        readonly property vector4d fh0: root.u.fh0
+        readonly property vector4d fh1: root.u.fh1
+        readonly property vector4d fh2: root.u.fh2
         fragmentShader: "qrc:/visual/feedback.frag.qsb"
     }
     ShaderEffectSource {

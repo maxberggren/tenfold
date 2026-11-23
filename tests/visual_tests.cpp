@@ -4,7 +4,10 @@
 // command lines and its sync with the sound.
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QPainter>
+#include <QVector4D>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryDir>
@@ -303,6 +306,93 @@ private slots:
         QCOMPARE(h.hand().fingers[1].alive, 0.0f);
     }
 
+    // Each finger down is counted in the order it lands: the first place
+    // no finger down holds. Lift the first and land again, and it is the
+    // first again, while the lifted one fades with its own place (its colour).
+    void fingersAreCountedInTheOrderTheyLand() {
+        auto order = [](const HandMorph &h, int id) {
+            for (const auto &f : h.hand().fingers)
+                if (f.id == id && f.alive >= 1)
+                    return f.order;
+            return -1;
+        };
+        HandMorph h;
+        h.frame(frameOf(0, {{0.2f, 0.2f, 0.5f}, {0.4f, 0.2f, 0.5f}, {0.6f, 0.2f, 0.5f}}), 1.6f);
+        QCOMPARE(order(h, 1), 0);
+        QCOMPARE(order(h, 2), 1);
+        QCOMPARE(order(h, 3), 2);
+        // The first lifts: the others keep their places.
+        Frame f = frameOf(0.1, {{0.4f, 0.2f, 0.5f}, {0.6f, 0.2f, 0.5f}});
+        f.touches[0].id = 2;
+        f.touches[1].id = 3;
+        h.frame(f, 1.6f);
+        QCOMPARE(order(h, 2), 1);
+        QCOMPARE(order(h, 3), 2);
+        // A new one takes the first place, not the fourth, in a slot of its
+        // own while the lifted one still fades in its.
+        f = frameOf(0.2, {{0.4f, 0.2f, 0.5f}, {0.6f, 0.2f, 0.5f}, {0.3f, 0.5f, 0.5f}});
+        f.touches[0].id = 2;
+        f.touches[1].id = 3;
+        f.touches[2].id = 4;
+        h.frame(f, 1.6f);
+        QCOMPARE(order(h, 4), 0);
+        QVERIFY(h.hand().fingers[0].alive > 0 && h.hand().fingers[0].alive < 1);
+        QCOMPARE(h.hand().fingers[0].order, 0);
+        // Everything lifts, one lands again at once: the first, though its
+        // old slot still fades.
+        h.frame(Frame{0.3, false, 0, {}}, 1.6f);
+        h.tick(0.1, false);
+        h.frame(frameOf(0.4, {{0.5f, 0.5f, 0.5f}}), 1.6f);
+        QCOMPARE(order(h, 1), 0);
+        // Ten down: ten places, each once.
+        HandMorph ten;
+        ten.frame(ring(0, 10, 0.5f, 0.5f, 0.3f, 0), 1.6f);
+        std::set<int> places;
+        for (const auto &x : ten.hand().fingers)
+            places.insert(x.order);
+        QCOMPARE(int(places.size()), 10);
+        QCOMPARE(*places.begin(), 0);
+        QCOMPARE(*places.rbegin(), 9);
+    }
+
+    // The first seven fingers down each carry the player's turn of the
+    // colour wheel to the shader, slot by slot; the rest none.
+    void theEarlyFingersHaveTheirOwnColours() {
+        Settings set;
+        for (int i = 0; i < kColourFingers; ++i)
+            set.fingerHues[size_t(i)] = 0.1f * float(i + 1);
+        HandMorph h;
+        h.frame(ring(0, 9, 0.5f, 0.5f, 0.3f, 0), 1.6f);
+        const auto u = uniforms(Signals(), set, h.hand(), Drive(), 640, 360, 0);
+        auto find = [&](const char *name) {
+            for (const Uniform &x : u)
+                if (std::strcmp(x.name, name) == 0)
+                    return x;
+            QTest::qFail(name, __FILE__, __LINE__);
+            return Uniform{};
+        };
+        const Uniform fh[] = {find("fh0"), find("fh1"), find("fh2")};
+        for (int slot = 0; slot < 10; ++slot) {
+            const Hand::Finger &f = h.hand().fingers[size_t(slot)];
+            const float want = f.order >= 0 && f.order < kColourFingers ? 0.1f * float(f.order + 1) : 0.0f;
+            QCOMPARE(fh[slot / 4].v[slot % 4], want);
+            QCOMPARE(fingerHue(set, f), want);
+        }
+        QCOMPARE(fh[2].v[2], 0.0f); // no eleventh finger
+        // With none set, every finger is the chord's colour, as it always was.
+        for (const Uniform &x : uniforms(Signals(), Settings(), h.hand(), Drive(), 640, 360, 0))
+            if (QByteArray(x.name).startsWith("fh"))
+                QCOMPARE(QVector4D(x.v[0], x.v[1], x.v[2], x.v[3]), QVector4D());
+        // The markers' colour is the rings': the shader's cosine palette.
+        QCOMPARE(palette(0).redF(), 1.0f);
+        QVERIFY(std::abs(palette(0.5f).redF()) < 1e-4f);
+        QVERIFY(std::abs(palette(0.67f).greenF() - 1.0f) < 0.001f);
+        const QString frag = QString::fromStdString(readFile(source(QStringLiteral("visual/feedback.frag"))));
+        QVERIFY(frag.contains(QStringLiteral("vec3(0.0, 0.33, 0.67) + t + h")));
+        QVERIFY(frag.contains(QStringLiteral("palette(0.6 + ubuf.fh2.y)")));
+        QCOMPARE(kFingerTone, 0.6f);
+    }
+
     // Left alone with the autopilot on, the world wanders, but only after a
     // while; with it off it stays.
     void theAutopilotWandersOnlyWhenLeftAlone() {
@@ -488,6 +578,98 @@ private slots:
             // As the file keeps it: to four places.
             QCOMPARE(toJson(s.visual()->state().settings.look), toJson(before));
             QVERIFY(!s.visual()->state().settings.autopilot);
+        });
+    }
+
+    // E picks an early finger, . and , turn its colour round the wheel, R
+    // puts it back; the colours are kept in the song file, and a song from
+    // before them, or a broken list, leaves the fingers the chord's colour.
+    void theFingersColoursAreSetByKeyAndSavedWithTheSong() {
+        QJsonObject doc;
+        testkit::play("page 0 9\nkey 0.1 .\nkey 0.15 .\nkey 0.2 .\n"   // finger 1: a quarter round
+                      "key 0.3 E\nkey 0.35 ,\n"                           // finger 2: a twelfth back
+                      "key 0.4 E\nkey 0.45 Shift+.\n"                     // finger 3: a little way
+                      "key 0.5 E\nkey 0.55 .\nkey 0.6 R\n"                // finger 4: turned, and back
+                      "key 0.7 Shift+E\nkey 0.75 Shift+E\nkey 0.8 Shift+E\nkey 0.85 Shift+E\n" // round to finger 7
+                      "end 0.9\n",
+                      [&](Session &s) {
+                          const auto &h = s.visual()->state().settings.fingerHues;
+                          QVERIFY(std::abs(h[0] - 0.25f) < 1e-5f);
+                          QVERIFY(std::abs(h[1] - 11.0f / 12) < 1e-5f);
+                          QVERIFY(std::abs(h[2] - 1.0f / 48) < 1e-5f);
+                          QCOMPARE(h[3], 0.0f);
+                          QCOMPARE(s.visual()->picked(), 6);
+                          uint32_t seq = 0;
+                          QVERIFY(s.notice(&seq).startsWith(QStringLiteral("Finger 7")));
+                          doc = s.saveSong();
+                      });
+        const QJsonArray saved = doc.value(QStringLiteral("visual")).toObject().value(QStringLiteral("fingerHues")).toArray();
+        QCOMPARE(saved.size(), kColourFingers);
+        QCOMPARE(saved[0].toDouble(), 0.25);
+        testkit::play("end 0.1\n", [&](Session &s) {
+            QString error;
+            QVERIFY(s.openSong(doc, &error));
+            const auto &h = s.visual()->state().settings.fingerHues;
+            QVERIFY(std::abs(h[0] - 0.25f) < 1e-4f);
+            QVERIFY(std::abs(h[1] - 11.0f / 12) < 1e-4f);
+            QVERIFY(std::abs(h[2] - 1.0f / 48) < 1e-4f);
+            // Shift+R: all seven back to the chord's.
+            KeyEvent k;
+            k.key = Qt::Key_R;
+            k.modifiers = Qt::ShiftModifier;
+            s.setPage(s.visualPage());
+            QVERIFY(s.key(k));
+            for (float x : s.visual()->state().settings.fingerHues)
+                QCOMPARE(x, 0.0f);
+        });
+        // Old songs and broken lists: the chord's colour where it is not a
+        // number, a whole turn wrapped.
+        QJsonObject visual = doc.value(QStringLiteral("visual")).toObject();
+        visual.remove(QStringLiteral("fingerHues"));
+        QJsonObject old = doc;
+        old[QStringLiteral("visual")] = visual;
+        visual[QStringLiteral("fingerHues")] = QJsonArray{1.25, QStringLiteral("red"), -0.25};
+        QJsonObject broken = doc;
+        broken[QStringLiteral("visual")] = visual;
+        testkit::play("end 0.1\n", [&](Session &s) {
+            QString error;
+            QVERIFY(s.openSong(doc, &error));
+            QVERIFY(s.openSong(old, &error));
+            for (float x : s.visual()->state().settings.fingerHues)
+                QCOMPARE(x, 0.0f);
+            QVERIFY(s.openSong(broken, &error));
+            const auto &h = s.visual()->state().settings.fingerHues;
+            QVERIFY(std::abs(h[0] - 0.25f) < 1e-5f);
+            QCOMPARE(h[1], 0.0f);
+            QVERIFY(std::abs(h[2] - 0.75f) < 1e-5f);
+            QCOMPARE(h[3], 0.0f);
+        });
+    }
+
+    // A click on a swatch picks that finger; a click on the picked one
+    // turns it. Drawn at the pad's top right.
+    void theSwatchesPickAndTurn() {
+        testkit::play("page 0 9\nend 0.1\n", [&](Session &s) {
+            VisualPage &page = *s.visual();
+            QImage img(1200, 800, QImage::Format_ARGB32);
+            QPainter p(&img);
+            PaintContext pc;
+            pc.pad = QRectF(40, 60, 1000, 600);
+            pc.color = QColor("#E4E8FF");
+            page.paint(p, pc);
+            p.end();
+            // The swatches' centres, from the right: 16 px boxes, 5 px apart.
+            const qreal y = console::tabY(pc);
+            auto centre = [&](int i) {
+                const qreal x0 = pc.pad.right() - 16 - kColourFingers * 16 - (kColourFingers - 1) * 5;
+                return QPointF(x0 + i * 21 + 8, y);
+            };
+            QCOMPARE(page.picked(), 0);
+            QVERIFY(s.clickAt(centre(3)));
+            QCOMPARE(page.picked(), 3);
+            QCOMPARE(page.state().settings.fingerHues[3], 0.0f);
+            QVERIFY(s.clickAt(centre(3)));
+            QVERIFY(std::abs(page.state().settings.fingerHues[3] - 1.0f / 12) < 1e-5f);
         });
     }
 

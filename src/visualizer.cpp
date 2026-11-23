@@ -75,6 +75,7 @@ void Visualizer::step(double dt) {
         m_showing = m_session->page() == m_session->visualPage();
         const StudioView &v = m_session->view();
         m_tracker.update(v, dt);
+        page->hear(m_tracker.now().chordHue);
         if (m_drive.step(m_tracker.now(), page->state().settings.look, dt, page->state().settings.autopilot))
             page->moveOn();
         state = page->state();

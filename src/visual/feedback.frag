@@ -43,6 +43,9 @@ layout(std140, binding = 0) uniform buf {
     vec4 n2;
     vec4 n3;
     vec4 debug;  // x: 3 leaves the echoes out, 4 draws them alone (TENFOLD_VISUAL_STAGE); y: the fingers drawn
+    vec4 fh0;    // each finger's turn of the colour wheel from the chord's: f0..f3
+    vec4 fh1;    // f4..f7
+    vec4 fh2;    // f8, f9
 } ubuf;
 layout(binding = 1) uniform sampler2D scene;
 layout(binding = 2) uniform sampler2D prev;
@@ -145,11 +148,19 @@ void main() {
 
 
     // The fingers, drawn into the flow so their paths trail.
-    float fg = fingerGlow(p, ubuf.f0, aspect) + fingerGlow(p, ubuf.f1, aspect) + fingerGlow(p, ubuf.f2, aspect) +
-               fingerGlow(p, ubuf.f3, aspect) + fingerGlow(p, ubuf.f4, aspect) + fingerGlow(p, ubuf.f5, aspect) +
-               fingerGlow(p, ubuf.f6, aspect) + fingerGlow(p, ubuf.f7, aspect) + fingerGlow(p, ubuf.f8, aspect) +
-               fingerGlow(p, ubuf.f9, aspect);
-    col += palette(0.6) * fg * ubuf.roll.z * ubuf.debug.y;
+    // Each in the chord's colour, turned as far round the wheel as the
+    // player set that finger (visual.h, Settings::fingerHues).
+    vec3 fg = palette(0.6 + ubuf.fh0.x) * fingerGlow(p, ubuf.f0, aspect) +
+              palette(0.6 + ubuf.fh0.y) * fingerGlow(p, ubuf.f1, aspect) +
+              palette(0.6 + ubuf.fh0.z) * fingerGlow(p, ubuf.f2, aspect) +
+              palette(0.6 + ubuf.fh0.w) * fingerGlow(p, ubuf.f3, aspect) +
+              palette(0.6 + ubuf.fh1.x) * fingerGlow(p, ubuf.f4, aspect) +
+              palette(0.6 + ubuf.fh1.y) * fingerGlow(p, ubuf.f5, aspect) +
+              palette(0.6 + ubuf.fh1.z) * fingerGlow(p, ubuf.f6, aspect) +
+              palette(0.6 + ubuf.fh1.w) * fingerGlow(p, ubuf.f7, aspect) +
+              palette(0.6 + ubuf.fh2.x) * fingerGlow(p, ubuf.f8, aspect) +
+              palette(0.6 + ubuf.fh2.y) * fingerGlow(p, ubuf.f9, aspect);
+    col += fg * ubuf.roll.z * ubuf.debug.y;
 
     now += col;
     // The echoes only where this frame is dark: they fill the black between

@@ -1,5 +1,6 @@
 #include "visual.h"
 
+#include <QJsonArray>
 #include <QJsonValue>
 #include <QPainter>
 #include <algorithm>
@@ -464,10 +465,20 @@ void HandMorph::frame(const Frame &f, float aspect) {
     for (int i = 0; i < n; ++i) {
         const Touch &t = f.touches[i];
         auto it = std::find_if(h.fingers.begin(), h.fingers.end(), [&](const Hand::Finger &s) { return s.id == t.id; });
-        if (it == h.fingers.end())
+        int order;
+        if (it != h.fingers.end()) {
+            order = it->order;
+        } else {
             it = std::min_element(h.fingers.begin(), h.fingers.end(),
                                   [](const Hand::Finger &a, const Hand::Finger &b) { return a.alive < b.alive; });
-        *it = {t.x, t.y, clamp01(t.pressure), 1.0f, t.id};
+            // A finger landing is the first place no finger down holds: lift
+            // the first and land again, and it is the first again.
+            for (order = 0; std::any_of(h.fingers.begin(), h.fingers.end(), [&](const Hand::Finger &s) {
+                     return s.alive >= 1 && s.order == order && &s != &*it;
+                 });)
+                ++order;
+        }
+        *it = {t.x, t.y, clamp01(t.pressure), 1.0f, t.id, order};
     }
 }
 
@@ -542,7 +553,7 @@ Look fromJson(const QJsonObject &o, Look l) {
 namespace {
 const char *const kWorldNames[] = {"CITY", "TUNNEL", "CRYSTAL", "SPONGE", "LATTICE"};
 const char *const kQualityNames[] = {"DRAFT", "NORMAL", "FINE", "FULL"};
-enum Spot : int { SpotWorld = 0, SpotAuto = 10, SpotMarkers, SpotQuality, SpotWindow, SpotFull, SpotJump, SpotHome };
+enum Spot : int { SpotWorld = 0, SpotAuto = 10, SpotMarkers, SpotQuality, SpotWindow, SpotFull, SpotJump, SpotHome, SpotFinger = 20 };
 } // namespace
 
 int VisualPage::worldKey(int key) {
@@ -574,6 +585,33 @@ void VisualPage::tick(double dt) {
     m_morph.tick(dt, m_state.settings.autopilot);
     m_state.settings.look = m_morph.look;
     m_state.hand = m_morph.hand();
+}
+
+float fingerHue(const Settings &set, const Hand::Finger &f) {
+    return f.order >= 0 && f.order < kColourFingers ? set.fingerHues[size_t(f.order)] : 0.0f;
+}
+
+QColor palette(float t) {
+    auto channel = [t](float phase) { return clamp01(0.5f + 0.5f * std::cos(2.0f * kPi * (phase + t))); };
+    return QColor::fromRgbF(channel(0.0f), channel(0.33f), channel(0.67f));
+}
+
+QColor VisualPage::fingerColour(int order) const {
+    const Settings &s = m_state.settings;
+    const float own = order >= 0 && order < kColourFingers ? s.fingerHues[size_t(order)] : 0.0f;
+    return palette(m_chordHue + s.look.hue + kFingerTone + own);
+}
+
+void VisualPage::turnFinger(ControlContext &ctx, int finger, float by) {
+    float &h = m_state.settings.fingerHues[size_t(finger)];
+    h += by;
+    h -= std::floor(h);
+    // A whole turn back is no turn (and no 359.99°).
+    if (h > 0.9999f)
+        h = 0;
+    const int degrees = int(std::lround(h * 360.0f)) % 360;
+    ask(ctx, degrees == 0 ? QStringLiteral("Finger %1: the chord's colour").arg(finger + 1)
+                          : QStringLiteral("Finger %1: %2° round from the chord's colour").arg(finger + 1).arg(degrees));
 }
 
 void VisualPage::leave(ControlContext &ctx) {
@@ -633,6 +671,28 @@ bool VisualPage::key(const KeyEvent &k, ControlContext &ctx) {
                                  : QStringLiteral("Autopilot off: it stays where the hand left it"));
             break;
         case Qt::Key_M: s.markers = !s.markers; break;
+        // The early fingers' colours: E picks one, , and . turn it round the
+        // wheel from the chord's (Shift, or ; and :, a little way), R puts
+        // it back (Shift+R all of them).
+        case Qt::Key_E:
+            m_pick = (m_pick + (shift ? kColourFingers - 1 : 1)) % kColourFingers;
+            turnFinger(ctx, m_pick, 0);
+            break;
+        case Qt::Key_Comma: turnFinger(ctx, m_pick, shift ? -1.0f / 48 : -1.0f / 12); break;
+        case Qt::Key_Period: turnFinger(ctx, m_pick, shift ? 1.0f / 48 : 1.0f / 12); break;
+        case Qt::Key_Less:
+        case Qt::Key_Semicolon: turnFinger(ctx, m_pick, -1.0f / 48); break;
+        case Qt::Key_Greater:
+        case Qt::Key_Colon: turnFinger(ctx, m_pick, 1.0f / 48); break;
+        case Qt::Key_R:
+            if (shift) {
+                s.fingerHues.fill(0);
+                ask(ctx, QStringLiteral("Every finger in the chord's colour"));
+            } else {
+                s.fingerHues[size_t(m_pick)] = 0;
+                turnFinger(ctx, m_pick, 0);
+            }
+            break;
         case Qt::Key_C: s.crt = !s.crt; break;
         case Qt::Key_Q:
             s.quality = (s.quality + 1) % 4;
@@ -674,9 +734,34 @@ void VisualPage::paint(QPainter &p, const PaintContext &pc) {
                 t.y = fg.y;
                 t.size = 0.8f + fg.pressure;
                 p.setOpacity(fg.alive);
-                console::finger(p, pc, t, pc.color);
+                console::finger(p, pc, t, fingerColour(fg.order));
             }
         p.setOpacity(1);
+    }
+
+    // The early fingers' colours, at the pad's top right: a swatch each,
+    // numbered, the one the keys turn ringed. A click picks one; a click on
+    // the picked one turns it on round the wheel.
+    {
+        const qreal box = 16, gap = 5;
+        const qreal x0 = pc.pad.right() - 16 - kColourFingers * box - (kColourFingers - 1) * gap;
+        const qreal y = console::tabY(pc);
+        p.fillRect(QRectF(x0 - 6, y - 11, kColourFingers * (box + gap) - gap + 12, 22), QColor(0, 0, 0));
+        const QFont nf = console::font(10, true);
+        p.setFont(nf);
+        for (int i = 0; i < kColourFingers; ++i) {
+            const QRectF r(x0 + i * (box + gap), y - box / 2, box, box);
+            const QColor c = fingerColour(i);
+            p.fillRect(r, c);
+            p.setPen(QColor(0, 0, 0));
+            console::drawText(p, r, Qt::AlignCenter, QString::number(i + 1));
+            if (i == m_pick) {
+                p.setBrush(Qt::NoBrush);
+                p.setPen(QPen(pc.color, 2.0));
+                p.drawRect(r.adjusted(-3, -3, 3, 3));
+            }
+            m_spots.add(r.adjusted(-gap / 2, -4, gap / 2, 4), SpotFinger + i);
+        }
     }
 
     QStringList worlds;
@@ -702,6 +787,15 @@ bool VisualPage::click(QPointF at, ControlContext &ctx) {
         k.key = key;
         this->key(k, ctx);
     };
+    if (id >= SpotFinger && id < SpotFinger + kColourFingers) {
+        if (id - SpotFinger == m_pick) {
+            press(Qt::Key_Period);
+        } else {
+            m_pick = id - SpotFinger;
+            turnFinger(ctx, m_pick, 0);
+        }
+        return true;
+    }
     if (id >= SpotWorld && id < SpotWorld + int(kWorlds)) {
         static const int keys[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F, Qt::Key_G};
         press(keys[id - SpotWorld]);
@@ -739,6 +833,9 @@ QString VisualPage::help() const {
         "Up / Down\tmore or less folded\n"
         "[ ]\troll · K kaleidoscope · W warp · T trails · Z zoom · H colours · + − speed\n"
         "Space\tanother variation of this world · Backspace the world back home\n"
+        "E\tpick one of the first seven fingers down (Shift+E the one before); , and . turn its colour round the "
+        "wheel from the chord's, Shift a little way; R puts it back, Shift+R all seven. Or click its swatch at the "
+        "top right, and again to turn it. Each keeps its distance from the chord's colour as the chords change\n"
         "P\tautopilot: left alone it wanders on its own, and a drop throws it into the next world with new "
         "colours · M the fingers drawn over it · Q quality · C a CRT's glass\n"
         "Return\tthe picture in a window of its own; Shift+Return puts it full screen (there F11 or a "
@@ -769,6 +866,10 @@ void VisualPage::save(QJsonObject &out) const {
     out[QStringLiteral("quality")] = s.quality;
     out[QStringLiteral("markers")] = s.markers;
     out[QStringLiteral("crt")] = s.crt;
+    QJsonArray hues;
+    for (float h : s.fingerHues)
+        hues.append(std::round(double(h) * 10000.0) / 10000.0);
+    out[QStringLiteral("fingerHues")] = hues;
 }
 
 void VisualPage::load(const QJsonObject &in, ControlContext &) {
@@ -783,6 +884,15 @@ void VisualPage::load(const QJsonObject &in, ControlContext &) {
         s.crt = in.value(QStringLiteral("crt")).toBool();
     if (in.value(QStringLiteral("quality")).isDouble())
         s.quality = std::clamp(in.value(QStringLiteral("quality")).toInt(), 0, 3);
+    // Missing (a song from before them), short or broken: those fingers keep
+    // the chord's colour.
+    s.fingerHues.fill(0);
+    const QJsonArray hues = in.value(QStringLiteral("fingerHues")).toArray();
+    for (int i = 0; i < kColourFingers && i < hues.size(); ++i)
+        if (hues[i].isDouble() && std::isfinite(hues[i].toDouble())) {
+            const double h = hues[i].toDouble();
+            s.fingerHues[size_t(i)] = float(h - std::floor(h));
+        }
 }
 
 float VisualPage::tutorialProbe(const QString &name) const {
@@ -877,6 +987,15 @@ std::vector<Uniform> uniforms(const Signals &s, const Settings &set, const Hand 
     for (int i = 0; i < 10; ++i) {
         const Hand::Finger &f = h.fingers[size_t(i)];
         u.push_back({fingers[i], {f.x, f.y, f.pressure, f.alive}});
+    }
+    // Each finger's turn of the colour wheel from the chord's, slot by slot:
+    // fh0 the slots of f0..f3, fh1 f4..f7, fh2 f8 and f9.
+    static const char *const hues[] = {"fh0", "fh1", "fh2"};
+    for (int i = 0; i < 3; ++i) {
+        Uniform x{hues[i], {0, 0, 0, 0}};
+        for (int j = 0; j < 4 && 4 * i + j < 10; ++j)
+            x.v[j] = fingerHue(set, h.fingers[size_t(4 * i + j)]);
+        u.push_back(x);
     }
     static const char *const notes[] = {"n0", "n1", "n2", "n3"};
     for (int i = 0; i < kNotes; ++i) {

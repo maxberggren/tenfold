@@ -21,6 +21,7 @@
 // the second window and the video recorder live with the app
 // (visualizer.h, recorder.h).
 
+#include <QColor>
 #include <QJsonObject>
 #include <QString>
 #include <array>
@@ -144,6 +145,10 @@ struct Hand {
     struct Finger {
         float x = 0, y = 0, pressure = 0, alive = 0; // alive fades 1 → 0 after a lift
         int id = -1;
+        // Which finger down it is, 0 the first: the lowest place no other
+        // finger down holds when it lands. Kept while it is down and as it
+        // fades, so its colour (Settings::fingerHues) stays with it.
+        int order = -1;
     };
     std::array<Finger, 10> fingers{};
 };
@@ -194,9 +199,18 @@ QJsonObject toJson(const Look &l);
 // Missing or broken values keep l's.
 Look fromJson(const QJsonObject &o, Look l);
 
+// The fingers whose colour the player sets: the first seven down. The rest
+// keep the chord's.
+constexpr int kColourFingers = 7;
+
 // The visual page's settings beyond the look, saved with it.
 struct Settings {
     Look look;
+    // Each early finger's colour, as a turn round the colour wheel from the
+    // one every finger has by default (the chord's, turned by the look's
+    // hue), 0..1: 0 the chord's own, 0.5 its complement. It still follows
+    // the chords, at its own distance.
+    std::array<float, kColourFingers> fingerHues{};
     bool autopilot = true;
     int quality = 1;      // 0 draft, 1 normal, 2 fine, 3 full: the world's resolution
     bool markers = true;  // the fingers drawn over the picture
@@ -218,6 +232,15 @@ struct Drive {
     // VisualPage::moveOn().
     bool step(const Signals &s, const Look &l, double dt, bool follow = true);
 };
+
+// A finger's turn of the colour wheel from the chord's: its own setting if
+// it is one of the first kColourFingers down, else none.
+float fingerHue(const Settings &set, const Hand::Finger &f);
+// The shaders' cosine palette (feedback.frag's palette()) at t, the chord's
+// hue and the look's turn added in by the caller: what a finger's ring is
+// drawn in is palette(chordHue + look.hue + kFingerTone + fingerHue).
+QColor palette(float t);
+constexpr float kFingerTone = 0.6f;
 
 // The march steps and the world's share of the picture's resolution, per
 // quality (draft, normal, fine, full).
@@ -262,6 +285,12 @@ public:
     const State &state() const { return m_state; }
     // The app steps the hand's easing at its own frame rate (also offline).
     void tick(double dt);
+    // The chord's colour as the picture has it now, so the fingers drawn
+    // over it are in their rings' colours.
+    void hear(float chordHue) { m_chordHue = chordHue; }
+    // The early finger the keys colour (0 the first), and its colour now.
+    int picked() const { return m_pick; }
+    QColor fingerColour(int order) const;
     // A drop with the autopilot on: a hard cut to the next world, in new
     // colours.
     void moveOn();
@@ -273,8 +302,11 @@ private:
     void ask(ControlContext &ctx, const QString &what);
     HandMorph m_morph;
     State m_state;
+    void turnFinger(ControlContext &ctx, int finger, float by);
     console::Hotspots m_spots;
     int m_jumps = 0;
+    int m_pick = 0;
+    float m_chordHue = 0;
 };
 
 PartSpec makeVisual();

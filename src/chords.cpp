@@ -1159,17 +1159,8 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     {
         qreal &x = tagsRight;
         const qreal y = pc.pad.top();
-        // The sound, where it is in the row (the row shows only some of
-        // them), and what it is, dimmer.
-        x = c::tag(p, QPointF(x, y),
-                   QStringLiteral("%1 %2/%3").arg(QString::fromUtf8(styleDef(m_style).name)).arg(m_style + 1).arg(
-                       int(StyleCount)),
-                   col, 12)
-                .right() +
-            6;
-        x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).blurb).toUpper(), c::alpha(col, 0.5f), 10)
-                .right() +
-            8;
+        // The sound's name alone; the chip row and the help say the rest.
+        x = c::tag(p, QPointF(x, y), QString::fromUtf8(styleDef(m_style).name), col, 12).right() + 8;
         if (m_hold)
             x = c::tag(p, QPointF(x, y), QStringLiteral("HOLD"), c::amber(), 12).right() + 8;
         if (m_register != 0)
@@ -1420,8 +1411,8 @@ QString Control::help() const {
         "pedal, third to fourth, then the A pedal, fifth to sixth, ease off to resolve; a flat finger is the knee "
         "lever, the root down a step), sitar (jawari buzz and chikari: press harder to bend the top string up to "
         "the next note, the meend; on a gate it plays jhala, its accents raking the strings short and its other "
-        "hits striking the chikari as hard); round from the last to the first. The page names the sound, what it "
-        "is and where it is in the row (11/15) along its top edge\n"
+        "hits striking the chikari as hard); round from the last to the first. The page names the sound along its "
+        "top edge\n"
         "↑ ↓\tthe voicing higher or lower\n"
         "Shift+← →  (or [ ])\tthe gate pattern for this sound\n"
         "- +  (or =)\tthe filter darker or brighter\n"

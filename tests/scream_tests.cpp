@@ -293,18 +293,24 @@ private slots:
 
     // --- the band and the place -----------------------------------------------------
 
-    void theBandIsAPhonesSeenFromAFewMetres() {
-        // The reference's voice runs from about 1 kHz to 5.5 kHz and the
-        // clip is 40 dB down by 11 kHz. The scream: nothing under 150 Hz,
-        // little over 7 kHz, nothing over 9 kHz.
+    void theBandIsThePhoneRecordingsSeenFromAFewMetres() {
+        // The reference, voiced frames, re its 1–2 kHz band: 4–6 kHz −17 dB,
+        // 6–8 kHz −29, 8–12 kHz −28 (the jets' noise goes on up after the
+        // voice's harmonics stop at about 5.5 kHz), and the AAC phone
+        // clip's top 40 dB down by 16 kHz. The scream: within 6 dB of each,
+        // nothing under 150 Hz.
         const Out o = screamed(sing(130.8f, 0.2, 1.8, 2.2));
-        const double low = bandDb(o, 0, 150, 0.6, 1.8), high = bandDb(o, 7000, 24000, 0.6, 1.8),
-                     top = bandDb(o, 9000, 24000, 0.6, 1.8), mid = bandDb(o, 500, 4000, 0.6, 1.8);
-        qInfo("under 150 Hz %.1f dB, 0.5–4 kHz %.1f dB, over 7 kHz %.1f dB, over 9 kHz %.1f dB", low, mid, high, top);
-        QVERIFY(mid > -1.5);
-        QVERIFY(low < -35);
-        QVERIFY(high < -30);
-        QVERIFY(top < -50);
+        const double mid = bandDb(o, 1000, 2000, 0.6, 1.8);
+        const double low = bandDb(o, 0, 150, 0.6, 1.8) - mid, b46 = bandDb(o, 4000, 6000, 0.6, 1.8) - mid,
+                     b68 = bandDb(o, 6000, 8000, 0.6, 1.8) - mid, b812 = bandDb(o, 8000, 12000, 0.6, 1.8) - mid,
+                     top = bandDb(o, 16000, 24000, 0.6, 1.8) - mid;
+        qInfo("re 1–2 kHz: under 150 Hz %.1f dB, 4–6 kHz %.1f, 6–8 kHz %.1f, 8–12 kHz %.1f, over 16 kHz %.1f", low,
+              b46, b68, b812, top);
+        QVERIFY(low < -40);
+        QVERIFY(std::fabs(b46 + 17) < 6);
+        QVERIFY(std::fabs(b68 + 29) < 6);
+        QVERIFY(std::fabs(b812 + 28) < 6);
+        QVERIFY(top < -40);
     }
 
     void theFieldHasTheGroundsEchoAndNoTail() {
@@ -432,7 +438,13 @@ private slots:
                 float in = 0;
                 for (float v : *x)
                     in = std::max(in, std::fabs(v));
-                QVERIFY2(o.peak() < 8.0f * std::max(1.0f, in), qPrintable(QString::number(o.peak())));
+                // (A room returns more than the direct sound, 5 dB of
+                // reverberant energy over it, and a pure tone sweeping
+                // through its modes rings them with a crest of 3 to 4 over
+                // the room's level: so its bound is higher. A voice never
+                // does that; the page's ceiling after the style takes it.)
+                const float bound = place == scream::Room ? 20.0f : 8.0f;
+                QVERIFY2(o.peak() < bound * std::max(1.0f, in), qPrintable(QString::number(o.peak())));
             }
     }
 

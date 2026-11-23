@@ -43,6 +43,7 @@
 #include "console.h"
 #include "fx.h"
 #include "parts.h"
+#include "scream.h"
 
 namespace tf {
 
@@ -55,10 +56,10 @@ namespace {
 // sitar played by the voice, a Balinese gamelan, and Houston's slowed and
 // chopped tape. Songs keep a style by name, so the order may grow but
 // never change.
-enum Preset { Natural, Tune, Prism, Choir, Vocoder, Robot, Talk, Throat, Sitar, Gamelan, Screwed, PresetCount };
+enum Preset { Natural, Tune, Prism, Choir, Vocoder, Robot, Talk, Throat, Sitar, Gamelan, Screwed, Riot, PresetCount };
 const char *presetName(int p) {
     static const char *names[] = {"NATURAL", "HARD TUNE", "PRISM", "CHOIR", "VOCODER", "ROBOT",
-                                  "TALK BOX", "THROAT", "SITAR", "GAMELAN", "SCREWED"};
+                                  "TALK BOX", "THROAT", "SITAR", "GAMELAN", "SCREWED", "RIOT"};
     return names[std::clamp(p, 0, PresetCount - 1)];
 }
 const char *presetLine(int p) {
@@ -76,6 +77,7 @@ const char *presetLine(int p) {
         "your voice plays a sitar: syllables pluck it",
         "syllables strike bronze, gongs keep the cycle",
         "you, slowed on tape; fingers chop and spin it",
+        "you, screamed from across a field; fingers join in",
     };
     return lines[std::clamp(p, 0, PresetCount - 1)];
 }
@@ -100,7 +102,8 @@ enum ParamId {
     PDemo,    // i[1]: a demo singer in place of the microphone
     PStyleOpt, // i[1]: the gamelan's tuning (GamTuning), i[2]: the talk box's sub octave (1 on),
                // i[3]: the talk box played from the lanes (1) or by the note sung (0),
-               // f[0]: the screwed tape's speed (ScrewSpeed), f[1]: throat singing's style (ThroatStyle)
+               // f[0]: the screwed tape's speed (ScrewSpeed), f[1]: throat singing's style (ThroatStyle),
+               // f[2]: where the riot's screamer is (scream::Place)
 };
 
 // The gamelan's tunings: its own two, rooted on the song's key note, or the
@@ -291,8 +294,10 @@ enum {
     ScrewDropBar,   // 1 if that drop is at a bar line (two bars behind), 0 on a beat
     ScrewDeckB,     // how far the crossfader is over to deck B
     TalkOpen,       // KEYS: how far the synth's filter is open, 0..1
+    RiotOctave,     // the octaves the riot's phrase is screamed up (−1..2)
+    RiotStrain,     // how hard its throat works, 0..1: the false folds' share
 };
-static_assert(TalkOpen < kPartData, "fits the page's data");
+static_assert(RiotStrain < kPartData, "fits the page's data");
 }
 
 // The nearest note of the key, or of the chord when follow is on, to a
@@ -633,6 +638,7 @@ public:
             m_talkKeys = c.i[3] != 0;
             m_screwSpeed = std::clamp(int(std::lround(c.f[0])), 0, ScrewSpeedCount - 1);
             m_throatStyle = std::clamp(int(std::lround(c.f[1])), 0, ThroatStyleCount - 1);
+            m_scream.setPlace(int(std::lround(c.f[2])));
             break;
         default: break;
         }
@@ -832,7 +838,7 @@ public:
         // the gamelan's bronze it steps back, so the instrument carries
         // the tune.
         const float wantDry = (m_preset == Prism && anyFinger) || m_preset == Vocoder || m_preset == Talk ||
-                                      m_preset == Throat || m_preset == Screwed
+                                      m_preset == Throat || m_preset == Screwed || m_preset == Riot
                                   ? 0.0f
                               : m_preset == Sitar   ? 0.0f
                               : m_preset == Gamelan ? 0.45f
@@ -1291,6 +1297,8 @@ public:
         d[pub::ScrewDrop] = m_preset == Screwed ? m_dropIn : -1.0f;
         d[pub::ScrewDropBar] = m_dropStop ? 1.0f : 0.0f;
         d[pub::ScrewDeckB] = m_preset == Screwed ? m_repLvl.y : 0.0f;
+        d[pub::RiotOctave] = float(m_scream.octave());
+        d[pub::RiotStrain] = m_preset == Riot ? m_scream.strain() : 0.0f;
         // The lag of a shifted copy: about half a period, plus what the
         // formant asks.
         d[pub::Lag] = m_pitch.period() > 0 ? m_pitch.period() * 0.5f / m_rate * 1000.0f : 3.0f;
@@ -1358,6 +1366,8 @@ private:
         m_talkPress.reset(0.5f);
         m_talkGate.reset(1);
         m_throatMix.setTime(0.04f, rate);
+        m_riotMix.setTime(0.03f, rate);
+        m_scream.init(rate);
         m_whOn.setTime(0.06f, rate);
         m_underLvl.setTime(0.03f, rate);
         m_throatTone.set(3400.0f, 0.6f, rate);
@@ -2408,6 +2418,39 @@ private:
                 m_leadMidi = p > 0 ? p + 12.0f * std::log2(speed) : -1.0f;
             }
         }
+
+        // Riot: the voice screamed, a few metres off (scream.h). Your
+        // mouth is kept, your throat replaced: the note you sing moved by
+        // octaves into a screamer's register for the phrase, pressed folds,
+        // the false folds drawn in by the effort and fluttering at half the
+        // pitch, and the noise of the jet on every pulse; heard across a
+        // field (or a room: B). A finger is another screamer, at its
+        // harmony, through the same mouth: a gang shout.
+        if (m_preset == Riot || m_riotMix.y > 0.001f) {
+            const bool on = m_preset == Riot;
+            if (m_riotMix.y < 0.001f)
+                m_scream.reset();
+            // (The tracker's own reading, not the octave-guarded note the
+            // instruments play by: the scream keeps its own guard, and the
+            // instruments' one takes a slip downwards at once.)
+            m_scream.setPitch(voiced ? hz : 0.0f, voicedNow, m_pitch.clarity());
+            float gangHz[scream::kMaxGang], gangLvl[scream::kMaxGang];
+            int gn = 0;
+            const double ref = sungMidi > 0 ? sungMidi : 57;
+            for (const auto &v : m_voices)
+                if (v.on && gn < scream::kMaxGang) {
+                    gangHz[gn] = midiToHz(noteMidi(h, v.value, v.mode, ref, m_follow) + v.detune * 0.3f);
+                    gangLvl[gn] = clampf(v.gain, 0.0f, 1.2f) * 0.8f;
+                    ++gn;
+                }
+            m_scream.setGang(gangHz, gangLvl, gn);
+            const float m0 = m_riotMix.y;
+            for (int i = 0; i < n; ++i)
+                m_riotMix.step(on ? 1.0f : 0.0f);
+            m_scream.process(dry, leadL, leadR, n, m0, m_riotMix.y);
+            if (on && m_scream.hz() > 0 && voiced)
+                m_leadMidi = midiOfHz(m_scream.hz());
+        }
     }
 
     // The kotekan: two parts, polos (left) and sangsih (right), that
@@ -2695,6 +2738,9 @@ private:
     bool m_talkSub = true, m_talkRest = true, m_talkKeys = false, m_talkKeyHeld = false;
     int m_sungAgo = 1 << 30;
     Smooth m_throatMix, m_whOn, m_underLvl;
+    // Riot: the scream and how far in it is.
+    scream::Scream m_scream;
+    Smooth m_riotMix;
     int m_whHold = 0, m_throatStyle = Sygyt;
     float m_droneSlow = 0, m_droneFast = 0, m_whLevel = 0, m_kgPhase = 0, m_kgJitter = 0, m_kgJit = 0;
     float m_whPhA = 0, m_zr[2] = {}, m_zi[2] = {}, m_zsr = 0, m_zsi = 0, m_ur = 1, m_ui = 0;
@@ -3225,12 +3271,16 @@ public:
             "behind the tape stops and drops at the bar line; a finger is Screw's hand on the crossfader, cutting "
             "to a second copy of the record a beat behind (half a beat on the two lanes at the right), so the "
             "word comes again off the other deck; the lowest lane, held, spins it back; Space makes a loop of "
-            "the phrase slowed whole. The row of styles under the pad scrolls with the lit one; click any to "
+            "the phrase slowed whole. RIOT: you, screamed, as a riot-grrrl singer sounds from across a field: your "
+            "vowels and consonants kept, but the throat made again (pressed folds, the false folds drawn in and "
+            "fluttering at half the pitch, the rush of air on every pulse), moved by octaves into a screamer's "
+            "register for each phrase and heard three metres off (B: in a FIELD, a small ROOM, or CLOSE); sing "
+            "louder and it strains more; a finger adds another screamer at its harmony, as a gang shout. The row of styles under the pad scrolls with the lit one; click any to "
             "pick it\n"
             "B\tthe style's own option, also the chip at the end of the row of styles, and named straight after "
             "the style in the status line: the TALK BOX sung or played from the lanes (KEYS), THROAT's style "
             "(sygyt, kargyraa, khoomei), the GAMELAN's tuning (pelog, slendro, the song's key), the SCREWED "
-            "tape's speed (a fourth down, a fifth, 0.8)\n"
+            "tape's speed (a fourth down, a fifth, 0.8), where the RIOT screams (field, room, close)\n"
             "Shift+B\tthe TALK BOX's sub octave (on, off)\n"
             "Shift+Left / Right (or [ ])\tthe stutter's rate: 1/8, 1/8T, 1/16, 1/16T, 1/32\n"
             "Up / Down\tthe keys an octave up or down\n"
@@ -3305,7 +3355,7 @@ public:
     // what a hand is doing.
     // The styles by the names a file gives them (the page's are for show).
     static constexpr const char *kStyleNames[PresetCount] = {"natural", "tune", "prism", "choir", "vocoder", "robot",
-                                                                 "talkbox", "throat", "sitar", "gamelan", "screwed"};
+                                                                 "talkbox", "throat", "sitar", "gamelan", "screwed", "riot"};
     void save(QJsonObject &out) const override {
         out[QStringLiteral("style")] = QLatin1String(kStyleNames[std::clamp(m_preset, 0, PresetCount - 1)]);
         out[QStringLiteral("formant")] = m_formant;
@@ -3317,6 +3367,7 @@ public:
         out[QStringLiteral("talkboxKeys")] = m_talkKeys;
         out[QStringLiteral("screwedSpeed")] = QLatin1String(screwSpeedKey(m_screwSpeed));
         out[QStringLiteral("throatStyle")] = QString::fromLatin1(throatStyleName(m_throatStyle)).toLower();
+        out[QStringLiteral("riotPlace")] = QLatin1String(scream::placeKey(m_riotPlace));
     }
     void load(const QJsonObject &in, ControlContext &ctx) override {
         m_preset = Natural;
@@ -3333,6 +3384,11 @@ public:
         for (int t = 0; t < GamTuningCount; ++t)
             if (tuning == QString::fromLatin1(gamTuningName(t)).toLower())
                 m_gamTuning = t;
+        m_riotPlace = scream::Field;
+        const QString place = in.value(QStringLiteral("riotPlace")).toString();
+        for (int k = 0; k < scream::PlaceCount; ++k)
+            if (place == QLatin1String(scream::placeKey(k)))
+                m_riotPlace = k;
         m_talkSub = in.value(QStringLiteral("talkboxSub")).toBool(true);
         m_talkKeys = in.value(QStringLiteral("talkboxKeys")).toBool(false);
         m_screwSpeed = ScrewFourth;
@@ -3947,7 +4003,9 @@ private:
     // with the other pages); the talk box played by the voice or from the
     // lanes (and with Shift, its sub octave); throat singing's style; the
     // screwed tape's speed.
-    bool hasOption(int preset) const { return preset == Gamelan || preset == Talk || preset == Screwed || preset == Throat; }
+    bool hasOption(int preset) const {
+        return preset == Gamelan || preset == Talk || preset == Screwed || preset == Throat || preset == Riot;
+    }
     QString optionLabel() const {
         if (m_preset == Throat)
             return QStringLiteral("%1  B").arg(QString::fromLatin1(throatStyleName(m_throatStyle)));
@@ -3955,6 +4013,8 @@ private:
             return QStringLiteral("%1  B").arg(QString::fromLatin1(gamTuningName(m_gamTuning)));
         if (m_preset == Screwed)
             return QStringLiteral("%1  B").arg(QString::fromUtf8(screwSpeedName(m_screwSpeed)));
+        if (m_preset == Riot)
+            return QStringLiteral("%1  B").arg(QString::fromLatin1(scream::placeName(m_riotPlace)));
         // (The sub, on by default, is named only when it is off.)
         return QStringLiteral("%1%2  B")
             .arg(m_talkKeys ? QStringLiteral("KEYS") : QStringLiteral("SUNG"))
@@ -3968,6 +4028,8 @@ private:
             return QString::fromLatin1(gamTuningName(m_gamTuning)).toLower();
         if (m_preset == Screwed)
             return QString::fromUtf8(screwSpeedName(m_screwSpeed)).toLower();
+        if (m_preset == Riot)
+            return QString::fromLatin1(scream::placeKey(m_riotPlace));
         return m_talkKeys ? QStringLiteral("keys") : QStringLiteral("sung");
     }
     void styleOption(ControlContext &ctx, bool shift) {
@@ -4001,9 +4063,15 @@ private:
             static const char *why[] = {"a fourth down, three quarters the speed", "a fifth down, two thirds the speed",
                                         "0.8 of the speed, the classic pitched-down deck"};
             ctx.notice(QStringLiteral("Screwed tape: %1").arg(QString::fromLatin1(why[m_screwSpeed])));
+        } else if (m_preset == Riot) {
+            m_riotPlace = (m_riotPlace + 1) % scream::PlaceCount;
+            static const char *why[] = {"in a field three metres off, the ground's echo and open air",
+                                        "three metres off in a small room, its walls and a tail",
+                                        "close: the scream with no place round it"};
+            ctx.notice(QStringLiteral("Riot: %1").arg(QString::fromLatin1(why[m_riotPlace])));
         } else {
             ctx.notice(QStringLiteral("%1 has no option of its own (B: the TALK BOX's keys, THROAT's style, the "
-                                      "GAMELAN's tuning, the SCREWED tape's speed)")
+                                      "GAMELAN's tuning, the SCREWED tape's speed, where the RIOT screams)")
                            .arg(QString::fromLatin1(presetName(m_preset))));
             return;
         }
@@ -4019,6 +4087,7 @@ private:
         c.i[3] = m_talkKeys ? 1 : 0;
         c.f[0] = float(m_screwSpeed);
         c.f[1] = float(m_throatStyle);
+        c.f[2] = float(m_riotPlace);
         ctx.send(c);
     }
     void setStutter(int s, ControlContext &ctx) {
@@ -4433,7 +4502,7 @@ private:
     int m_tkW = 0;
     // The styles' own options: the gamelan's tuning, the tape's speed,
     // throat singing's style, the talk box's sub and keys.
-    int m_gamTuning = Pelog, m_screwSpeed = ScrewFourth, m_throatStyle = Sygyt;
+    int m_gamTuning = Pelog, m_screwSpeed = ScrewFourth, m_throatStyle = Sygyt, m_riotPlace = scream::Field;
     bool m_talkSub = true, m_talkKeys = false;
     double m_loopSince = -1e18;
     uint32_t m_takesSeen = 0;
@@ -4666,6 +4735,18 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             c::text(p, pc.rect(kLeft, kTapeTop + 0.05f, kRight, kTapeTop + 0.09f),
                     QStringLiteral("HOLD: CUT TO THE SECOND DECK, A BEAT (½ ON THE RIGHT) BEHIND"),
                     c::alpha(col, 0.6f), labelPx - 1, true, Qt::AlignCenter);
+        if (m_preset == Riot) {
+            // Where the scream is pitched and where it is heard from.
+            const int oct = int(std::lround(d[pub::RiotOctave]));
+            const QString up = oct == 0   ? QStringLiteral("AT YOUR PITCH")
+                               : oct > 0  ? QStringLiteral("%1 OCTAVE%2 UP").arg(oct).arg(oct > 1 ? "S" : "")
+                                          : QStringLiteral("AN OCTAVE DOWN");
+            static const char *where[] = {"ACROSS A FIELD, 3 M OFF", "IN A ROOM, 3 M OFF", "CLOSE"};
+            c::text(p, pc.rect(kLeft, kTapeTop + 0.05f, kRight, kTapeTop + 0.09f),
+                    QStringLiteral("SCREAMED %1 · %2 · HOLD A LANE: A GANG SHOUT AT ITS HARMONY")
+                        .arg(up, QString::fromLatin1(where[std::clamp(m_riotPlace, 0, 2)])),
+                    c::alpha(col, 0.6f), labelPx - 1, true, Qt::AlignCenter);
+        }
         // Your own note sits between the thirds.
         const float ux = kLeft + laneW * 3.0f;
         p.setPen(QPen(c::alpha(col, 0.5f), 1, Qt::DashLine));

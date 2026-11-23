@@ -47,6 +47,7 @@ HEADERS += \
     src/visual.h \
     src/visualizer.h \
     src/recorder.h \
+    src/scream.h \
     src/translator.h \
     src/tuning.h \
     src/tutorial.h \

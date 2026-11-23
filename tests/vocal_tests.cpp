@@ -995,14 +995,14 @@ private slots:
     }
 
     void theNewStylesComeBackByName() {
-        const char *names[] = {"talkbox", "throat", "sitar", "gamelan", "screwed"};
-        for (int k = 0; k < 5; ++k) {
+        const char *names[] = {"talkbox", "throat", "sitar", "gamelan", "screwed", "riot"};
+        for (int k = 0; k < 6; ++k) {
             const auto song = reopenVocal(std::string(kPage) + rights(Talk + k) + "voice 0.5 0.6 hz=220\nend 1.4\n", 0.5);
             QCOMPARE(song.settings[QStringLiteral("style")].toString(), QString::fromLatin1(names[k]));
         }
         // And Left from NATURAL wraps round to the last of them.
         const auto wrapped = reopenVocal(std::string(kPage) + "key 0.1 Left\nend 0.6\n", 0.5);
-        QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("screwed"));
+        QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("riot"));
         // The styles' own options too: slendro; the talk box on the keys,
         // and (Shift+B) with no sub; the tape a fifth down.
         const auto gam = reopenVocal(std::string(kPage) + rights(Gamelan) + "key 0.5 B\nend 0.8\n", 0.5);
@@ -1014,6 +1014,76 @@ private slots:
         QCOMPARE(screw.settings[QStringLiteral("screwedSpeed")].toString(), QStringLiteral("fifth"));
         const auto throat = reopenVocal(std::string(kPage) + rights(Throat) + "key 0.5 B\nend 0.8\n", 0.5);
         QCOMPARE(throat.settings[QStringLiteral("throatStyle")].toString(), QStringLiteral("kargyraa"));
+        const auto riot = reopenVocal(std::string(kPage) + rights(Riot) + "key 0.5 B\nend 0.8\n", 0.5);
+        QCOMPARE(riot.settings[QStringLiteral("riotPlace")].toString(), QStringLiteral("room"));
+        const auto close = reopenVocal(std::string(kPage) + rights(Riot) + "key 0.5 B\nkey 0.6 B\nend 0.8\n", 0.5);
+        QCOMPARE(close.settings[QStringLiteral("riotPlace")].toString(), QStringLiteral("close"));
+    }
+
+    // --- riot ------------------------------------------------------------------------
+
+    void theRiotScreamsWhatIsSung() {
+        // Sung on A3: what comes out is screamed an octave up (the octave
+        // nearest a screamer's 540 Hz), its first resonance on the second
+        // harmonic, with nothing of the voice's own pitch left, as loud as
+        // the natural voice within a few dB; and the page says so.
+        const std::string sing = "voice 0.3 2.2 hz=220 vowel=a level=0.3\nend 2.8\n";
+        const auto take = playStyle(Riot, sing);
+        checkStyle(take, "RIOT");
+        QVERIFY2(take.status.contains(QLatin1String("screamed")), qPrintable(take.status));
+        QVERIFY2(take.status.contains(QLatin1String("(field, B)")), qPrintable(take.status));
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        const double f0 = peakPower(take, 440, 1.0, 2.2), h2 = peakPower(take, 880, 1.0, 2.2),
+                     sung = power(take, 220, 1.0, 2.2), was = power(natural, 220, 1.0, 2.2);
+        qInfo("riot: 440 Hz %.1f dB, 880 Hz %.1f dB; 220 Hz %.1f dB (the natural voice's %.1f)",
+              10 * std::log10(f0), 10 * std::log10(h2), 10 * std::log10(sung + 1e-30), 10 * std::log10(was));
+        QVERIFY2(h2 > f0, "the first resonance isn't on the second harmonic");
+        QVERIFY2(sung < 1e-3 * was, "the sung pitch is still there");
+        const double db = 20 * std::log10(take.rms(1.0, 2.2) / natural.rms(1.0, 2.2));
+        qInfo("riot: %.1f dB from the natural voice", db);
+        QVERIFY2(std::fabs(db) < 4, qPrintable(QString("%1 dB").arg(db)));
+    }
+
+    void theRiotsFingersJoinInAGangShout() {
+        // A finger on a lane is another screamer at its harmony: a new pitch
+        // in the scream's register, far stronger than without it.
+        const std::string sing = "voice 0.3 2.0 hz=220 vowel=a level=0.3\n";
+        const auto alone = playStyle(Riot, sing + "end 2.4\n");
+        const auto gang = playStyle(Riot, sing + "down 0.2 1 0.62 0.5 p=0.7\nend 2.4\n");
+        QVERIFY(gang.finite());
+        double gain = 0, at = 0;
+        for (double hz = 380; hz < 1000; hz += 1) {
+            const double g = power(gang, hz, 1.0, 2.0) / std::max(1e-9, power(alone, hz, 1.0, 2.0));
+            if (g > gain)
+                gain = g, at = hz;
+        }
+        qInfo("riot: a finger adds %.0f Hz, %.1f dB", at, 10 * std::log10(gain));
+        QVERIFY2(gain > 20, qPrintable(QString("only %1x").arg(gain)));
+    }
+
+    void aRiotLoopReplaysTheScream() {
+        // Space loops what was heard: the scream, not the voice under it.
+        const std::string script = std::string(kPage) + rights(Riot) +
+                                   "voice 0.5 0.35 hz=220 vowel=a\nvoice 0.95 0.3 hz=247 vowel=e\n"
+                                   "voice 1.35 0.5 hz=262 to=247 vowel=a\nkey 2.2 Space\nend 7\n";
+        const auto take = testkit::play(script);
+        QVERIFY(take.error.empty());
+        QCOMPARE(take.view.parts[kVocal].playing, 0);
+        // After the singing, only the loop plays: the screamed register
+        // (an octave up) leads the sung one.
+        double up = 0, sungBand = 0;
+        for (double hz : {440.0, 494.0, 523.0})
+            up += peakPower(take, hz, 3.0, 6.5);
+        for (double hz : {220.0, 247.0, 262.0})
+            sungBand += peakPower(take, hz, 3.0, 6.5);
+        qInfo("riot loop: rms %.3f, the screamed octave %.1f dB over the sung one", take.rms(3.0, 6.5),
+              10 * std::log10(up / std::max(1e-30, sungBand)));
+        QVERIFY(take.rms(3.0, 6.5) > 0.01);
+        // (Not nothing at the sung notes: screamed an octave up, the false
+        // folds' half-rate flutter puts the scream's own subharmonic right
+        // there, 20–30 dB under its harmonics. The singer's own voice would
+        // be level with them.)
+        QVERIFY(up > 30 * sungBand);
     }
 
     // --- the five styles, round three ---------------------------------------------
@@ -1403,7 +1473,7 @@ private slots:
 
 private:
     // The styles by their place on Left / Right (after the page's own six).
-    enum { Talk = 6, Throat, Sitar, Gamelan, Screwed };
+    enum { Talk = 6, Throat, Sitar, Gamelan, Screwed, Riot };
     static std::string rights(int n) {
         std::string s;
         for (int k = 0; k < n; ++k)

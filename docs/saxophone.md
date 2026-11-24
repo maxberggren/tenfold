@@ -5,7 +5,10 @@ The Lead page has two saxophones, each simulated as it is built
 `Sound::Sax` block):
 
 - **Tenor sax** (R&B): the lead of R&B, soul and rock'n'roll.
-- **Alto sax** (smooth jazz): a smaller, narrower horn a fourth higher.
+- **Alto sax** (smooth jazz): a smaller horn a fourth higher, brighter.
+
+The tenor sounds a fourth under the neck, the alto on it (see
+[The tenor against the alto](#the-tenor-against-the-alto)).
 
 Every voice of the line, melody and harmony, is a horn of its own, so the
 harmony rows make a section. The survey behind every number is in
@@ -89,6 +92,101 @@ The saxophone is the opposite case:
     player then plays that note that way, and forgets it again over some
     seconds.
 
+## The tenor against the alto
+
+Until this change the tenor was the alto scaled up by 2^(5/12) in every
+length, with its reed's resonance scaled down. Its dimensionless dynamics
+were the alto's, and played on the same neck cell it was the alto a
+fourth down, in the same place: the two sounded alike. Now its parts come
+from a tenor's own measurements where there are any (section 7 of
+`docs/saxophone-research.md`):
+
+| Part | Alto | Tenor | Source of the tenor's |
+|---|---|---|---|
+| Cone half angle | 0.028 rad (1.60°) | 0.0265 rad (1.52°) | [CSW09]; 1.55° in the CT [JG21] |
+| Radius at the mouthpiece | 5.5 mm | 6.7 mm | the CT [JG21 Fig. 3], digitised |
+| Missing cone | 0.196 m, 6.2 ml | 0.253 m, 11.9 ml | from the two above |
+| Mouthpiece (model cylinder) | 30 × 6 mm radius, 3.4 ml | 32 × 8.5 mm radius, 7.3 ml | radius: the shank of 41 tenor mouthpieces [MPW, sec.]; length **est.** |
+| Tone hole b/a | 0.6 **est.** | 0.54 | [JG21], measured on a tenor |
+| Lattice cutoff (model) | 1.2–1.5 kHz | 0.7–1.0 kHz | against 760 ± 250 Hz measured [CSW09] |
+| Reed | 672 Hz, Q 1 [CVGD21] | 514 Hz, Q 1 **est.** | the alto's over (80/70)², the reeds' lengths [Thomann, sec.] |
+| Spectrum lifted at the break | — | +4 dB **est.** around 618 Hz | where [BL88] found a tenor's break (an alto's at 837 Hz) |
+| Breath noise, subtone | 1 | 3 **est.** | nothing measured |
+
+Chimneys and bell are the alto's proportions on both: nothing measured
+says otherwise (the bells' mouths, ~150 and ~120 mm, scale with the
+horns' lengths).
+
+The reed. The one reed measured in playing, 672 Hz with Q 1.13
+[MGDC16], is a tenor's. Colinot et al. model the alto with it, and so was
+this model's alto tuned. An alto's reed is about 70 mm long and a
+tenor's 80, so as a cantilever the alto's rests (80/70)² ≈ 1.31 times
+higher. One of the two has to be estimated, and keeping the alto as
+tuned makes the tenor's 514 Hz. With the measured 672 Hz on the tenor,
+its lowest three notes start an octave up for 0.1–0.2 s and settle flat.
+
+The break. Measured, a saxophone's spectrum rises to its break and falls
+steeply above it [BL88]: on a recorded tenor's low notes the strongest
+harmonics lie at 415–730 Hz, the honk. This model's reed excitation falls
+too fast to make that rise (see "Darker than measured"), so the tenor's
+radiated sound is lifted 4 dB around 618 Hz (a peaking section three
+octaves wide). It is a gentle tilt: played hard, B♭2 and C3 have their
+6th and 5th harmonics strongest, but on most low notes and on every
+shared note at a mezzo forte the fundamental still leads, and the energy
+above 1 kHz moves by about 1 dB. A larger lift evens the range out less
+and costs the low notes' bends more (below). The alto is not lifted: it
+is the alto the Lead had.
+
+**Where each plays.** A tenor sounds A♭2 to E♭5 (E5 with the high F♯ key),
+an alto D♭3 to A♭5, a fourth higher. On the Lead a cell is the same
+fingering, the same written note, on both: the alto plays where the
+neck is, the tenor a fourth under it (`Sound::saxOct`). So each plays
+across its own range. Their register breaks (written C♯5 to D5) fall on the
+same cells, concert B3 to C4 on the tenor and E4 to F4 on the alto. Their
+altissimo, the smaller horn above the palm keys, also starts on the same
+cell: concert E5 on the tenor, A5 on the alto. An octave would have put the
+tenor's solo register far under the alto's. In the Weimar Jazz Database
+the middle half of the tenor solos' notes lie from B3 to A♭4, the alto's
+D4 to B♭4, a few semitones apart [WJD]. So the pitch makes some of the
+difference on the same cell, but most of it has to be the sound.
+
+**The honk.** A low tenor note (under concert F♯3) pressed nearly to the
+top (from 0.85) is blown harder through a wider opening and growled into
+(`Sound::saxHonk`), as an R&B tenor honks: rough, and within 3 dB of a
+forte's energy above 1 kHz. Its growl replaces a top press's own rather
+than adding to it, which would swamp the reed and muffle the note. Under
+that press a forte low note is clean. The alto doesn't honk.
+
+**What tells them apart on the same note.** The same concert notes, D3 to
+C5, blown alike (breath 0.75, lip 0.6), on master's tenor (before) and
+this one (after):
+
+| | Before | After |
+|---|---|---|
+| Tenor's energy above 1 kHz against the alto's (median) | −3.1 dB | −8.5 dB |
+| …darker than the alto's on | 6 of 7 notes | 7 of 7 |
+| The spectrum's −20 dB edge, tenor over alto (median) | 0.83 | 0.60 |
+| Harmonic profiles (first 12) apart, rms (median) | 5.6 dB | 10.8 dB |
+| Spectral centroid, tenor over alto (median) | 0.83 | 0.82 |
+| Subtone hiss over the harmonics, tenor over alto (D3, E3, A3, B3) | — | +4.5 to +7.5 dB |
+
+Benade and Lutgen's break is at 618 Hz on a tenor and 837 Hz on an alto,
+a ratio of 0.74. Here the edge's ratio is 0.60: the same direction, but
+further, since the alto's lattice cuts off higher than a measured alto's
+(1.2–1.5 kHz against 0.93–1.14). The centroid barely moved, because both
+horns' energy lies mostly in their fundamental and second harmonic. The
+difference is everything above about 600 Hz: the tenor falls off past
+its break, while the alto stays even out to its 7th harmonic and beyond. Both horns are darker than recordings above 1 kHz.
+`theTenorIsNotAnAlto` asserts the first four rows and bounds them both
+ways, so it fails if the horns converge again (master's tenor fails three
+of its four: energy above 1 kHz −3.1 dB, edge 0.83, profiles 5.6 dB apart)
+or if the tenor goes dull. `theTenorBreathesMoreInSubtone`,
+`theLowestNotesSettle` and `eachSaxPlaysInItsOwnRange` check the hiss,
+the low notes' starts, the fourth and the honk. `theTenorIsAsBrightAsARealOne`
+is an expected failure: on a recorded tenor's low notes the energy above
+1 kHz is 6–9 dB under the total, on this one about 20 dB under, 11–14 dB
+less.
+
 ## The model
 
 ### The horn
@@ -115,10 +213,10 @@ sample (Guillemain, Kergomard & Voinier).
 
 | Part | What it is | Set from |
 |---|---|---|
-| Cone | Alto: half angle 0.028 rad, missing tip x1 = 0.196 m, so the radius at the mouthpiece is 5.5 mm. Tenor: the alto scaled up by 2^(5/12) in every length (radius 7.3 mm, x1 = 0.26 m) | [PCKG20] 0.028 rad; [KGSVDGK19] x1 0.196 m; tenor's measured half angle 1.52° against the alto's 1.60° [CSW09] |
-| Mouthpiece | A cylinder closed by the reed: alto 30 mm long, 6 mm in radius (3.4 ml); tenor scaled. Half the length of Colinot's 60 mm model mouthpiece. **est.**, chosen so the bore keeps a measured alto's inharmonicity (below) | [CVGD21] the cylinder model. Shortened: with a perfectly harmonic bore (f₂/f₁ = 2.00) the low notes jumped to the octave at a forte; this gives 2.05 and 3.14 on the low D♯, against the measured 2.08 and 3.12 |
-| Wall losses | Benade's 2.96 × 10⁻⁵·√f/r per metre, per 12 cm piece by its mean 1/r, times √(f/90 Hz) above 90 Hz (the tenor's rise from 67 Hz) | [FR98] the smooth-tube loss; the rise **est.**, fitted so the alto's low D♯ has Q 34, 33, 34, 29 for its first four modes against the measured 34, 35, 28.5, 37 [CVGD21] |
-| Tone holes | Radius 0.6 of the bore's where the hole is, chimney half its radius; Keefe's shunt (inner end correction by Dalmont's polynomial, outer 0.61 b, radiation 0.25 (kb)², the chimney's own wall loss) and series length −0.28 b(b/a)². Each placed so its fingering's first resonance is on its note | b/a **est.** (tenor 0.54 ± 0.08 [JG21]); hole radius 7 mm at the top to 19 mm at the bottom (alto). Cutoff where the peaks fall under a quarter of the strongest: alto 1.1–1.5 kHz, tenor 0.75–1.1 kHz, against 0.93–1.14 kHz [PCKG20] and 760 ± 250 Hz [CSW09] |
+| Cone | Alto: half angle 0.028 rad, missing tip x1 = 0.196 m, so the radius at the mouthpiece is 5.5 mm. Tenor: half angle 0.0265 rad (1.52°), 6.7 mm at the mouthpiece, so x1 = 0.25 m | [PCKG20] 0.028 rad; [KGSVDGK19] x1 0.196 m; tenor 1.52° [CSW09], 1.55° and 6.7 mm at the neck's input in Jensch & Grothe's CT of a tenor [JG21 Fig. 3, digitised] |
+| Mouthpiece | A cylinder closed by the reed: alto 30 mm long, 6 mm in radius (3.4 ml, 0.55 of its missing cone); tenor 32 mm long, 8.5 mm in radius (7.3 ml, 0.61 of its missing cone), its radius the mean shank of 41 tenor mouthpieces (16.98 mm across; forum measurements, secondary). Real mouthpieces fill about their whole missing cone (tenor ~11–12 ml in play, alto ~8–9, **est.** from water fills); a tenor's that size here sends its lowest notes into a hollow, near-sine regime. Half the length of Colinot's 60 mm model mouthpiece. **est.**, chosen so the bore keeps a measured alto's inharmonicity (below) | [CVGD21] the cylinder model. Shortened: with a perfectly harmonic bore (f₂/f₁ = 2.00) the low notes jumped to the octave at a forte; this gives 2.05 and 3.14 on the low D♯, against the measured 2.08 and 3.12 |
+| Wall losses | Benade's 2.96 × 10⁻⁵·√f/r per metre, per 12 cm piece by its mean 1/r, times √(f/90 Hz) above 90 Hz (the tenor's rise from 67 Hz, its lowest note's ratio to the alto's) | [FR98] the smooth-tube loss; the rise **est.**, fitted so the alto's low D♯ has Q 34, 33, 34, 29 for its first four modes against the measured 34, 35, 28.5, 37 [CVGD21] |
+| Tone holes | Radius 0.6 of the bore's where the hole is (tenor 0.54), chimney half its radius; Keefe's shunt (inner end correction by Dalmont's polynomial, outer 0.61 b, radiation 0.25 (kb)², the chimney's own wall loss) and series length −0.28 b(b/a)². Each placed so its fingering's first resonance is on its note | alto's b/a **est.**, the tenor's measured, 0.54 ± 0.08 [JG21]; hole radius 7 mm at the top to 19 mm at the bottom (alto). Cutoff where the peaks fall under a quarter of the strongest: alto 1.2–1.5 kHz, tenor 0.7–1.0 kHz, against 0.93–1.14 kHz [PCKG20] and 760 ± 250 Hz [CSW09] |
 | Register vents | Radius 1.5 mm (alto), 6 mm chimney; the body vent at the second mode's node of written F4's tube (serving written D5–G♯5), the neck vent at written C♯5's (A5–E6). The resonances below a vented note's are played at 0.6 of their computed peaks: as computed, the neck vent barely spoils the short tubes' first mode, and the top notes locked onto it at a forte | ~2 mm across, 6 mm long [CSW09]; positions and the 0.6 **est.** (not published) |
 | Bell | Radiation of an unflanged mouth 1.25 times the cone's end radius (Levine & Schwinger's low-ka terms, kept bounded) | **est.** |
 | Measured check | Alto low D♯, model against Colinot: 185 Hz (equal-tempered) against 190, the next two at 2.05 and 3.14 times it against 2.08 and 3.12; Q 34 / 33 / 34 / 29 against 34 / 35 / 28.5 / 37; peaks 7.7 / 9.3 / 8.3 / 5.3 against 10 / 13.3 / 9.9 / 7.7 × Z_c (23–31 % low). Tenor's lowest note 16 MPa·s/m³ against 11 with the reed's compliance in parallel | [CVGD21 Table 2], [CSW11 Fig. 8] |
@@ -127,7 +225,7 @@ sample (Guillemain, Kergomard & Voinier).
 
 | Part | What it is | Set from |
 |---|---|---|
-| Reed | A mass–spring with the lip's damping, x'' + (ω_r/Q)x' + ω_r²x = −ω_r²(γ − p), opening h = 1 + x, shut against the lay (inelastic). First register: ω_r = 0.8–0.9 × 672 Hz, Q 0.5. Second register: 0.9 × 672 Hz, Q 1.5 (the pinched embouchure). Never under 1.9 times the note (an inward-striking valve drives only below its resonance). Tenor's 672 Hz scaled down with its size | [MGDC16] 672 Hz, Q 1.13; [CVGD21] ω_r = 4224 rad/s, q_r = 1; [WB74]. Q is lower here: at Q ≈ 1 this model's low notes jumped to the octave |
+| Reed | A mass–spring with the lip's damping, x'' + (ω_r/Q)x' + ω_r²x = −ω_r²(γ − p), opening h = 1 + x, shut against the lay (inelastic). First register: ω_r = 0.8–0.9 × 672 Hz, Q 0.5. Second register: 0.9 × 672 Hz, Q 1.5 (the pinched embouchure). Never under 1.9 times the note (an inward-striking valve drives only below its resonance). The tenor's 514 Hz **est.** (see [The tenor against the alto](#the-tenor-against-the-alto)) | [MGDC16] 672 Hz, Q 1.13; [CVGD21] ω_r = 4224 rad/s, q_r = 1; [WB74]. Q is lower here: at Q ≈ 1 this model's low notes jumped to the octave |
 | Flow | Bernoulli, u = ζ·h·√(γ − p), with the lay's curve and the lip's cushion closing the slit over the last of the swing, h → h²/(h + ε), ε = 0.02 (edge) to 0.32 (subtone) | ζ = 0.8 at an ordinary embouchure (0.6 [CVGD21], 0.65 [KGSVDGK19]); ε **est.** [DGO03, AvW04 the smooth closure] |
 | Embouchure | ζ × (0.85 + 0.35·lip) × √(opening); the closing pressure P_M = 3.8 kPa (alto), 4.3 (tenor), times the opening (0.5 to 1.1, with the touch) | P_M = K_a·H0, 4.8 MPa/m × 0.8 mm [MGDC16]; the opening **est.** |
 | Breath | γ from just over the note's linear threshold (with the reed's dynamics) to 0.9, the envelope's rise behind the tongue (30 ms, 12 under a hard press) | [FS96] 1.6–4.4 kPa ≈ 0.4–1 × P_M; [CVGD21] thresholds 0.3–0.45 |
@@ -175,10 +273,13 @@ sample (Guillemain, Kergomard & Voinier).
   register, once the ear has drawn it in. Above the palm keys (written F6
   and up, every semitone to s 50, at an ordinary and at a hard touch with
   a firm lip) within 50.
-  Slurred across the break (alto from E4, tenor from A3) up and back down:
+  Slurred across the break (from the neck's E4: the alto's E4, the tenor's
+  B3) up and back down:
   every note slurred to, and the note held at the end, within 30 cents.
 - **Bends and level:** every note bent ±15, ±30 and ±45 cents within 3 dB
-  of the note unbent; every note from 8 semitones under the low B♭ to 40
+  of the note unbent (the tenor's within 4: its low notes' strength lies in
+  the upper harmonics around their break, from which a bend up on the lip
+  alone pulls the reed's support; its third note loses 3.8 dB at +45); every note from 8 semitones under the low B♭ to 40
   over it within 10 dB of the range's median.
 - **A slide and a tongue on the page:** a finger slid between two notes of
   one register swells less than 8 dB; notes re-tongued on a sounding horn
@@ -190,6 +291,7 @@ sample (Guillemain, Kergomard & Voinier).
   (second difference) into the line than the held notes' beating does,
   and the line never stops. Across the break, within six times.
 - **Growl:** sidebands between the harmonics, 6 dB more of them.
+- **The tenor is not an alto:** see the next section.
 - **Stability:** six seconds of random pushes, about 90 of them (pitch,
   breath past closing, embouchure, growl, tonguing), always finite, under
   40 Pa, and silent once the breath stops.
@@ -209,10 +311,34 @@ These were left open after the critique rounds:
   same horn scaled down, on its second-register fingering. Those notes are
   in tune within 50 cents and their timbre is a sopranino's, not an
   altissimo's. Likewise, below the low B♭ a larger horn plays.
-- **The tenor is a scaled alto.** A real tenor's neck is a little narrower
-  for its size (7–8 mm against 7.3 here), and its reed is measured at
-  672 Hz where the scaled one rests at 503 Hz. Its timbre is the alto's a
-  fourth down, which is close but not exact.
+- **One reed is measured, for two horns.** The alto plays the tenor's
+  measured reed (672 Hz), as Colinot et al.'s does; the tenor's is
+  estimated from it by the reeds' lengths (514 Hz).
+- **The tenor's break is lifted, not grown.** Its 4 dB around 618 Hz is a
+  filter on what it radiates, standing in for an excitation this model
+  can't make (see "Darker than measured"). It costs its low notes' bends
+  up to 4 dB (against 3 for the alto) and lifts its low register over its
+  throat notes (written A4 to C♯5), which sit 8–10 dB under the range's
+  median. The alto's break isn't lifted.
+- **The tenor's breath noise is an estimate.** Nothing is measured. It is
+  three times the alto's in the subtone term, so a low subtone's hiss is
+  4.5–7.5 dB over the alto's.
+- **The honk is played, not built.** It is a little more breath, a wider
+  opening and the growl on a low note pressed nearly to the top, as an R&B
+  tenor plays. It roughens the note without brightening it: in this model a
+  low note blown harder grows only a little brighter.
+- **Where the tenor is still not a tenor:**
+  - In subtone on D4 and E4 it has 4–6 dB less hiss than the alto, and it
+    speaks faster. The hiss is tested on D3 to B3 only.
+  - Its lowest note, A♭2, starts about 20 cents flat for up to 0.4 s;
+    master's was in tune by 0.3 s. `theLowestNotesSettle` allows 25 cents
+    from 0.3 s.
+  - Its bends are allowed 4 dB, 0.2 dB over its worst case.
+  - Its reed, 514 Hz, is about where master's scaled one was (503 Hz), so
+    the reed adds little contrast. The cantilever estimate ignores the
+    lip's loading.
+  - Its altissimo wasn't listened to, and the fourth down wasn't checked
+    against the other parts in Arrange.
 - **The reed is heavier damped than measured.** It has Q 0.5 in the first
   register against the measured 1.13 with the lip [MGDC16]. With the
   measured value, this model's low notes jumped to the octave at a

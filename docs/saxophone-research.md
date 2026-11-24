@@ -204,6 +204,52 @@ upper teeth on the mouthpiece.
   general vibrato literature gives 5.5 to 8 Hz [TD00]. In pedagogy it is
   about 4.8 Hz classically and 4 to 6 Hz in jazz, ±15–40 cents.
 
+## 7. The tenor against the alto
+
+A tenor is not an alto scaled by 2^(5/12) in every length. (Tags: sec. is
+secondary, a forum, retailer or museum record, or an abstract; dig. is
+read off a published figure, to ±1–2 mm.)
+
+- **The bore.** The tenor's neck takes the mouthpiece at about 6.7 mm in
+  radius [JG21 Fig. 3, dig.], the alto's at 6.0–6.25 mm [CVGD21, PCKG20].
+  The tenor's cone runs at 1.52° [CSW09] (1.55° in the CT [JG21, dig.])
+  against the alto's 1.60°. So the tenor is longer mostly because its cone
+  runs further towards its tip: about 0.245 m missing (11.5 ml) against
+  the alto's ~0.2 m.
+- **The mouthpiece.** Its shank is 16.98 mm across on average over 41
+  tenor mouthpieces (16.5–17.4) [MPW, sec.]; one alto's is 16 mm. Filled
+  with water, a tenor mouthpiece holds 16.7 ml and an alto's 13.4 ml with
+  the shank [MPW, sec.]: about 11–12 and 8–9 ml past the neck, the
+  missing cone's volume on each. Tip openings are 1.2–1.4 times the
+  alto's (Selmer S80 C*: 1.90 mm against 1.55) [Syos, sec.]. No measured
+  baffle heights were found.
+- **The reed.** A tenor reed is about 80 mm long and 17.3 mm wide at the
+  tip, an alto's 70 mm and 16 mm [Thomann, sec.]. Its resonance with the
+  lip, 672 Hz and Q 1.13, was measured on a tenor [MGDC16]. None was
+  found for the alto.
+- **The tone holes.** On a tenor, measured by CT, the holes run from 11 mm
+  across (C♯5) to 42 mm (C4, B3), b/a = 0.54 ± 0.08 [JG21]. No alto table
+  was found.
+- **The bell.** About 150 mm across on a tenor [JG21, dig.] (museum tenors
+  140–160 mm [NMM, sec.]); an alto's 112–118 mm in museum records, about
+  115–125 on a modern one.
+- **The spectrum.** Benade and Lutgen fit one envelope to each horn's low-
+  and second-register notes, rising to a break and falling steeply above
+  it: 618 Hz on a tenor, 837 Hz on an alto, a ratio of 0.74, about the
+  fourth between them [BL88, sec.]. On a tenor's low notes the strongest
+  harmonics lie at 415–730 Hz (UNSW recordings, analysed here), the honk.
+  Li et al. measured a forte tenor concert B♭3's centroid at about
+  1.18 kHz [LCSW15]. No published paper sets the two horns' centroids side
+  by side. Recordings from different collections (UNSW's tenor, Iowa's
+  alto) differ in player, mouthpiece and microphone by more than the
+  horns do, so they were not used to tune.
+- **Where they play.** A tenor sounds A♭2 to E♭5 (E5 with the high F♯), an
+  alto D♭3 to A♭5. In 157 tenor and 80 alto solos of the Weimar Jazz
+  Database, the middle half of the notes lie from B3 to A♭4 (tenor) and
+  D4 to B♭4 (alto), the medians E4 and F♯4 [WJD]: tenor players solo
+  high in their horn, so the two are told apart by their sound more than
+  their register.
+
 ## Sources
 
 - **[APFZ14]** J. Abeßer, M. Pfleiderer, K. Frieler, W.-G. Zaddach, "Score-informed tracking and contextual analysis of fundamental frequency contours in trumpet and saxophone jazz solos", DAFx-14 (2014).
@@ -231,3 +277,9 @@ upper teeth on the mouthpiece.
 - **[SLdS08]** G. P. Scavone, A. Lefebvre, A. R. da Silva, "Measurement of vocal-tract influence during saxophone performance", JASA 123 (2008) 2391–2400. sec.
 - **[TD00]** R. Timmers, P. Desain, "Vibrato: questions and answers from musicians and science", ICMPC 2000.
 - **[WB74]** T. A. Wilson, G. S. Beavers, "Operating modes of the clarinet", JASA 56 (1974) 653–658. sec.
+- **[MPW]** Mouthpiece Work forum (archived at jackdesert.github.io/mouthpiece-work): K. Bradbury, "Tenor Shank Bore Stats"; M. Fleming, "Measuring volume in a mouthpiece". sec.
+- **[NMM]** National Music Museum (Vermillion) catalogue records of saxophones. sec.
+- **[Syos]** Syos tip-opening charts for alto and tenor mouthpieces. sec.
+- **[Thomann]** Thomann reed listings (Pilgerstorfer alto and tenor). sec.
+- **[UNSW]** UNSW Music Acoustics, tenor saxophone recordings (newt.phys.unsw.edu.au/music/saxophone).
+- **[WJD]** Weimar Jazz Database (Jazzomat Research Project), 2017.

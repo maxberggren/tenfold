@@ -2152,7 +2152,13 @@ private:
                     k.saxLive = false;
                     continue;
                 }
-                const float hz = clampf(inc1[b] * rate, 20.0f, 4000.0f);
+                const float hz = clampf(inc1[b] * rate * std::exp2(s.saxOct), 20.0f, 4000.0f);
+                // The honk: a low note (under concert F♯3) pressed nearly to
+                // the top, blown harder through a wider opening and growled
+                // into (the growl not piling on a top press's own, which
+                // would swamp the reed): the R&B tenor's.
+                const float honk = s.saxHonk * clampf((v.press - 0.85f) / 0.1f, 0.0f, 1.0f) *
+                                   clampf((190.0f - hz) / 40.0f, 0.0f, 1.0f);
                 if (!k.saxLive) {
                     k.sax.start(sax::Kind(std::clamp(s.sax, 0, sax::kKinds - 1)), hz);
                     k.sax.tongue(v.vel, true);
@@ -2164,12 +2170,12 @@ private:
                 const float th = k.sax.threshold();
                 // (From a little over the threshold, which the reed's
                 // embouchure and opening move, to a hard, beating breath.)
-                c.blow = (th + 0.06f + std::max(kSaxBlowTop - th - 0.06f, 0.08f) * touch) * a1;
-                c.growl = growl;
+                c.blow = (th + 0.06f + std::max(kSaxBlowTop - th - 0.06f, 0.08f) * touch + 0.1f * honk) * a1;
+                c.growl = std::min(1.0f, std::max(growl, 0.35f * honk));
                 c.air = 0.5f * clampf(v.fat, 0.0f, 1.0f);
                 // (A light touch also closes the reed down under the lip: a
                 // pianissimo is a smaller opening, not only less breath.)
-                c.open = 0.5f + 0.6f * touch;
+                c.open = 0.5f + 0.6f * touch + 0.4f * honk;
                 c.find = true;
                 k.sax.render(m_saxOut[b], n, c);
             }

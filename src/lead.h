@@ -255,6 +255,8 @@ struct Sound {
     float rollHz = 13.0f;  // Pan, Gong: the strokes a second a held note is rolled at, near enough
     float feedback = 0;    // Guitar: how readily a held note feeds back through the amp (Gong's hand: the fretting hand's damping)
     int sax = 0;           // Sax: which kind (sax::Kind: alto, tenor)
+    float saxOct = 0;      // Sax: octaves the horn sounds from the neck (the tenor a fourth under it: the same cell, the same fingering)
+    float saxHonk = 0;     // Sax: how far a hard breath on a low note tips it into a honk (the R&B tenor's)
 };
 
 // The accordion's registers, by the finger's height: low on the pad the
@@ -568,14 +570,19 @@ inline const Sound &sound(int i) {
         // through the horn (the growl), as a hard press does too. Notes
         // are tongued; legato slurs, the keys moving under the breath; a
         // slide or the bend is the lip and jaw, and the vibrato is the
-        // jaw's. Low on the neck the horn's own range; up the neck the
-        // octave key; above its top, a smaller horn's.
+        // jaw's. It sounds a fourth under the neck, as a tenor sounds a
+        // fourth under an alto: a cell is the same fingering, the same
+        // written note, on both, so each plays across its own range, the
+        // tenor A♭2 to E5 where the alto plays D♭3 to A5. Pressed to the
+        // top on a low note (under F♯3) it honks: blown past a forte,
+        // roughened.
         {.name = "Tenor sax", .style = "R&B", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.03f,
          .d = 1.0f, .s = 1.0f, .r = 0.07f, .aHard = 0.012f, .glide = 0.03f, .porta = 0.004f, .scoop = 0.35f,
          .scoopTime = 0.06f, .vibRate = 5.2f, .vibDepth = 0.2f, .vibDelay = 0.35f, .vibAmp = 0.04f, .echo = 0.12f,
-         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 1},
+         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 1, .saxOct = -5.0f / 12.0f, .saxHonk = 1.0f},
         // An alto saxophone, smooth jazz's and pop's: the same physics, a
-        // smaller, narrower horn a fourth higher, brighter and more nasal.
+        // smaller horn a fourth higher, on the neck as it is: brighter, its
+        // spectrum breaking higher (its open holes cut off higher).
         {.name = "Alto sax", .style = "smooth jazz", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.03f,
          .d = 1.0f, .s = 1.0f, .r = 0.07f, .aHard = 0.012f, .glide = 0.03f, .porta = 0.004f, .scoop = 0.3f,
          .scoopTime = 0.05f, .vibRate = 5.4f, .vibDepth = 0.18f, .vibDelay = 0.35f, .vibAmp = 0.04f, .echo = 0.12f,

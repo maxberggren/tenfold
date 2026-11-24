@@ -101,6 +101,11 @@ struct Spec {
     double bell = 1.25;        // the bell's mouth radius over the cone's at its end
     double ventR = 0.0012, ventT = 0.008; // the register vents' radius and chimney, m
     double lossK = 1.0;        // the walls' losses over a smooth tube's
+    double breath = 1.0;       // the breath noise through the slit with the lip slack (subtone), over the alto's
+    // Where the radiated spectrum peaks before it falls (Benade & Lutgen's
+    // break), and by how much it is lifted there (see Sax::start): the
+    // alto's own, unlifted.
+    double breakHz = 837, breakDb = 0;
     int register2 = 16;        // the first overblown note (semitones over the lowest): written D5
     // The reed, at an ordinary embouchure (see Sax::Control::lip for the range).
     double reedHz = 1800;    // its resonance with the lip on it
@@ -133,23 +138,61 @@ inline Spec specOf(Kind k) {
         s.ventR = 0.0015;
         s.ventT = 0.006;
     } else {
-        // The tenor, a fourth below: the alto scaled up by 2^(5/12) in every
-        // length (its cone's half angle the same, 1.52° measured against
-        // the alto's 1.60°, Chen, Smith & Wolfe 2009; its lattice's cutoff
-        // about the alto's over 1.33, 760 Hz against ~1 kHz), its reed's
-        // resonance down with it, so its dimensionless dynamics are the
-        // alto's. (Its neck is then 7.3 mm in radius at the mouthpiece.)
-        s = specOf(Alto);
+        // The tenor, a fourth below, is not the alto scaled: its parts are
+        // proportioned differently, from a tenor's measurements where there
+        // are any (the sources in docs/saxophone-research.md, sec. 7;
+        // est. marks an estimate).
+        // - The cone: 1.52° (0.0265 rad; Chen, Smith & Wolfe 2009; 1.55° in
+        //   Jensch & Grothe's CT of a tenor) against the alto's 1.60°.
+        // - The neck: 6.7 mm in radius where the mouthpiece fits (the CT),
+        //   barely wider than an alto's 6.0 to 6.25 (this model's alto is
+        //   5.5, its cone's truncation): the tenor is longer mostly
+        //   because its cone runs further towards its tip (0.25 m missing,
+        //   against the alto's 0.2).
+        // - The mouthpiece: 8.5 mm in radius, the mean shank of 41 tenor
+        //   mouthpieces; 32 mm long (est.), so 7.3 ml, 0.61 of the missing
+        //   cone's volume, as the alto's is 0.55 of its own. Real ones fill
+        //   about all of it; here a tenor's that size sends its lowest notes
+        //   into a hollow, near-sine regime.
+        // - The tone holes: b/a 0.54 (Jensch & Grothe 2021, measured on a
+        //   tenor) against the alto's 0.6 (est.), chimneys as the alto's:
+        //   the lattice cuts off at 0.7 to 1.0 kHz, inside the 760 ± 250 Hz
+        //   measured on a tenor (CSW 2009), the alto's at 1.2 to 1.5 kHz.
+        // - The bell: as the alto's for the cone's end (a mouth ~150 mm
+        //   against ~120 on a cone 1.33 times longer).
+        // - The reed: 514 Hz, Q 1 (est.). The one reed measured in playing,
+        //   672 Hz with Q 1.13 (Muñoz Arancón et al.), is a tenor's, but this
+        //   model's alto was tuned with it (as Colinot et al.'s is), and an
+        //   alto reed (70 mm long) rests above a tenor's (80 mm), as a
+        //   cantilever by (80/70)²; so the tenor's is the alto's 672 Hz
+        //   over 1.31. (At 672 Hz its lowest notes start an octave up.)
+        // - The break: its radiated spectrum lifted 4 dB around 618 Hz,
+        //   where Benade & Lutgen found a tenor's peaks (an alto's at
+        //   837 Hz); the height est. This model's excitation falls too fast
+        //   to make that peak itself (docs/saxophone.md, "Darker than
+        //   measured"). With it, played hard, B♭2 and C3 have their 6th and
+        //   5th harmonics strongest (a recorded tenor's low notes peak at
+        //   415 to 730 Hz); elsewhere the fundamental still leads.
+        // - The breath: three times the alto's noise in the subtone term
+        //   (est.: nothing measured), the bigger reed's slit and a slack lip.
         s.kind = Tenor;
-        const double k = std::exp2(5.0 / 12.0);
         s.lowMidi = 44;
-        s.r1 *= k;
-        s.mpLen *= k;
-        s.mpR *= k;
-        s.ventR *= k;
-        s.ventT *= k;
-        s.reedHz /= k;
+        s.r1 = 0.0067;
+        s.halfAngle = 0.0265;
+        s.mpLen = 0.032;
+        s.mpR = 0.0085;
+        s.holeRatio = 0.54;
+        s.chimney = 0.5;
+        s.bell = 1.25;
+        s.breakHz = 618;
+        s.breakDb = 4;
+        s.reedHz = 514;
+        s.reedQ = 1.0;
+        s.zeta = 0.8;
         s.pm = 4300;
+        s.ventR = 0.0015 * 1.33;
+        s.ventT = 0.006 * 1.33;
+        s.breath = 3.0;
         return s;
     }
     s.lossK = 1.0;
@@ -673,6 +716,17 @@ public:
             std::fill(std::begin(m_find), std::end(m_find), 0.0f);
         }
         m_d = &d;
+        {
+            // The break: a peaking section (RBJ's), Q 0.4 (three octaves
+            // wide), at the horn's break frequency.
+            const double w0 = 2 * M_PI * d.spec.breakHz / m_rate, A = std::pow(10.0, d.spec.breakDb / 40.0);
+            const double al = std::sin(w0) / (2 * 0.4), cw = std::cos(w0), a0 = 1 + al / A;
+            m_bq[0] = float((1 + al * A) / a0);
+            m_bq[1] = float(-2 * cw / a0);
+            m_bq[2] = float((1 - al * A) / a0);
+            m_bq[3] = float(-2 * cw / a0);
+            m_bq[4] = float((1 - al / A) / a0);
+        }
         silence();
         m_s = noteOf(hz);
         const Fingering &f = d.at(m_s);
@@ -701,6 +755,7 @@ public:
         m_dc = DcBlock{0, 0, m_dc.r};
         m_tractP = 0;
         m_hpU = m_hp1 = m_hp2 = 0;
+        m_bz[0] = m_bz[1] = 0;
         m_fresh = true;
         m_e1Re = m_e1Im = m_e2Re = m_e2Im = 0;
         m_upRe = m_upIm = m_dnRe = m_dnIm = 0;
@@ -928,6 +983,13 @@ private:
             rad = 2.0f * rad + m_uh2 * h2;
             // (No steady flow radiates.)
             rad = m_dc.step(rad) * pm;
+            // (Lifted at the break.)
+            {
+                const float y = m_bq[0] * rad + m_bz[0];
+                m_bz[0] = m_bq[1] * rad - m_bq[3] * y + m_bz[1];
+                m_bz[1] = m_bq[2] * rad - m_bq[4] * y;
+                rad = y;
+            }
             out[i] += rad;
             e += rad * rad;
             // The reed, moved by the pressure across it, beating shut on the lay.
@@ -1325,7 +1387,7 @@ private:
         }
         m_soft = 0.02f + 0.3f * (1.0f - lip) * (1.0f - lip);
         // The jet's turbulence: more with the lip slack and the jaw down.
-        m_sigma = 0.02f + 0.08f * (1.0f - lip) * (1.0f - lip) + 0.1f * clampf(c.air, 0.0f, 1.0f);
+        m_sigma = 0.02f + 0.08f * float(m_d->spec.breath) * (1.0f - lip) * (1.0f - lip) + 0.1f * clampf(c.air, 0.0f, 1.0f);
         // The hum: a voice's pitch in its chest range under the note.
         m_growl = 0.45f * clampf(c.growl, 0.0f, 1.0f);
         float hum = c.hz * 0.41f;
@@ -1373,6 +1435,7 @@ private:
     float m_rotRe = 1, m_rotIm = 0, m_incRe = 1, m_incIm = 0, m_e1Re = 0, m_e1Im = 0, m_e2Re = 0, m_e2Im = 0;
     float m_lastP = 0;
     float m_cap = 2.0f, m_open = 1, m_soft = 0.05f, m_wr = 4000, m_qr = 0.5f;
+    float m_bq[5] = {1, 0, 0, 0, 0}, m_bz[2] = {};
     float m_blow = 0, m_sigma = 0.08f, m_growl = 0, m_glottis = 0, m_humBase = 0, m_humInc = 0;
     Svf m_noiseF;
     DcBlock m_dc;

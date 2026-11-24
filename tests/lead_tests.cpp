@@ -901,8 +901,11 @@ private slots:
                 if (lead::sound(snd).model == lead::Sound::Gong || lead::sound(snd).model == lead::Sound::Kargyraa)
                     continue;
                 const auto take = testkit::play(hold(snd, n.cell));
+                // (A sound may sing an octave from its cell: the tenor sax
+                // in its own range, under the alto.)
+                const double want = n.midi + 12.0 * double(lead::sound(snd).saxOct);
                 const double midi = midiOf(pitchHz(take, 0.62, 0.8));
-                QVERIFY2(std::fabs(midi - n.midi) < 0.1,
+                QVERIFY2(std::fabs(midi - want) < 0.1,
                          qPrintable(QStringLiteral("%1 %2: %3").arg(soundName(snd)).arg(n.midi).arg(midi)));
                 QVERIFY2(take.finite(), soundName(snd));
                 QVERIFY2(take.rms(0.32, 0.6) > 0.02, soundName(snd));

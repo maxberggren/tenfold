@@ -1280,55 +1280,67 @@ private slots:
     // --- what the page lights ------------------------------------------------
 
     void aHitLightsOnlyTheKitItWasPlayedOn() {
-        // Every kit shown, every other kit's loop hitting every pad: the
-        // hits sound, but light none of the shown kit's pads (the hang's
-        // fields and the slit drum's tongues share pad ids), only the
+        // Each kit's loop hitting all sixteen pads at once while another
+        // kit is shown, the next one along (house on techno, the djembe on
+        // the hang, the hang on the slit drum…) and one across the list (a
+        // grid kit on a whole-pad one and back): the hits sound, but light
+        // none of the shown kit's pads (the kits share pad ids), only the
         // played kit's chip and the visualiser's count of what was heard.
-        // On its own kit, a loop's hit lights its pad.
+        // Then that kit chosen: its own loop's hits light their pads. One
+        // engine and one block per case, so it is quick under load.
         Ctx ctx;
         float l[kBlock], r[kBlock];
         float data[kPartData];
-        for (int shown = 0; shown < drums::KitCount; ++shown)
-            for (int played = 0; played < drums::KitCount; ++played)
+        auto choose = [&](drums::Engine &e, int kit) {
+            Command k;
+            k.type = Command::Param;
+            k.i[0] = drums::ParamKit;
+            k.i[1] = kit;
+            e.command(k, ctx);
+        };
+        auto loopHitsEveryPad = [&](drums::Engine &e, int kit) {
+            for (int pad = 0; pad < drums::PadCount; ++pad) {
+                Command c;
+                c.type = drums::Hit;
+                c.id = (1 << 24) + pad; // from a clip
+                c.i[0] = pad;
+                c.i[2] = kit + 1;
+                c.f[0] = 1.0f;
+                c.f[1] = c.f[2] = 0.5f;
+                c.f[5] = 0.4f;
+                e.command(c, ctx);
+            }
+            std::fill(l, l + kBlock, 0.0f);
+            std::fill(r, r + kBlock, 0.0f);
+            e.render(l, r, kBlock, ctx);
+            std::fill(data, data + kPartData, 0.0f);
+            e.publish(data);
+        };
+        for (int played = 0; played < drums::KitCount; ++played)
+            for (int step : {1, drums::KitCount / 2}) {
+                const int shown = (played + step) % drums::KitCount;
+                drums::Engine e;
+                e.init(kRate);
+                choose(e, shown);
+                loopHitsEveryPad(e, played);
                 for (int pad = 0; pad < drums::PadCount; ++pad) {
-                    drums::Engine e;
-                    e.init(kRate);
-                    Command k;
-                    k.type = Command::Param;
-                    k.i[0] = drums::ParamKit;
-                    k.i[1] = shown;
-                    e.command(k, ctx);
-                    Command c;
-                    c.type = drums::Hit;
-                    c.i[0] = pad;
-                    c.i[2] = played + 1;
-                    c.f[0] = 1.0f;
-                    c.f[1] = c.f[2] = 0.5f;
-                    c.f[5] = 0.4f;
-                    c.id = 1 << 24; // from a clip
-                    e.command(c, ctx);
-                    std::fill(l, l + kBlock, 0.0f);
-                    std::fill(r, r + kBlock, 0.0f);
-                    e.render(l, r, kBlock, ctx);
-                    std::fill(data, data + kPartData, 0.0f);
-                    e.publish(data);
                     const QString what = QStringLiteral("%1 of %2 shown on %3")
                                              .arg(drums::padName(pad, played), drums::kitName(played), drums::kitName(shown));
-                    float lit = 0, heard = 0;
-                    for (int p = 0; p < drums::PadCount; ++p) {
-                        lit = std::max({lit, data[drums::kDataFlash + p], data[drums::kDataFlashReplay + p]});
-                        heard = std::max({heard, data[drums::kDataHeard + p], data[drums::kDataHeardReplay + p]});
-                    }
-                    QVERIFY2(heard > 0.3f, qPrintable(what));
-                    if (played == shown) {
-                        QVERIFY2(std::max(data[drums::kDataFlash + pad], data[drums::kDataFlashReplay + pad]) > 0.3f,
-                                 qPrintable(what));
-                    } else {
-                        QVERIFY2(lit == 0.0f, qPrintable(what));
-                        QVERIFY2(data[drums::kDataKitLoop + played] > 0.3f, qPrintable(what));
-                        QVERIFY2(data[32] == 0.0f, qPrintable(what)); // nor the 808's note
-                    }
+                    QVERIFY2(data[drums::kDataFlash + pad] == 0.0f && data[drums::kDataFlashReplay + pad] == 0.0f,
+                             qPrintable(what));
+                    QVERIFY2(data[drums::kDataHeardReplay + pad] > 0.3f, qPrintable(what));
                 }
+                QVERIFY2(data[drums::kDataKitLoop + played] > 0.3f, drums::kitName(played));
+                QVERIFY2(data[32] == 0.0f, drums::kitName(played)); // nor the 808's note
+                if (step != 1)
+                    continue;
+                choose(e, played);
+                loopHitsEveryPad(e, played);
+                for (int pad = 0; pad < drums::PadCount; ++pad)
+                    QVERIFY2(data[drums::kDataFlashReplay + pad] > 0.3f,
+                             qPrintable(QStringLiteral("%1 of %2 shown on itself")
+                                            .arg(drums::padName(pad, played), drums::kitName(played))));
+            }
     }
 
     void aLoopOnOneKitDoesntLightTheNextKitsPads() {

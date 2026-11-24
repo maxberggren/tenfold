@@ -809,7 +809,7 @@ private slots:
         // is 0.048 of it under the pad, row 1 0.119. Row 0 ends with the
         // sounds, more of them than fit: a window onto them that follows
         // the chosen one, so a click on its last chip (faded, with more
-        // beyond) moves along, and enough of them reach Tam-tam, the last;
+        // beyond) moves along, and enough of them reach Tromba marina, the last;
         // row 1 starts with the octave stepper (↑ at its right end) and has
         // FOLLOW about 0.64 across, HOLD after it.
         testkit::play("page 0 4\nbutton 0.2 0.98 -0.048\nend 0.5\n", [](Session &s) {
@@ -820,7 +820,7 @@ private slots:
             for (int k = 0; k < 16; ++k)
                 walk += fmt("button %.2f 0.98 -0.048\n", 0.2 + 0.1 * k);
             testkit::play(walk + "end 2.0\n", [](Session &s) {
-                QVERIFY2(s.pageStatus().contains(QStringLiteral("Tam-tam")), qPrintable(s.pageStatus()));
+                QVERIFY2(s.pageStatus().contains(QStringLiteral("Tromba marina")), qPrintable(s.pageStatus()));
             });
         }
         testkit::play("page 0 4\nbutton 0.2 0.635 -0.119\nend 0.5\n", [](Session &s) {

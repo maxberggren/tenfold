@@ -30,6 +30,7 @@ HEADERS += \
     src/electro.h \
     src/fx.h \
     src/gong.h \
+    src/trombamarina.h \
     src/hang.h \
     src/slitdrum.h \
     src/pipedrum.h \

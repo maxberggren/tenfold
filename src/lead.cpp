@@ -33,6 +33,7 @@
 #include "gong.h"
 #include "lead.h"
 #include "parts.h"
+#include "trombamarina.h"
 
 namespace tf {
 namespace lead {
@@ -203,6 +204,10 @@ constexpr float kRollAccent = 1.5f;
 constexpr float kGongLevel[gong::kKinds] = {0.27f, 0.85f, 0.3f};
 // Gong: how many tam-tams may ring at once.
 constexpr int kTamTams = 4;
+// Tromba marina: what its pressure (Pa at a metre) is worth on the page, and
+// how long the bow is, in seconds of an ordinary stroke.
+constexpr float kTrombaLevel = 0.5f;
+constexpr float kTrombaStrokeS = 2.6f;
 
 // An accordion's bellows: how much air one way holds (seconds of sound at
 // an ordinary press), and how long a rest is a breath, long enough to turn
@@ -393,6 +398,12 @@ struct Bank {
     // chime's are), and whether it has been hung and struck for this note.
     gong::Gong gong;
     bool gongLive = false;
+    // Tromba marina: the voice's instrument (each voice of a line its own),
+    // whether it is sounding, and the harmonic the thumb is on and the note
+    // it was chosen for.
+    tromba::TrombaMarina tromba;
+    bool trombaLive = false;
+    float trombaFor = -100;
 };
 
 struct Voice {
@@ -478,6 +489,11 @@ public:
         for (auto &v : m_voices)
             for (auto &k : v.banks)
                 k.gong.init(rate);
+        // The tromba marina's soundboard too.
+        tromba::prepare();
+        for (auto &v : m_voices)
+            for (auto &k : v.banks)
+                k.tromba.init(rate);
         for (auto &c : m_chik) {
             c.string.init(size_t(rate / 150.0f));
             c.jawF.set(3000.0f, 4.0f, rate);
@@ -953,6 +969,10 @@ private:
             k.gongLive = false;
             if (s.model == Sound::Gong)
                 k.gong.silence();
+            k.trombaLive = false;
+            k.trombaFor = -100;
+            if (s.model == Sound::TrombaMarina)
+                k.tromba.silence();
             k.thudLp.reset();
             k.pingF.reset();
             k.pingLp.reset();
@@ -1057,7 +1077,7 @@ private:
         // is already on the string, so it doesn't scoop into the note
         // from under it (that would step the string's length at once, a
         // tick): it slides there from the last.
-        if (s.model == Sound::Bow && v.amp.v > 0.05f) {
+        if ((s.model == Sound::Bow || s.model == Sound::TrombaMarina) && v.amp.v > 0.05f) {
             v.bowDir = -v.bowDir;
             v.bowPos = 0;
             scoop = false;
@@ -1260,6 +1280,16 @@ private:
     void renderSegment(float *l, float *r, int at, int n, AudioContext &ctx) {
         const Harmony &h = ctx.harmony();
         const float dt = float(n) / m_rate;
+        // The tromba marina's string is tuned to the key: its root two
+        // octaves under the neck's (G1 to F♯2).
+        {
+            double root = h.tuning.baseMidi() + h.tuning.degreeSemis(0);
+            while (root < 31.0)
+                root += 12.0;
+            while (root >= 43.0)
+                root -= 12.0;
+            m_trombaRef = midiToHz(root);
+        }
         // Lines drive their voices.
         for (int li = 0; li < kLines; ++li) {
             Line &line = m_lines[size_t(li)];
@@ -1745,6 +1775,61 @@ private:
                 k.gong.render(m_gongL[b], m_gongR[b], n, kGongLevel[std::clamp(s.gong, 0, gong::kKinds - 1)] * even);
             }
         }
+        // Tromba marina: each voice of the line is a string of its own,
+        // tuned to the key two octaves under the neck's root; its note
+        // picks the harmonic the thumb touches (chosen again only when the
+        // note changes, so a bend or a glide inside it keeps the thumb
+        // where it is, and a new one slides it to another node). The bow
+        // is drawn by the envelope, its weight, speed and place the
+        // player's (tromba::bowFor), and it turns round at the end of its
+        // stroke, or on a note struck again while it sounds, passing
+        // through rest.
+        if (model == Sound::TrombaMarina) {
+            if (!v.releasing) {
+                v.bowPos += dt;
+                if (v.bowPos >= kTrombaStrokeS) {
+                    v.bowDir = -v.bowDir;
+                    v.bowPos = 0;
+                }
+            }
+            // (A quick turn: a slow one lingers near rest, where the
+            // string catches in several slips a period and may stay.)
+            v.bowDirS += (v.bowDir - v.bowDirS) * (1.0f - std::exp(-dt / 0.01f));
+            const float drawn = clampf(v.amp.v, 0.0f, 1.0f);
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                Bank &k = v.banks[b];
+                std::fill(m_trombaL[b], m_trombaL[b] + n, 0.0f);
+                std::fill(m_trombaR[b], m_trombaR[b] + n, 0.0f);
+                if (!live[b])
+                    continue;
+                if (!k.trombaLive && v.releasing)
+                    continue;
+                const float hz = inc1[b] * rate;
+                const bool fresh = !k.trombaLive;
+                if (fresh || std::fabs(k.target - k.trombaFor) > 0.5f) {
+                    const int h = tromba::harmonicFor(midiToHz(clampf(k.target, 0.0f, 140.0f)), m_trombaRef);
+                    k.tromba.setNote(hz, h, fresh);
+                    k.trombaFor = k.target;
+                } else {
+                    k.tromba.setNote(hz, k.tromba.harmonic());
+                }
+                k.trombaLive = true;
+                const tromba::Bowing bw =
+                    tromba::bowFor(v.press, v.y, v.vel, k.tromba.harmonic(), hz / float(k.tromba.harmonic()));
+                // The weight comes onto the string ahead of the speed, as a
+                // player sets the bow before drawing it (Guettler's clean
+                // attacks want the force up while the bow accelerates); as
+                // it leaves, both ease off together. A flatter finger sets
+                // the guidon closer, more bray.
+                const float weight = v.releasing ? drawn : std::min(1.0f, 2.5f * drawn);
+                k.tromba.setGap(tromba::Physics::kGap - 8e-6f * clampf(v.fat, 0.0f, 1.0f));
+                k.tromba.setBow(drawn > 0.002f ? bw.force * weight : 0.0f, bw.speed * drawn * v.bowDirS, bw.beta);
+                // Its loudness is the physics', evened out across the neck
+                // so a line is one instrument.
+                const float even = std::pow(clampf(hz / 440.0f, 0.4f, 3.0f), 0.35f);
+                k.tromba.render(m_trombaL[b], m_trombaR[b], n, kTrombaLevel * even);
+            }
+        }
         // Sync: each slave's ratio sweeps down from the attack to where it
         // settles, never all the way to the note, so the tear holds; height
         // and pressure lift it, a slow wander moves it, and so does the
@@ -2164,6 +2249,10 @@ private:
                     bl += m_gongL[b][i];
                     br += m_gongR[b][i];
                     break;
+                case Sound::TrombaMarina:
+                    bl += m_trombaL[b][i];
+                    br += m_trombaR[b][i];
+                    break;
                 case Sound::Sync: {
                     // At four times the rate: four quarter steps, the second
                     // voice's master an octave up, through two half-band
@@ -2400,11 +2489,14 @@ private:
             // a player leans into the middle of the stroke. The bellows
             // turning round push a swell through the reeds as they catch.
             // A gong's level is its own: a hand stills it, not an envelope.
-            const float env = model == Sound::Bow    ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
-                              : model == Sound::Gong ? 1.0f
-                                                     : a;
+            // A tromba marina's is its bow's, which the envelope draws.
+            const float env = model == Sound::Bow                                     ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
+                              : model == Sound::Gong || model == Sound::TrombaMarina ? 1.0f
+                                                                                      : a;
             const float jerk = model == Sound::Reed ? 1.0f + 0.5f * (jerk0 + (jerk1 - jerk0) * t) * std::min(1.0f, v.held / 0.03f) : 1.0f;
-            const float level = model == Sound::Bow ? bowGain0 + (outGain - bowGain0) * t : outGain;
+            const float level = model == Sound::Bow            ? bowGain0 + (outGain - bowGain0) * t
+                                : model == Sound::TrombaMarina ? s.gain * 0.3f
+                                                               : outGain;
             const float g2 = env * level * gate * jerk * (amp0 + (amp1 - amp0) * t);
             sl *= g2;
             sr *= g2;
@@ -2442,6 +2534,13 @@ private:
             for (const auto &k : v.banks)
                 ringing |= k.gongLive && k.gong.active();
             if (v.releasing && !ringing)
+                v.active = false;
+        } else if (model == Sound::TrombaMarina) {
+            // Done once the bow has left and every string has rung out.
+            bool ringing = false;
+            for (const auto &k : v.banks)
+                ringing |= k.trombaLive && k.tromba.active();
+            if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f) && !ringing)
                 v.active = false;
         } else if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f)) {
             v.active = false;
@@ -2624,6 +2723,8 @@ private:
     };
     float m_symSend[kBlock] = {};
     float m_gongL[Voice::kBanks][kBlock] = {}, m_gongR[Voice::kBanks][kBlock] = {};
+    float m_trombaL[Voice::kBanks][kBlock] = {}, m_trombaR[Voice::kBanks][kBlock] = {};
+    float m_trombaRef = 55; // the tromba marina's open string, two octaves under the neck's root (Hz)
     Delay m_sym[kTaraf];
     float m_symLp[kTaraf] = {};
     Chikari m_chik[kChikari];
@@ -3086,7 +3187,9 @@ public:
             "Gong (gamelan: a bossed gong, every voice its own, its octave beating against the smith's, the ombak), "
             "Opera gong (Chinese opera: low on the neck the big flat gongs, sharp when struck hard and gliding down; "
             "high the small domed ones, gliding up), Tam-tam (film score: a thud an octave down that, struck hard, "
-            "blossoms over a second into a shimmer; held, it is rolled); "
+            "blossoms over a second into a shimmer; held, it is rolled), Tromba marina (baroque: one long bowed "
+            "string that sounds only its harmonics, the thumb sliding from node to node, on a bridge whose free foot "
+            "knocks on the board every period, a trumpet's bray when bowed firmly; no vibrato); "
             "the row under the pad shows the ones around the chosen "
             "sound, faded at an end with more beyond; the status line says what music each is for\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
@@ -3108,11 +3211,13 @@ public:
             "higher on the pad\tbrighter (on Vox, the vowel: oo, oh, ah, eh, ee; on Sync, the sweep held higher and "
             "the vowel from ow to ee; on "
             "Erhu, bowed nearer the bridge; on Accordion, the register: clarinet low, bandoneon in the middle, musette "
-            "high, and the bandoneon from the keys; on the gongs, the strike moves out from the middle toward the rim)\n"
+            "high, and the bandoneon from the keys; on the gongs, the strike moves out from the middle toward the rim; "
+            "on Tromba marina, bowed nearer the nut)\n"
             "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
             "on Flute, a quicker attack; on Steel pan, a harder roll, and high on the note a ping; on Sync, a snarl of FM into the sync; on Erhu, "
             "the bow's weight: a light touch whistles, a hard one grinds; on the gongs, a harder mallet: further glides, "
-            "a stronger ombak, a brighter blossom, and a harder tam-tam roll)\n"
+            "a stronger ombak, a brighter blossom, and a harder tam-tam roll; on Tromba marina, the bow's weight: "
+            "light is a soft flageolet, firmer sets the bridge knocking, all the way scratches)\n"
             "flatten the finger\tfatter: the unison spreads (on Flute, breathier; on Sitar, more buzz; "
             "on Accordion, a wetter musette; on the gongs, a softer beater)\n"
             "twist the finger\tbend up or down one step of the scale\n"

@@ -215,7 +215,13 @@ struct Sound {
     //           membrane stress that couples them, struck by a padded
     //           mallet; every voice of the line its own gong, tuned to its
     //           note. The kind (bossed, opera, tam-tam) is the sound's.
-    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong };
+    //   TrombaMarina: a tromba marina as physics (trombamarina.h): one long
+    //           gut string bowed above a thumb that only touches its nodes,
+    //           so it sounds the harmonic the note is, on a bridge whose
+    //           free foot knocks on the soundboard every period (the
+    //           trumpet's buzz), into a long tapered box. The note picks the
+    //           harmonic of a string tuned two octaves under the neck's root.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina };
     int model = Osc;
     float jawari = 0;      // String: how hard the string buzzes on its bridge
     float sympathy = 0;    // String: how loud the taraf rings
@@ -263,7 +269,7 @@ inline const char *registerName(float y) {
 // note is held, strikes the high drone strings instead of a hammer-on.
 constexpr float kChikariY = 0.8f;
 
-constexpr int kSounds = 18;
+constexpr int kSounds = 19;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -478,6 +484,21 @@ inline const Sound &sound(int i) {
          .d = 1.0f, .s = 1.0f, .r = 4.0f, .glide = 0.05f, .vibDepth = 0.0f, .retrig = true, .echo = 0.08f,
          .echoFb = 0.25f, .gain = 1.0f, .model = Sound::Gong, .roll = 1.0f, .gong = 2, .gongOct = -1.0f, .hand = 12.0f,
          .rollHz = 9.0f},
+        // A tromba marina, the "trumpet marine" of baroque and convent
+        // music: one long gut string, bowed near the top while the thumb
+        // only touches it at a node, so every note is a natural harmonic
+        // of the open string, tuned two octaves under the key's root. Its
+        // bridge has one foot free a hair over the soundboard, and every
+        // period it knocks there: bowed firmly, the string brays like a
+        // trumpet; lightly, the knocking stops and it is a soft, nasal
+        // flageolet. Pressure is the bow's weight (and its speed, as a
+        // player leans in): past the bow's limit it scratches. Higher on
+        // the pad bows nearer the nut, brighter and needing more weight.
+        // Moving to another note slides the thumb to another node. No
+        // vibrato: a harmonic's pitch is the string's.
+        {.name = "Tromba marina", .style = "baroque", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.08f,
+         .d = 0.6f, .s = 1.0f, .r = 0.15f, .aHard = 0.04f, .glide = 0.05f, .vibDepth = 0.0f, .echo = 0.1f,
+         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::TrombaMarina},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

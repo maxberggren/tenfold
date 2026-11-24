@@ -2674,7 +2674,9 @@ void DrumsControl::paintKits(QPainter &p, const PaintContext &pc, const QRectF &
     for (int k = first; k < last; ++k)
         names << QString::fromUtf8(kitName(k)).toUpper();
     const int lit = m_kit >= first && m_kit < last ? m_kit - first : -1;
-    console::chips(p, pc, row, names, lit, &m_spots, SpotKit + first);
+    // A loop playing on a kit not shown glows faintly in that kit's chip,
+    // rather than on the shown kit's pads (see kDataKitLoop).
+    console::chips(p, pc, row, names, lit, &m_spots, SpotKit + first, 4, pc.view->data + kDataKitLoop + first);
 }
 
 // The hang, drawn as it is played: its shell, the ding in the middle, the

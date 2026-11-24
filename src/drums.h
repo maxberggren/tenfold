@@ -185,6 +185,19 @@ enum Kit : int {
     Amapiano, Tabla, Gamelan, Chip, Djembe, Hang, SlitDrum, Pipes, Khishba, Udu, TablaPair, Cuica, KitCount
 };
 
+// Where the engine publishes its hits (see Engine::publish). The page draws
+// only the kit it shows, and the kits share pad ids (the hang's fields, the
+// slit drum's tongues, a grid kit's cells), so a hit lights its pad only on
+// the kit it was played on: kDataFlash + pad (live) and kDataFlashReplay +
+// pad (a loop's). Every hit, whatever its kit, for the visualiser, which
+// hears them all: kDataHeard + pad, kDataHeardReplay + pad, and the 808's
+// level at kDataSubHeard. And kDataKitLoop + kit: how hard a loop just hit
+// a kit, for its chip.
+inline constexpr int kDataFlash = 0, kDataFlashReplay = 16, kDataSubHeard = 39, kDataHeard = 112,
+                     kDataHeardReplay = 128, kDataKitLoop = 160;
+static_assert(kDataHeardReplay + int(PadCount) <= kDataKitLoop && kDataKitLoop + int(KitCount) <= 200,
+              "the kit chips' glow runs into the khishba's level at 200");
+
 // The tabla pair's strokes are pads of their own, by where they land: the
 // dayan's kinar (na), maidan (tin) and syahi (tun), the bayan open (ge)
 // and slapped flat (ka). Pads nothing else is special about, as the hang's.
@@ -4759,7 +4772,13 @@ public:
         }
         case Command::Param:
             if (c.i[0] == ParamKit) {
-                m_kit = std::clamp(c.i[1], 0, KitCount - 1);
+                if (const int kit = std::clamp(c.i[1], 0, KitCount - 1); kit != m_kit) {
+                    // The pads now drawn are another kit's: what lit the
+                    // last one's doesn't light these.
+                    m_kit = kit;
+                    std::fill(std::begin(m_flash), std::end(m_flash), 0.0f);
+                    std::fill(std::begin(m_flashReplay), std::end(m_flashReplay), 0.0f);
+                }
                 applyKit();
             } else if (c.i[0] == ParamEdit) {
                 const int pad = std::clamp(c.i[1], 0, PadCount - 1);
@@ -4904,7 +4923,11 @@ public:
         for (int p = 0; p < PadCount; ++p) {
             m_flash[p] *= fall;
             m_flashReplay[p] *= fall;
+            m_heard[p] *= fall;
+            m_heardReplay[p] *= fall;
         }
+        for (float &k : m_kitLoop)
+            k *= fall;
         m_sample += uint64_t(n);
     }
 
@@ -4938,20 +4961,30 @@ public:
         m_pendingCount = 0;
     }
 
-    // data[0..15] how hard each pad was just hit (live), [16..31] the same
-    // for hits a clip played, [32] the 808's level, [33] its degree, [34]
+    // data[0..15] how hard each pad of the kit shown was just hit (live),
+    // [16..31] the same for hits a clip played (kDataFlash, kDataFlashReplay;
+    // a hit on another kit lights neither), [32] the 808's level, [33] its
+    // degree (both only while it is the kit shown's 808), [34]
     // the kit, [35] voices sounding, [36] how loud the hang rings, [37] the slit drum, [38] the
     // pipes, [40 + 3 * pad ..] each pad's edit (tune, decay, tone) as the engine has it, [96 +
     // pipe] how loud each pipe rings, [200] the khishba, [210] the udu, [211] [212] how open its
     // side hole and mouth are, [220] [221] how loud the dayan and the bayan ring, [222]
     // how far the bayan's heel bends it (semitones), [230] the cuíca, [231] how hard
-    // its thumb presses (0..1).
+    // its thumb presses (0..1); [39] the 808's level whatever its kit, [112 +
+    // pad] [128 + pad] every hit live and looped whatever its kit (the
+    // visualiser's), [160 + kit] how hard a loop just hit that kit.
     void publish(float *data) override {
         for (int p = 0; p < PadCount; ++p) {
-            data[p] = m_flash[p];
-            data[16 + p] = m_flashReplay[p];
+            data[kDataFlash + p] = m_flash[p];
+            data[kDataFlashReplay + p] = m_flashReplay[p];
+            data[kDataHeard + p] = m_heard[p];
+            data[kDataHeardReplay + p] = m_heardReplay[p];
         }
-        data[32] = m_sub.active ? m_sub.level : 0.0f;
+        for (int k = 0; k < KitCount; ++k)
+            data[kDataKitLoop + k] = m_kitLoop[k];
+        data[kDataSubHeard] = m_sub.active ? m_sub.level : 0.0f;
+        const bool subShown = m_sub.active && m_sub.kit == m_kit;
+        data[32] = subShown ? m_sub.level : 0.0f;
         data[33] = m_sub.degree;
         data[34] = float(m_kit);
         data[35] = float(voices());
@@ -5143,8 +5176,17 @@ private:
                 Setup su{m_rate, m_kit, &ctx.harmony()};
                 startVoice(s, su, offset);
             }
-            float &flash = p.replay ? m_flashReplay[pad] : m_flash[pad];
-            flash = std::max(flash, 0.3f + 0.7f * clampf(s.vel, 0, 1));
+            // The hit lights its pad only on the kit it was played on: the
+            // kits share pad ids, and the page draws the kit shown.
+            const float how = 0.3f + 0.7f * clampf(s.vel, 0, 1);
+            float &heard = p.replay ? m_heardReplay[pad] : m_heard[pad];
+            heard = std::max(heard, how);
+            if (s.kit == m_kit) {
+                float &flash = p.replay ? m_flashReplay[pad] : m_flash[pad];
+                flash = std::max(flash, how);
+            }
+            if (p.replay)
+                m_kitLoop[s.kit] = std::max(m_kitLoop[s.kit], how);
             break;
         }
         case Command::Move:
@@ -5450,7 +5492,9 @@ private:
                                      INT64_MIN / 2, INT64_MIN / 2, INT64_MIN / 2, INT64_MIN / 2};
     uint32_t m_serial = 0;
     uint32_t m_muted[kClipSlots] = {}; // per clip slot, the pads silenced in its loop
-    float m_flash[PadCount] = {}, m_flashReplay[PadCount] = {};
+    float m_flash[PadCount] = {}, m_flashReplay[PadCount] = {}; // the kit shown's
+    float m_heard[PadCount] = {}, m_heardReplay[PadCount] = {}; // every kit's
+    float m_kitLoop[KitCount] = {};
 };
 
 }

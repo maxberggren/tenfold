@@ -1277,6 +1277,78 @@ private slots:
         QVERIFY(back.view.parts[0].data[16 + drums::Clap] > 0.3f);
     }
 
+    // --- what the page lights ------------------------------------------------
+
+    void aHitLightsOnlyTheKitItWasPlayedOn() {
+        // Every kit shown, every other kit's loop hitting every pad: the
+        // hits sound, but light none of the shown kit's pads (the hang's
+        // fields and the slit drum's tongues share pad ids), only the
+        // played kit's chip and the visualiser's count of what was heard.
+        // On its own kit, a loop's hit lights its pad.
+        Ctx ctx;
+        float l[kBlock], r[kBlock];
+        float data[kPartData];
+        for (int shown = 0; shown < drums::KitCount; ++shown)
+            for (int played = 0; played < drums::KitCount; ++played)
+                for (int pad = 0; pad < drums::PadCount; ++pad) {
+                    drums::Engine e;
+                    e.init(kRate);
+                    Command k;
+                    k.type = Command::Param;
+                    k.i[0] = drums::ParamKit;
+                    k.i[1] = shown;
+                    e.command(k, ctx);
+                    Command c;
+                    c.type = drums::Hit;
+                    c.i[0] = pad;
+                    c.i[2] = played + 1;
+                    c.f[0] = 1.0f;
+                    c.f[1] = c.f[2] = 0.5f;
+                    c.f[5] = 0.4f;
+                    c.id = 1 << 24; // from a clip
+                    e.command(c, ctx);
+                    std::fill(l, l + kBlock, 0.0f);
+                    std::fill(r, r + kBlock, 0.0f);
+                    e.render(l, r, kBlock, ctx);
+                    std::fill(data, data + kPartData, 0.0f);
+                    e.publish(data);
+                    const QString what = QStringLiteral("%1 of %2 shown on %3")
+                                             .arg(drums::padName(pad, played), drums::kitName(played), drums::kitName(shown));
+                    float lit = 0, heard = 0;
+                    for (int p = 0; p < drums::PadCount; ++p) {
+                        lit = std::max({lit, data[drums::kDataFlash + p], data[drums::kDataFlashReplay + p]});
+                        heard = std::max({heard, data[drums::kDataHeard + p], data[drums::kDataHeardReplay + p]});
+                    }
+                    QVERIFY2(heard > 0.3f, qPrintable(what));
+                    if (played == shown) {
+                        QVERIFY2(std::max(data[drums::kDataFlash + pad], data[drums::kDataFlashReplay + pad]) > 0.3f,
+                                 qPrintable(what));
+                    } else {
+                        QVERIFY2(lit == 0.0f, qPrintable(what));
+                        QVERIFY2(data[drums::kDataKitLoop + played] > 0.3f, qPrintable(what));
+                        QVERIFY2(data[32] == 0.0f, qPrintable(what)); // nor the 808's note
+                    }
+                }
+    }
+
+    void aLoopOnOneKitDoesntLightTheNextKitsPads() {
+        // As played: a clap looped on the house kit, then the techno kit
+        // chosen. The loop's clap still sounds, but the techno kit's clap
+        // pad stays dark; the house chip glows for it instead.
+        const std::string keep = "page 0 1\n"
+                                 "down 1.00 1 " + at(drums::Kick) + "\ndown 1.02 2 " + at(drums::Clap) +
+                                 "\nclick 2.0 len=0.15\nup 2.4 1\nup 2.4 2\nkey 6.0 Right\n";
+        const double clapAt = 25 * kSpb + 0.03;
+        const auto out = testkit::play(keep + "end " + std::to_string(clapAt) + "\n");
+        QVERIFY(out.error.empty());
+        const float *d = out.view.parts[0].data;
+        QCOMPARE(int(d[34]), int(drums::Techno));
+        QCOMPARE(d[16 + drums::Clap], 0.0f);
+        QCOMPARE(d[16 + drums::Kick], 0.0f);
+        QVERIFY(d[drums::kDataHeardReplay + drums::Clap] > 0.3f);
+        QVERIFY(d[drums::kDataKitLoop + drums::House] > 0.3f);
+    }
+
     // --- loop lengths ----------------------------------------------------------
 
     void aGrooveHeldLongerKeepsMoreBars() {

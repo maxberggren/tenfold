@@ -103,9 +103,11 @@ inline QRectF bandRow(const PaintContext &pc, int row, double x0 = 0, double x1 
 }
 
 // Lays `labels` out as equal chips across `r`, the `lit` one filled; each
-// clickable as idBase + its index. A label "" leaves a gap.
+// clickable as idBase + its index. A label "" leaves a gap. `glow`, if
+// given, is one 0..1 per label: a soft fill under the chips not lit (the
+// drums' kits a loop is playing while another kit is shown).
 void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, int lit,
-           Hotspots *spots, int idBase, double gap = 4);
+           Hotspots *spots, int idBase, double gap = 4, const float *glow = nullptr);
 
 // Ids the shared clip strip answers to: kClipSpot + slot.
 constexpr int kClipSpot = 1000;

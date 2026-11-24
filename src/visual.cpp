@@ -92,17 +92,18 @@ void SignalTracker::update(const StudioView &v, double dt) {
         s.level[p] += (target - s.level[p]) * float(1.0 - std::exp(-dt / 0.05));
     }
 
-    // Drums: what each pad was just hit with, live or from a loop. A jump up
-    // is a hit; the envelope keeps the loudest and falls away.
+    // Drums: what each pad was just hit with, live or from a loop, on any
+    // kit (a loop on a kit not shown is heard all the same). A jump up is a
+    // hit; the envelope keeps the loudest and falls away.
     if (v.partCount > Drums) {
+        using namespace tf::drums;
         const float *d = v.parts[Drums].data;
         auto hit = [&](std::initializer_list<int> pads) {
             float m = 0;
             for (int pad : pads)
-                m = std::max({m, d[pad], d[16 + pad]});
+                m = std::max({m, d[kDataHeard + pad], d[kDataHeardReplay + pad]});
             return aud[Drums] ? m : 0.0f;
         };
-        using namespace tf::drums;
         const float now[3] = {hit({Kick}), hit({Snare, Clap, Rim}), hit({Hat, Shaker, Open, Ride})};
         float *env[3] = {&s.kick, &s.snare, &s.hat};
         int *count[3] = {&s.kicks, &s.snares, &s.hats};
@@ -119,7 +120,7 @@ void SignalTracker::update(const StudioView &v, double dt) {
             m_prevDrum[i] = now[i];
         }
         s.perc = std::max(decay(s.perc, dt, 0.15), hit({TomLo, TomMid, TomHi, Perc, Crash, Bell, Zap}));
-        s.sub = aud[Drums] ? clamp01(d[32] * 1.5f) : decay(s.sub, dt, 0.1);
+        s.sub = aud[Drums] ? clamp01(d[kDataSubHeard] * 1.5f) : decay(s.sub, dt, 0.1);
     }
 
     // Bass: the louder of its live and loop lanes.

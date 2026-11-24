@@ -411,7 +411,7 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
 }
 
 void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, int lit,
-           Hotspots *spots, int idBase, double gap) {
+           Hotspots *spots, int idBase, double gap, const float *glow) {
     const int n = int(labels.size());
     if (n == 0)
         return;
@@ -440,6 +440,8 @@ void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringLi
             p.setOpacity(0.3);
         }
         const QRectF cell(r.left() + k * w, r.top(), w - gap, r.height());
+        if (glow && i != lit && glow[i] > 0.02f)
+            p.fillRect(cell, alpha(pc.color, 0.3f * std::min(1.0f, glow[i])));
         chip(p, pc, cell, labels[i], i == lit, spots, idBase + i);
         if (more)
             p.restore();

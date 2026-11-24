@@ -214,6 +214,17 @@ TablaSpot tablaAt(float x, float y) {
     sp.stroke = tabla::strokeAt(sp.drum, sp.hx, sp.hy);
     return sp;
 }
+// Where a ge struck at (hx, hy) of the drawn bayan lands on its head: the
+// part above the ka strip (y from kKaEdge to the far rim, x across) onto the
+// patch where the fingers strike it, the syahi's far half and just past its
+// edge (the syahi's middle is at y 0.18, its far edge at 0.43; the patch x
+// within ±0.25, y 0.2 to 0.55 of the radius), in which the boom holds within
+// a few dB.
+constexpr float kKaEdge = -0.45f;
+void geSpot(float &hx, float &hy) {
+    hx = 0.25f * clampf(hx, -1.0f, 1.0f);
+    hy = 0.2f + 0.35f * clampf((hy - kKaEdge) / (0.97f - kKaEdge), 0.0f, 1.0f);
+}
 // A stroke's own place on its drum, for a key: na on the kinar, tin on the
 // maidan, tun on the syahi, ge past the bayan's syahi a little off its
 // diameter at the syahi's far edge, ka over the near half.
@@ -971,8 +982,16 @@ private:
             return;
         }
         if (m_kit == TablaPair) {
-            // Where on its head, ±1 across 0..1.
-            const TablaSpot sp = tablaAt(x, y);
+            // Where on its head, ±1 across 0..1. A ge lands where fingers
+            // swinging past the heel strike one, on the syahi's far half and
+            // just past its edge: the drawn bayan above the ka strip is the
+            // hand's reach, not the head (under the heel and out at the sides
+            // it would be a click with no boom), so it is drawn in onto that
+            // patch, where it still shades the stroke. (A ge finger's, by its
+            // stroke: a ka palm sliding up stays where it lies.)
+            TablaSpot sp = tablaAt(x, y);
+            if (tablaStroke(pad) == tabla::Ge && sp.drum == tabla::Bayan)
+                geSpot(sp.hx, sp.hy);
             sx = clampf(0.5f + 0.5f * sp.hx, 0, 1);
             sy = clampf(0.5f + 0.5f * sp.hy, 0, 1);
             return;

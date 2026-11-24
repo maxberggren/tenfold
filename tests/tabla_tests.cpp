@@ -612,6 +612,54 @@ private slots:
         QVERIFY2(bend > 1.0f && bend < 12.5f, qPrintable(QString::number(bend)));
     }
 
+    void aFastGeBoomsWhereverItLands() {
+        // Played quickly, fingers land all over the bayan, not only round
+        // its syahi: every ge still booms, as a real one does under fingers
+        // swinging past the heel, and a quick re-stroke over a ringing ge,
+        // a second finger down before the first is up, adds to it. (The
+        // page once struck the head where it was touched, so a ge landing
+        // out at the side or toward the heel was a click with no boom.)
+        auto mono = [](const testkit::Take &t) {
+            std::vector<float> m(t.left.size());
+            for (size_t i = 0; i < m.size(); ++i)
+                m[i] = 0.5f * (t.left[i] + t.right[i]);
+            return m;
+        };
+        float sa, ge;
+        Ctx ctx;
+        drums::tablaTuning(ctx.h, sa, ge);
+        const auto lone = mono(testkit::play(toPair() + "tap 0.5 " + padAt(tabla::Bayan, 0.12f, 0.38f) + " p=0.6 len=0.08\nend 1.2\n"));
+        double f0 = ge, top = -1e9; // (the page's key, whatever it is)
+        for (double f = 50; f < 130; f += 0.25)
+            if (const double l = levelAt(lone, 0.55, 0.3, f); l > top)
+                top = l, f0 = f;
+        const double boom = levelAt(lone, 0.52, 0.06, f0);
+        // Ten a second over the drawn bayan above the ka strip, one finger
+        // landing as the last lifts, then two fingers overlapping.
+        const float spots[][2] = {{0.0f, 0.4f}, {-0.6f, 0.3f}, {0.6f, 0.0f}, {0.0f, -0.35f}, {-0.4f, -0.2f},
+                                  {0.4f, 0.6f}, {-0.2f, 0.8f}, {0.7f, -0.3f}, {-0.7f, 0.0f}, {0.2f, 0.1f}};
+        // Each alone, against the lone stroke: none a click.
+        for (const auto &sp : spots) {
+            const auto one = mono(testkit::play(toPair() + "tap 0.5 " + padAt(tabla::Bayan, sp[0], sp[1]) + " p=0.6 len=0.06\nend 0.8\n"));
+            const double l = levelAt(one, 0.52, 0.06, f0) - boom;
+            QVERIFY2(l > -8, qPrintable(QStringLiteral("alone at (%1, %2): %3 dB").arg(sp[0]).arg(sp[1]).arg(l)));
+        }
+        for (int overlap = 0; overlap < 2; ++overlap) {
+            std::string s = toPair();
+            for (int k = 0; k < 10; ++k)
+                s += fmt("down %.3f %d ", 0.5 + 0.1 * k, overlap ? 10 + k % 2 : 10 + k) +
+                     padAt(tabla::Bayan, spots[k][0], spots[k][1]) + fmt(" p=0.6\nup %.3f %d\n", 0.5 + 0.1 * k + (overlap ? 0.15 : 0.06), overlap ? 10 + k % 2 : 10 + k);
+            const auto take = testkit::play(s + "end 2\n");
+            QVERIFY(take.finite());
+            const auto m = mono(take);
+            for (int k = 0; k < 10; ++k) {
+                const double l = levelAt(m, 0.52 + 0.1 * k, 0.06, f0) - boom;
+                QVERIFY2(l > -8, qPrintable(QStringLiteral("overlap %1, stroke %2 at (%3, %4): %5 dB")
+                                                .arg(overlap).arg(k).arg(spots[k][0]).arg(spots[k][1]).arg(l)));
+            }
+        }
+    }
+
     void aLoopOfThePairKeepsThePair() {
         // Strokes carry the kit: a loop of the pair still sounds after the
         // page has gone back to house.

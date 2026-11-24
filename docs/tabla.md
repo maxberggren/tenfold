@@ -21,8 +21,12 @@ and is unchanged.
   - its maidan is **tin**, the same with the ring finger barely touching:
     the 2nd and 3rd strong, brighter than tun;
   - its syahi is **tun**: struck and left, the deep (0,1) rings;
-  - past the bayan's syahi is **ge**, the bayan's deep tone, with the heel
-    of the hand resting at its near edge;
+  - the rest of the bayan is **ge**, the bayan's deep tone, with the heel
+    of the hand resting at its near edge. Wherever on it a finger lands, the
+    stroke falls where fingers swinging past the heel strike one, on the
+    syahi's far half and just past its edge (the head out at the sides or
+    under the heel gives a click with no boom); where you land still shades
+    it;
   - the bayan's near part is **ka**, the hand slapped flat and left there.
   - A stroke that arrives without a place of its own (a loop recorded on
     another kit, say) is played where that stroke is played.

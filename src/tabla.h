@@ -959,7 +959,13 @@ public:
         c->hc = f.hc;
         c->v = f.speed * (0.06f + 0.94f * vel);
         c->retract = c->v / f.retract;
-        c->sigma = float(sigmaAt(h.b->design, x, y));
+        {
+            // (the skin's mass where it lands, in the head's own frame: the
+            // bayan's syahi is solved along −x)
+            float fx = x, fy = y;
+            toFrame(h, fx, fy);
+            c->sigma = float(sigmaAt(h.b->design, fx, fy));
+        }
         c->pan = x;
         patch(h, x, y, f.patch, c->phi);
         // The other fingers each stroke rests on the skin.

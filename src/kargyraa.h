@@ -115,17 +115,19 @@ struct Larynx {
     static constexpr float kAmax = 1.0e-5f;
     static constexpr float kLeak = 5.0e-7f;
     // The open quotient of a pressed voice, and how much of the open phase
-    // is opening (Rosenberg's skew), each wandering slowly (a rigid pulse
-    // puts the same spectral zeros on the same harmonics at every pitch;
-    // varied cycle to cycle it would be rough: a healthy voice's shape
-    // changes by a few percent at most); and the return phase after
-    // closure (the LF model's Ta:
+    // is opening (Rosenberg's skew), varying a hair cycle to cycle. (A
+    // rigid pulse would put the same spectral zeros on the same harmonics
+    // at every pitch; the weak cycle's open phase, half again as long under
+    // the false folds' push, puts its zeros elsewhere, and the pair's
+    // spectrum has none deep. Left to wander slowly, the zeros would sit
+    // on whichever harmonic a stretch of the walk took them to: a melody
+    // harmonic sunk for a second at a time, differently in every run.)
+    // And the return phase after closure (the LF model's Ta:
     // the last of the glottis shutting over 0.05 ms, short as a pressed
     // voice's is).
     static constexpr float kOpen = 0.45f;
     static constexpr float kRiseShare = 0.7f; // (closing quicker than modal's 0.62: Fuks 1998)
     static constexpr float kShapeVary = 0.005f; // cycle to cycle
-    static constexpr float kShapeDrift = 0.06f; // and slowly, over 0.3 s
     static constexpr float kReturn = 0.00005f;  // s: a pressed voice's short return
     static constexpr float kReturnArea = 0.05f; // of the widest, where the return takes over
     // The ventricular folds: a slit a little longer than the vocal folds'
@@ -181,7 +183,7 @@ struct Larynx {
     float jit = 1, shim = 1, venDepth = 1, venGap = 0, venJit = 1, comp = 1;
     float oq = kOpen, rise = kRiseShare * kOpen, back = kBackPressure, ret = 0, retFall = 0.9f;
     float detune = 1, rough = 0; // the singer's tension against the lock; a rough onset's extra irregularity
-    float driftBack = 0, driftShape = 0, driftSkew = 0; // slow random walks, unit variance
+    float driftBack = 0; // the push's slow random walk, unit variance
     int cycle = 0, pairLen = 0;
     float lastAg = 0, lastAs = kVenRest;
     Rng rng{0x4B47u};
@@ -196,14 +198,23 @@ struct Larynx {
         rise = kRiseShare * kOpen;
         back = kBackPressure;
         ret = 0;
-        driftBack = driftShape = driftSkew = 0;
+        driftBack = 0;
         detune = 1;
         rough = 0;
         cycle = pairLen = 0;
         lastAg = 0;
         lastAs = kVenRest;
     }
-    static float gauss(Rng &r) { return (r.unit() + r.unit() + r.unit() + r.unit() - 2.0f) * 1.732f; }
+    // (Each draw its own statement: the order of calls within one
+    // expression is the compiler's to choose, and every build should hear
+    // the same noise.)
+    static float gauss(Rng &r) {
+        float s = r.unit();
+        s += r.unit();
+        s += r.unit();
+        s += r.unit();
+        return (s - 2.0f) * 1.732f;
+    }
     // A new cycle of the false folds: each closure a little different, in
     // how wide they open, how tightly they meet, how hard they push back.
     // (Their push on the glottis wanders slowly, as a singer's effort does,
@@ -215,8 +226,6 @@ struct Larynx {
         venJit = 1.0f + 0.5f * jitter * gauss(rng);
         const float rho = std::exp(-period / kDriftTime), nu = std::sqrt(1.0f - rho * rho);
         driftBack = rho * driftBack + nu * gauss(rng);
-        driftShape = rho * driftShape + nu * gauss(rng);
-        driftSkew = rho * driftSkew + nu * gauss(rng);
         back = kBackPressure * clampf(1.0f + kBackVary * driftBack, 0.3f, 1.6f);
     }
 
@@ -277,8 +286,8 @@ struct Larynx {
             const float j = 1.0f + rough * 4.0f;
             jit = 1.0f + jitter * j * gauss(rng);
             shim = std::exp(shimmer * j * gauss(rng));
-            oq = kOpen * clampf(1.0f + kShapeVary * gauss(rng) + kShapeDrift * driftShape, 0.8f, 1.2f);
-            rise = oq * kRiseShare * clampf(1.0f + kShapeVary * gauss(rng) + kShapeDrift * driftSkew, 0.8f, 1.2f);
+            oq = kOpen * clampf(1.0f + kShapeVary * gauss(rng), 0.8f, 1.2f);
+            rise = oq * kRiseShare * clampf(1.0f + kShapeVary * gauss(rng), 0.8f, 1.2f);
             retFall = std::exp(-1.0f / (kReturn * rate));
             // The singer's pitch is the pair's: what the contact adds to
             // one cycle is taken from the pair, so the undertone is
@@ -353,7 +362,9 @@ struct Larynx {
         const float jetV = clampf(Ag / As, 0.0f, 1.0f);
         const float aG = std::max(0.0f, Re * Re - kReCrit * kReCrit);
         const float aV = jetV * std::max(0.0f, ReV * ReV - kReCrit * kReCrit);
-        const float pn = kNoiseK * (aG * (rng.unit() - 0.5f) + aV * (rng.unit() - 0.5f));
+        const float nG = rng.unit() - 0.5f;
+        const float nV = rng.unit() - 0.5f;
+        const float pn = kNoiseK * (aG * nG + aV * nV);
         const float total = U + pn * kTract / (kRho * kC);
         const float out = (total - prev) * rate;
         prev = total;

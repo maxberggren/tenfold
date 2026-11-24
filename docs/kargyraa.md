@@ -60,7 +60,7 @@ quadratic. The lips radiate dU/dt.
 | Register | a phrase starts in the octave of its note nearest 140 Hz (99–198 Hz); inside a phrase the octave moves only if the note leaves 80–230 Hz, so a note near an edge, or a vibrato across one, never flips | Lindestad 2001: 70 Hz against 140 modal. Castellengo & Henrich 2014: 61–92 Hz in eleven recordings. Fuks 1998: an octave from 49 Hz |
 | Fold length | 1.4 cm | Sakakibara 2002's model, l_g |
 | Glottal peak area `kAmax` | 0.10 cm², chink 0.005 cm² | a strong pulse at the full voice's 2.2 kPa peaks at about 520 mL/s through the inertance. Fuks: 460 mL/s in this mode, 280 modal |
-| Open quotient, skew | 0.45, opening 70 % of it (Rosenberg; modal is about 62 %). Each wanders slowly, ±6 % (sd) over 0.3 s, and only ±0.5 % cycle to cycle | pressed (Lindestad: "slightly pressed"; Fuks: closed phase 1.50 ms against 1.63, and the flow's decreasing phase faster in this mode). A rigid pulse puts its spectral zeros on the same harmonics at every pitch, and those sank melody harmonics (review, round 1). Varied fast cycle to cycle, the voice turned rough (round 2). The contact cycle's open quotient comes out higher by itself (below) |
+| Open quotient, skew | 0.45, opening 70 % of it (Rosenberg; modal is about 62 %), varying ±0.5 % cycle to cycle | pressed (Lindestad: "slightly pressed"; Fuks: closed phase 1.50 ms against 1.63, and the flow's decreasing phase faster in this mode). A rigid pulse puts its spectral zeros on the same harmonics at every pitch, and those sank melody harmonics (review, round 1). The contact cycle's open quotient, longer under the false folds' push, puts its zeros elsewhere, so the pair's spectrum has none deep. Varied fast cycle to cycle, the voice turned rough (round 2). A slow ±6 % walk, added after round 1, was taken out after CI: it moved the zeros onto whichever harmonic a stretch of the walk took them to, so a melody harmonic's standing depended on the run, and one compiler's run sank the 7th (see "After CI") |
 | Return phase | the closing area, once down to 5 % of its widest, falls exponentially over 0.05 ms | the LF model's Ta, short for a pressed voice |
 | Lungs `kPmin`–`kPmax` | 1.4 → 2.4 kPa with your level | Fuks: 21.9 cmH₂O (2.15 kPa) in this mode against 18 modal, "consistently higher" |
 | Inertance | ρ · 3 cm / 0.7 cm², the epilarynx and ventricle | Rothenberg's skewing; the length allows for the lowered larynx (Esling 2002) |
@@ -74,8 +74,8 @@ quadratic. The lips radiate dU/dt.
 | The pair's period | held at R × the sung period, half of each pair's error corrected at the next | so the undertone is the sung note's half, in tune with the music, within a few cents (all of the error at once is a loop at a gain of one, and with the lock's lag it can swing) |
 | The weak pulse | the series flow, not a constant | measured here: 0.28 of the strong (−11 dB). Fuks −13 dB; Lindestad less |
 | Onset | each phrase starts rough: for 50–300 ms (different each phrase) the false folds approach on every cycle without touching, jitter and shimmer × 5; then the doubling comes in over about 40 ms | Castellengo & Henrich 2014: a song starts on a plain pitch and switches to the doubling. Bailly 2010: a rough, same-period stage before it |
-| Jitter, shimmer | 0.2 %, 0.025 neper (0.2 dB) per cycle. With the false folds' own variation, the undertone's period jitter comes to 0.53 % | none published. Lindestad: "sonorous"; Grawunder 1999: "more uniform" than pulse register; Fuks: "clear harmonic partials up to about 4 kHz". At 0.5 % the 20th harmonic's phase is already scrambled |
-| Turbulence | (Re² − Re_c²) above Re_c 2700, at both jets; the false folds' jet counts as far as they are the narrower. Scale 1.5·10⁻⁶ per Re² | Meyer-Eppler 1953; Flanagan & Cherry 1969. None is published for kargyraa (heard as "hoarse"). This is 0.75 × RIOT's. Harmonics-to-noise: 39, 27, 12 and 9 dB at 0–1, 1–2, 2–3 and 3–4 kHz (mean of five pitches, /a/ and /o/) |
+| Jitter, shimmer | 0.2 %, 0.025 neper (0.2 dB) per cycle. With the false folds' own variation, the undertone's period jitter comes to 0.40 % | none published. Lindestad: "sonorous"; Grawunder 1999: "more uniform" than pulse register; Fuks: "clear harmonic partials up to about 4 kHz". At 0.5 % the 20th harmonic's phase is already scrambled |
+| Turbulence | (Re² − Re_c²) above Re_c 2700, at both jets; the false folds' jet counts as far as they are the narrower. Scale 1.5·10⁻⁶ per Re² | Meyer-Eppler 1953; Flanagan & Cherry 1969. None is published for kargyraa (heard as "hoarse"). This is 0.75 × RIOT's. Harmonics-to-noise: 42, 32, 20 and 15 dB at 0–1, 1–2, 2–3 and 3–4 kHz (mean of five pitches, /a/ and /o/) |
 
 ### The tract
 
@@ -132,8 +132,8 @@ front end (`tests/vocal_tests.cpp`).
 | Register | 220 Hz sung gives a 55 Hz undertone; G2 (98 Hz) with vibrato stays within 2 % (no octave flips) | |
 | 3:1 | third-harmonics present, 4 dB under the harmonics | Fuks, Sakakibara |
 | Vowel steering | /u/: F1 on H5 (325 Hz), 16 dB over its neighbours. /a/: H11 (714 Hz), 16 dB over | |
-| A finger, each of H6–H11 | 8.3, 5.5, 12.5, 16.0, 7.2 and 14.0 dB over the louder neighbour | |
-| Regularity | undertone period jitter 0.53 %; harmonics-to-noise 39 / 27 / 12 / 9 dB at 0–1 / 1–2 / 2–3 / 3–4 kHz | Fuks: clear partials to 4 kHz; Lindestad: "sonorous" |
+| A finger, each of H6–H11 | 9.9, 2.3, 12.2, 16.9, 8.6 and 13.6 dB over the louder neighbour. The 7th, a half-harmonic, stands +1.9 to +3.5 dB over its neighbours whatever the compiler or the run | |
+| Regularity | undertone period jitter 0.40 %; harmonics-to-noise 42 / 32 / 20 / 15 dB at 0–1 / 1–2 / 2–3 / 3–4 kHz | Fuks: clear partials to 4 kHz; Lindestad: "sonorous" |
 | The top, against modal | against the same engine without the false folds and at modal pressure (formants on its own harmonics), 2–4 kHz is +8 dB on /a/ and /o/ and +15 on /u/; 4–6 kHz is +5, +5 and +9 | Fuks: more energy at 2–6 kHz than modal, on [a] |
 | Level | on a steady vowel within 0.3 dB of the singer's; 100 ms levels within ±1 dB; on the page 0.1 dB from the natural voice | |
 | Onset | within 6 dB of steady 39 ms after the vowel starts (the tracker's first readings, then the rough start). An attack's loudest 25 ms is −0.8 to +2.9 dB against the steady part's loudest | |
@@ -281,7 +281,7 @@ the last.
   model that explains the doubling (Bailly 2010) does not produce the
   measured lengthening, so `kBackPressure` is set to the measurement.
 - **B1 25 Hz.** A stylisation, the overtone singer's.
-- **Jitter, shimmer, noise and the slow drifts.** Nothing published
+- **Jitter, shimmer, noise and the false folds' slow drift.** Nothing published
   measures them for kargyraa. They are chosen so that the measured
   qualities hold: "sonorous", "clear partials to 4 kHz", "more uniform".
 - **The level loop.** It holds the growl to the singer's level; that is
@@ -338,9 +338,43 @@ round was the last.
 - **Height.** It moves only F2. The melody is the note, so the vowel's
   F1 is not the player's to move, as it is on the Vocal page.
 - **The vocal style after the pair compensation changed** (it now corrects
-  half of each pair's error, for the lead's pitch). Undertone jitter is
-  0.53 % (was 0.44 %). The harmonics-to-noise and the level flutter moved
-  a little: on /a/, 30/20/7/4 dB against 33/22/9/5 by the reviewer's
-  measure. The finger-steered 7th harmonic on /a/ improved from 1.5 dB to
-  5.4 dB over its neighbours.
+  half of each pair's error, for the lead's pitch). Undertone jitter rose
+  to 0.53 % (from 0.44 %) and the harmonics-to-noise fell a little. Both
+  are past now (see "After CI").
+
+### After CI
+
+`everyMelodyHarmonicStandsOut` failed on one CI build, gcc 13 on aarch64:
+the finger-steered 7th harmonic did not stand over its neighbours. It
+passed on gcc 12, gcc 16 and clang.
+
+**The cause.** The pulse's open quotient and skew wandered on a slow
+random walk (±6 %, over 0.3 s). That moved the source's spectral zeros
+from harmonic to harmonic, so over the test's 1.2 s where they sat
+depended on the run.
+
+- The model's run itself depends on the last bit of rounding. Fused
+  multiply-adds on or off move a phase wrap by a sample, and from there
+  the run diverges.
+- So each compiler measured a different, equally valid stretch. The 7th
+  ranged from −1.6 to +5.7 dB across builds, and from −1.5 to +9.4 dB
+  across random streams on one build.
+
+**The fix.**
+- The walk is gone. The strong and weak cycles' different open phases and
+  the return phase already keep the spectrum free of deep zeros, and every
+  melody harmonic stands as clear as before.
+- The 7th's standing is now a property of the model, not of the run:
+  +1.9 to +3.5 dB on gcc and clang, with fused multiply-adds on or off,
+  over 16 random streams, at a spread of 0.5 dB.
+- The voice is steadier for it: harmonics-to-noise 42/32/20/15 dB (was
+  39/27/12/9), and undertone jitter 0.40 %.
+- **The draws.** Two expressions drew random numbers twice in one
+  expression: the jets' noise, and the Gaussian's sum of four. C++ leaves
+  the order of those calls to the compiler, so they are now one draw per
+  statement, and every build hears the same noise.
+
+**Still open.** The 7th harmonic at a 110 Hz voice stands only about
+level with its neighbours (+0.2 dB on average). It is a half-harmonic
+between two of the folds' own; the open point above.
 

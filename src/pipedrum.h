@@ -51,6 +51,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 #include "dsp.h"
 
@@ -256,8 +257,9 @@ public:
                 next = std::min(next, m_events[k].wait);
             }
             fireDue(i);
-            for (; i < next; ++i)
-                step(l[i], r[i]);
+            if (next > i)
+                run(l + i, r + i, next - i);
+            i = next;
         }
         for (int k = 0; k < m_eventCount; ++k)
             m_events[k].wait -= n;
@@ -383,10 +385,13 @@ private:
         bool stay = false;       // slapped back on: the hand keeps it there from the moment it lands
         int age = 0, contact = 0;
         float arrive = 1.0f;
-        float mass = Physics::kPaddleMass, k = 1e5f, cover = 1.0f, tilt = 0.15f;
+        float mass = Physics::kPaddleMass, invMass = 1.0f / Physics::kPaddleMass, k = 1e5f, cover = 1.0f, tilt = 0.15f;
         float seal = 5e-6f;      // the gap a pressed sole still leaves round a sawn rim (m)
         float open = 0;          // the part of the mouth a glancing sole leaves uncovered (m²)
         float lgap = 0;          // the gap the air sees, log2 of metres: it seals and unseals over a fraction of a millisecond
+        // (a held sole's gap hardly moves: its log and the table's reading
+        // are kept until it moves by a thousandth)
+        float lastGap = -1, lastLg = 0, lastLgap = 1e9f, lastM = 0, lastK = 0;
         int held = 0;            // samples a hand has held it
         float accPrev = 0, vPrev = 0;
     };
@@ -422,9 +427,20 @@ private:
         End mouth, far;
         Paddle paddle;
         WallMode wall[kWallModes];
+        // The same modes as the loop steps them, side by side (padded to
+        // eight): drive is the sole's push on each, per newton, this strike's
+        // tilt in it. Asleep (live false) once rung out with nothing on the rim.
+        struct Plastic {
+            alignas(32) float x[8] = {}, u[8] = {}, d[8] = {}, c[8] = {}, drive[8] = {}, rim[8] = {}, radM[8] = {},
+                radF[8] = {};
+            bool live = false;
+        } plastic;
         // The two ends' sound on its way to the microphones.
         float outMouth[kOut] = {}, outFar[kOut] = {};
         float dMouthL = 0, dMouthR = 0, dFarL = 0, dFarR = 0;
+        // (the same, split once into whole samples and the fraction between)
+        int iMouthL = 0, iMouthR = 0, iFarL = 0, iFarR = 0;
+        float tMouthL = 0, tMouthR = 0, tFarL = 0, tFarR = 0;
         float gMouthL = 0, gMouthR = 0, gFarL = 0, gFarR = 0;
         float energy = 0, shown = 0;
         float pMouth = 0; // the pressure in the mouth last sample
@@ -467,6 +483,7 @@ private:
             sole(pd, e.tone);
             pd.cover = e.cover;
             pd.tilt = Knobs::tilt + 0.6f * (1.0f - e.cover);
+            aim(q);
             pd.seal = Knobs::leak;
             // (a glancing sole leaves the rest of the mouth open beside it:
             // a crescent the air leaves by whatever the foam does)
@@ -493,6 +510,7 @@ private:
             sole(pd, e.tone);
             pd.cover = 1.0f;
             pd.tilt = Knobs::tilt;
+            aim(q);
             pd.seal = Knobs::leak;
             pd.open = 0;
             {
@@ -551,6 +569,7 @@ private:
         const float rim = kTwoPi * a * Physics::kThick; // the annulus the foam lands on
         pd.k = Knobs::spread * Physics::kFoamE * rim / Physics::kSoleThick * std::exp2(2.0f * tone);
         pd.mass = Physics::kPaddleMass * std::exp2(-0.5f * tone);
+        pd.invMass = 1.0f / pd.mass;
     }
 
     void wake(Pipe &q) {
@@ -572,6 +591,9 @@ private:
         q.far = End{};
         for (auto &m : q.wall)
             m.x = m.u = 0;
+        std::fill(std::begin(q.plastic.x), std::end(q.plastic.x), 0.0f);
+        std::fill(std::begin(q.plastic.u), std::end(q.plastic.u), 0.0f);
+        q.plastic.live = false;
         q.paddle.mode = Paddle::Idle;
         q.paddle.x = 1.0f;
         q.paddle.v = 0;
@@ -637,6 +659,7 @@ private:
     // Both, read from tables over log h (three pow()s a sample otherwise).
     static constexpr int kGapN = 512;
     static constexpr float kGapMin = 1e-7f;
+    static constexpr float kLogGapMin = -23.253496664f; // log2(kGapMin)
     void buildGap() {
         const float span = std::log2(3.0f * Physics::kRadius / kGapMin);
         m_gapScale = float(kGapN - 1) / span;
@@ -647,8 +670,22 @@ private:
         }
         m_gapM[kGapN - 1] = m_gapK[kGapN - 1] = 0.0f;
     }
-    void gapAt(float h, float &M, float &K) const {
-        const float u = std::log2(std::max(h, kGapMin) / kGapMin) * m_gapScale;
+    // log2 of a positive x to within 5·10⁻⁶ (an octave's two-hundred-
+    // thousandth): the exponent from its bits, the mantissa by a polynomial.
+    static float fastLog2(float x) {
+        uint32_t bits;
+        std::memcpy(&bits, &x, sizeof bits);
+        const float e = float(int((bits >> 23) & 255u) - 127);
+        bits = (bits & 0x007fffffu) | 0x3f800000u;
+        float m;
+        std::memcpy(&m, &bits, sizeof m);
+        const float t = m - 1.0f;
+        return e + ((((((-0.0248259844f * t + 0.117906861f) * t - 0.272355827f) * t + 0.453858205f) * t - 0.716987568f) * t +
+                     1.44239559f) * t + 5.06032795e-06f);
+    }
+    // (from log2 of the gap, as the paddle keeps it)
+    void gapAt(float lg, float &M, float &K) const {
+        const float u = std::max(lg - kLogGapMin, 0.0f) * m_gapScale;
         if (u >= float(kGapN - 1)) {
             M = 0;
             K = m_jetOpen;
@@ -672,9 +709,15 @@ private:
         // is left ringing when it goes). Together: K|U|U + D·U = C.
         const float D = m_z0 + m_radA + M * m_rate;
         const float C = 2.0f * in + m_z0 * push - B + m_rate * M * e.flow;
+        // (where the jet's loss is small against the rest, ε = K|U₀|/D under
+        // a hundredth, as it is but for a closing sole or the hardest slap,
+        // its series to ε² is the root to five parts in a million)
         float U;
-        if (K * std::fabs(C) < 1e-6f * D * D) {
-            U = C / D;
+        const float invD = M == 0.0f ? m_invD0 : 1.0f / D;
+        const float U0 = C * invD;
+        const float eps = K * std::fabs(U0) * invD;
+        if (eps < 0.01f) {
+            U = U0 * (1.0f - eps * (1.0f - 2.0f * eps));
         } else {
             const float s = C >= 0 ? 1.0f : -1.0f;
             U = s * (2.0f * std::fabs(C)) / (D + std::sqrt(D * D + 4.0f * K * std::fabs(C)));
@@ -687,22 +730,59 @@ private:
         return p - in;
     }
 
-    void step(float &outL, float &outR) {
-        const float dt = m_dt, rate = m_rate;
-        float ql = 0, qr = 0, dip = 0;
-        for (int p = 0; p < kPipes; ++p) {
-            Pipe &q = m_pipe[p];
-            if (!q.awake)
-                continue;
-            Paddle &pd = q.paddle;
+    // A stretch of samples with no event in it: each pipe in turn rings
+    // through all of it (its state stays at hand), then the microphones
+    // hear them all, sample by sample. The pipes add up in the same order as
+    // they would sample by sample.
+    void run(float *outL, float *outR, int n) {
+        constexpr int kChunk = 64;
+        while (n > 0) {
+            const int c = std::min(n, kChunk);
+            float ql[kChunk] = {}, qr[kChunk] = {}, dip[kChunk] = {};
+            for (int p = 0; p < kPipes; ++p)
+                if (m_pipe[p].awake)
+                    runPipe(m_pipe[p], c, ql, qr, dip);
+            m_outW = (m_outW + c) & (kOut - 1);
+            // Pressure follows the volume acceleration: ρ/4π · d(Q/r)/dt.
+            const float gain = Knobs::level * Physics::kRhoAir / (4.0f * kPi) * m_rate;
+            for (int i = 0; i < c; ++i) {
+                // The paddle's dipole, toned by the sole's own give.
+                const float d = m_dip.step(dip[i] * m_dipGain).low;
+                outL[i] += (ql[i] - m_ql) * gain + d;
+                outR[i] += (qr[i] - m_qr) * gain + d;
+                m_ql = ql[i];
+                m_qr = qr[i];
+            }
+            outL += c;
+            outR += c;
+            n -= c;
+        }
+    }
 
+    // One pipe through n samples, adding what each end sends each
+    // microphone into ql and qr, and its paddle's jerk into dip.
+    void runPipe(Pipe &q, int n, float *ql, float *qr, float *dip) {
+        const float dt = m_dt, rate = m_rate;
+        Paddle &pd = q.paddle;
+        auto &W = q.plastic;
+        // (the waveguide's state, at hand for the whole stretch)
+        int w = q.w;
+        const int nf = q.nf, nb = q.nb;
+        const float lossG = q.lossG, lossB = q.lossB, apEta = q.apEta, mute = m_mute, dcR = m_dcR;
+        float lossF = q.lossF, lossK = q.lossK, apX = q.apX, apY = q.apY, dcX = q.dcX, dcY = q.dcY;
+        float energy = q.energy, pMouth = q.pMouth, peakP = m_peakP;
+        End mouth = q.mouth, far = q.far;
+        float *const fwd = q.fwd, *const back = q.back, *const outMouth = q.outMouth, *const outFar = q.outFar;
+        for (int i = 0; i < n; ++i) {
             // The rim's motion along the pipe, from the plastic's modes.
             float rim = 0, rimV = 0;
-            for (const auto &m : q.wall) {
-                rim += m.rim * m.x;
-                rimV += m.rim * m.u;
+            if (W.live) {
+                for (int k = 0; k < 8; ++k) {
+                    rim += W.rim[k] * W.x[k];
+                    rimV += W.rim[k] * W.u[k];
+                }
+                rimV *= rate;
             }
-            rimV *= rate;
 
             // The paddle: the foam against the rim, the air in the mouth
             // against its face, the hand.
@@ -743,14 +823,14 @@ private:
                 }
                 // The air: the sole over the mouth pushes what it covers.
                 // (pressed harder, the foam seals better)
-                const float gap = std::max(h, 0.0f) + pd.seal / (1.0f + std::max(-h, 0.0f) / 1e-5f);
+                const float gap = h > 0.0f ? h + pd.seal : pd.seal / (1.0f - h * 1e5f);
                 // (it is put a few millimetres off when the hit is due; its
                 // pull on the air fades in smoothly over 1.5 ms, as if it had
                 // flown in from far; a sole landing on the rim beside the
                 // mouth still squeezes a little air in)
                 pd.arrive = std::min(1.0f, pd.arrive + m_arriveStep);
                 const float in = pd.arrive * pd.arrive * (3.0f - 2.0f * pd.arrive);
-                const float near = nearness(h) * (0.1f + 0.9f * pd.cover) * in;
+                const float near = (h > 0.0f ? nearness(h) : 1.0f) * (0.1f + 0.9f * pd.cover) * in;
                 push = -m_area * near * (pd.v - rimV);
                 // (the air sees the seal close as the film between foam and
                 // rim drains and the foam conforms: an octave of gap every
@@ -758,16 +838,27 @@ private:
                 {
                     // (as fast as the foam conforms over the rim's last
                     // kConform: quick for a hard slap, slow for a soft one)
-                    const float lg = std::log2(std::max(gap, kGapMin));
+                    const float tolGap = pd.mode == Paddle::Servo ? 1e-3f : 0.0f;
+                    if (std::fabs(gap - pd.lastGap) > tolGap * gap) {
+                        pd.lastGap = gap;
+                        pd.lastLg = fastLog2(std::max(gap, kGapMin));
+                    }
+                    const float lg = pd.lastLg;
                     if (pd.age <= 1)
                         pd.lgap = lg;
                     // (and lets go at once: a lifting sole breaks the film)
                     const float seal = std::clamp((std::fabs(pd.v - rimV) + 0.05f) * dt / (kConform * 0.6931f), 0.02f, 0.5f);
                     pd.lgap += std::clamp(lg - pd.lgap, -seal, m_unseal);
                 }
-                const float gapAir = std::exp2(pd.lgap);
-                gapAt(gapAir, M, K);
+                const float tolLg = pd.mode == Paddle::Servo ? 1e-3f : 0.0f;
+                if (std::fabs(pd.lgap - pd.lastLgap) > tolLg) {
+                    pd.lastLgap = pd.lgap;
+                    gapAt(pd.lgap, pd.lastM, pd.lastK);
+                }
+                M = pd.lastM;
+                K = pd.lastK;
                 if (pd.open > 0.0f) {
+                    const float gapAir = std::exp2(pd.lgap);
                     // The crescent beside a glancing sole: a hole of its own
                     // area with its own end correction, alongside the gap.
                     const float Mu = Physics::kRhoAir * 0.85f * std::sqrt(pd.open / kPi) / pd.open;
@@ -777,7 +868,7 @@ private:
                 }
                 M *= in;
                 K = m_jetOpen + (K - m_jetOpen) * in;
-                float force = contact + q.pMouth * m_area * near;
+                float force = contact + pMouth * m_area * near;
                 if (pd.mode == Paddle::Fly) {
                     if (pd.touched && pd.v < pd.back)
                         force += pd.mass * std::min(pd.pull, (pd.back - pd.v) * rate);
@@ -792,11 +883,11 @@ private:
                     if (++pd.held > int(6.0f * rate) && pd.goal < 0.1f)
                         servo(pd, 0.15f, 0.6f, kGrip);
                 }
-                pd.v += force / pd.mass * dt;
+                pd.v += force * pd.invMass * dt;
                 pd.x += pd.v * dt;
                 // Its crack: a plate stopped dead, a dipole (jerk).
                 const float acc = (pd.v - pd.vPrev) * rate;
-                dip += (acc - pd.accPrev) * rate * pd.cover;
+                dip[i] += (acc - pd.accPrev) * rate * pd.cover;
                 pd.accPrev = acc;
                 pd.vPrev = pd.v;
                 // Gone once it is well clear, rising.
@@ -813,67 +904,82 @@ private:
             // The plastic: the foam's force on the rim (inward), a little of
             // it across the pipe.
             float wallMouth = 0, wallFar = 0;
-            for (auto &m : q.wall) {
-                const float f = -contact * (m.rim + pd.tilt * m.side);
-                m.u = m.d * m.u - m.c * m.x + m.inv * f;
-                m.x += m.u;
-                wallMouth += m.radMouth * m.u;
-                wallFar += m.radFar * m.u;
+            if (contact > 0.0f)
+                W.live = true;
+            if (W.live) {
+                for (int k = 0; k < 8; ++k) {
+                    W.u[k] = W.d[k] * W.u[k] - W.c[k] * W.x[k] - contact * W.drive[k];
+                    W.x[k] += W.u[k];
+                    wallMouth += W.radM[k] * W.u[k];
+                    wallFar += W.radF[k] * W.u[k];
+                }
             }
 
             // The air column: the mouth, then the far end.
-            const int w = q.w;
-            const float inMouth = q.back[(w - q.nb) & (kLine - 1)] * m_mute;
-            const float outM = endStep(q.mouth, inMouth, push, M, K);
-            q.pMouth = inMouth + outM;
+            const float inMouth = back[(w - nb) & (kLine - 1)] * mute;
+            const float outM = endStep(mouth, inMouth, push, M, K);
+            pMouth = inMouth + outM;
             // Wall loss toward the far end (one pole each way).
-            q.lossF = q.lossG * outM + q.lossB * q.lossF;
-            q.fwd[w] = q.lossF;
-            const float inFar = q.fwd[(w - q.nf) & (kLine - 1)];
-            const float outF = endStep(q.far, inFar, 0.0f, 0.0f, m_jetOpen);
-            q.lossK = q.lossG * outF + q.lossB * q.lossK;
+            lossF = lossG * outM + lossB * lossF;
+            fwd[w] = lossF;
+            const float inFar = fwd[(w - nf) & (kLine - 1)];
+            const float outF = endStep(far, inFar, 0.0f, 0.0f, m_jetOpen);
+            lossK = lossG * outF + lossB * lossK;
             // The fractional part of the length (first-order Thiran).
-            const float y = q.apEta * q.lossK + q.apX - q.apEta * q.apY;
-            q.apX = q.lossK;
-            q.apY = y;
+            const float y = apEta * lossK + apX - apEta * apY;
+            apX = lossK;
+            apY = y;
             // A steady flow straight through the pipe is no note: the
             // bore's friction and the ends' jets stop it in a fraction of a
             // second (a leak below 2 Hz).
-            const float z = y - q.dcX + m_dcR * q.dcY;
-            q.dcX = y;
-            q.dcY = z;
-            q.back[w] = z;
-            q.w = (w + 1) & (kLine - 1);
-            m_peakP = std::max(m_peakP, std::fabs(q.pMouth));
+            const float z = y - dcX + dcR * dcY;
+            dcX = y;
+            dcY = z;
+            back[w] = z;
+            w = (w + 1) & (kLine - 1);
+            peakP = std::max(peakP, std::fabs(pMouth));
             // (the plastic's ringing counts too, in the pressure it would
             // make in the mouth)
-            q.energy += inMouth * inMouth + inFar * inFar + (m_z0 * wallMouth) * (m_z0 * wallMouth);
+            energy += inMouth * inMouth + inFar * inFar + (m_z0 * wallMouth) * (m_z0 * wallMouth);
 
             // What leaves each end (the air going out of the pipe, minus
             // what the paddle pushed in), and the plastic's share.
-            const float mouthQ = q.mouth.flow - push + wallMouth;
-            const float farQ = q.far.flow + wallFar;
-            const int o = m_outW;
-            q.outMouth[o] = mouthQ;
-            q.outFar[o] = farQ;
-            ql += tap(q.outMouth, q.dMouthL) * q.gMouthL + tap(q.outFar, q.dFarL) * q.gFarL;
-            qr += tap(q.outMouth, q.dMouthR) * q.gMouthR + tap(q.outFar, q.dFarR) * q.gFarR;
+            const int o = (m_outW + i) & (kOut - 1);
+            outMouth[o] = mouth.flow - push + wallMouth;
+            outFar[o] = far.flow + wallFar;
+            ql[i] += tap(outMouth, o, q.iMouthL, q.tMouthL) * q.gMouthL + tap(outFar, o, q.iFarL, q.tFarL) * q.gFarL;
+            qr[i] += tap(outMouth, o, q.iMouthR, q.tMouthR) * q.gMouthR + tap(outFar, o, q.iFarR, q.tFarR) * q.gFarR;
         }
-        m_outW = (m_outW + 1) & (kOut - 1);
-        // Pressure follows the volume acceleration: ρ/4π · d(Q/r)/dt.
-        const float gain = Knobs::level * Physics::kRhoAir / (4.0f * kPi) * rate;
-        // The paddle's dipole, toned by the sole's own give.
-        const float d = m_dip.step(dip * m_dipGain).low;
-        outL += (ql - m_ql) * gain + d;
-        outR += (qr - m_qr) * gain + d;
-        m_ql = ql;
-        m_qr = qr;
+        q.w = w;
+        q.lossF = lossF;
+        q.lossK = lossK;
+        q.apX = apX;
+        q.apY = apY;
+        q.dcX = dcX;
+        q.dcY = dcY;
+        q.energy = energy;
+        q.pMouth = pMouth;
+        q.mouth = mouth;
+        q.far = far;
+        m_peakP = peakP;
+        // The plastic sleeps once it has rung out with nothing on the rim:
+        // its sound far under the air's, and the rim still to a nanometre.
+        if (W.live && pd.mode == Paddle::Idle) {
+            float said = 0, moved = 0;
+            for (int k = 0; k < 8; ++k) {
+                said += std::fabs((W.radM[k] + W.radF[k]) * W.u[k]);
+                moved += std::fabs(W.rim[k] * W.x[k]);
+            }
+            if ((m_z0 * said) * (m_z0 * said) < 1e-4f * m_sleepEnergy && moved < 1e-9f) {
+                std::fill(std::begin(W.x), std::end(W.x), 0.0f);
+                std::fill(std::begin(W.u), std::end(W.u), 0.0f);
+                W.live = false;
+            }
+        }
     }
 
-    float tap(const float *line, float d) const {
-        const int i = int(d);
-        const float t = d - float(i);
-        const float a = line[(m_outW - i) & (kOut - 1)], b = line[(m_outW - i - 1) & (kOut - 1)];
+    static float tap(const float *line, int o, int i, float t) {
+        const float a = line[(o - i) & (kOut - 1)], b = line[(o - i - 1) & (kOut - 1)];
         return a + t * (b - a);
     }
 
@@ -904,6 +1010,7 @@ private:
         // An open end's own jet: the flow leaving a sharp-edged pipe at high
         // amplitude separates and loses ½ρu² · C of its head, C ≈ 0.6.
         m_jetOpen = 0.5f * Physics::kRhoAir * 0.6f / (S * S);
+        m_invD0 = 1.0f / (m_z0 + m_radA);
         m_dcR = 1.0f - kTwoPi * kDcHz / m_rate;
         m_arriveStep = 1.0f / (0.0015f * m_rate);
         m_unseal = 0.5f * 48000.0f / m_rate;
@@ -972,6 +1079,14 @@ private:
             q.dMouthR = delay(dist[n][1]);
             q.dFarL = delay(dist[n][2]);
             q.dFarR = delay(dist[n][3]);
+            auto split = [](float d, int &i, float &t) {
+                i = int(d);
+                t = d - float(i);
+            };
+            split(q.dMouthL, q.iMouthL, q.tMouthL);
+            split(q.dMouthR, q.iMouthR, q.tMouthR);
+            split(q.dFarL, q.iFarL, q.tFarL);
+            split(q.dFarR, q.iFarR, q.tFarR);
             // 1/r, at half a metre the unit.
             q.gMouthL = 0.5f / dist[n][0];
             q.gMouthR = 0.5f / dist[n][1];
@@ -1049,14 +1164,27 @@ private:
             // area times u·rate.
             m.radMouth *= m_rate;
             m.radFar *= m_rate;
+            q.plastic.d[k] = m.d;
+            q.plastic.c[k] = m.c;
+            q.plastic.rim[k] = m.rim;
+            q.plastic.radM[k] = m.radMouth;
+            q.plastic.radF[k] = m.radFar;
         }
+        aim(q);
+    }
+
+    // How the sole's force drives each of the plastic's modes, with the
+    // share of it across the pipe this strike's tilt gives.
+    static void aim(Pipe &q) {
+        for (int k = 0; k < kWallModes; ++k)
+            q.plastic.drive[k] = q.wall[k].inv * (q.wall[k].rim + q.paddle.tilt * q.wall[k].side);
     }
 
     float m_rate = 48000, m_dt = 1.0f / 48000;
     float m_hz[kPipes] = {};
     bool m_tuned = false;
     float m_lossScale = 1.0f;
-    float m_area = 0, m_z0 = 1, m_radA = 0, m_radB = 0, m_jetOpen = 0, m_dcR = 1;
+    float m_area = 0, m_z0 = 1, m_radA = 0, m_radB = 0, m_jetOpen = 0, m_dcR = 1, m_invD0 = 0;
     static constexpr float kDcHz = 2.0f;
     static constexpr float kFoamStiffen = 0.002f; // m
     static constexpr float kEdge = 1e-4f;          // m

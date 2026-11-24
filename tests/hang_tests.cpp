@@ -671,6 +671,7 @@ private slots:
         // One body rings whatever strikes it: ten strikes at once cost about
         // what one does, and a hang playing costs well under a percent of
         // one core per second of sound.
+        TENFOLD_TIMED();
         Ctx ctx;
         float top = 0;
         auto timed = [&](int fingers) {
@@ -716,6 +717,7 @@ private slots:
     void tenFingersOnTheHangStayInsideBudget() {
         // Ten fingers drumming on the hang through the whole studio, as the
         // other pages' budgets are measured.
+        TENFOLD_TIMED();
         std::string s = toHang();
         for (int f = 0; f < 10; ++f) {
             const float x = 0.12f + 0.08f * float(f), y = 0.2f + 0.06f * float(f % 6);

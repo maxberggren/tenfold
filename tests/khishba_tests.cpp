@@ -519,6 +519,7 @@ private slots:
     void theKhishbaCostsTheSameForTenFingers() {
         // One skin rings whatever strikes it: ten strokes at once cost about
         // what one does, well under a percent and a half of one core.
+        TENFOLD_TIMED();
         Ctx ctx;
         float top = 0;
         auto timed = [&](int fingers) {

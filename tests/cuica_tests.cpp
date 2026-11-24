@@ -705,6 +705,7 @@ private slots:
         // One body sounds whatever plays it: a hand and a thumb cost well
         // under a percent of a core, and six hands with four thumbs not
         // much more.
+        TENFOLD_TIMED();
         auto timed = [](int hands, int thumbs) {
             cuica::Body b;
             b.init(kRate);
@@ -733,6 +734,7 @@ private slots:
     void tenFingersOnTheCuicaStayInsideBudget() {
         // Ten fingers on the cuíca through the whole studio, as the other
         // pages' budgets are measured.
+        TENFOLD_TIMED();
         std::string s = "page 0 1\n" + cuicaKeys();
         for (int f = 0; f < 10; ++f) {
             const bool thumb = f >= 7;

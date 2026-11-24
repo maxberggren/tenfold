@@ -643,6 +643,7 @@ private slots:
         // One box rings whatever strikes it: ten strikes at once cost about
         // what one does, and a slit drum playing costs well under a percent
         // of one core per second of sound.
+        TENFOLD_TIMED();
         Ctx ctx;
         float top = 0;
         auto timed = [&](int mallets) {
@@ -684,6 +685,7 @@ private slots:
 
     void tenMalletsOnTheSlitDrumStayInsideBudget() {
         // Ten fingers drumming on the slit drum through the whole studio.
+        TENFOLD_TIMED();
         std::string s = toSlitDrum();
         for (int f = 0; f < 10; ++f) {
             const float x = 0.12f + 0.08f * float(f), y = 0.2f + 0.06f * float(f % 6);

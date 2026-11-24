@@ -609,6 +609,7 @@ private slots:
         // Each ringing pipe is a waveguide and a handful of modes: all ten
         // slapped at once cost well under a percent of a core per second of
         // sound, and nothing feeds on the crowd.
+        TENFOLD_TIMED();
         Ctx ctx;
         float top = 0;
         auto timed = [&](int pipes) {
@@ -649,6 +650,7 @@ private slots:
     void tenFingersOnThePipesStayInsideBudget() {
         // Ten fingers drumming on the pipes through the whole studio, as the
         // other pages' budgets are measured, then all ten held down.
+        TENFOLD_TIMED();
         std::string s = toPipes();
         for (int f = 0; f < 10; ++f) {
             const pipedrum::Mouth m = pipedrum::mouth(f);

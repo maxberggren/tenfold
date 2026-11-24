@@ -627,6 +627,7 @@ private slots:
     void thePairCostsLittle() {
         // Both heads ringing and a hand on each: well under a percent of a
         // core per second of sound.
+        TENFOLD_TIMED();
         tabla::Body b = fresh();
         const auto t0 = std::chrono::steady_clock::now();
         const auto x = play(b, 4.0, [&](double t) {
@@ -647,6 +648,7 @@ private slots:
     void tenFingersOnThePairStayInsideBudget() {
         // Ten fingers drumming on the pair through the whole studio, as the
         // other pages' budgets are measured.
+        TENFOLD_TIMED();
         std::string s = toPair() + "";
         for (int f = 0; f < 10; ++f) {
             const float x = 0.08f + 0.09f * float(f), y = 0.2f + 0.06f * float(f % 6);

@@ -496,6 +496,7 @@ private slots:
         // A hard strike on each kind, rendered against the clock: a bossed
         // or opera gong costs a fraction of a percent of real time, a
         // tam-tam (116 sheet modes and the stretching of eight patches) about one.
+        TENFOLD_TIMED();
         for (int k = 0; k < gong::kKinds; ++k) {
             gong::Gong g;
             g.init(kRate);
@@ -513,6 +514,7 @@ private slots:
     void fourTamTamsStayInsideBudget() {
         // A run of hard tam-tam strokes through the whole studio, each left
         // to ring: four ring at most, and the studio keeps its time.
+        TENFOLD_TIMED();
         std::string s = onSound(kTamTam, "");
         for (int i = 0; i < 10; ++i)
             s += fmt("down %.2f %d %.4f 0.6 p=0.95\nup %.2f %d\n", 0.5 + 0.35 * i, i + 1, cellX((i * 3) % 15), 0.8 + 0.35 * i,

@@ -816,6 +816,7 @@ private slots:
     void theUduCostsLittle() {
         // One pot rings whatever strikes it: ten hands at once cost about what
         // one does, well under a percent of a core.
+        TENFOLD_TIMED();
         Ctx ctx;
         auto timed = [&](int fingers) {
             drums::Engine e;
@@ -852,6 +853,7 @@ private slots:
         // Ten fingers drumming on the udu, some resting and sliding over its
         // openings, through the whole studio, as the other pages' budgets
         // are measured.
+        TENFOLD_TIMED();
         std::string s = toUdu();
         for (int f = 0; f < 8; ++f) {
             const float x = 0.3f + 0.05f * float(f), y = 0.15f + 0.08f * float(f % 6);

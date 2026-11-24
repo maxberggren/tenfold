@@ -1265,9 +1265,13 @@ public:
             // give it, the sheet's swing is scaled back within a block or
             // two. (Strokes landing on strokes would otherwise swing it
             // further than the explicit step can follow; a single stroke
-            // never reaches it.)
-            if (all > m_yield && !m_touching) {
-                const float keep = std::sqrt(std::sqrt(m_yield / all));
+            // never reaches it. It acts with a mallet on the sheet too, as
+            // strokes coming faster than a mallet leaves keep one there,
+            // but higher then: a hard stroke on a tam-tam carries about
+            // three times as much while its mallet is still on.)
+            const float yield = m_touching ? 4.0f * m_yield : m_yield;
+            if (all > yield) {
+                const float keep = std::sqrt(std::sqrt(yield / all));
                 for (int k = 0; k < m_nAct; ++k) {
                     x[k] *= keep;
                     u[k] *= keep;
@@ -1480,18 +1484,24 @@ private:
             }
             const float cmU = m_cm[0];
             for (int q = 0; q < d.Pt; ++q) {
-                const float gx = sum4(ax[q]), gy = sum4(ay[q]);
+                float gx = sum4(ax[q]), gy = sum4(ay[q]);
+                // (A numerical guard, not bronze: the slope a patch's
+                // stretching sees is held under what would stiffen some mode
+                // past what the explicit step holds, everything the
+                // stretching adds to the stiffness growing with it. The
+                // linear part is exact in the sheet's own modes and is never
+                // touched. Played strokes don't reach it; hammering does.)
+                const float g2 = gx * gx + gy * gy, most = m_slopeMax[q];
+                if (g2 > most * most) {
+                    const float k = most / std::sqrt(g2);
+                    gx *= k;
+                    gy *= k;
+                }
                 const float wx = m_w0x[q], wy = m_w0y[q];
                 const float L = wx * gx + wy * gy, Q = 0.5f * (gx * gx + gy * gy);
                 const float kq = sheet * m_kapPt[q] * cmU;
-                // (A numerical guard, not bronze: a patch's stretch beyond
-                // the linear, Q, is held under what would stiffen some mode
-                // past what the explicit step holds. The linear part is
-                // exact in the sheet's own modes and is never touched.
-                // Played strokes don't reach it.)
-                const float st = L + std::min(Q, m_strainMax[q]);
-                sx[q] = kq * (st * gx + (st - L) * wx);
-                sy[q] = kq * (st * gy + (st - L) * wy);
+                sx[q] = kq * ((L + Q) * gx + Q * wx);
+                sy[q] = kq * ((L + Q) * gy + Q * wy);
             }
         }
         auto force = [&](int b) {
@@ -1684,17 +1694,23 @@ private:
             m_kapPt[q] = d.kapPt[size_t(q)];
             m_w0x[q] = d.w0x[size_t(q)];
             m_w0y[q] = d.w0y[size_t(q)];
-            // The most a patch may stretch (a numerical bound): what would,
-            // with every patch as far, stiffen some mode to 80 % of where the
-            // explicit step gives way (c = 4).
+            // The steepest slope a patch's stretching may see (a numerical
+            // bound): what would, with every patch as steep, stiffen some
+            // mode to 80 % of where the explicit step gives way (c = 4).
+            // The stretching's stiffness on mode k through patch q is at
+            // most κ·|a|²·(3|w0'|·g + 1.5g²), a its slope there and g the
+            // patch's slope, so g solves 1.5g² + 3|w0'|g = R.
             float most = 1e30f;
+            const float w = std::sqrt(m_w0x[q] * m_w0x[q] + m_w0y[q] * m_w0y[q]);
             for (int k = 0; k < m_nAct; ++k) {
                 const float a2 = d.px[size_t(q) * N + k] * d.px[size_t(q) * N + k] + d.py[size_t(q) * N + k] * d.py[size_t(q) * N + k];
                 const float room = 3.2f - m_cc[k];
-                if (a2 > 0 && m_cm[k] > 0)
-                    most = std::min(most, room / (float(d.Pt) * m_cm[k] * m_kapPt[q] * a2));
+                if (a2 > 0 && m_cm[k] > 0) {
+                    const float R = room / (float(d.Pt) * m_cm[k] * m_kapPt[q] * a2);
+                    most = std::min(most, (std::sqrt(9.0f * w * w + 6.0f * R) - 3.0f * w) / 3.0f);
+                }
             }
-            m_strainMax[q] = std::max(most, 0.0f);
+            m_slopeMax[q] = std::max(most, 0.0f);
         }
         if (!d.eigen)
             radiate();
@@ -1769,7 +1785,7 @@ private:
     bool m_lossless = false;
     alignas(16) float m_prod[kMaxPairs] = {}, m_S[kMaxPairs] = {};
     float m_kap[kMaxR] = {};
-    float m_kapPt[kPtPad] = {}, m_w0x[kPtPad] = {}, m_w0y[kPtPad] = {}, m_strainMax[kPtPad] = {};
+    float m_kapPt[kPtPad] = {}, m_w0x[kPtPad] = {}, m_w0y[kPtPad] = {}, m_slopeMax[kPtPad] = {};
     float m_pGain = 1;
     float m_ql = 0, m_qr = 0;
     float m_energy = 0, m_refEnergy = 1, m_sleepEnergy = 0;

@@ -387,7 +387,10 @@ private slots:
     void nothingRunsAway() {
         // Hammered: strikes as hard as they come, anywhere, soft and hard
         // beaters, while the pitch is bent about: every gong stays finite
-        // and bounded, and rings down to silence once left alone.
+        // and bounded, and rings down to silence once left alone. Ten
+        // strokes a second, then a drumroll faster than a mallet leaves,
+        // so one is always on the sheet.
+        for (int gap : {75, 3})
         for (int k = 0; k < gong::kKinds; ++k) {
             float one = 0;
             for (float v : strike(gong::Kind(k), 220.0f, 1.0f, 0.5))
@@ -395,26 +398,28 @@ private slots:
             gong::Gong g;
             g.init(kRate);
             g.start(gong::Kind(k), 220.0f);
-            Rng rng(0x5eedu + uint32_t(k));
+            Rng rng(0x5eedu + uint32_t(k) + 977u * uint32_t(gap));
+            const QString what = QStringLiteral("kind %1, a stroke every %2 blocks").arg(k).arg(gap);
             float l[64], r[64], top = 0;
             for (int b = 0; b < int(4.0 * kRate) / 64; ++b) {
-                if (b % 75 == 0) // ten strokes a second
+                if (b % gap == 0)
                     g.strike(1.0f, 0.9f * rng.unit(), 6.28f * rng.unit(), 0, rng.unit());
                 g.setPitch(220.0f * std::exp2(2.0f * std::sin(0.01f * float(b)) / 12.0f));
                 std::fill(l, l + 64, 0.0f);
                 std::fill(r, r + 64, 0.0f);
                 g.render(l, r, 64, 1.0f);
                 for (int i = 0; i < 64; ++i) {
-                    QVERIFY2(std::isfinite(l[i]) && std::isfinite(r[i]), qPrintable(QString::number(k)));
+                    QVERIFY2(std::isfinite(l[i]) && std::isfinite(r[i]), qPrintable(what));
                     top = std::max(top, std::fabs(l[i]));
                 }
             }
-            // (Strokes landing on a gong already swinging add up, a little.)
-            QVERIFY2(top < 12.0f * one, qPrintable(QStringLiteral("kind %1: %2 against one strike's %3").arg(k).arg(top).arg(one)));
+            // (Strokes landing on a gong already swinging add up, a little;
+            // two hundred and fifty a second, a little more.)
+            QVERIFY2(top < (gap < 75 ? 24.0f : 12.0f) * one, qPrintable(QStringLiteral("%1: %2 against one strike's %3").arg(what).arg(top).arg(one)));
             g.mute(0.5f);
             for (int b = 0; b < int(3.0 * kRate) / 64; ++b)
                 g.render(l, r, 64, 1.0f);
-            QVERIFY2(!g.active(), qPrintable(QString::number(k)));
+            QVERIFY2(!g.active(), qPrintable(what));
         }
     }
 

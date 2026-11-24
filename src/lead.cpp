@@ -33,6 +33,7 @@
 #include "electro.h"
 #include "gong.h"
 #include "guitar.h"
+#include "kargyraa.h"
 #include "lead.h"
 #include "parts.h"
 #include "trombamarina.h"
@@ -204,6 +205,8 @@ constexpr float kRollAccent = 1.5f;
 // Gong: what a gong's pressure (Pa at a metre) is worth on the page, per kind
 // (bossed, opera, tam-tam), so each speaks as loud as the other leads.
 constexpr float kGongLevel[gong::kKinds] = {0.27f, 0.85f, 0.3f};
+// Kargyraa: the level its voice is held at (RMS), before the envelope.
+constexpr float kKgLevel = 0.2f;
 // Gong: how many tam-tams may ring at once.
 constexpr int kTamTams = 4;
 // Tromba marina: what its pressure (Pa at a metre) is worth on the page, and
@@ -445,6 +448,8 @@ struct Bank {
     bool guitarLive = false;
     float fret = 60, anchor = 60;
     float rested = 60; // where the finger last rested on the neck (with its bends), the fret a slide counts from
+    // Kargyraa: the voice's throat (kargyraa.h), each voice of a line its own.
+    kargyraa::Played kg;
 };
 
 struct Voice {
@@ -549,6 +554,10 @@ public:
         for (auto &line : m_rig)
             for (auto &rig : line)
                 rig.init(rate);
+        // And each voice's throat, for Kargyraa.
+        for (auto &v : m_voices)
+            for (auto &k : v.banks)
+                k.kg.init(rate);
         for (auto &c : m_chik) {
             c.string.init(size_t(rate / 150.0f));
             c.jawF.set(3000.0f, 4.0f, rate);
@@ -1042,6 +1051,8 @@ private:
                 k.tongue.silence();
             k.guitarLive = false;
             k.fret = k.anchor = k.rested = targets[b];
+            if (s.model == Sound::Kargyraa)
+                k.kg.reset();
             k.thudLp.reset();
             k.pingF.reset();
             k.pingLp.reset();
@@ -1142,6 +1153,8 @@ private:
                 hit(k, vel, v.y, 1.0f, false);
             if (s.model == Sound::Reed)
                 k.thud = 0.6f + 0.4f * vel; // the key's click
+            if (s.model == Sound::Kargyraa)
+                k.kg.start(vel > 0.9f, v.rng); // from silence, a new phrase
         }
         // A bowed note struck again while it still sounds is the bow
         // changing direction: its speed turns through nothing, the hair
@@ -1390,6 +1403,7 @@ private:
 
     void renderSegment(float *l, float *r, int at, int n, AudioContext &ctx) {
         const Harmony &h = ctx.harmony();
+        m_rootHz = midiToHz(h.midi(0, 0)); // Kargyraa: the growl prefers the key's root
         const float dt = float(n) / m_rate;
         // The tromba marina's string is tuned to the key: its root two
         // octaves under the neck's (G1 to F♯2).
@@ -2525,6 +2539,19 @@ private:
                     break;
                 case Sound::Guitar: // (heard through its line's rig: renderRigs)
                     break;
+                case Sound::Kargyraa: {
+                    // The note is the melody, the growl's undertone under
+                    // it; its voice held at a steady level (each note as
+                    // loud as the last), the envelope shaping it after.
+                    // (Harmony voices share the lead voice's growl when they
+                    // fit it: one drone under the chord, not three; the
+                    // throat sounds through the envelope's release.)
+                    const float o = k.kg.step(inc * rate, v.y, v.press, !v.releasing || v.amp.v > 0.05f, kKgLevel,
+                                              m_rootHz, b > 0 ? v.banks[0].kg.under() : 0.0f);
+                    bl += o;
+                    br += o;
+                    break;
+                }
                 case Sound::Sync: {
                     // At four times the rate: four quarter steps, the second
                     // voice's master an octave up, through two half-band
@@ -2994,6 +3021,7 @@ private:
     }
 
     float m_rate = 48000;
+    float m_rootHz = 0; // Kargyraa: the key's root, for the growl to hold
     uint64_t m_age = 0;
     std::array<Voice, 8> m_voices;
     std::array<Line, kLines> m_lines;
@@ -3497,7 +3525,11 @@ public:
             "it rests in the key only when following the chord), "
             "Guitar (rock: an overdriven electric guitar, "
             "a picked steel string through a humbucker, a cranked valve amp and a 4x12; a second finger hammers on, "
-            "lifting it pulls off, a slide steps fret by fret, held notes sustain and, pressed, feed back); "
+            "lifting it pulls off, a slide steps fret by fret, held notes sustain and, pressed, feed back), "
+            "Kargyraa (Tuvan throat singing: the note "
+            "is the overtone the vowel picks out, a whistle over a growl in the singer's own register, its "
+            "undertone, the false folds closing on every other pulse; higher on the pad brightens the vowel, the "
+            "press is the lungs); "
             "the row under the pad shows the ones around the chosen "
             "sound, faded at an end with more beyond; the status line says what music each is for\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"

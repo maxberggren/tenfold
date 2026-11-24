@@ -513,6 +513,81 @@ private slots:
         qInfo("a kargyraa %.2f %% of a core", 100 * share);
         QVERIFY2(share < 0.01, qPrintable(QString::number(share)));
     }
+
+    void aPlayedKargyraaCostsUnderAPercent() {
+        TENFOLD_TIMED();
+        // The Lead page's: ten seconds of a melody (a note every half
+        // second, legato) through one voice, best of three.
+        double best = 1e9;
+        for (int rep = 0; rep < 3; ++rep) {
+            kargyraa::Played p;
+            p.init(kRate);
+            Rng rng(5);
+            p.start(false, rng);
+            float sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < int(10 * kRate); ++i) {
+                const float note = 220.0f * std::exp2(float((i / 24000) % 8) / 12.0f);
+                sink += p.step(note, 0.5f, 0.6f, true, 0.2f);
+            }
+            best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+            QVERIFY(std::isfinite(sink));
+        }
+        qInfo("a played kargyraa: %.2f %% of a core", 100 * best / 10.0);
+        QVERIFY2(best / 10.0 < 0.01, qPrintable(QString::number(best / 10.0)));
+    }
+
+    void aPlayedLineHoldsItsGrowl() {
+        // A line in A (its root's growl, A1): A4, E5, A5 and E4 are all
+        // harmonics of it, so the growl holds under them, the vowel picking
+        // another harmonic each time; C5 is not (its 9.5th), so the growl
+        // moves, to C2, the note's own name: in the key, never a pure third
+        // under the melody.
+        kargyraa::Played p;
+        p.init(kRate);
+        Rng rng(5);
+        p.start(false, rng);
+        const float rootHz = 55.0f;
+        auto play = [&](float note) {
+            for (int i = 0; i < int(0.3f * kRate); ++i)
+                p.step(note, 0.5f, 0.6f, true, 0.2f, rootHz);
+            return p.under();
+        };
+        for (const float note : {440.0f, 659.26f, 880.0f, 329.63f}) {
+            const float u = play(note);
+            qInfo("%.0f Hz over %.2f Hz (harmonic %d)", double(note), double(u), p.harmonic());
+            QVERIFY2(std::fabs(u / 55.0f - 1.0f) < 0.005f, qPrintable(QString::number(u)));
+        }
+        const float c = play(523.25f);
+        qInfo("C5 over %.2f Hz (harmonic %d)", double(c), p.harmonic());
+        QVERIFY2(std::fabs(1200 * std::log2(c / 65.41f)) < 5, qPrintable(QString::number(c)));
+    }
+
+    void aPlayedNoteIsItsOvertoneAndFallsSilent() {
+        // The Lead's voice: an A4 held two seconds sounds its note as its
+        // line, within six cents over the held stretch (over a third of a
+        // second it wanders ±5–10, as a held voice does); let go, it is
+        // silent a quarter second on.
+        kargyraa::Played p;
+        p.init(kRate);
+        Rng rng(5);
+        p.start(false, rng);
+        std::vector<float> o(size_t(2.5 * kRate));
+        for (size_t i = 0; i < o.size(); ++i)
+            o[i] = p.step(440.0f, 0.5f, 0.6f, i < size_t(2 * kRate), 0.2f);
+        double best = 0, at = 0;
+        for (double f = 430; f < 450; f += 0.1) {
+            const double q = power(o, f, 0.4, 1.95);
+            if (q > best)
+                best = q, at = f;
+        }
+        qInfo("a played A4: its line at %.2f Hz", at);
+        QVERIFY(std::fabs(1200 * std::log2(at / 440.0)) < 6);
+        float tail = 0;
+        for (size_t i = size_t(2.25 * kRate); i < o.size(); ++i)
+            tail = std::max(tail, std::fabs(o[i]));
+        QVERIFY2(tail < 1e-4f, qPrintable(QString::number(tail)));
+    }
 };
 
 TESTKIT_REGISTER(KargyraaTests)

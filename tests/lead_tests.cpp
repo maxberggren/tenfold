@@ -228,7 +228,7 @@ const char *soundName(int i) { return lead::sound(i).name; }
 std::string hold(int snd, int cell, double y = 0.6, double press = 0.55) {
     std::string s = "page 0 4\n";
     for (int k = 0; k < snd; ++k)
-        s += fmt("key %.3f Right\n", 0.01 + 0.015 * k);
+        s += fmt("key %.3f Right\n", 0.01 + 0.012 * k);
     return s + fmt("down 0.3 1 %.4f %.3f p=%.3f\nup 1.5 1\nend 1.8\n", cellX(cell), y, press);
 }
 std::string holdA4(int snd) { return hold(snd, 7); }
@@ -341,7 +341,7 @@ double bandDb(const testkit::Take &take, double from, double to, double lo, doub
 std::string onSound(int snd, const std::string &rest) {
     std::string s = "page 0 4\n";
     for (int k = 0; k < snd; ++k)
-        s += fmt("key %.3f Right\n", 0.01 + 0.015 * k);
+        s += fmt("key %.3f Right\n", 0.01 + 0.012 * k);
     return s + rest;
 }
 
@@ -809,7 +809,7 @@ private slots:
         // is 0.048 of it under the pad, row 1 0.119. Row 0 ends with the
         // sounds, more of them than fit: a window onto them that follows
         // the chosen one, so a click on its last chip (faded, with more
-        // beyond) moves along, and enough of them reach Guitar, the last;
+        // beyond) moves along, and enough of them reach the last;
         // row 1 starts with the octave stepper (↑ at its right end) and has
         // FOLLOW about 0.64 across, HOLD after it.
         testkit::play("page 0 4\nbutton 0.2 0.98 -0.048\nend 0.5\n", [](Session &s) {
@@ -817,10 +817,10 @@ private slots:
         });
         {
             std::string walk = "page 0 4\n";
-            for (int k = 0; k < 18; ++k)
+            for (int k = 0; k < 19; ++k)
                 walk += fmt("button %.2f 0.98 -0.048\n", 0.2 + 0.1 * k);
-            testkit::play(walk + "end 2.0\n", [](Session &s) {
-                QVERIFY2(s.pageStatus().contains(QStringLiteral("Guitar")), qPrintable(s.pageStatus()));
+            testkit::play(walk + "end 2.2\n", [](Session &s) {
+                QVERIFY2(s.pageStatus().contains(QString::fromUtf8(lead::sound(lead::kSounds - 1).name)), qPrintable(s.pageStatus()));
             });
         }
         testkit::play("page 0 4\nbutton 0.2 0.635 -0.119\nend 0.5\n", [](Session &s) {
@@ -868,7 +868,7 @@ private slots:
         for (int snd = 0; snd < lead::kSounds; ++snd) {
             std::string s = "page 0 4\n";
             for (int k = 0; k < snd; ++k)
-                s += fmt("key %.3f Right\n", 0.01 + 0.015 * k);
+                s += fmt("key %.3f Right\n", 0.01 + 0.012 * k);
             s += fmt("down 0.3 11 0.08 %.4f p=1\ndown 0.3 12 0.15 %.4f p=1\ndown 0.3 13 0.08 %.4f p=1\n", rowY(4),
                      rowY(3), rowY(2));
             s += "down 0.3 14 0.17 0.35 p=1\n";
@@ -893,10 +893,12 @@ private slots:
         } notes[] = {{0, 57.0}, {7, 69.0}, {11, 76.0}};
         // (The gongs' tuning is checked in gong_tests.cpp, by their spectra:
         // an autocorrelation hears a gong's inharmonic partials as periods
-        // of their own.)
+        // of their own. The kargyraa's, below, by its spectrum too: its
+        // note is an overtone with the growl's harmonics close either side,
+        // which pull an autocorrelation's peak.)
         for (int snd = 0; snd < lead::kSounds; ++snd)
             for (const auto &n : notes) {
-                if (lead::sound(snd).model == lead::Sound::Gong)
+                if (lead::sound(snd).model == lead::Sound::Gong || lead::sound(snd).model == lead::Sound::Kargyraa)
                     continue;
                 const auto take = testkit::play(hold(snd, n.cell));
                 const double midi = midiOf(pitchHz(take, 0.62, 0.8));
@@ -905,6 +907,57 @@ private slots:
                 QVERIFY2(take.finite(), soundName(snd));
                 QVERIFY2(take.rms(0.32, 0.6) > 0.02, soundName(snd));
             }
+    }
+
+    void theKargyraaSingsItsNoteOverAGrowl() {
+        // Low, in the middle and high on the neck: the note is the
+        // strongest line (an overtone the vowel picks out); under it the
+        // growl, held on the key's root (A1, 55 Hz, in the scripts' A
+        // minor), the note its 4th, 8th or 12th harmonic, the half-
+        // harmonics among them.
+        int snd = 0;
+        while (lead::sound(snd).model != lead::Sound::Kargyraa)
+            ++snd;
+        const struct {
+            int cell;
+            double midi;
+        } notes[] = {{0, 57.0}, {7, 69.0}, {11, 76.0}};
+        for (const auto &n : notes) {
+            const auto take = testkit::play(hold(snd, n.cell));
+            const double hz = 440.0 * std::exp2((n.midi - 69.0) / 12.0);
+            auto line = [&](double f) {
+                double best = 0;
+                for (double g = f * 0.995; g <= f * 1.005; g += 0.1) {
+                    double re = 0, im = 0;
+                    const size_t a = size_t(0.62 * 48000), len = size_t(0.8 * 48000) - a;
+                    for (size_t i = 0; i < len; ++i) {
+                        const double w = 0.5 - 0.5 * std::cos(2 * M_PI * double(i) / double(len));
+                        const double v = 0.5 * (take.left[a + i] + take.right[a + i]) * w;
+                        re += v * std::cos(2 * M_PI * g * double(i) / 48000.0);
+                        im += v * std::sin(2 * M_PI * g * double(i) / 48000.0);
+                    }
+                    best = std::max(best, re * re + im * im);
+                }
+                return best + 1e-30;
+            };
+            const int k = int(std::lround(hz / 55.0));
+            const double fu = hz / k;
+            double strongest = 0, at = 0;
+            for (int j = 1; j <= k + 6; ++j) {
+                const double p = line(j * fu);
+                if (p > strongest)
+                    strongest = p, at = j;
+            }
+            double half = 0;
+            int m = 0;
+            for (int j = 3; j < k; j += 2, ++m)
+                half += 10 * std::log10(line(j * fu) / std::sqrt(line((j - 1) * fu) * line((j + 1) * fu)));
+            qInfo("kargyraa lead %.0f: the strongest line harmonic %.0f of %.1f Hz; half-harmonics %.1f dB re neighbours",
+                  n.midi, at, fu, half / std::max(m, 1));
+            QVERIFY2(int(at) == k, qPrintable(QString::number(at)));
+            QVERIFY2(half / std::max(m, 1) > -15, "no growl under it");
+            QVERIFY(take.finite());
+        }
     }
 
     void theNewSoundsAreTheirOwn() {
@@ -958,7 +1011,7 @@ private slots:
         // pitch is still on its way up from the first; it settles in tune.
         std::string mini = "page 0 4\n";
         for (int k = 0; k < 8; ++k)
-            mini += fmt("key %.3f Right\n", 0.01 + 0.015 * k);
+            mini += fmt("key %.3f Right\n", 0.01 + 0.012 * k);
         mini += fmt("down 0.3 1 %.4f 0.6\nup 0.7 1\n", cellX(0)) + fmt("down 0.72 2 %.4f 0.6\nup 1.9 2\nend 2.0\n", cellX(4));
         const auto m = testkit::play(mini);
         const double early = midiOf(pitchHz(m, 0.725, 0.75)), late = midiOf(pitchHz(m, 1.45, 1.85));
@@ -1009,7 +1062,7 @@ private slots:
             QVERIFY2(take.rms(0.32, 1.4) > 0.02, soundName(snd));
             std::string s = "page 0 4\n";
             for (int k = 0; k < snd; ++k)
-                s += fmt("key %.3f Right\n", 0.01 + 0.015 * k);
+                s += fmt("key %.3f Right\n", 0.01 + 0.012 * k);
             const QString name = QString::fromUtf8(soundName(snd));
             const QString styled = name + QStringLiteral(" · ") + QString::fromUtf8(lead::sound(snd).style);
             testkit::reopen(s + "end 0.5\n", 0.3, [&](Session &, Session &opened, const QJsonObject &doc) {

@@ -47,6 +47,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numeric>
 
 #include "dsp.h"
 #include "scream.h"
@@ -64,6 +65,10 @@ inline const char *ratioKey(int r) {
     return names[std::clamp(r, 0, RatioCount - 1)];
 }
 inline int cyclesOf(int r) { return std::clamp(r, 0, RatioCount - 1) == Third ? 3 : 2; }
+
+// The lungs: 1.4 kPa soft to 2.4 kPa loud; a full voice about the 21.9
+// cmH₂O (2.15 kPa) Fuks measured in this mode, against 18 modal.
+constexpr float kLungsSoft = 1400.0f, kLungsLoud = 2400.0f;
 
 // sin(2π·e) for e in [−0.5, 0.5], from scream's cosine.
 inline float sin2Pi(float e) {
@@ -280,7 +285,12 @@ struct Larynx {
             // exactly the sung note's half (and the music's in tune).
             if (cycle == 0) {
                 const float want = R * rate / std::max(f0, 1.0f);
-                comp = clampf(comp * std::pow(float(pairLen) / want, 0.15f), 0.8f, 1.6f);
+                // (Half the last pair's error, each pair: the push that
+                // lengthens the weak cycle wanders over a third of a
+                // second, so this follows it and a melody harmonic stays
+                // within a few cents of its note; all of it at once, a loop
+                // at a gain of one with the lock's own lag, can swing.)
+                comp = clampf(comp * std::sqrt(float(pairLen) / want), 0.8f, 1.6f);
                 pairLen = 0;
             }
         }
@@ -351,7 +361,307 @@ struct Larynx {
     }
 };
 
-// The voice: the studio's rate in and out.
+// The kargyraa voice itself: the larynx, the tract and a level loop, run
+// sample by sample by what plays it. The Vocal page's style (Kargyraa,
+// below) drives it from a sung voice: its pitch, its level, its vowel. The
+// Lead page's (Played, below) drives it from a note: its pitch, the
+// finger's height as the vowel, its press as the lungs.
+class Voice {
+public:
+    void init(float rate) {
+        m_rate = rate;
+        m_dc.r = 1.0f - kTwoPi * 20.0f / rate;
+        auto per = [&](float seconds) { return 1.0f - std::exp(-1.0f / (seconds * rate)); };
+        m_tractRate = per(kGlide);
+        m_rawRate = per(0.04f);
+        m_gainRate = per(0.01f);
+        m_settleRate = per(0.3f);
+        reset();
+    }
+    void reset() {
+        for (auto &r : m_tract)
+            r.reset();
+        for (int j = 2; j < 12; ++j)
+            m_tract[j].set(std::min(kFHigh[j - 2], 0.45f * m_rate), kBHigh[j - 2], m_rate);
+        m_dc.x1 = m_dc.y1 = 0;
+        m_larynx.reset();
+        m_t1 = m_want1 = 500.0f;
+        m_t2 = m_want2 = 900.0f;
+        m_tick = 0;
+        m_rawPow = m_lvlPow = 0;
+        m_gain = m_gainSettled = kGainStart;
+    }
+    void setRatio(int r) { m_ratio = std::clamp(r, 0, RatioCount - 1); }
+    int cycles() const { return cyclesOf(m_ratio); }
+    // Where the tract's first two resonances go (Hz): they glide there over
+    // 15 ms, the tongue and the jaw moving; or, placeNow, are there at once.
+    void setFormants(float f1, float f2) {
+        m_want1 = f1;
+        m_want2 = f2;
+    }
+    void placeNow() {
+        m_t1 = m_want1;
+        m_t2 = m_want2;
+    }
+
+    float f1() const { return m_t1; }
+    float f2() const { return m_t2; }
+    Larynx &larynx() { return m_larynx; }
+    const Larynx &larynx() const { return m_larynx; }
+
+    // One sample: the folds' rate f0 (Hz), the lungs' pressure P (Pa), how
+    // far the voice is sounding (0..1), how far the false folds are in
+    // (0..1), and the level to hold, as this sample of it squared.
+    inline float step(float f0, float P, float voicing, float engage, float levelSq) {
+        m_t1 += (m_want1 - m_t1) * m_tractRate;
+        m_t2 += (m_want2 - m_t2) * m_tractRate;
+        if ((m_tick++ & 15) == 0) {
+            m_tract[0].set(m_t1, kB1, m_rate);
+            m_tract[1].set(m_t2, kB2, m_rate);
+        }
+        float src = 0;
+        if (f0 > 0) {
+            const float norm = 1.0f / (Larynx::kAmax * std::sqrt(2.0f * P / Larynx::kRho) * f0);
+            src = m_larynx.step(f0, P, voicing, engage, cycles(), kJitter, kShimmer, m_rate) * norm;
+        }
+        float y = src;
+        for (auto &res : m_tract)
+            y = res.step(y);
+        y = m_dc.step(y);
+        if (!std::isfinite(y)) {
+            reset();
+            y = 0;
+        }
+        // The level held: the growl's own power over 40 ms held to the one
+        // asked for over the same, both started when the growl starts, so
+        // the vowel, the harmonic the melody is on, the doubling coming in
+        // and the pressure change its colour but not its level (a loudness
+        // follower, by design). A phrase starts on the gain the last one
+        // settled on, and the gain never rises past twice that: the growl's
+        // first milliseconds, while its own power is still building, aren't
+        // lifted to meet a level they haven't reached.
+        if (voicing < 0.05f) {
+            m_gain = m_gainSettled;
+            m_rawPow = m_lvlPow = 0;
+        } else {
+            m_rawPow += (y * y - m_rawPow) * m_rawRate;
+            m_lvlPow += (levelSq - m_lvlPow) * m_rawRate;
+        }
+        const float cap = std::min(kGainCap, 2.0f * m_gainSettled);
+        const float gTo = m_rawPow > 1e-12f ? std::min(std::sqrt(m_lvlPow / m_rawPow), cap) : m_gainSettled;
+        m_gain += (gTo - m_gain) * m_gainRate;
+        // (Settled: a doubled, fully sounding voice.)
+        if (voicing > 0.99f && engage > 0.95f)
+            m_gainSettled += (m_gain - m_gainSettled) * m_settleRate;
+        return y * m_gain;
+    }
+
+    // Cycle to cycle: jitter 0.2 %, shimmer 0.025 neper (0.2 dB). Nothing
+    // measures a kargyraa's; it is "sonorous" (Lindestad 2001), its cycles
+    // "more uniform" than the pulse register's (Grawunder 1999), and its
+    // partials clear to 4 kHz (Fuks 1998), so a steady healthy voice's;
+    // with the false folds' own variation the undertone's period jitter
+    // comes to about 0.4 %.
+    static constexpr float kJitter = 0.002f, kShimmer = 0.025f;
+
+private:
+    static constexpr float kGlide = 0.015f; // s
+    // Bandwidths: narrow. Nothing measures a kargyraa's; a long, firm
+    // glottal closure damps the tract little, and an overtone singer's
+    // tuned formant is about 20 Hz wide (Klingholz 1993). 25 Hz puts the
+    // tuned harmonic 5–16 dB over its neighbours across H6–H11.
+    static constexpr float kB1 = 25.0f, kB2 = 45.0f;
+    // F3–F5 a man's; F6–F12 over them, about a kilohertz apart as an 18 cm
+    // tube's are. A cascade cut off after five poles loses what the poles
+    // above add to the top (Klatt's cascade at 10 kHz stood in for them
+    // with a higher-pole correction; at the studio's rate they are poles).
+    static constexpr float kFHigh[10] = {2350.0f, 3150.0f, 3750.0f, 4500.0f, 5500.0f,
+                                         6500.0f, 7500.0f, 8500.0f, 9500.0f, 10500.0f};
+    static constexpr float kBHigh[10] = {110.0f, 160.0f, 200.0f, 300.0f, 400.0f, 500.0f, 600.0f, 700.0f, 800.0f, 900.0f};
+    // The level loop's gain: never over this (a voice needs 0.01–0.05: its
+    // raw RMS is 10–30), and where a first phrase starts.
+    static constexpr float kGainCap = 0.15f;
+    static constexpr float kGainStart = 0.03f;
+
+    float m_rate = 48000;
+    int m_ratio = Half;
+    Larynx m_larynx;
+    Resonator m_tract[12];
+    DcBlock m_dc;
+    float m_t1 = 500, m_t2 = 900, m_want1 = 500, m_want2 = 900;
+    uint32_t m_tick = 0;
+    float m_tractRate = 0, m_rawRate = 0, m_gainRate = 0, m_settleRate = 0;
+    float m_rawPow = 0, m_lvlPow = 0, m_gain = 0, m_gainSettled = 0;
+};
+
+// The voice played as an instrument (the Lead page's KARGYRAA), the way a
+// throat singer sings a melody: the note played is the melody, a harmonic
+// of the growl's undertone that the vowel's first resonance picks out, and
+// the undertone holds under it in kargyraa's own register (45–105 Hz),
+// the singer changing which harmonic the vowel picks out, not the drone.
+// It holds while each new note is within 6 cents of one of its even
+// harmonics (the 4th to the 16th: its octaves and fifths, the folds' own
+// harmonics, steady); otherwise it moves, to the key's root if that fits
+// under the note, or else to the note's own name an octave or more down.
+// So the growl is always in the key, and the melody's harmonics are the
+// tempered notes within a few cents. The folds sound an octave over the
+// undertone and the false folds close on every other pulse. F1 is on the
+// note, narrow, so the note is what is heard; the finger's height moves F2
+// from an octave over F1 (the open vowels' "formant octave") up to a
+// bright 1.7 kHz (/ɛ ə a/), the two ways Castellengo & Henrich found it
+// sung. A note from silence is a phrase: a short rough start, the false
+// folds a little off the lock. Pressure is the lungs.
+class Played {
+public:
+    void init(float rate) {
+        m_rate = rate;
+        m_voice.init(rate);
+        auto per = [&](float seconds) { return 1.0f - std::exp(-1.0f / (seconds * rate)); };
+        m_up = per(0.008f);
+        m_down = per(0.025f);
+        m_engRate = per(0.04f);
+        reset();
+    }
+    void reset() {
+        m_voice.reset();
+        m_voicing = m_engage = 0;
+        m_age = 1 << 30;
+        m_rough = 0;
+        m_k = 0;
+        m_under = m_noteWas = 0;
+        m_tick = 0;
+    }
+    // A note begins. From silence it is a new phrase: a rough start of 20
+    // to 60 ms (a singer's runs 50 to 300, which would put a line's first
+    // note's growl an octave up, the folds' own pitch, off the beat; an
+    // accent doubles at once), the false folds a little off the lock.
+    void start(bool accent, Rng &rng) {
+        if (m_voicing > 0.05f)
+            return;
+        m_age = 0;
+        m_k = 0;
+        m_under = 0;
+        m_rough = accent ? 0 : int((0.02f + 0.04f * rng.unit()) * m_rate);
+        m_voice.larynx().detune = 1.0f + 0.03f * Larynx::gauss(rng);
+    }
+    bool sounding() const { return m_voicing > 0.001f; }
+    // Which harmonic of the undertone the note is (0: silent), and the
+    // undertone (Hz).
+    int harmonic() const { return m_voicing > 0.1f ? m_k : 0; }
+    float under() const { return m_under; }
+    const Voice &voice() const { return m_voice; }
+
+    // One sample: the note (Hz, the melody), the finger's height (F2,
+    // 0..1), the lungs (0..1), whether the note is held, the level to hold
+    // its voice at (RMS), the key's root (Hz, any octave; 0: none) and an
+    // undertone to share if the note fits it (a harmony's, the lead
+    // voice's; 0: none).
+    inline float step(float hz, float height, float effort, bool on, float level, float rootHz = 0,
+                      float shareUnder = 0) {
+        m_voicing += ((on ? 1.0f : 0.0f) - m_voicing) * (on ? m_up : m_down);
+        const bool rough = on && m_age < m_rough;
+        if (m_age < (1 << 30))
+            ++m_age;
+        m_engage += ((on ? (rough ? 0.5f : 1.0f) : 0.0f) - m_engage) * m_engRate;
+        Larynx &lx = m_voice.larynx();
+        lx.rough += ((rough ? 1.0f : 0.0f) - lx.rough) * m_engRate;
+        const float note = std::max(hz, 1.0f);
+        if (std::fabs(note - m_noteWas) > 1e-3f * note || m_k <= 0) {
+            m_noteWas = note;
+            choose(note, rootHz, shareUnder);
+        }
+        if ((m_tick++ & 15) == 0) {
+            const float f1 = note;
+            const float w = clampf(height, 0.0f, 1.0f);
+            const float f2want = std::min(lerpf(2.0f * f1, std::max(1700.0f, f1 + 300.0f), w), kF2Top);
+            // F2 on the harmonic nearest that which shares no factor with
+            // the note's (two strong partials with a common period would be
+            // heard at theirs, an octave or more over the note), never over
+            // its ceiling.
+            const int top = std::max(m_k + 1, int(std::floor(kF2Top / m_under)));
+            const int near = std::clamp(int(std::lround(f2want / m_under)), m_k + 1, top);
+            int k2 = near;
+            for (int d = 0; d <= 3; ++d) {
+                if (near - d > m_k && std::gcd(m_k, near - d) == 1) {
+                    k2 = near - d;
+                    break;
+                }
+                if (near + d <= top && std::gcd(m_k, near + d) == 1) {
+                    k2 = near + d;
+                    break;
+                }
+            }
+            m_voice.setFormants(f1, float(k2) * m_under);
+            if (m_voicing < 0.02f)
+                m_voice.placeNow();
+        }
+        const float P = kLungsSoft + (kLungsLoud - kLungsSoft) * clampf(effort, 0.0f, 1.0f);
+        return m_voice.step(m_under * float(m_voice.cycles()), P, m_voicing, m_engage, level * level);
+    }
+
+private:
+    // The undertone for a new note: the one held, a shared one, or a new
+    // one, and which harmonic of it the note is.
+    void choose(float note, float rootHz, float shareUnder) {
+        // The even harmonic of u the note is within 6 cents of (0: none).
+        auto fits = [&](float u) {
+            if (u < kUnderLo || u > kUnderHi)
+                return 0;
+            const float q = note / u;
+            const int k = 2 * int(std::lround(0.5f * q));
+            if (k < kKLo || k > kKHi)
+                return 0;
+            return std::fabs(1200.0f * std::log2(q / float(k))) < 6.0f ? k : 0;
+        };
+        int k = 0;
+        if (shareUnder > 0 && (k = fits(shareUnder)) > 0) {
+            m_under = shareUnder;
+        } else if (m_under > 0 && (k = fits(m_under)) > 0) {
+            // (Held: the drone stays, the vowel picks another harmonic.)
+        } else {
+            // A new one: the key's root under the note if it fits, or the
+            // note's own name an octave or more down (its 4th, 8th or 16th
+            // harmonic), or a fifth under that (the 6th, 12th), nearest
+            // 70 Hz; the 10th and 14th, a pure third and seventh, would put
+            // the growl out of key.
+            float best = 1e9f;
+            for (int kk : {4, 6, 8, 12, 16}) {
+                const float u = note / float(kk);
+                if (u < kUnderLo || u > kUnderHi)
+                    continue;
+                float score = std::fabs(std::log2(u / kUnderAt)) + (kk % 4 ? 0.3f : 0.0f);
+                if (rootHz > 0) {
+                    const float c = 12.0f * std::log2(u / rootHz);
+                    if (std::fabs(c - std::round(c / 12.0f) * 12.0f) < 0.1f)
+                        score -= 2.0f;
+                }
+                if (score < best)
+                    best = score, k = kk;
+            }
+            if (k == 0)
+                k = std::clamp(2 * int(std::lround(note / (2.0f * kUnderAt))), kKLo, kKHi);
+            m_under = note / float(k);
+        }
+        m_k = k;
+    }
+
+    // The undertone's register (Lindestad: 70 Hz; eleven recordings 61–92;
+    // Fuks from 49), and which harmonics a melody note may be of it
+    // (Castellengo & Henrich's 6th to 12th, down to the 4th for the neck's
+    // lowest notes, up to the 16th for its highest); F2's ceiling.
+    static constexpr float kUnderAt = 70.0f, kUnderLo = 45.0f, kUnderHi = 105.0f;
+    static constexpr int kKLo = 4, kKHi = 16;
+    static constexpr float kF2Top = 2300.0f;
+
+    float m_rate = 48000;
+    Voice m_voice;
+    float m_voicing = 0, m_engage = 0, m_up = 0, m_down = 0, m_engRate = 0, m_under = 0, m_noteWas = 0;
+    int m_age = 1 << 30, m_rough = 0, m_k = 0;
+    uint32_t m_tick = 0;
+};
+
+// The Vocal page's style: a sung voice in, the kargyraa out, at the
+// studio's rate.
 class Kargyraa {
 public:
     void init(float rate) {
@@ -363,7 +673,7 @@ public:
         m_consHp[0].set(1800.0f, 0.5412f, rate);
         m_consHp[1].set(1800.0f, 1.3066f, rate);
         m_hiBand.set(2000.0f, 0.7071f, rate);
-        m_dc.r = 1.0f - kTwoPi * 20.0f / rate;
+        m_voice.init(rate);
         auto per = [&](float seconds) { return 1.0f - std::exp(-1.0f / (seconds * rate)); };
         m_envUp = per(0.004f);
         m_envDown = per(0.03f);
@@ -371,10 +681,6 @@ public:
         m_vDown = per(0.025f);
         m_engRate = per(0.04f);
         m_glide = per(0.005f);
-        m_tractRate = per(kGlide);
-        m_rawRate = per(0.04f);
-        m_gainRate = per(0.01f);
-        m_settleRate = per(0.3f);
         m_onsetSamples = int(0.15f * rate);
         m_guardRate = per(0.02f);
         m_refFall = std::exp(-std::log(10.0f) * 6.0f / rate);
@@ -396,20 +702,13 @@ public:
         for (auto &f : m_consHp)
             f.reset();
         m_hiBand.reset();
-        for (auto &r : m_tract)
-            r.reset();
-        for (int j = 2; j < 12; ++j)
-            m_tract[j].set(std::min(kFHigh[j - 2], 0.45f * m_rate), kBHigh[j - 2], m_rate);
-        m_dc.x1 = m_dc.y1 = 0;
-        m_larynx.reset();
+        m_voice.reset();
         std::fill(std::begin(m_buf), std::end(m_buf), 0.0f);
         m_w = 0;
         m_phase = 0;
         m_hopAt = 0;
         m_preX = 0;
         m_env = m_pow = m_powHi = m_voicing = m_engage = 0;
-        m_rawPow = m_lvlPow = 0;
-        m_gain = m_gainSettled = kGainStart;
         m_powIn = m_powRef = m_powOut = 0;
         m_guard = 1;
         m_f0 = 0;
@@ -424,8 +723,8 @@ public:
         m_f2 = 900.0f;
         m_haveVowel = false;
         m_k1 = m_k2 = 0;
-        m_t1 = 500.0f;
-        m_t2 = 900.0f;
+        m_want1 = 500.0f;
+        m_want2 = 900.0f;
         m_tick = 0;
         m_consGate = 0;
 
@@ -443,7 +742,10 @@ public:
     // A finger's note (Hz; 0: none): the resonance steered onto the
     // undertone's harmonic nearest it. Without one, your vowel steers it.
     void setSteer(float hz) { m_steerHz = hz; }
-    void setRatio(int r) { m_ratio = std::clamp(r, 0, RatioCount - 1); }
+    void setRatio(int r) {
+        m_ratio = std::clamp(r, 0, RatioCount - 1);
+        m_voice.setRatio(m_ratio);
+    }
     int ratio() const { return m_ratio; }
 
     // The folds' pitch now, the undertone's (the false folds'), the octaves
@@ -455,19 +757,18 @@ public:
     int octave() const { return m_oct; }
     int harmonic() const { return m_voicing > 0.1f ? m_k1 : 0; }
     float focusHz() const { return m_want1; }
-    float f1() const { return m_t1; }
-    float f2() const { return m_t2; }
+    float f1() const { return m_voice.f1(); }
+    float f2() const { return m_voice.f2(); }
     // The singer's own first two resonances, as found.
     float sungF1() const { return m_f1; }
     float sungF2() const { return m_f2; }
     float engaged() const { return m_engage; }
     // The two valves' areas at the last sample (m²), for the tests.
-    const Larynx &larynx() const { return m_larynx; }
+    const Larynx &larynx() const { return m_voice.larynx(); }
 
     // n samples of the voice in; the kargyraa out, added to l and r.
     void process(const float *in, float *l, float *r, int n, float mix0 = 1.0f, float mix1 = 1.0f) {
         follow(n);
-        const int R = cyclesOf(m_ratio);
         const bool sounding = m_inVoiced && m_sung > 0;
         const float target = m_sung > 0 ? m_sung * std::exp2(float(m_oct)) : m_f0;
         for (int i = 0; i < n; ++i) {
@@ -492,7 +793,7 @@ public:
             const float hb = m_hiBand.step(x).high;
             m_powHi += (hb * hb - m_powHi) * (hb * hb > m_powHi ? m_envUp : m_envDown);
             const float loud = clampf(m_env / kEnvRef, 0.0f, 1.3f);
-            const float P = kPmin + (kPmax - kPmin) * std::min(loud, 1.0f);
+            const float P = kLungsSoft + (kLungsLoud - kLungsSoft) * std::min(loud, 1.0f);
             // The voice: in over 8 ms, out over 25.
             m_voicing += ((sounding ? 1.0f : 0.0f) - m_voicing) * (sounding ? m_vUp : m_vDown);
             // The false folds come in with the voice: a plain pitch first,
@@ -501,60 +802,20 @@ public:
             const bool rough = sounding && m_phraseAge < m_roughFor;
             const float engageTo = sounding ? (rough ? 0.5f : 1.0f) : 0.0f;
             m_engage += (engageTo - m_engage) * m_engRate;
-            m_larynx.rough += ((rough ? 1.0f : 0.0f) - m_larynx.rough) * m_engRate;
+            Larynx &lx = m_voice.larynx();
+            lx.rough += ((rough ? 1.0f : 0.0f) - lx.rough) * m_engRate;
             if (target > 0)
                 m_f0 = m_f0 > 0 && m_voicing > 0.05f ? m_f0 + (target - m_f0) * m_glide : target;
-            // The tract's resonances follow their targets over 25 ms: the
-            // tongue moving from one harmonic to the next.
-            // (A phrase's first vowel is placed at once, not glided to.)
-            if (m_voicing < 0.02f) {
-                m_t1 = m_want1;
-                m_t2 = m_want2;
+            // Your vowel onto the undertone's harmonics, every 16 samples (a
+            // phrase's first vowel placed at once, not glided to); then the
+            // voice, as loud as you: its level held to yours.
+            if ((m_tick++ & 15) == 0) {
+                place();
+                m_voice.setFormants(m_want1, m_want2);
             }
-            m_t1 += (m_want1 - m_t1) * m_tractRate;
-            m_t2 += (m_want2 - m_t2) * m_tractRate;
-            if ((m_tick++ & 15) == 0)
-                setTract();
-
-
-            float src = 0;
-            if (m_f0 > 0) {
-                const float norm = 1.0f / (Larynx::kAmax * std::sqrt(2.0f * P / Larynx::kRho) * m_f0 * kSrcScale);
-                src = m_larynx.step(m_f0, P, m_voicing, m_engage, R, kJitter, kShimmer, m_rate) * norm;
-            }
-            float y = src;
-            for (auto &res : m_tract)
-                y = res.step(y);
-            y = m_dc.step(y);
-            if (!std::isfinite(y)) {
-                reset();
-                y = 0;
-            }
-            // As loud as you: the growl's own power over 40 ms held to
-            // yours over the same, so the vowel, the harmonic the melody is on, the
-            // doubling coming in and the pressure change its colour but not
-            // its level (a loudness follower, by design). A phrase starts
-            // on the gain the last one settled on, and the gain never rises
-            // past twice that: the growl's first milliseconds, while its
-            // own 40 ms power is still building, aren't lifted to meet a
-            // level they haven't reached.
-            // (Yours and the growl's, each over the same 40 ms and both
-            // started when the growl starts, so neither leads the other at
-            // an onset: yours began a tracker's latency earlier.)
-            if (m_voicing < 0.05f) {
-                m_gain = m_gainSettled;
-                m_rawPow = m_lvlPow = 0;
-            } else {
-                m_rawPow += (y * y - m_rawPow) * m_rawRate;
-                m_lvlPow += (x * x - m_lvlPow) * m_rawRate;
-            }
-            const float gTo = m_rawPow > 1e-12f ? std::min(std::sqrt(m_lvlPow / m_rawPow), std::min(kGainCap, 2.0f * m_gainSettled))
-                                                : m_gainSettled;
-            m_gain += (gTo - m_gain) * m_gainRate;
-            // (Settled: a tenth of a second into a doubled, sounding voice.)
-            if (m_voicing > 0.99f && m_engage > 0.95f)
-                m_gainSettled += (m_gain - m_gainSettled) * m_settleRate;
-            y *= m_gain * kLevel;
+            if (m_voicing < 0.02f)
+                m_voice.placeNow();
+            float y = m_voice.step(m_f0, P, m_voicing, m_engage, x * x);
             // A guard, not a sound: what comes out over 20 ms is held to at
             // most 6 dB over your level (held as it falls, 60 dB a second),
             // so a tone or a buzz shouted in can't make it ring far louder.
@@ -622,7 +883,7 @@ private:
             // How long this phrase's rough start lasts, and how far the
             // singer's false folds are set off the lock.
             m_roughFor = int((0.05f + 0.25f * m_rng.unit()) * m_rate);
-            m_larynx.detune = 1.0f + 0.03f * Larynx::gauss(m_rng);
+            m_voice.larynx().detune = 1.0f + 0.03f * Larynx::gauss(m_rng);
             return;
         }
         m_unvoiced = 0;
@@ -709,11 +970,6 @@ private:
             m_k2 = m_k1 + 2;
             m_want2 = float(m_k2) * fu;
         }
-    }
-    void setTract() {
-        place();
-        m_tract[0].set(m_t1, kB1, m_rate);
-        m_tract[1].set(m_t2, kB2, m_rate);
     }
     // --- the analysis ------------------------------------------------------
     // Every 8 ms, the last 32 ms of what you sing at 8 kHz: windowed,
@@ -855,17 +1111,7 @@ private:
     // undertone of 40–115 Hz; Fuks 1998 sang an octave from 49 Hz).
     static constexpr float kCentreHz = 140.0f;
     static constexpr float kFoldTop = 230.0f, kFoldBottom = 80.0f;
-    // The lungs: 1.4 kPa soft to 2.4 kPa loud; a full voice about the
-    // 21.9 cmH₂O (2.15 kPa) Fuks measured in this mode, against 18 modal.
-    static constexpr float kPmin = 1400.0f, kPmax = 2400.0f;
     static constexpr float kEnvRef = 0.12f;
-    // Cycle to cycle: jitter 0.2 %, shimmer 0.025 neper (0.2 dB). Nothing
-    // measures a kargyraa's; it is "sonorous" (Lindestad 2001), its cycles
-    // "more uniform" than the pulse register's (Grawunder 1999), and its
-    // partials clear to 4 kHz (Fuks 1998), so a steady healthy voice's;
-    // with the false folds' own variation the undertone's period jitter
-    // comes to about 0.4 %.
-    static constexpr float kJitter = 0.002f, kShimmer = 0.025f;
     // The tract. Your formants to a man's: α at your own octave, less per
     // octave the voice is moved down. The bands the two resonances keep
     // to, and the melody's band.
@@ -874,31 +1120,10 @@ private:
     static constexpr float kF1Lo = 300.0f, kF1Hi = 950.0f, kF2Hi = 2300.0f, kGap = 180.0f;
     static constexpr float kMelLo = 5.7f; // the melody from the undertone's 6th harmonic
     static constexpr float kHysteresis = 0.25f;
-    static constexpr float kGlide = 0.015f; // s
-    // Bandwidths: narrow. Nothing measures a kargyraa's; a long, firm
-    // glottal closure damps the tract little, and an overtone singer's
-    // tuned formant is about 20 Hz wide (Klingholz 1993). 25 Hz puts the
-    // tuned harmonic 5–16 dB over its neighbours across H6–H11.
-    static constexpr float kB1 = 25.0f, kB2 = 45.0f;
-    // F3–F5 a man's; F6–F12 over them, about a kilohertz apart as an 18 cm
-    // tube's are. A cascade cut off after five poles loses what the poles
-    // above add to the top (Klatt's cascade at 10 kHz stood in for them
-    // with a higher-pole correction; at the studio's rate they are poles).
-    static constexpr float kFHigh[10] = {2350.0f, 3150.0f, 3750.0f, 4500.0f, 5500.0f,
-                                         6500.0f, 7500.0f, 8500.0f, 9500.0f, 10500.0f};
-    static constexpr float kBHigh[10] = {110.0f, 160.0f, 200.0f, 300.0f, 400.0f, 500.0f, 600.0f, 700.0f, 800.0f, 900.0f};
-    // Calibration: what a source cycle carries, and the voice's level.
-    static constexpr float kSrcScale = 1.0f;
-    static constexpr float kLevel = 1.0f;   // the growl's RMS against yours
-    static constexpr float kGainCap = 0.15f;   // (a voice needs 0.01–0.05: its raw RMS is 10–30)
-    static constexpr float kGainStart = 0.03f; // a first phrase's gain
-
     float m_rate = 48000, m_inner = 8000;
     int m_decim = 6, m_phase = 0;
     Svf m_down[3], m_consHp[2], m_hiBand;
-    DcBlock m_dc;
-    Resonator m_tract[12];
-    Larynx m_larynx;
+    Voice m_voice;
     float m_buf[kBufN] = {};
     float m_hann[kWin] = {};
     float m_gc[kGrid][kOrder + 1] = {}, m_gs[kGrid][kOrder + 1] = {};
@@ -907,8 +1132,7 @@ private:
     float m_preX = 0;
     float m_env = 0, m_pow = 0, m_powHi = 0, m_voicing = 0, m_engage = 0;
     float m_envUp = 0, m_envDown = 0, m_vUp = 0, m_vDown = 0, m_engRate = 0;
-    float m_glide = 0, m_tractRate = 0, m_rawRate = 0, m_gainRate = 0;
-    float m_rawPow = 0, m_lvlPow = 0, m_gain = 0, m_gainSettled = 0, m_settleRate = 0;
+    float m_glide = 0;
     int m_onsetSamples = 7200;
     float m_powIn = 0, m_powRef = 0, m_powOut = 0, m_guard = 1, m_guardRate = 0, m_refFall = 1;
     float m_f0 = 0, m_sung = 0, m_inHz = 0, m_inClarity = 0, m_steerHz = 0;
@@ -917,7 +1141,7 @@ private:
     bool m_inVoiced = false, m_haveVowel = false;
     float m_r1[3] = {500, 500, 500}, m_r2[3] = {900, 900, 900};
     int m_ri = 0;
-    float m_f1 = 500, m_f2 = 900, m_want1 = 500, m_want2 = 900, m_t1 = 500, m_t2 = 900;
+    float m_f1 = 500, m_f2 = 900, m_want1 = 500, m_want2 = 900;
     int m_k1 = 0, m_k2 = 0;
     uint32_t m_tick = 0;
     float m_consGate = 0;

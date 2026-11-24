@@ -228,7 +228,13 @@ struct Sound {
     //   Guitar: an overdriven electric guitar as physics (guitar.h): a
     //           steel string picked, read by a humbucker, through a valve
     //           amp and a 4x12; every voice of the line its own guitar.
-    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax, Guitar };
+    //   Kargyraa: the Tuvan growl as physics (kargyraa.h, shared with the
+    //           Vocal page's style): vocal folds and the false folds
+    //           closing on every other pulse, an undertone in kargyraa's
+    //           register, and a tract whose first resonance sits on the
+    //           note, a harmonic of that undertone: the throat singer's
+    //           melody over the growl.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax, Guitar, Kargyraa };
     int model = Osc;
     float jawari = 0;      // String: how hard the string buzzes on its bridge
     float sympathy = 0;    // String: how loud the taraf rings
@@ -277,7 +283,7 @@ inline const char *registerName(float y) {
 // note is held, strikes the high drone strings instead of a hammer-on.
 constexpr float kChikariY = 0.8f;
 
-constexpr int kSounds = 21;
+constexpr int kSounds = 22;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -540,6 +546,18 @@ inline const Sound &sound(int i) {
          .d = 1.0f, .s = 1.0f, .r = 0.3f, .glide = 0.004f, .vibRate = 5.8f, .vibDepth = 0.35f, .vibDelay = 0.6f,
          .echo = 0.16f, .echoFb = 0.32f, .echoBeats = 0.75f, .gain = 1.0f, .model = Sound::Guitar, .hand = 0.12f,
          .feedback = 1.0f},
+        // Kargyraa, the Tuvan growl, played as a throat singer sings a
+        // melody: the note is an overtone the vowel picks out, a whistle
+        // over the growl, and the growl's undertone sits under it in
+        // kargyraa's own register (55–100 Hz: the note divided by the
+        // harmonic that brings it nearest 70 Hz), the folds an octave over
+        // that and the false folds closing on every other pulse (a short
+        // rough start on a note from silence, then the doubling). Higher on
+        // the pad brightens the vowel (its F2) and opens the filter; the
+        // press is the lungs.
+        {.name = "Kargyraa", .style = "Tuvan throat singing", .cutoff = 0.85f, .cutoffY = 0.12f, .keyTrack = 0.3f,
+         .a = 0.04f, .d = 0.5f, .s = 0.95f, .r = 0.12f, .glide = 0.08f, .vibDepth = 0.04f, .vibDelay = 0.8f,
+         .echo = 0.1f, .echoFb = 0.25f, .gain = 1.0f, .model = Sound::Kargyraa},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

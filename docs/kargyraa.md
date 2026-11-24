@@ -1,6 +1,7 @@
 # Kargyraa: the Tuvan growl
 
-KARGYRAA is the Vocal page's last style. You sing or speak low, and what
+KARGYRAA is the Vocal page's last style, and the Lead page's last sound
+(below). You sing or speak low, and what
 comes back is your voice made the way a kargyraa singer's larynx makes it:
 - a growl an octave under the note you sing;
 - over it, a melody made of that growl's own harmonics, steered by your
@@ -70,11 +71,11 @@ quadratic. The lips radiate dU/dt.
 | Lock | an Adler phase oscillator: dφ/dt = f + K·sin 2π(φ_lock − φ), K = 0.25 of its rate | the 1:2 entrainment of two self-sustained oscillators (Bailly 2014 gives the false folds their own resonance, about 70 Hz, Q ≈ 3) |
 | Their natural rate | the singer's tension: f0/R, followed over 0.3 s, set off it by ±3 % (sd) at each phrase | so the phase of the lock differs from phrase to phrase and slips at a leap. It is not their free resonance: a fixed 70 Hz could not lock across the 49–95 Hz kargyraa is sung over, which the singer's tension evidently can |
 | Back pressure `kBackPressure` | during contact the folds' open phase runs at 1 − 0.47 × its speed, the 0.47 wandering slowly, ±5 % (sd) over 0.3 s | Bailly 2010: the contact cycle is 1.19 × the other, its open phase 1.5 ms longer, its open quotient +11 %; four consecutive cycles apart by a steady 39–42 Hz. Their model (ventricle at the lungs' pressure, so no glottal drop) does not produce the lengthening, so it is set to the measurement. Measured here: 19 % longer. Varied more, or from closure to closure, the half-harmonics' timing scatters and the top turns to noise (round 2: HNR 2–3 dB over 2 kHz) |
-| The pair's period | held at exactly R × the sung period | so the undertone is the sung note's half, in tune with the music |
+| The pair's period | held at R × the sung period, half of each pair's error corrected at the next | so the undertone is the sung note's half, in tune with the music, within a few cents (all of the error at once is a loop at a gain of one, and with the lock's lag it can swing) |
 | The weak pulse | the series flow, not a constant | measured here: 0.28 of the strong (−11 dB). Fuks −13 dB; Lindestad less |
 | Onset | each phrase starts rough: for 50–300 ms (different each phrase) the false folds approach on every cycle without touching, jitter and shimmer × 5; then the doubling comes in over about 40 ms | Castellengo & Henrich 2014: a song starts on a plain pitch and switches to the doubling. Bailly 2010: a rough, same-period stage before it |
-| Jitter, shimmer | 0.2 %, 0.025 neper (0.2 dB) per cycle. With the false folds' own variation, the undertone's period jitter comes to 0.44 % | none published. Lindestad: "sonorous"; Grawunder 1999: "more uniform" than pulse register; Fuks: "clear harmonic partials up to about 4 kHz". At 0.5 % the 20th harmonic's phase is already scrambled |
-| Turbulence | (Re² − Re_c²) above Re_c 2700, at both jets; the false folds' jet counts as far as they are the narrower. Scale 1.5·10⁻⁶ per Re² | Meyer-Eppler 1953; Flanagan & Cherry 1969. None is published for kargyraa (heard as "hoarse"). This is 0.75 × RIOT's. Harmonics-to-noise: 38, 26, 13 and 8.5 dB at 0–1, 1–2, 2–3 and 3–4 kHz (mean of five pitches, /a/ and /o/) |
+| Jitter, shimmer | 0.2 %, 0.025 neper (0.2 dB) per cycle. With the false folds' own variation, the undertone's period jitter comes to 0.53 % | none published. Lindestad: "sonorous"; Grawunder 1999: "more uniform" than pulse register; Fuks: "clear harmonic partials up to about 4 kHz". At 0.5 % the 20th harmonic's phase is already scrambled |
+| Turbulence | (Re² − Re_c²) above Re_c 2700, at both jets; the false folds' jet counts as far as they are the narrower. Scale 1.5·10⁻⁶ per Re² | Meyer-Eppler 1953; Flanagan & Cherry 1969. None is published for kargyraa (heard as "hoarse"). This is 0.75 × RIOT's. Harmonics-to-noise: 39, 27, 12 and 9 dB at 0–1, 1–2, 2–3 and 3–4 kHz (mean of five pitches, /a/ and /o/) |
 
 ### The tract
 
@@ -132,13 +133,75 @@ front end (`tests/vocal_tests.cpp`).
 | 3:1 | third-harmonics present, 4 dB under the harmonics | Fuks, Sakakibara |
 | Vowel steering | /u/: F1 on H5 (325 Hz), 16 dB over its neighbours. /a/: H11 (714 Hz), 16 dB over | |
 | A finger, each of H6–H11 | 8.3, 5.5, 12.5, 16.0, 7.2 and 14.0 dB over the louder neighbour | |
-| Regularity | undertone period jitter 0.44 %; harmonics-to-noise 38 / 26 / 13 / 8.5 dB at 0–1 / 1–2 / 2–3 / 3–4 kHz | Fuks: clear partials to 4 kHz; Lindestad: "sonorous" |
+| Regularity | undertone period jitter 0.53 %; harmonics-to-noise 39 / 27 / 12 / 9 dB at 0–1 / 1–2 / 2–3 / 3–4 kHz | Fuks: clear partials to 4 kHz; Lindestad: "sonorous" |
 | The top, against modal | against the same engine without the false folds and at modal pressure (formants on its own harmonics), 2–4 kHz is +8 dB on /a/ and /o/ and +15 on /u/; 4–6 kHz is +5, +5 and +9 | Fuks: more energy at 2–6 kHz than modal, on [a] |
 | Level | on a steady vowel within 0.3 dB of the singer's; 100 ms levels within ±1 dB; on the page 0.1 dB from the natural voice | |
 | Onset | within 6 dB of steady 39 ms after the vowel starts (the tracker's first readings, then the rough start). An attack's loudest 25 ms is −0.8 to +2.9 dB against the steady part's loudest | |
 | Silence, loud input | silent; a full-scale buzz, square, noise, tone and clicks are all finite and held to 6 dB over the input's level | |
 | Cost | 0.36 % of a core (best of three, 10 s, on a loaded machine); 0.53 % in the harness | |
 | Sanitizers | the engine and the page's kargyraa tests under `-fsanitize=address,undefined`, gcc and clang: clean | |
+
+## On the Lead page
+
+KARGYRAA is also the Lead page's last sound. It is the same voice
+(`kargyraa::Voice` in `src/kargyraa.h`: the larynx, the tract and the
+level loop), driven by a note through `kargyraa::Played`, the way a throat
+singer sings a melody.
+
+- **The note is the melody.** It is a harmonic of the growl's undertone,
+  and the vowel's first resonance sits on it, narrow, so it is the line
+  heard, at the note's own pitch and octave.
+- **The growl holds under it**, in kargyraa's register (45–105 Hz), as a
+  singer's drone does while the vowel picks out another harmonic.
+  - **When it holds.** It holds while each new note is within 6 cents of
+    one of its even harmonics, the 4th to the 16th: its octaves and
+    fifths, the folds' own harmonics, steady.
+  - **When it moves.** Otherwise it moves to the key's root if that fits
+    under the note, or else to the note's own name an octave or more down,
+    or a fifth under that.
+  - **Never a third or a seventh.** The 10th and 14th harmonics, a pure
+    third and seventh, are never chosen: they would put the growl out of
+    key (an E5 over a C♯ growl, 14 cents off the tempered note).
+  - **An example.** In A, E4, A4, E5 and A5 all sound over one A1 growl,
+    as its 6th, 8th, 12th and 16th harmonics. C5 moves it to C2.
+  - **The folds.** They sound an octave over the undertone, and the false
+    folds close on every other pulse.
+- **Harmony voices** share the lead voice's growl when they fit it: one
+  drone under the chord. One that doesn't fit has a growl of its own.
+- **Why not the undertone as the note.** That was the first version,
+  carried over from a bass sound. Up the neck it put the folds at 440 Hz
+  and more. With the undertone weak, as it is in kargyraa, the strongest
+  harmonic became the pitch heard, an octave and a fifth up: the review's
+  "a sine and a whistle". A kargyraa singer's melody is its overtones, so
+  the lead plays those.
+- **Height brightens the vowel.** F2 moves from an octave over F1 (the
+  open vowels' "formant octave") up to a held 1.7 kHz (/ɛ ə a/), the two
+  ways Castellengo & Henrich found it sung. The lead's filter opens with
+  it.
+  - F2 always sits on a harmonic that shares no factor with the note's: two
+    strong partials with a common period would be heard at theirs.
+  - F2 never goes over 2.3 kHz.
+- **A note from silence is a phrase.** It has a short rough start of
+  20–60 ms, then the doubling. An accent doubles at once. The singer's
+  50–300 ms would put a line's first note's growl an octave up, off the
+  beat. The false folds are set off the lock a little, differently each
+  time.
+- **The press is the lungs:** 1.4–2.4 kPa.
+- **Around it.**
+  - The voice's level is held, at RMS 0.2, so every note is as loud as the
+    last.
+  - The lead's envelope (40 ms in, 120 ms out), its filter and its echo
+    shape it after.
+  - The throat sounds on through the envelope's release.
+
+| Check | Result |
+|---|---|
+| A3, A4, E5 held, in A (`lead_tests.cpp`) | the strongest line is the note, the 4th, 8th and 12th harmonic of the A1 growl (55 Hz). Half-harmonics against their neighbours: −0.5, −1.9 and +1.1 dB |
+| A line in A (`kargyraa_tests.cpp`) | A4, E5, A5 and E4 hold the A1 growl; C5 moves it to C2 |
+| A4 held two seconds | its line at 439.9 Hz (−0.4 cents); over a third of a second it wanders ±5–10 cents, as a held voice does |
+| Let go | silent a quarter second later |
+| Every lead sound's checks | in bounds at the extremes, unlike the others. Its tuning is checked by its spectrum, as the gongs' is: the growl's partials close either side of the note pull an autocorrelation's peak |
+| Cost | 0.26 % of a core for one voice. Every voice of a line and each harmony bank runs its own throat, so the page's worst case (8 voices × 4 banks) would be about 8 % |
 
 ## The review
 
@@ -230,4 +293,54 @@ the last.
   engine.
 - **The page's pitch tracker at 96 kHz** reads 135 Hz as 139.5 and loses
   110 Hz, which this style (and others) inherit.
+
+### The review of the playable version
+
+The playable kargyraa had three rounds of its own. It began as a Bass
+sound, and became a Lead when the user asked for one.
+
+**Bass, round one:**
+- above A2 the sound was a sine and a 2.6 kHz whistle, because F1 was
+  unbounded;
+- a note from silence growled an octave up for up to 300 ms;
+- E1's low heights had no melody.
+
+All three were fixed: F1 kept to 280–950 Hz, a 20–60 ms rough start, and
+the height spread over the harmonics left. The reviewer judged a bass the
+right register for kargyraa's undertone.
+
+**Round two** was stopped unfinished when the plan changed to a Lead. It
+counts toward the three.
+
+**Lead, round three**, the last. It passed:
+- the pitch, within ±4 cents from E3 to A6;
+- the melody standing 5–12 dB over the growl from A3 to C6;
+- the onset;
+- the real-time safety and the per-voice cost.
+
+It held back sign-off on one item: the growl moved with every note,
+parallel to the melody, and its 10th harmonic put it out of key. It is
+now held, and moves only to the key's root or the note's own name, as
+above. It also found:
+- F2 overshooting its ceiling past D♯6;
+- every harmony bank growing its own drone;
+- the throat stopping before the envelope's release.
+
+All three are fixed. None of the four fixes was re-reviewed: the third
+round was the last.
+
+**Still open:**
+- **A3's growl.** In the full lead it is quieter than in the bare voice:
+  the lead's filter and echo sit over it.
+- **Cost.** Each harmony bank that doesn't fit the lead voice's growl, and
+  every voice, runs a throat of its own: about 8 % of a core in the
+  page's worst case.
+- **Height.** It moves only F2. The melody is the note, so the vowel's
+  F1 is not the player's to move, as it is on the Vocal page.
+- **The vocal style after the pair compensation changed** (it now corrects
+  half of each pair's error, for the lead's pitch). Undertone jitter is
+  0.53 % (was 0.44 %). The harmonics-to-noise and the level flutter moved
+  a little: on /a/, 30/20/7/4 dB against 33/22/9/5 by the reviewer's
+  measure. The finger-steered 7th harmonic on /a/ improved from 1.5 dB to
+  5.4 dB over its neighbours.
 

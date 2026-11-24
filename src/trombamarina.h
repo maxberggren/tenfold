@@ -172,6 +172,26 @@ struct Halfband {
     }
 };
 
+// A fractional delay's cubic Hermite weights (as Delay::read), worked out
+// once for the two lines of a segment, which share their length.
+struct Frac {
+    uint32_t i = 2;
+    float w0 = 0, w1 = 1, w2 = 0, w3 = 0;
+    void set(float d) {
+        d = std::max(d, 1.0f);
+        const float fl = std::floor(d), t = d - fl, t2 = t * t, t3 = t2 * t;
+        i = uint32_t(fl);
+        w0 = -0.5f * t + t2 - 0.5f * t3;
+        w1 = 1.0f - 2.5f * t2 + 1.5f * t3;
+        w2 = 0.5f * t + 2.0f * t2 - 1.5f * t3;
+        w3 = -0.5f * t2 + 0.5f * t3;
+    }
+    float read(const Delay &dl) const {
+        const uint32_t m = dl.mask, b = dl.w - i;
+        return w0 * dl.buf[(b + 1) & m] + w1 * dl.buf[b & m] + w2 * dl.buf[(b - 1) & m] + w3 * dl.buf[(b - 2) & m];
+    }
+};
+
 // --- the soundboard, built once ---------------------------------------------------------------------------
 
 struct Board {
@@ -612,6 +632,11 @@ public:
         const float cb = m * kTwoPi * P::kBridgeHz / P::kBridgeQ;
         const float rl = P::kLever, dtI = m_dtI;
         const float twoZ = 2.0f * Z, inv4Z = 1.0f / (4.0f * Z);
+        // The bridge step's constant parts.
+        const float inv2dt = 1.0f / (2.0f * dtI), mOverDt2 = m / (dtI * dtI);
+        const float aLin = mOverDt2 + 0.5f * kb + (cb + rl * rl * Z) * inv2dt, twoRZ = 2.0f * rl * Z;
+        const bool moving = dd[0] != 0.0f || dd[1] != 0.0f || dd[2] != 0.0f;
+        Frac fa, fb, fc3;
         float peak = 0;
         for (int i = 0; i < n; ++i) {
             for (int o = 0; o < kOver; ++o) {
@@ -620,9 +645,16 @@ public:
                 dC += dd[2];
                 force += dForce;
                 speed += dSpeed;
-                const float aR = m_aR.read(dA), aL = m_aL.read(dA);
-                const float bR = m_bR.read(dB), bL = m_bL.read(dB);
-                const float cR = m_cR.read(dC), cL = m_cL.read(dC);
+                // (The lengths only move in a slide or a glide: their
+                // weights are worked out again only then.)
+                if (moving || (i == 0 && o == 0)) {
+                    fa.set(dA);
+                    fb.set(dB);
+                    fc3.set(dC);
+                }
+                const float aR = fa.read(m_aR), aL = fa.read(m_aL);
+                const float bR = fb.read(m_bR), bL = fb.read(m_bL);
+                const float cR = fc3.read(m_cR), cL = fc3.read(m_cL);
                 // The nut: rigid, the wave turned over.
                 m_aR.push(-aL);
                 // The bow: where the string's impedance line meets the
@@ -683,29 +715,35 @@ public:
                 // s, so one root, which Newton finds from the linear guess.
                 const float yp = m_yp, y0 = m_y;
                 const float pen0 = std::max(0.0f, -m_gap - y0);
-                const float dc = cb + P::kContactLambda * P::kContactK * pen0 * std::sqrt(pen0) + rl * rl * Z;
-                const float A = m / (dtI * dtI) + 0.5f * kb + dc / (2.0f * dtI);
-                const float B = -2.0f * m * (y0 - yp) / (dtI * dtI) + kb * yp - 2.0f * rl * Z * in;
-                const float Vp = potential(yp);
+                const float hc = pen0 > 0 ? P::kContactLambda * P::kContactK * pen0 * std::sqrt(pen0) : 0.0f;
+                const float A = aLin + hc * inv2dt;
+                const float B = -2.0f * mOverDt2 * (y0 - yp) + kb * yp - twoRZ * in;
                 float sN = -B / A;
                 float phi = 0;
-                for (int it = 0; it < 8; ++it) {
-                    float dphi = 0;
-                    phi = slopeBetween(yp, sN, Vp, dphi);
-                    const float G = A * sN + B + phi;
-                    const float step = G / (A + dphi);
-                    sN -= step;
-                    if (std::fabs(step) < 1e-13f + 1e-6f * std::fabs(sN))
-                        break;
+                // Clear of the board at both ends of the step, the contact's
+                // potential is zero there and the linear step is the step;
+                // only a step that reaches the board needs Newton.
+                if (pen0 > 0 || yp + sN < -m_gap || yp < -m_gap) {
+                    const float Vp = potential(yp);
+                    for (int it = 0; it < 8; ++it) {
+                        float dphi = 0;
+                        phi = slopeBetween(yp, sN, Vp, dphi);
+                        const float G = A * sN + B + phi;
+                        const float step = G / (A + dphi);
+                        sN -= step;
+                        if (std::fabs(step) < 1e-13f + 1e-6f * std::fabs(sN))
+                            break;
+                    }
+                    float d;
+                    phi = slopeBetween(yp, sN, Vp, d);
                 }
-                phi = [&] { float d; return slopeBetween(yp, sN, Vp, d); }();
                 const float y1 = yp + sN;
-                const float vy = sN / (2.0f * dtI); // the foot's speed at step n
+                const float vy = sN * inv2dt; // the foot's speed at step n
                 m_yp = y0;
                 m_y = y1;
                 m_vy = vy;
                 // The contact's force on the foot (up), and its knocks.
-                const float fc = -phi - P::kContactLambda * P::kContactK * pen0 * std::sqrt(pen0) * vy;
+                const float fc = -phi - hc * vy;
                 if (pen0 > 0 || y1 < -m_gap) {
                     ++m_contactSamples;
                     if (!m_touching)
@@ -754,7 +792,10 @@ public:
             return;
         }
         // Asleep once the bow is off and it has rung out.
-        if (m_forceTo <= 0 && peak < 1e-6f && std::fabs(m_vy) < 1e-7f && m_out < 1e-7f * std::max(gain, 1e-6f)) {
+        // (A bowed string moves at a few tenths of a metre a second: 30 µm/s
+        // is 80 dB under that, and the board's pressure as far under its
+        // ordinary level.)
+        if (m_forceTo <= 0 && peak < 3e-5f && std::fabs(m_vy) < 3e-6f && m_out < 1e-5f * std::max(gain, 1e-6f)) {
             if (++m_quiet > int(0.05f * m_rate / float(n)) + 1)
                 silence();
         } else {

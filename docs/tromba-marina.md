@@ -153,11 +153,24 @@ estimated where nothing is published.
 - **Stability:** 20 s of 20 N at 2 m/s, turning, leaping across every
   harmonic and bending, with NaN and infinities thrown in. It stays finite
   under 200 Pa, and once the bow leaves it sleeps within 4 s.
-- **Cost:** a knocking string costs under 1.5 % of real time (0.8–0.9 %
-  on the development machine). A released string goes on costing that
-  until it sleeps, 0.8–1.3 s later. The worst case, eight voices of four
-  strings, is about 0.28 of a core. A run with three harmony strings
-  keeps p99 load under 0.2.
+- **Cost:** a knocking string costs under 1.5 % of real time (0.46 % on
+  the development machine).
+  - A released string goes on costing that until it sleeps, once it is
+    80 dB under a bowed string's motion: 1.1 s after the bow leaves.
+  - The worst case, eight voices of four strings, is about 0.15 of a
+    core.
+  - The test's run with three harmony strings has a p99 callback load of
+    0.093 on the development machine; the limit is 0.2.
+  - What made it cheaper, with the output the same to 70–110 dB under the
+    signal:
+    - the cubic interpolation's weights, worked out once per segment
+      (both directions share a length) and only when the lengths move;
+    - the bridge's Newton solve, skipped when the step stays clear of the
+      board, where the contact's potential is zero;
+    - the bridge step's constants, out of the loop;
+    - sleeping at −80 dB instead of −120.
+  - Together: 0.79 % → 0.46 % a string, and p99 0.164 → 0.093 on that
+    run, which CI's shared runners had measured at 0.22–0.28.
 
 ## Open points
 

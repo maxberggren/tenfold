@@ -466,9 +466,10 @@ private slots:
     void aHeldTamTamIsRolledAndSwells() {
         // Held, the tam-tam is rolled with soft beaters, swelling over a
         // second or two, harder the harder the press; let go, a hand stills
-        // it over a few seconds rather than at once.
-        const auto held = testkit::play(onSound(kTamTam, fmt("down 0.3 1 %.4f 0.4 p=0.9\nup 4.0 1\nend 8.5\n", cellX(7))));
-        const auto tap = testkit::play(onSound(kTamTam, fmt("down 0.3 1 %.4f 0.4 p=0.9\nup 0.45 1\nend 4.5\n", cellX(7))));
+        // it over a few seconds rather than at once. (A medium press, so the
+        // swell has room under the studio's ceiling.)
+        const auto held = testkit::play(onSound(kTamTam, fmt("down 0.3 1 %.4f 0.4 p=0.6\nup 4.0 1\nend 8.5\n", cellX(7))));
+        const auto tap = testkit::play(onSound(kTamTam, fmt("down 0.3 1 %.4f 0.4 p=0.6\nup 0.45 1\nend 4.5\n", cellX(7))));
         QVERIFY2(levelOf(held, 2.8, 3.8) > levelOf(tap, 2.8, 3.8) + 6,
                  qPrintable(QStringLiteral("%1 %2").arg(levelOf(held, 2.8, 3.8)).arg(levelOf(tap, 2.8, 3.8))));
         QVERIFY2(levelOf(held, 2.8, 3.8) > levelOf(held, 0.6, 1.0),
@@ -494,7 +495,7 @@ private slots:
     void aGongStaysInsideBudget() {
         // A hard strike on each kind, rendered against the clock: a bossed
         // or opera gong costs a fraction of a percent of real time, a
-        // tam-tam (eighty modes and the stretching of its sheet) a couple.
+        // tam-tam (116 sheet modes and the stretching of eight patches) about one.
         for (int k = 0; k < gong::kKinds; ++k) {
             gong::Gong g;
             g.init(kRate);

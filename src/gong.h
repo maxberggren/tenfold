@@ -40,7 +40,7 @@
 //                 Balinese gong's ombak, Krueger et al. 2010).
 //   tam-tam     a thin, nearly flat sheet driven past its thickness has to
 //               pass energy to modes of every symmetry, as wave turbulence
-//               does. Its stress is resolved instead on sixteen patches of
+//               does. Its stress is resolved instead on eight patches of
 //               the sheet, each with the uniform tension of its own mean
 //               stretch (Marguerre's ½|∇w|² + ∇w0·∇w where the patch is): a
 //               local, Berger-like approximation of an in-plane stress that
@@ -168,9 +168,10 @@ struct Bronze {
 struct Knobs {
     // How much of the uniform tension an immovable rim would hold, the
     // flange's or ring's in-plane stiffness against the sheet's.
-    static inline float rimOpera = 1.0f, rimBossed = 1.0f, rimTamTam = 0.28f;
+    static inline float rimOpera = 1.0f, rimBossed = 1.0f, rimTamTam = 0.2f;
     static inline float level = 0.5f;
     static inline float speed = 1.0f, texture = 1.0f, texSlope = -1.0f; // for exploring
+    static inline int patches = 0, modes = 0; // overrides, for exploring
     // A tam-tam's swing energy is limited to this (in thicknesses² of its
     // thud's swing): a few hard strokes' worth, a numerical guard.
     static inline float yield = 12.0f;
@@ -248,9 +249,9 @@ inline Spec specOf(Kind k) {
         s.rise = 0.6f;
         s.riseOver = 0.35f;
         s.texture = 0.9f;
-        s.patches = 16;
+        s.patches = 8;
         s.rim = Knobs::rimTamTam;
-        s.maxModes = 190;
+        s.maxModes = 116;
         s.maxM = 40;
         s.maxRatio = 200.0f;
         s.twin = 0.012f;
@@ -265,6 +266,10 @@ inline Spec specOf(Kind k) {
     }
     s.speed *= Knobs::speed;
     s.texture *= Knobs::texture;
+    if (Knobs::patches > 0 && k == TamTam)
+        s.patches = Knobs::patches;
+    if (Knobs::modes > 0 && k == TamTam)
+        s.maxModes = Knobs::modes;
     if (Knobs::texSlope >= 0)
         s.textureSlope = Knobs::texSlope;
     return s;
@@ -305,7 +310,12 @@ struct Design {
     // there, and the patch's stiffness.
     int Pt = 0;
     std::vector<float> px, py, w0x, w0y, kapPt;
-    std::vector<float> pxT, pyT; // the same, [n][kPtPad], for working out every patch at once
+    std::vector<float> pxT, pyT; // the same, [n][ptw], for working out every patch at once
+    int ptw = 0;                 // the patches padded to a multiple of four
+    // The same again in blocks of four modes: for each block, for each
+    // patch, the four modes' x slopes, then for each patch their y slopes
+    // ([n/4][2·ptw][4]); the modes padded to a multiple of four with none.
+    std::vector<float> blocks;
     std::vector<float> wtx, wty, Kax; // the texture's slope alone at each patch; the dome's smooth stiffness [na][na]
     // A tam-tam rings in its sheet's own modes (eigen): each one's λ² and
     // frequency over the thud's, the plate mode it is most of, and the
@@ -911,12 +921,23 @@ inline Design buildDesign(const Spec &sp, float rise) {
             }
         d.px = px;
         d.py = py;
-        d.pxT.assign(size_t(N) * kPtPad, 0.0f);
-        d.pyT.assign(size_t(N) * kPtPad, 0.0f);
+        d.ptw = (d.Pt + 3) & ~3;
+        d.pxT.assign(size_t(N) * d.ptw, 0.0f);
+        d.pyT.assign(size_t(N) * d.ptw, 0.0f);
+        {
+            const int nb = (N + 3) / 4, w = d.ptw;
+            d.blocks.assign(size_t(nb) * 2 * w * 4, 0.0f);
+            for (int q = 0; q < d.Pt; ++q)
+                for (int j = 0; j < N; ++j) {
+                    const size_t b = size_t(j / 4) * 2 * w * 4, lane = size_t(j % 4);
+                    d.blocks[b + size_t(q) * 4 + lane] = d.px[size_t(q) * N + j];
+                    d.blocks[b + size_t(w + q) * 4 + lane] = d.py[size_t(q) * N + j];
+                }
+        }
         for (int q = 0; q < d.Pt; ++q)
             for (int j = 0; j < N; ++j) {
-                d.pxT[size_t(j) * kPtPad + q] = d.px[size_t(q) * N + j];
-                d.pyT[size_t(j) * kPtPad + q] = d.py[size_t(q) * N + j];
+                d.pxT[size_t(j) * d.ptw + q] = d.px[size_t(q) * N + j];
+                d.pyT[size_t(j) * d.ptw + q] = d.py[size_t(q) * N + j];
             }
     }
     // The pitch is the axisymmetric fundamental's, the mode a strike in
@@ -1259,64 +1280,16 @@ public:
         const int Pt = sheet0 > 0 ? d.Pt : 0;
         const float sheetStep = (m_sheet - sheet0) / float(std::max(n, 1));
         float sheet = sheet0;
-        const float *PX = d.px.data(), *PY = d.py.data(), *TX = d.pxT.data(), *TY = d.pyT.data();
         const int NA = d.eigen ? m_nAct : N;
         for (int i = 0; i < n; ++i) {
             if (d.eigen) {
-                for (int k = 0; k < NA; ++k)
-                    f[k] = 0;
-                if (Pt > 0) {
-                    // Every patch's slope at once (the modes outside, the
-                    // patches inside, so each patch's sum runs on its own).
-                    float gx[kPtPad], gy[kPtPad], sx[kPtPad], sy[kPtPad];
-                    for (int q = 0; q < kPtPad; ++q)
-                        gx[q] = gy[q] = 0;
-                    for (int k = 0; k < NA; ++k) {
-                        const float xk = x[k];
-                        const float *tx = TX + size_t(k) * kPtPad, *ty = TY + size_t(k) * kPtPad;
-                        for (int q = 0; q < kPtPad; ++q) {
-                            gx[q] += tx[q] * xk;
-                            gy[q] += ty[q] * xk;
-                        }
-                    }
-                    for (int q = 0; q < Pt; ++q) {
-                        const float wx = m_w0x[q], wy = m_w0y[q];
-                        const float L = wx * gx[q] + wy * gy[q], Q = 0.5f * (gx[q] * gx[q] + gy[q] * gy[q]);
-                        const float kq = sheet * m_kapPt[q];
-                        // (A numerical guard, not bronze: a patch's stretch
-                        // beyond the linear, Q, is held under what would
-                        // stiffen some mode past what the explicit step
-                        // holds. The linear part is exact in the sheet's
-                        // own modes and is never touched. Played strokes
-                        // don't reach it.)
-                        const float st = L + std::min(Q, m_strainMax[q]);
-                        sx[q] = kq * (st * gx[q] + (st - L) * wx);
-                        sy[q] = kq * (st * gy[q] + (st - L) * wy);
-                    }
-                    for (int q = 0; q + 1 < Pt; q += 2) {
-                        const float *a0 = PX + size_t(q) * N, *b0 = PY + size_t(q) * N;
-                        const float *a1 = a0 + N, *b1 = b0 + N;
-                        const float s0 = sx[q], t0 = sy[q], s1 = sx[q + 1], t1 = sy[q + 1];
-                        for (int k = 0; k < NA; ++k)
-                            f[k] -= s0 * a0[k] + t0 * b0[k] + s1 * a1[k] + t1 * b1[k];
-                    }
-                    if (Pt & 1) {
-                        const int q = Pt - 1;
-                        const float *a0 = PX + size_t(q) * N, *b0 = PY + size_t(q) * N;
-                        for (int k = 0; k < NA; ++k)
-                            f[k] -= sx[q] * a0[k] + sy[q] * b0[k];
-                    }
-                    for (int k = 0; k < NA; ++k)
-                        f[k] *= m_cm[k];
-                }
-                if (m_touching)
-                    contacts(f);
                 float ql = 0, qr = 0;
-                for (int k = 0; k < NA; ++k) {
-                    u[k] = m_dd[k] * u[k] - m_cc[k] * x[k] + f[k];
-                    x[k] += u[k];
-                    ql += m_gl[k] * u[k];
-                    qr += m_gr[k] * u[k];
+                switch (Pt > 0 ? d.ptw : 0) {
+                case 0: stepSheet<0>(d, NA, sheet, ql, qr); break;
+                case 4: stepSheet<4>(d, NA, sheet, ql, qr); break;
+                case 8: stepSheet<8>(d, NA, sheet, ql, qr); break;
+                case 12: stepSheet<12>(d, NA, sheet, ql, qr); break;
+                default: stepSheet<16>(d, NA, sheet, ql, qr); break;
                 }
                 l[i] += (ql - m_ql) * pGain;
                 r[i] += (qr - m_qr) * pGain;
@@ -1477,6 +1450,84 @@ public:
     }
 
 private:
+    // Four floats at once (GCC's and Clang's vector extension: SSE, NEON).
+    typedef float V4 __attribute__((vector_size(16), may_alias));
+    static float sum4(V4 v) { return (v[0] + v[1]) + (v[2] + v[3]); }
+
+    // One sample of a tam-tam's sheet, four of its modes (each of mass 1)
+    // at a time: the slope they make at every patch (W of them, padded; a
+    // compile-time count so the sums live in registers), each patch's
+    // stretch beyond the linear and its stress, then the force those
+    // stresses make on the four, straight into their step. Each block of
+    // slopes is read once in each pass, in order.
+    template <int W>
+    void stepSheet(const Design &d, int NA, float sheet, float &ql, float &qr) {
+        const int nb = (NA + 3) / 4;
+        V4 *x = reinterpret_cast<V4 *>(m_x), *u = reinterpret_cast<V4 *>(m_u), *f = reinterpret_cast<V4 *>(m_f);
+        const V4 *dd = reinterpret_cast<const V4 *>(m_dd), *cc = reinterpret_cast<const V4 *>(m_cc);
+        const V4 *gl = reinterpret_cast<const V4 *>(m_gl), *gr = reinterpret_cast<const V4 *>(m_gr);
+        float sx[W > 0 ? W : 1] = {}, sy[W > 0 ? W : 1] = {};
+        const V4 *blk = reinterpret_cast<const V4 *>(d.blocks.data());
+        if constexpr (W > 0) {
+            V4 ax[W] = {}, ay[W] = {};
+            for (int b = 0; b < nb; ++b) {
+                const V4 xb = x[b];
+                const V4 *p = blk + size_t(b) * 2 * W;
+                for (int q = 0; q < W; ++q) {
+                    ax[q] += p[q] * xb;
+                    ay[q] += p[W + q] * xb;
+                }
+            }
+            const float cmU = m_cm[0];
+            for (int q = 0; q < d.Pt; ++q) {
+                const float gx = sum4(ax[q]), gy = sum4(ay[q]);
+                const float wx = m_w0x[q], wy = m_w0y[q];
+                const float L = wx * gx + wy * gy, Q = 0.5f * (gx * gx + gy * gy);
+                const float kq = sheet * m_kapPt[q] * cmU;
+                // (A numerical guard, not bronze: a patch's stretch beyond
+                // the linear, Q, is held under what would stiffen some mode
+                // past what the explicit step holds. The linear part is
+                // exact in the sheet's own modes and is never touched.
+                // Played strokes don't reach it.)
+                const float st = L + std::min(Q, m_strainMax[q]);
+                sx[q] = kq * (st * gx + (st - L) * wx);
+                sy[q] = kq * (st * gy + (st - L) * wy);
+            }
+        }
+        auto force = [&](int b) {
+            V4 v = {0, 0, 0, 0};
+            if constexpr (W > 0) {
+                const V4 *p = blk + size_t(b) * 2 * W;
+                for (int q = 0; q < W; ++q)
+                    v -= sx[q] * p[q] + sy[q] * p[W + q];
+            } else {
+                (void)b;
+            }
+            return v;
+        };
+        V4 l4 = {0, 0, 0, 0}, r4 = {0, 0, 0, 0};
+        if (m_touching) {
+            for (int b = 0; b < nb; ++b)
+                f[b] = force(b);
+            contacts(m_f);
+            for (int b = 0; b < nb; ++b) {
+                u[b] = dd[b] * u[b] - cc[b] * x[b] + f[b];
+                x[b] += u[b];
+                l4 += gl[b] * u[b];
+                r4 += gr[b] * u[b];
+            }
+        } else {
+            for (int b = 0; b < nb; ++b) {
+                u[b] = dd[b] * u[b] - cc[b] * x[b] + force(b);
+                x[b] += u[b];
+                l4 += gl[b] * u[b];
+                r4 += gr[b] * u[b];
+            }
+        }
+        ql = sum4(l4);
+        qr = sum4(r4);
+    }
+
     struct Contact {
         bool on = false;
         int delay = 0, age = 0, touched = 0;
@@ -1615,6 +1666,16 @@ private:
                 m_x[k] = m_u[k] = 0;
                 if (d.eigen)
                     m_nAct = std::min(m_nAct, k);
+            }
+        }
+        // (A tam-tam's sheet modes are stepped four at a time: its modes in
+        // play are a whole number of fours, the one to three left over at
+        // the top sitting out with the rest.)
+        if (d.eigen) {
+            m_nAct &= ~3;
+            for (int k = m_nAct; k < N; ++k) {
+                m_dd[k] = m_cc[k] = m_cm[k] = m_cf[k] = 0;
+                m_x[k] = m_u[k] = 0;
             }
         }
         for (int c = 0; c < d.R; ++c)

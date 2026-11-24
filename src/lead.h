@@ -225,7 +225,10 @@ struct Sound {
     //           clamped in a block, bowed on its end, a dax pressed on it
     //           sliding to set its sounding length, heard by contact
     //           microphones in the block; every voice its own tongue.
-    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax };
+    //   Guitar: an overdriven electric guitar as physics (guitar.h): a
+    //           steel string picked, read by a humbucker, through a valve
+    //           amp and a 4x12; every voice of the line its own guitar.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax, Guitar };
     int model = Osc;
     float jawari = 0;      // String: how hard the string buzzes on its bridge
     float sympathy = 0;    // String: how loud the taraf rings
@@ -244,6 +247,7 @@ struct Sound {
     float gongOct = 0;     // Gong: octaves the gong sounds from the note (a tam-tam's thud an octave under it)
     float hand = 1.0f;     // Gong: seconds a hand laid on it takes to still it once the finger lifts
     float rollHz = 13.0f;  // Pan, Gong: the strokes a second a held note is rolled at, near enough
+    float feedback = 0;    // Guitar: how readily a held note feeds back through the amp (Gong's hand: the fretting hand's damping)
 };
 
 // The accordion's registers, by the finger's height: low on the pad the
@@ -273,7 +277,7 @@ inline const char *registerName(float y) {
 // note is held, strikes the high drone strings instead of a hammer-on.
 constexpr float kChikariY = 0.8f;
 
-constexpr int kSounds = 20;
+constexpr int kSounds = 21;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -520,6 +524,22 @@ inline const Sound &sound(int i) {
         {.name = "Daxophone", .style = "free improv", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.01f,
          .d = 1.0f, .s = 1.0f, .r = 0.3f, .glide = 0.09f, .porta = 0.04f, .vibRate = 5.2f, .vibDepth = 0.22f,
          .vibDelay = 0.35f, .swoop = true, .echo = 0.12f, .echoFb = 0.3f, .gain = 1.0f, .model = Sound::Dax},
+        // An overdriven electric guitar, the rock lead: a Les Paul's steel
+        // string, picked, through its bridge humbucker into a cranked
+        // Marshall and a 4x12. The pick's stroke is the press as the finger
+        // lands; higher on the pad picks nearer the bridge, brighter and
+        // thinner. A second finger hammers on (no new pick, the string
+        // ringing on at its new fret), lifting it pulls off; a slide steps
+        // fret by fret; the twist and the bend wheel bend the string up,
+        // and a held note's vibrato is a bend's, above the note. A flat
+        // finger is a palm on the strings by the bridge: a muted chug.
+        // Held, the amp's sustain carries it, and pressing harder stands
+        // nearer the amp, until it feeds back. Lifting the finger mutes the
+        // string with the fretting hand.
+        {.name = "Guitar", .style = "rock", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.0005f,
+         .d = 1.0f, .s = 1.0f, .r = 0.3f, .glide = 0.004f, .vibRate = 5.8f, .vibDepth = 0.35f, .vibDelay = 0.6f,
+         .echo = 0.16f, .echoFb = 0.32f, .echoBeats = 0.75f, .gain = 1.0f, .model = Sound::Guitar, .hand = 0.12f,
+         .feedback = 1.0f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

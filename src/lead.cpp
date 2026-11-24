@@ -32,6 +32,7 @@
 #include "daxophone.h"
 #include "electro.h"
 #include "gong.h"
+#include "guitar.h"
 #include "lead.h"
 #include "parts.h"
 #include "trombamarina.h"
@@ -236,6 +237,8 @@ constexpr float kDaxSoft = 1.3f, kDaxCrush = 2.5f;
 // bottom off, the small box's top and the piezo discs ring a broad band
 // near three kilohertz, and little over eight comes through.
 constexpr float kDaxLowHz = 45.0f, kDaxBandHz = 2800.0f, kDaxBandQ = 1.4f, kDaxBand = 0.35f, kDaxTopHz = 8000.0f;
+// Guitar: what the mic'd cab's level (a fortieth of the speaker's volts) is worth on the page.
+constexpr float kGuitarLevel = 0.85f;
 
 // An accordion's bellows: how much air one way holds (seconds of sound at
 // an ordinary press), and how long a rest is a breath, long enough to turn
@@ -434,6 +437,14 @@ struct Bank {
     float trombaFor = -100;
     // Daxophone: the voice's tongue (each voice of a line its own daxophone).
     dax::Tongue tongue;
+    // Guitar: the voice's guitar (each voice of a line its own, as a
+    // harmony line is played by several guitarists), whether it has been
+    // picked for this note, and where the note's fret is (MIDI) and where
+    // the finger rests with its bends but without its slide.
+    guitar::Guitar guitar;
+    bool guitarLive = false;
+    float fret = 60, anchor = 60;
+    float rested = 60; // where the finger last rested on the neck (with its bends), the fret a slide counts from
 };
 
 struct Voice {
@@ -530,6 +541,14 @@ public:
         for (auto &v : m_voices)
             for (auto &k : v.banks)
                 k.tromba.init(rate);
+        // So are the guitar's (its valves' curves, its strings' stiffness).
+        guitar::prepare();
+        for (auto &v : m_voices)
+            for (auto &k : v.banks)
+                k.guitar.init(rate);
+        for (auto &line : m_rig)
+            for (auto &rig : line)
+                rig.init(rate);
         for (auto &c : m_chik) {
             c.string.init(size_t(rate / 150.0f));
             c.jawF.set(3000.0f, 4.0f, rate);
@@ -781,6 +800,11 @@ private:
             v->tau = glideTime(*v, line, n, s.glide, ctx);
             v->held = 0;
             huayin(*v, line, n, ctx);
+            // A guitarist's legato is a hammer-on: no new pick.
+            if (s.model == Sound::Guitar)
+                for (auto &k : v->banks)
+                    if (k.guitarLive)
+                        k.guitar.hammer(pickForce(n.vel));
             if (s.retrig)
                 strike(*v, n.vel, false);
             return;
@@ -827,8 +851,13 @@ private:
             line.offAt = m_clock;
             release(*v);
         } else if (wasTop) {
-            // A pull-off: back to the note still held, gliding, no new attack.
+            // A pull-off: back to the note still held, gliding, no new attack
+            // (a guitar's string is plucked by the finger leaving it).
             v->tau = glideTime(*v, line, *line.top(), sound(v->sound).glide, ctx);
+            if (sound(v->sound).model == Sound::Guitar)
+                for (auto &k : v->banks)
+                    if (k.guitarLive)
+                        k.guitar.pullOff(pickForce(v->vel));
         }
     }
 
@@ -1011,6 +1040,8 @@ private:
                 k.tromba.silence();
             if (s.model == Sound::Dax)
                 k.tongue.silence();
+            k.guitarLive = false;
+            k.fret = k.anchor = k.rested = targets[b];
             k.thudLp.reset();
             k.pingF.reset();
             k.pingLp.reset();
@@ -1105,6 +1136,8 @@ private:
             k.pluck = -1; // its length is worked out at its own pitch, when it sounds
             if (s.model == Sound::Gong && (b == 0 || k.want > 0 || k.level > 0))
                 gongStrike(v, k, b, vel, 1.0f);
+            if (s.model == Sound::Guitar && (b == 0 || k.want > 0 || k.level > 0))
+                guitarPick(v, k, vel);
             if (s.model == Sound::Pan)
                 hit(k, vel, v.y, 1.0f, false);
             if (s.model == Sound::Reed)
@@ -1124,6 +1157,25 @@ private:
         if (scoop)
             v.scoop = -s.scoop * (0.7f + 0.6f * vel);
         v.vel = vel;
+    }
+
+    // A guitar's pick force from a note's velocity: the pad's touch lands
+    // between 0.6 and 1 (the keys 0.75, or 1 accented), and the guitar's
+    // touch is all of its range.
+    static float pickForce(float vel) { return clampf((vel - 0.6f) / 0.4f, 0.05f, 1.0f); }
+    // A flat finger is a palm on the strings.
+    static float palmOf(const Voice &v) { return clampf((v.fat - 0.4f) / 0.45f, 0.0f, 1.0f); }
+
+    // A guitar picked: a fresh string, the one its note lies on, picked as
+    // hard as the finger landed and as far toward the bridge as it is high
+    // on the pad.
+    void guitarPick(Voice &v, Bank &k, float vel) {
+        k.guitar.silence();
+        k.guitar.start(k.pitch);
+        k.guitar.setPitch(midiToHz(clampf(k.pitch, 0.0f, 140.0f)), 0);
+        k.guitar.setMute(palmOf(v), true);
+        k.guitar.pluck(pickForce(vel), clampf(v.y, 0.0f, 1.0f));
+        k.guitarLive = true;
     }
 
     // A gong struck: hung (tuned to its voice's pitch) if it isn't yet,
@@ -1196,6 +1248,10 @@ private:
         v.releasing = true;
         v.amp.gate(false);
         v.filt.gate(false);
+        // A guitar's note let go: the fretting hand mutes the string.
+        if (sound(v.sound).model == Sound::Guitar)
+            for (auto &k : v.banks)
+                k.guitar.damp(sound(v.sound).hand);
         // A gong let go has a hand laid on it.
         if (sound(v.sound).model == Sound::Gong)
             for (auto &k : v.banks)
@@ -1273,7 +1329,10 @@ private:
         float leadDegree = 0; // where the line sings, in degrees, for the page
         float harmDegree[kHarmSlots] = {};
     };
-    static Targets targetsFor(const Line &line, const NoteIn &n, const Harmony &h, float *pitch, float *level) {
+    // (fret and anchor, if asked for: each bank's note without the finger's
+    // continuous offsets, and with its twist and bend but without its slide.)
+    static Targets targetsFor(const Line &line, const NoteIn &n, const Harmony &h, float *pitch, float *level,
+                              float *fret = nullptr, float *anchor = nullptr) {
         Targets t;
         const int per = h.tuning.degreesPerOctave();
         const int abs = n.octave * per + n.degree;
@@ -1289,11 +1348,20 @@ private:
         pitch[0] = base + float(h.tuning.continuousSemis(double(tgt) + double(cont)));
         level[0] = 1.0f;
         t.leadDegree = float(tgt) + cont + float(per) * line.octave;
+        const float bend = n.twist + line.bend;
+        if (fret) {
+            fret[0] = base + float(h.tuning.continuousSemis(double(tgt)));
+            anchor[0] = base + float(h.tuning.continuousSemis(double(tgt) + double(bend)));
+        }
         for (int s = 0; s < kHarmSlots; ++s) {
-            const float hd = harmonyDegree(tgt, line.harmRow[s], n.follow, h) + cont;
+            const float hd0 = harmonyDegree(tgt, line.harmRow[s], n.follow, h), hd = hd0 + cont;
             pitch[1 + s] = base + float(h.tuning.continuousSemis(double(hd)));
             level[1 + s] = line.harmLevel[s];
             t.harmDegree[s] = hd + float(per) * line.octave;
+            if (fret) {
+                fret[1 + s] = base + float(h.tuning.continuousSemis(double(hd0)));
+                anchor[1 + s] = base + float(h.tuning.continuousSemis(double(hd0) + double(bend)));
+            }
         }
         return t;
     }
@@ -1345,11 +1413,13 @@ private:
             if (top)
                 line.last = *top;
             const NoteIn &note = line.last;
-            float targets[Voice::kBanks], levels[Voice::kBanks];
-            const Targets t = targetsFor(line, note, h, targets, levels);
+            float targets[Voice::kBanks], levels[Voice::kBanks], frets[Voice::kBanks], anchors[Voice::kBanks];
+            const Targets t = targetsFor(line, note, h, targets, levels, frets, anchors);
             for (int b = 0; b < Voice::kBanks; ++b) {
                 v.banks[b].target = targets[b];
                 v.banks[b].want = levels[b];
+                v.banks[b].fret = frets[b];
+                v.banks[b].anchor = anchors[b];
             }
             v.ySet = note.y;
             v.pressSet = note.press;
@@ -1372,6 +1442,37 @@ private:
                 m_beat = tr.beatAt(at);
                 renderVoice(v, l + at, r + at, m_sendL + at, m_sendR + at, m_symSend + at, n, dt, float(phase - std::floor(phase)),
                             float(tr.beatsPerSample * steps), steps > 0);
+            }
+        renderRigs(l + at, r + at, m_sendL + at, m_sendR + at, n);
+    }
+
+    // Guitar: every line's rigs play what their voices' pickups sent them
+    // (a released note's tail and the next note's attack through the same
+    // valves), into the mix and the echo, as loud whatever the touch: a
+    // guitar's dynamics are the amp's. A rig left alone rings down and sleeps.
+    void renderRigs(float *outL, float *outR, float *sendL, float *sendR, int n) {
+        static const float bankPan[Voice::kBanks][2] = {{1.0f, 1.0f}, {1.15f, 0.82f}, {0.82f, 1.15f}, {1.0f, 1.0f}};
+        float mic[kBlock];
+        for (int li = 0; li < kLines; ++li)
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                guitar::Rig &rig = m_rig[size_t(li)][size_t(b)];
+                const bool fed = m_rigFed[li][b];
+                if (!fed && !rig.live())
+                    continue;
+                rig.process(m_rigIn[li][b], mic, nullptr, n, fed);
+                std::fill(m_rigIn[li][b], m_rigIn[li][b] + n, 0.0f);
+                m_rigFed[li][b] = false;
+                const Sound &s = sound(m_rigSound[li]);
+                // (Harmony voices about five decibels under the melody, as the others.)
+                const float g = kGuitarLevel * s.gain * 0.25f * (b == 0 ? 1.0f : 0.65f);
+                const float send = s.echo + 0.9f * m_lines[size_t(li)].throwAmt;
+                for (int i = 0; i < n; ++i) {
+                    const float o = mic[i] * g;
+                    outL[i] += o * bankPan[b][0];
+                    outR[i] += o * bankPan[b][1];
+                    sendL[i] += o * bankPan[b][0] * send;
+                    sendR[i] += o * bankPan[b][1] * send;
+                }
             }
     }
 
@@ -1417,10 +1518,15 @@ private:
             vibShape = v.vibW;
             vibRate = s.vibRate * (1.0f + 0.3f * grow * (0.35f + 0.65f * lift)) * v.vibRateJ;
         }
+        // A guitarist's vibrato is no clock either: each cycle its own speed
+        // and width (it changes at the cycle's foot, on the fret's pitch).
+        if (s.model == Sound::Guitar)
+            vibRate *= v.vibRateJ;
         const float vibDepth = s.vibDepth * vibShape;
         const float sin0 = sine()(v.vibPhase);
+        const float ph0 = v.vibPhase;
         v.vibPhase += vibRate * dt;
-        if (v.vibPhase >= 1.0f && s.model == Sound::Bow) {
+        if (v.vibPhase >= 1.0f && (s.model == Sound::Bow || s.model == Sound::Guitar)) {
             // A new cycle, at the sine's zero crossing: its own speed and
             // width, a few per cent either way.
             v.vibRateJ = 1.0f + 0.07f * v.rng.bipolar();
@@ -1444,7 +1550,22 @@ private:
                 v.drift[o] += (v.driftTo[o] - v.drift[o]) * k;
             }
         }
-        const float vib0 = s.vibDepth * vibShape0 * sin0, vib1 = vibDepth * sin1;
+        // A guitarist's vibrato is a bend rocked to and fro: it only ever
+        // raises the string's tension, so it swings above the note, from the
+        // fret's pitch up and back, lingering at the top of each push.
+        float vib0 = s.vibDepth * vibShape0 * sin0, vib1 = vibDepth * sin1;
+        if (s.model == Sound::Guitar) {
+            // (Leaning in widens it to some 70 cents, no further: its middle
+            // stands above the note, and a wider one is heard sharp.)
+            vibShape0 = std::min(vibShape0, 1.0f);
+            vibShape = std::min(vibShape, 1.0f);
+            auto push = [](float ph) {
+                const float w = 0.5f - 0.5f * sine()(ph + 0.25f - std::floor(ph + 0.25f));
+                return 2.0f * (1.0f - std::pow(1.0f - w, 1.6f));
+            };
+            vib0 = s.vibDepth * vibShape0 * v.vibDepthJ * push(ph0);
+            vib1 = s.vibDepth * vibShape * v.vibDepthJ * push(v.vibPhase);
+        }
         // A wind player's vibrato is mostly in the breath: the level swells with it.
         float amp0 = 1.0f + s.vibAmp * vibShape0 * sin0, amp1 = 1.0f + s.vibAmp * vibShape * sin1;
         const float scoop0 = v.scoop;
@@ -1937,6 +2058,44 @@ private:
             }
             daxOut = s.gain * 0.3f * kDaxLevel;
         }
+        // Guitar: each voice's guitar follows its pitch. The finger's slide
+        // crosses the frets: counted from where it last rested, past 0.6 of
+        // a semitone it moves a fret at a time (the string snapping onto
+        // each), and once it rests again it is on its note exactly (in any
+        // tuning). Rocking it in place is continuous; the twist, the bend
+        // wheel and the vibrato bend the string, raising its tension. A flat finger is a palm on the strings; a firm press
+        // stands nearer the amp, for feedback; the tone keys turn the amp's
+        // treble. A harmony voice coming in is picked then.
+        if (model == Sound::Guitar) {
+            const float palm = palmOf(v);
+            const float near = s.feedback * clampf((v.press - 0.7f) / 0.25f, 0.0f, 1.0f);
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                Bank &k = v.banks[b];
+                if (!live[b])
+                    continue;
+                if (!k.guitarLive && !v.releasing)
+                    guitarPick(v, k, v.vel);
+                if (!k.guitarLive)
+                    continue;
+                if (v.motion < 0.15f)
+                    k.rested = k.anchor;
+                const float d = k.pitch - k.rested;
+                const float frets = std::fabs(d) > 0.6f ? std::round(d) : 0.0f;
+                const float midi = (frets != 0.0f ? k.rested + frets : k.pitch) + vib1 + v.scoop;
+                // (The fret under the finger: the note's, or as far along as the slide has crossed.)
+                const float fretNow = frets != 0.0f ? k.rested - (k.anchor - k.fret) + frets : k.fret;
+                k.guitar.setPitch(midiToHz(clampf(midi, 0.0f, 140.0f)), midi - fretNow);
+                k.guitar.setMute(palm);
+                k.guitar.setFeedback(v.releasing ? 0.0f : near);
+                // Into the line's own rig (each harmony voice its own player's).
+                guitar::Rig &rig = m_rig[size_t(v.from)][b];
+                rig.setTone(tone);
+                k.guitar.pickup(m_rigIn[v.from][b], n, &rig);
+                m_rigFed[v.from][b] = true;
+                m_rigSound[v.from] = v.sound;
+                v.level = std::max(v.level * std::exp(-dt / 0.08f), k.guitar.level());
+            }
+        }
         // Sync: each slave's ratio sweeps down from the attack to where it
         // settles, never all the way to the note, so the tear holds; height
         // and pressure lift it, a slow wander moves it, and so does the
@@ -2364,6 +2523,8 @@ private:
                     bl += m_daxL[b][i];
                     br += m_daxR[b][i];
                     break;
+                case Sound::Guitar: // (heard through its line's rig: renderRigs)
+                    break;
                 case Sound::Sync: {
                     // At four times the rate: four quarter steps, the second
                     // voice's master an octave up, through two half-band
@@ -2608,10 +2769,12 @@ private:
             // a player leans into the middle of the stroke. The bellows
             // turning round push a swell through the reeds as they catch.
             // A gong's level is its own: a hand stills it, not an envelope.
-            // A tromba marina's is its bow's, which the envelope draws.
-            const float env = model == Sound::Bow                                     ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
-                              : model == Sound::Gong || model == Sound::TrombaMarina || model == Sound::Dax ? 1.0f
-                                                                                      : a;
+            // A tromba marina's is its bow's, which the envelope draws. So is a
+            // guitar's own: its string rings, the amp sustains it, a hand mutes it.
+            const float env = model == Sound::Bow ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
+                              : model == Sound::Gong || model == Sound::TrombaMarina || model == Sound::Dax || model == Sound::Guitar
+                                  ? 1.0f
+                                  : a;
             const float jerk = model == Sound::Reed ? 1.0f + 0.5f * (jerk0 + (jerk1 - jerk0) * t) * std::min(1.0f, v.held / 0.03f) : 1.0f;
             const float level = model == Sound::Bow            ? bowGain0 + (outGain - bowGain0) * t
                                 : model == Sound::TrombaMarina ? s.gain * 0.3f
@@ -2644,7 +2807,8 @@ private:
             }
             peak = std::max(peak, std::fabs(sl) + std::fabs(sr));
         }
-        v.level = std::max(peak * 2.0f, v.level * std::exp(-dt / 0.08f));
+        if (model != Sound::Guitar)
+            v.level = std::max(peak * 2.0f, v.level * std::exp(-dt / 0.08f));
         // A released voice is done once it's 70 dB down; the envelope's own
         // idea of silence is far below anything audible, and every voice
         // still ringing costs its full price.
@@ -2665,6 +2829,12 @@ private:
             for (const auto &k : v.banks)
                 ringing |= k.trombaLive && k.tromba.active();
             if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f) && !ringing)
+                v.active = false;
+        } else if (model == Sound::Guitar) {
+            bool ringing = false;
+            for (const auto &k : v.banks)
+                ringing |= k.guitarLive && k.guitar.active();
+            if (v.releasing && !ringing)
                 v.active = false;
         } else if (v.releasing && (v.amp.stage == Env::Idle || v.amp.v < 3e-4f)) {
             v.active = false;
@@ -2851,6 +3021,12 @@ private:
     float m_trombaRef = 55; // the tromba marina's open string, two octaves under the neck's root (Hz)
     float m_daxL[Voice::kBanks][kBlock] = {}, m_daxR[Voice::kBanks][kBlock] = {};
     dax::Ear m_daxEar;
+    // Guitar: an amp and a cab for every line and every voice of it, what
+    // its voices' pickups send them this segment, and what plays through them.
+    std::array<std::array<guitar::Rig, Voice::kBanks>, kLines> m_rig;
+    float m_rigIn[kLines][Voice::kBanks][kBlock] = {};
+    bool m_rigFed[kLines][Voice::kBanks] = {};
+    int m_rigSound[kLines] = {};
     Delay m_sym[kTaraf];
     float m_symLp[kTaraf] = {};
     Chikari m_chik[kChikari];
@@ -3318,7 +3494,10 @@ public:
             "knocks on the board every period, a trumpet's bray when bowed firmly; no vibrato), "
             "Daxophone (free improv: a wooden tongue "
             "bowed on its end, the finger the dax sliding along it, so it glides wherever the finger goes; "
-            "it rests in the key only when following the chord); "
+            "it rests in the key only when following the chord), "
+            "Guitar (rock: an overdriven electric guitar, "
+            "a picked steel string through a humbucker, a cranked valve amp and a 4x12; a second finger hammers on, "
+            "lifting it pulls off, a slide steps fret by fret, held notes sustain and, pressed, feed back); "
             "the row under the pad shows the ones around the chosen "
             "sound, faded at an end with more beyond; the status line says what music each is for\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
@@ -3342,15 +3521,17 @@ public:
             "Erhu, bowed nearer the bridge; on Accordion, the register: clarinet low, bandoneon in the middle, musette "
             "high, and the bandoneon from the keys; on the gongs, the strike moves out from the middle toward the rim; "
             "on Tromba marina, bowed nearer the nut; on Daxophone, bowed on the very end, rougher; lower, further in "
-            "along its edge, rounder)\n"
+            "along its edge, rounder; on Guitar, picked nearer the bridge)\n"
             "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
             "on Flute, a quicker attack; on Steel pan, a harder roll, and high on the note a ping; on Sync, a snarl of FM into the sync; on Erhu, "
             "the bow's weight: a light touch whistles, a hard one grinds; on the gongs, a harder mallet: further glides, "
             "a stronger ombak, a brighter blossom, and a harder tam-tam roll; on Tromba marina, the bow's weight: "
             "light is a soft flageolet, firmer sets the bridge knocking, all the way scratches; on Daxophone, the bow's weight: "
-            "the lightest skates, harder is rougher, the hardest breaks the note: rough, or falling a few semitones)\n"
+            "the lightest skates, harder is rougher, the hardest breaks the note: rough, or falling a few semitones; "
+            "on Guitar, a harder pick as the finger lands, and held, nearer the amp until it feeds back)\n"
             "flatten the finger\tfatter: the unison spreads (on Flute, breathier; on Sitar, more buzz; "
-            "on Accordion, a wetter musette; on the gongs, a softer beater; on Daxophone, the dax pressed lighter)\n"
+            "on Accordion, a wetter musette; on the gongs, a softer beater; on Daxophone, the dax pressed lighter; "
+            "on Guitar, a palm muting the strings)\n"
             "twist the finger\tbend up or down one step of the scale\n"
             "click the pad\tleap an octave up while held\n"
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"

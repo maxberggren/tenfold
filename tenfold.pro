@@ -32,6 +32,7 @@ HEADERS += \
     src/gong.h \
     src/trombamarina.h \
     src/daxophone.h \
+    src/guitar.h \
     src/hang.h \
     src/slitdrum.h \
     src/pipedrum.h \

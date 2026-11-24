@@ -345,11 +345,30 @@ inline double tongueHz(double L) {
 
 // The length that sounds at hz on a rigid box (λ₁ moves a little with the
 // length, so a few rounds).
+// The first mode alone of a tongue L long, read as beamFor reads all of
+// them: what tuning needs, a fraction of the work.
+struct FirstMode {
+    double lambda, P, Q, M;
+};
+inline FirstMode firstModeFor(double L) {
+    const BeamTable &t = beamTable();
+    const double u = std::clamp(std::log(L / BeamTable::kLo) / std::log(BeamTable::kHi / BeamTable::kLo), 0.0, 1.0) *
+                     (BeamTable::kN - 1);
+    const int i = std::min(int(u), BeamTable::kN - 2);
+    const double f = u - i;
+    const BeamModes &a = t.at[size_t(i)], &c = t.at[size_t(i + 1)];
+    auto mix = [f](double x, double y) { return x + (y - x) * f; };
+    return {mix(a.lambda[0], c.lambda[0]), mix(a.P[0], c.P[0]), mix(a.Q[0], c.Q[0]), mix(a.M[0], c.M[0])};
+}
+
 inline double tongueLength(double hz) {
     double L = 0.1;
     for (int i = 0; i < 10; ++i) {
-        const BeamModes b = beamFor(L);
-        L = b.lambda[0] * std::sqrt(std::sqrt(kEI / kRhoA) / (2.0 * M_PI * hz));
+        const double next = firstModeFor(L).lambda * std::sqrt(std::sqrt(kEI / kRhoA) / (2.0 * M_PI * hz));
+        const bool done = std::fabs(next - L) < 1e-9 * L;
+        L = next;
+        if (done)
+            break;
     }
     return std::clamp(L, BeamTable::kLo, BeamTable::kHi);
 }
@@ -431,6 +450,7 @@ public:
         t.finger = Free;
         t.dampC = t.dampTo = 0;
         t.used = true;
+        t.width = kLanes;
         t.age = ++m_clock;
         tuneSlot(best, hz);
         return best;
@@ -472,8 +492,10 @@ public:
         const bool still = t.finger == Free && moving < 1e-7f;
         t.used = true;
         t.age = ++m_clock;
+        wake();
         t.dampTo = 0;
         t.dampC = 0;
+        t.dirty = true; // the finger's damping gone: its decay is the tongue's own again
         t.off = clampf(st.off, -1.0f, 1.0f) * 0.5f * float(Physics::kWidth) * 0.6f;
         placeFinger(s, Knobs::fingerAt - Knobs::fingerIn * clampf(st.spot, 0.0f, 1.0f));
         // How far the finger takes the tongue down where it meets it: a
@@ -554,6 +576,7 @@ public:
         for (int k = 0; k < kFront; ++k)
             m_knockPsi[k] = float(shape(k, x, y));
         m_knock.on = true;
+        wake();
         m_knock.z = panelDispAt(m_knockPsi);
         // A hand lands at up to a couple of metres a second.
         m_knock.v = 0.3f + 1.6f * vel;
@@ -588,6 +611,11 @@ public:
             if (std::fabs(t.dampC - was) > 1e-6f || t.dirty)
                 coefficients(s);
         }
+        // Whether any tongue sounds this block (a pluck lands between
+        // blocks): without one, the board carries nothing.
+        bool sounding = false;
+        for (const Slot &t : m_slot)
+            sounding |= t.used;
         float *y = m_y, *v = m_v;
         for (int i = 0; i < n; ++i) {
             // The cavity: its pressure from every panel's volume and the plug's.
@@ -600,8 +628,12 @@ public:
                 f[k] = -p * m_area[k];
             const float fp = p * m_holeS;
 
-            // The tongues' roots on the board, the fingers.
-            float tick = 0;
+            // The tongues' roots on the board, the fingers. Every tongue is
+            // bolted to the one rigid board, so what they do to the panel is
+            // what they do to the board, summed: a push and a roll at its
+            // middle, a tip along the tongues, a twist (and a tip that has
+            // hit the panel, which pushes the panel where it is).
+            float tick = 0, push = 0, roll = 0, tip = 0;
             for (int s = 0; s < kSlots; ++s) {
                 Slot &t = m_slot[s];
                 if (!t.used)
@@ -638,15 +670,25 @@ public:
                 t.lastFc = Fc;
                 // What the root does to the board: the modes' own (stiffness)
                 // and what of the outside forces the modes leave out.
-                float Fb = F * t.resP - Fc * t.resP1, Mb = F * t.resQ - Fc * t.resQ1;
-                for (int m = 0; m < kBend; ++m) {
-                    Fb += t.gP[m] * t.q[m];
-                    Mb += t.gQ[m] * t.q[m];
+                float Fb = 0, Mb = 0, Tb = 0;
+                for (int m = 0; m < t.width; ++m) {
+                    Fb += t.gY[m] * t.q[m];
+                    Mb += t.gTh[m] * t.q[m];
+                    Tb += t.gX[m] * t.q[m];
                 }
-                const float Tb = t.gT * t.q[kBend] + F * t.off * t.resT;
-                for (int k = 0; k < kFront; ++k)
-                    f[k] += Fb * t.psiB[k] + Mb * t.psiS[k] + Tb * t.psiX[k] + Fc * t.psiTip[k];
+                Fb += F * t.resP - Fc * t.resP1;
+                Mb += F * t.resQ - Fc * t.resQ1;
+                Tb += F * t.off * t.resT;
+                push += Fb;
+                roll += Fb * t.e + Tb;
+                tip += Mb;
+                if (Fc != 0)
+                    for (int k = 0; k < kFront; ++k)
+                        f[k] += Fc * t.psiTip[k];
             }
+            if (sounding)
+                for (int k = 0; k < kFront; ++k)
+                    f[k] += push * m_barYf[k] + roll * m_barRollf[k] + tip * m_barSf[k];
 
             // The box steps, free of the hand.
             float un[kPanel];
@@ -663,7 +705,7 @@ public:
                 const float hand = m_dt * m_dt / m_knock.mass;
                 const float free = m_knock.z + m_knock.v * m_dt - w;
                 const float loss = clampf(1.0f + Knobs::knockLoss * (free - m_knock.gap) * m_rate, 0.0f, 3.0f);
-                Fk = contact(m_knock.k * loss, free, give + hand);
+                Fk = contact(m_knock.k * loss, free, give + hand, m_lastFk);
                 m_knock.gap = free - (give + hand) * Fk;
                 for (int k = 0; k < kFront; ++k)
                     un[k] += m_inv[k] * Fk * m_knockPsi[k];
@@ -677,11 +719,13 @@ public:
             m_lastFk = Fk;
             // The box moves: panels and plug, the accelerations kept for the
             // tongues riding on it.
+            // (Plain loops over arrays, each one the compiler runs a vector
+            // at a time.)
             float acc[kFront];
+            for (int k = 0; k < kFront; ++k)
+                acc[k] = un[k] - v[k];
             float Q = 0;
             for (int k = 0; k < kPanel; ++k) {
-                if (k < kFront)
-                    acc[k] = un[k] - v[k];
                 v[k] = un[k];
                 y[k] += un[k];
                 Q -= m_rad[k] * un[k];
@@ -693,48 +737,48 @@ public:
                 Q += m_holeS * m_holeRad * u;
             }
 
-            // The tongues, their bases moving with the board.
+            // The tongues, their bases moving with the board: how it moves,
+            // once for all of them.
+            float boardY = 0, boardRoll = 0, boardTip = 0;
+            for (int k = 0; k < kFront && sounding; ++k) {
+                boardY += m_barYf[k] * acc[k];
+                boardRoll += m_barRollf[k] * acc[k];
+                boardTip += m_barSf[k] * acc[k];
+            }
             float dip = 0;
             for (int s = 0; s < kSlots; ++s) {
                 Slot &t = m_slot[s];
                 if (!t.used)
                     continue;
-                float Y = 0, Th = 0, X = 0;
-                for (int k = 0; k < kFront; ++k) {
-                    Y += t.psiB[k] * acc[k];
-                    Th += t.psiS[k] * acc[k];
-                    X += t.psiX[k] * acc[k];
-                }
+                const float Y = boardY + t.e * boardRoll, Th = boardTip, X = boardRoll;
                 // Free of the slapping pulp and the panel, first.
                 const float Fknown = t.finger == Pressing ? 0.0f : t.F;
-                float uq[kModes];
-                for (int m = 0; m < kBend; ++m)
-                    uq[m] = t.d[m] * t.u[m] - t.c[m] * t.q[m] + t.inv[m] * Fknown * t.phiC[m] - t.bP[m] * Y -
-                            t.bQ[m] * Th;
-                uq[kBend] = t.d[kBend] * t.u[kBend] - t.c[kBend] * t.q[kBend] +
-                            t.inv[kBend] * Fknown * t.off * t.phiT - t.bT * X;
+                // (Every mode a lane, the twist among them, the same sums for
+                // all: one loop the compiler can run four or eight at a time.)
+                float uq[kLanes] = {};
+                for (int m = 0; m < t.width; ++m)
+                    uq[m] = t.d[m] * t.u[m] - t.c[m] * t.q[m] + t.inv[m] * Fknown * t.fg[m] - t.bY[m] * Y -
+                            t.bTh[m] * Th - t.bX[m] * X;
                 // The slap's pulp, solved with the tongue's step and the
                 // finger's: the hand pushes behind it.
                 if (t.finger == Pressing) {
-                    float w = 0, give = m_dt * m_dt / Knobs::fingerMass;
-                    for (int m = 0; m < kBend; ++m) {
-                        w += t.phiC[m] * (t.q[m] + uq[m]);
-                        give += t.phiC[m] * t.phiC[m] * t.inv[m];
-                    }
+                    float w = 0;
+                    for (int m = 0; m < kLanes; ++m)
+                        w += t.pc[m] * (t.q[m] + uq[m]);
+                    const float give = m_dt * m_dt / Knobs::fingerMass + t.pressGive;
                     const float zFree = t.z + t.vz * m_dt + t.push * m_dt * m_dt / Knobs::fingerMass;
-                    const float F = contact(t.pulp, zFree - w, give);
-                    for (int m = 0; m < kBend; ++m)
-                        uq[m] += t.inv[m] * F * t.phiC[m];
-                    uq[kBend] += t.inv[kBend] * F * t.off * t.phiT;
+                    const float F = contact(t.pulp, zFree - w, give, t.F);
+                    for (int m = 0; m < kLanes; ++m)
+                        uq[m] += t.inv[m] * F * t.fg[m];
                     t.vz += (t.push - F) / Knobs::fingerMass * m_dt;
                     t.z += t.vz * m_dt;
                     t.time += m_dt;
                     t.F = F;
                     // It slips off once it has the tongue down as far as it
                     // meant, or the hand's stroke is spent.
-                    float at = 0;
-                    for (int m = 0; m < kBend; ++m)
-                        at += t.phiC[m] * (t.q[m] + uq[m]);
+                    // (Where the tongue is under the finger now: where it was
+                    // going, and what the pulp's force moved it.)
+                    const float at = w + F * t.pressGive;
                     if (at >= 0.85f * t.depth || t.time > 0.03f || (t.vz < 0 && F <= 0)) {
                         t.finger = Releasing;
                         t.release = F;
@@ -744,30 +788,36 @@ public:
                 }
                 // The tip and the panel under it, solved likewise.
                 {
-                    float tip = -panelDispAt(t.psiTip), give = 0;
-                    for (int m = 0; m < kBend; ++m)
-                        if (t.live[m]) {
-                            tip += t.q[m] + uq[m];
-                            give += t.inv[m];
+                    float tip = 0;
+                    for (int m = 0; m < t.width; ++m)
+                        tip += t.tw[m] * (t.q[m] + uq[m]);
+                    // The panel under the tip moves microns: it is read only
+                    // when the tip is anywhere near it.
+                    float Fc = 0, into = -float(Physics::kGap);
+                    if (tip > 0.5f * float(Physics::kGap)) {
+                        tip -= panelDispAt(t.psiTip);
+                        into = tip - float(Physics::kGap);
+                        if (into > 0) {
+                            float give = 0;
+                            for (int m = 0; m < kLanes; ++m)
+                                give += t.tw[m] * t.inv[m];
+                            const float loss = clampf(1.0f + Knobs::tipLoss * (into - t.into) * m_rate, 0.0f, 3.0f);
+                            Fc = contact(Knobs::tipHit * loss, into, give, t.Fc);
+                            for (int m = 0; m < kLanes; ++m)
+                                uq[m] -= t.tw[m] * t.inv[m] * Fc;
+                            into -= give * Fc;
                         }
-                    float Fc = 0;
-                    const float into = tip - float(Physics::kGap);
-                    if (into > 0) {
-                        const float loss = clampf(1.0f + Knobs::tipLoss * (into - t.into) * m_rate, 0.0f, 3.0f);
-                        Fc = contact(Knobs::tipHit * loss, into, give);
-                        for (int m = 0; m < kBend; ++m)
-                            if (t.live[m])
-                                uq[m] -= t.inv[m] * Fc;
                     }
-                    t.into = into - give * Fc;
+                    t.into = into;
                     t.Fc = Fc;
                 }
-                for (int m = 0; m < kModes; ++m) {
-                    if (m < kBend)
-                        dip += t.rad[m] * (uq[m] - t.u[m]);
+                float sounded = 0;
+                for (int m = 0; m < t.width; ++m) {
+                    sounded += t.rL[m] * (uq[m] - t.u[m]);
                     t.u[m] = uq[m];
                     t.q[m] += uq[m];
                 }
+                dip += sounded;
             }
             // Pressure: the volume acceleration of the monopoles, the
             // tongues' dipoles, and the hard contacts' clicks on the panel
@@ -791,10 +841,21 @@ public:
             Slot &t = m_slot[s];
             if (!t.used)
                 continue;
-            float te = 0;
-            for (int m = 0; m < kModes; ++m)
-                te += t.mass[m] * (t.u[m] * t.u[m] + t.c[m] * t.q[m] * t.q[m]);
-            t.energy = te * m_rate * m_rate;
+            float lo = 0, hi = 0;
+            for (int m = 0; m < kLanes / 2; ++m)
+                lo += t.mass[m] * (t.u[m] * t.u[m] + t.c[m] * t.q[m] * t.q[m]);
+            for (int m = kLanes / 2; m < t.width; ++m)
+                hi += t.mass[m] * (t.u[m] * t.u[m] + t.c[m] * t.q[m] * t.q[m]);
+            t.energy = (lo + hi) * m_rate * m_rate;
+            // The upper half of the lanes (the fifth and sixth bending modes
+            // and the twist) dies within a few tenths of a second of a
+            // pluck: once it is 70 dB under the rest, it sleeps until the
+            // next, and the tongue steps one vector a sample, not two.
+            if (t.width == kLanes && t.finger == Free && hi < 1e-7f * lo) {
+                for (int m = kLanes / 2; m < kLanes; ++m)
+                    t.q[m] = t.u[m] = 0;
+                t.width = kLanes / 2;
+            }
             tongues += t.energy;
             touching |= t.finger != Free;
             if (t.finger == Free && t.energy < 1e-12f)
@@ -948,20 +1009,31 @@ public:
 
 private:
     static constexpr int kModes = kBend + 1;
+    static constexpr int kLanes = 8; // the modes, padded to whole vectors
     enum Finger { Free, Pressing, Releasing };
 
     struct Slot {
         bool used = false, dirty = false;
         float hz = 110, L = 0.1f;
         uint32_t age = 0;
-        float q[kModes] = {}, u[kModes] = {};
-        float d[kModes] = {}, c[kModes] = {}, inv[kModes] = {}, mass[kModes] = {}, tau[kModes] = {};
-        float w2[kModes] = {}, modeHz[kModes] = {};
+        float q[kLanes] = {}, u[kLanes] = {};
+        float d[kLanes] = {}, c[kLanes] = {}, inv[kLanes] = {}, mass[kLanes] = {}, tau[kLanes] = {};
+        float w2[kLanes] = {}, modeHz[kLanes] = {};
+        // Per lane (lanes()): the finger's force on it (fg), how the board's
+        // push, tip and roll move it (bY, bTh, bX), how it pushes, tips and
+        // rolls the board (gY, gTh, gX), its own sound (rL), where the finger
+        // and the tip see it (pc, tw).
+        float fg[kLanes] = {}, bY[kLanes] = {}, bTh[kLanes] = {}, bX[kLanes] = {};
+        float gY[kLanes] = {}, gTh[kLanes] = {}, gX[kLanes] = {}, rL[kLanes] = {}, pc[kLanes] = {}, tw[kLanes] = {};
+        float pressGive = 0;
         float phiC[kBend] = {};
         float gP[kBend] = {}, gQ[kBend] = {}, bP[kBend] = {}, bQ[kBend] = {}, rad[kBend] = {};
         float gT = 0, bT = 0, phiT = 0, resT = 0;
         float resP = 0, resQ = 0, resP1 = 0, resQ1 = 0;
-        float kStatic = 1, xc = 0.1f, xi = 0;
+        int width = kLanes; // the lanes stepped: all, or the lower half once the upper rings out
+        bool placed = false, stepped = false; // placeFinger's and coefficients' work still good
+        float sinH2[kLanes] = {};
+        float kStatic = 1, xc = 0.1f, xi = 0, e = 0; // e: where it sits along the board from its middle
         BeamModes bm;
         float psiB[kFront] = {}, psiS[kFront] = {}, psiX[kFront] = {}, psiTip[kFront] = {};
         // The finger.
@@ -1001,6 +1073,7 @@ private:
             for (int i = 0; i < want; ++i)
                 outp[i] = {a, b, h, c[i].m, c[i].n};
         };
+        ++m_box; // a new box: what was tuned on the last is not for this one
         lowest(Physics::kFrontThick, kFront, m_panel);
         lowest(Physics::kBackThick, kBack, m_panel + kFront);
         const double rhoC2 = Physics::kRhoAir * Physics::kC * Physics::kC;
@@ -1029,6 +1102,7 @@ private:
                     XX += w * (x - m_barMid) * (x - m_barMid);
                 }
                 m_barY[k] = Y / (3.0 * N), m_barS[k] = S / (3.0 * N), m_barRoll[k] = XR / XX;
+                m_barYf[k] = float(m_barY[k]), m_barSf[k] = float(m_barS[k]), m_barRollf[k] = float(m_barRoll[k]);
             }
         }
         for (int k = 0; k < kPanel; ++k) {
@@ -1108,16 +1182,35 @@ private:
     // A Hertzian contact solved with the step: the force F = K·δ^1.5 where
     // δ = free − give·F, free how far the two would overlap if it pushed
     // nothing, give how much its own force moves them apart this step.
-    // Monotone in F, so bisected (on √ for the steep start).
-    static float contact(float K, float free, float give) {
+    // Monotone in F and bracketed (0 to free/give), so Newton's steps,
+    // started from the force the last sample found (a contact changes
+    // little in a sample: two or three steps), and halving the bracket
+    // whenever a step would leave it.
+    static float contact(float K, float free, float give, float guess) {
         if (free <= 0 || K <= 0)
             return 0;
         float lo = 0, hi = free / std::max(give, 1e-12f);
-        for (int i = 0; i < 26; ++i) {
-            const float F = 0.5f * (lo + hi), d = free - give * F;
-            (d > 0 && F < K * d * std::sqrt(d) ? lo : hi) = F;
+        float F = clampf(guess, 0.0f, hi);
+        for (int i = 0; i < 30; ++i) {
+            const float d = std::max(free - give * F, 0.0f), root = std::sqrt(d);
+            const float g = F - K * d * root;
+            (g > 0 ? hi : lo) = F;
+            float next = F - g / (1.0f + 1.5f * K * give * root);
+            if (!(next > lo && next < hi))
+                next = 0.5f * (lo + hi);
+            const bool done = std::fabs(next - F) <= 1e-6f * next + 1e-9f;
+            F = next;
+            if (done)
+                break;
         }
-        return 0.5f * (lo + hi);
+        return F;
+    }
+
+    // Something struck the box: every tongue's upper modes answer it again
+    // (they would ring in sympathy), until they ring out once more.
+    void wake() {
+        for (Slot &t : m_slot)
+            t.width = kLanes;
     }
 
     float contactDisp(const Slot &t) const {
@@ -1155,17 +1248,19 @@ private:
     // root of its first mode's equation with the box, ω² = ω₀²/(1 + ω₀²G(ω)/M)
     // (G the box's complex receptance, losses and all), followed by Newton
     // from the tongue's own frequency, so it stays on the tongue's branch.
-    double heardTongue(double f0, const float *psiB, const float *psiS) const {
+    // from (if given, and a root is no further than a few percent from it,
+    // the last solve's: each step of the secant moves the tongue a little).
+    double heardTongue(double f0, const float *psiB, const float *psiS, std::complex<double> *from = nullptr) const {
         using C = std::complex<double>;
         const double L = tongueLength(f0);
-        const BeamModes bm = beamFor(L);
-        const double m = kRhoA * L, M1 = m * bm.M[0];
-        const double w0 = 2 * M_PI * bm.lambda[0] * bm.lambda[0] / (2 * M_PI * L * L) * std::sqrt(kEI / kRhoA);
+        const FirstMode bm = firstModeFor(L);
+        const double m = kRhoA * L, M1 = m * bm.M;
+        const double w0 = 2 * M_PI * bm.lambda * bm.lambda / (2 * M_PI * L * L) * std::sqrt(kEI / kRhoA);
         double cvec[kPanel] = {};
         for (int k = 0; k < kFront; ++k)
-            cvec[k] = m * (bm.P[0] * psiB[k] + bm.Q[0] * L * psiS[k]);
+            cvec[k] = m * (bm.P * psiB[k] + bm.Q * L * psiS[k]);
         auto f = [&](C w) { return w0 * w0 - w * w * (1.0 + w0 * w0 * boxReceptance(cvec, w) / M1); };
-        C w = w0;
+        C w = from && std::abs(*from - w0) < 0.05 * w0 ? *from : C(w0);
         for (int i = 0; i < 10; ++i) {
             const C h = 1e-5 * w0, fw = f(w);
             const C d = (f(w + h) - fw) / h;
@@ -1179,6 +1274,8 @@ private:
             if (std::abs(step) < 1e-7 * w0)
                 break;
         }
+        if (from)
+            *from = w;
         return std::real(w) / (2 * M_PI);
     }
 
@@ -1201,6 +1298,7 @@ private:
         // Where it sits: on the board, which moves as the bar it is (up and
         // down where the tongue is, tipping along it, rolling across it);
         // its tip over the panel itself.
+        t.e = float(e);
         for (int k = 0; k < kFront; ++k) {
             t.psiB[k] = float(m_barY[k] + e * m_barRoll[k]);
             t.psiS[k] = float(m_barS[k]);
@@ -1211,10 +1309,18 @@ private:
         // stiffens. Twice, as the length moves the coupling.
         // The secant on the tongue's own pitch until it is heard at hz, the
         // best kept should it not get there (a note in a coupled pair's gap).
+        // A note played before on this box was tuned then: the same tongue.
         double target = hz;
-        if (m_coupled) {
-            double a = hz, ha = heardTongue(a, t.psiB, t.psiS);
-            double b = hz * hz / std::max(ha, 1.0), hb = heardTongue(b, t.psiB, t.psiS);
+        int cached = -1;
+        for (int i = 0; i < kTunings; ++i)
+            if (m_tuned[i].hz == hz && m_tuned[i].box == m_box)
+                cached = i;
+        if (cached >= 0) {
+            target = m_tuned[cached].target;
+        } else if (m_coupled) {
+            std::complex<double> w = 0;
+            double a = hz, ha = heardTongue(a, t.psiB, t.psiS, &w);
+            double b = hz * hz / std::max(ha, 1.0), hb = heardTongue(b, t.psiB, t.psiS, &w);
             double best = std::fabs(ha - hz) < std::fabs(hb - hz) ? a : b;
             double bestErr = std::min(std::fabs(ha - hz), std::fabs(hb - hz));
             for (int it = 0; it < 8 && bestErr > hz * 1e-4; ++it) {
@@ -1222,11 +1328,13 @@ private:
                     break;
                 const double c = std::clamp(b - (hb - hz) * (b - a) / (hb - ha), hz * 0.6, hz * 1.6);
                 a = b, ha = hb;
-                b = c, hb = heardTongue(b, t.psiB, t.psiS);
+                b = c, hb = heardTongue(b, t.psiB, t.psiS, &w);
                 if (std::fabs(hb - hz) < bestErr)
                     bestErr = std::fabs(hb - hz), best = b;
             }
             target = best;
+            m_tuned[m_nextTuned] = {hz, m_box, target};
+            m_nextTuned = (m_nextTuned + 1) % kTunings;
         }
         const double L = tongueLength(target);
         const BeamModes bm = beamFor(L);
@@ -1286,6 +1394,8 @@ private:
         }
         for (int k = 0; k < kFront; ++k)
             t.psiTip[k] = float(shape(k, x, std::min(0.98 * b, yb + L)));
+        t.placed = false;
+        t.stepped = false;
         placeFinger(s, t.xi > 0 ? t.xi : Knobs::fingerAt);
         for (int n = 0; n < kModes; ++n)
             if (was[n][1] > 0) {
@@ -1317,6 +1427,13 @@ private:
     void placeFinger(int s, float xi) {
         Slot &t = m_slot[s];
         xi = clampf(xi, 0.3f, 1.0f);
+        // Where it was last time, on the same tongue: only the finger's
+        // place across the tongue (the twist's lane) is new.
+        if (t.placed && xi == t.xi) {
+            lanes(s);
+            return;
+        }
+        t.placed = true;
         t.xi = xi;
         const double L = t.L, xc = xi * L;
         t.xc = float(xc);
@@ -1342,6 +1459,31 @@ private:
         t.phiT = float(std::sin(0.5 * M_PI * xi));
         t.resT = float(coupled * (1.0 - (2 / M_PI) * t.phiT / 0.5));
         t.dirty = true;
+        lanes(s);
+    }
+
+    // Each mode as a lane of the same sums: the bending modes, the twist
+    // (moved by the board's roll, rolling it back, pushed by the finger off
+    // the middle), and an idle lane to fill the vector.
+    void lanes(int s) {
+        Slot &t = m_slot[s];
+        for (int m = 0; m < kLanes; ++m) {
+            const bool bend = m < kBend, twist = m == kBend;
+            t.fg[m] = bend ? t.phiC[m] : twist ? t.off * t.phiT : 0.0f;
+            t.bY[m] = bend ? t.bP[m] : 0.0f;
+            t.bTh[m] = bend ? t.bQ[m] : 0.0f;
+            t.bX[m] = twist ? t.bT : 0.0f;
+            t.gY[m] = bend ? t.gP[m] : 0.0f;
+            t.gTh[m] = bend ? t.gQ[m] : 0.0f;
+            t.gX[m] = twist ? t.gT : 0.0f;
+            t.rL[m] = bend ? t.rad[m] : 0.0f;
+            t.pc[m] = bend ? t.phiC[m] : 0.0f;
+            t.tw[m] = bend && t.live[m] ? 1.0f : 0.0f;
+        }
+        // How far the tongue under the finger gives to a newton, this step.
+        t.pressGive = 0;
+        for (int m = 0; m < kLanes; ++m)
+            t.pressGive += t.pc[m] * t.pc[m] * t.inv[m];
     }
 
     // Each mode's step: exact poles for its frequency and its decay (its
@@ -1349,6 +1491,19 @@ private:
     void coefficients(int s) {
         Slot &t = m_slot[s];
         t.dirty = false;
+        // (The finger's damping changes the decay only: each mode's turn a
+        // sample is worked out once a tuning, in double. And as
+        // c = (1 − r)² + 4r·sin²(θ/2), not 1 + r² − 2r·cos θ: for a bass
+        // tongue θ is a few thousandths of a radian, c a few parts in a
+        // hundred thousand, and the cosine form leaves it to the difference
+        // of numbers near 1, where a float's last digit is a cent of pitch.)
+        if (!t.stepped) {
+            for (int n = 0; n < kModes; ++n) {
+                const double h = std::sin(0.5 * std::sqrt(double(t.w2[n])) / double(m_rate));
+                t.sinH2[n] = float(h * h);
+            }
+            t.stepped = true;
+        }
         for (int n = 0; n < kModes; ++n) {
             const float w = std::sqrt(t.w2[n]);
             if (n < kBend ? !t.live[n] : w / m_rate > 0.4f * kPi) {
@@ -1362,7 +1517,7 @@ private:
             const float sigma = 1.0f / t.tau[n] + t.dampC * phi * phi / (2.0f * t.mass[n]);
             const float r = std::exp(-sigma / m_rate);
             t.d[n] = r * r;
-            t.c[n] = 1 + r * r - 2 * r * std::cos(w / m_rate);
+            t.c[n] = (1 - r) * (1 - r) + 4 * r * t.sinH2[n];
         }
     }
 
@@ -1400,6 +1555,18 @@ private:
     float m_kCav = 0, m_gain = 0, m_wPanel = 0, m_leak = 0, m_force = 0;
     float m_knockPsi[kFront] = {};
     double m_barY[kFront] = {}, m_barS[kFront] = {}, m_barRoll[kFront] = {}, m_barMid = 0;
+    float m_barYf[kFront] = {}, m_barSf[kFront] = {}, m_barRollf[kFront] = {};
+    // The tongues this box has had tuned: a note's pitch, the box, and the
+    // pitch its tongue has on a rigid box to sound at it on this one.
+    static constexpr int kTunings = 48;
+    struct Tuned {
+        float hz = -1;
+        uint32_t box = 0;
+        double target = 0;
+    };
+    Tuned m_tuned[kTunings];
+    int m_nextTuned = 0;
+    uint32_t m_box = 0;
 
     Slot m_slot[kSlots];
     Knock m_knock;

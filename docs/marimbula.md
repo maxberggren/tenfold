@@ -81,17 +81,31 @@ finger, GRIT, the kick's pump and the lane's knee.
 
 ### Cost
 
-The box (18 panel modes and the plug) rings once, whatever plays it. Each
-sounding tongue adds seven modes and its coupling to the front's fourteen
-(about 150 multiply-adds a sample). Measured by the reviewer (best case,
-on a loaded machine): six tongues ringing 185 ns a sample (0.9% of a
-core). A slap's contact, solved by bisection while it touches, costs more:
-six tongues slapped every few milliseconds with knocks reach 2.6%, which
-no line played on the page comes near. A tongue sleeps once rung out, and
-the box once everything has. A new note's tongue (the secant over the box's
-equation) costs 4 µs on average and 10 µs at worst when its note lands, a
-bend 2–13 µs, and a new key's box (its hole solved from the box's
-equation) 21–43 µs, once.
+The box (18 panel modes and the plug) rings once, whatever plays it. Every
+tongue is bolted to the one rigid board, so the tongues are summed onto the
+board and the board read back once a sample, not once a tongue. Each
+sounding tongue is eight lanes of the same sums (its six bending modes, its
+twist and an idle lane), a loop the compiler runs a vector at a time; once
+the upper half (the fifth and sixth bending modes and the twist) has rung
+70 dB under the rest, it sleeps until the box is next struck, and the
+tongue is one vector a sample. Contacts are solved by Newton's steps from
+the last sample's force (two or three a sample).
+
+Measured on the CPU clock of the rendering thread (best of fifteen, an
+aarch64 laptop), against the first version:
+
+| Case | Before | Now |
+|---|---|---|
+| Four tongues plucked every 0.2 s, knocks (the cost test) | 135 ns a sample | 73–79 ns (−45%) |
+| Six tongues ringing | 172 ns | 69–71 ns (−59%) |
+| The box alone | 39–40 ns | 31–39 ns |
+| A note's tongue, first time on this box / again | 5.0 / 2.9 µs | 4.1 / 0.4 µs |
+| Ten fingers on the page, whole studio: p99 of a callback | 4.89% | 3.60% (a plain SUB: 3.42%) |
+
+A tongue sleeps once rung out, and the box once everything has. Each
+tuning is remembered for its note and its box, so a note played again
+costs a fraction of a microsecond; a new key's box (its hole solved from
+the box's equation) costs 21–43 µs, once.
 
 ## How it was checked
 

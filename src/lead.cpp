@@ -3179,6 +3179,87 @@ struct Motion {
     }
 };
 
+// A trackpad finger's position, steadied. A resting finger shivers on the
+// pad: by a hundredth of a millimetre on an Apple pad, by a tenth or more
+// on a coarser one, whose readings step by that much; each step, read as
+// speed, let the pitch leave the note and follow the finger. A one-euro
+// filter (Casiez et al., CHI 2012):
+// a low-pass whose cutoff rises with the finger's speed, so it smooths
+// hard at rest and hardly at all on a slide. In pad widths, so it holds
+// the same for every scale on the neck.
+struct Steady {
+    static constexpr float kRestHz = 1.5f;  // the cutoff for a finger at rest
+    static constexpr float kPerSpeed = 160; // more, per pad width a second
+    static constexpr float kSpeedHz = 8.0f; // how quickly the speed is believed
+    float x = 0, dx = 0;
+    double t = -1;
+    void reset(float p, double now) {
+        x = p;
+        dx = 0;
+        t = now;
+    }
+    float update(float p, double now) {
+        if (t < 0) {
+            reset(p, now);
+            return x;
+        }
+        const double gap = now - t;
+        if (gap <= 0)
+            return x;
+        // A finger gone quiet for a while (the pad sends nothing for a
+        // finger that doesn't move) is where it is now.
+        const float dt = float(std::min(gap, 0.05));
+        t = now;
+        auto alpha = [dt](float hz) {
+            const float r = 2.0f * kPi * hz * dt;
+            return r / (r + 1.0f);
+        };
+        dx += ((p - x) / dt - dx) * alpha(kSpeedHz);
+        x += (p - x) * alpha(kRestHz + kPerSpeed * std::fabs(dx));
+        return x;
+    }
+};
+
+// A trackpad contact's angle and how long it is, steadied. A fingertip
+// is nearly round, so the angle the pad reads for it shivers; and an
+// Apple pad (as Linux reads it) loses the angle for runs of frames, saying
+// exactly 0, then climbs back to it over a few more. Taken as it came,
+// that turned a resting finger by twenty or thirty degrees at a time, and
+// the twist bent its note by half a semitone, on and off. A reading of
+// exactly 0 is taken as none; the rest is smoothed over a few tens of
+// milliseconds, quick enough for a deliberate twist.
+struct Turn {
+    static constexpr float kHz = 5.0f;
+    float angle = 0, eccentricity = 0;
+    double t = -1;
+    void reset(float a, float e, double now) {
+        angle = a;
+        eccentricity = e;
+        t = now;
+    }
+    void update(float a, float e, double now) {
+        const double gap = now - t;
+        if (t < 0 || gap <= 0)
+            return reset(a, e, now);
+        t = now;
+        const float r = 2.0f * kPi * kHz * float(std::min(gap, 0.05)), k = r / (r + 1.0f);
+        eccentricity += (e - eccentricity) * k;
+        if (a == 0.0f)
+            return;
+        // Angles are half turns: −89° and 89° are a degree apart.
+        float d = a - angle;
+        while (d > kPi / 2)
+            d -= kPi;
+        while (d < -kPi / 2)
+            d += kPi;
+        angle += d * k;
+        if (angle > kPi / 2)
+            angle -= kPi;
+        else if (angle <= -kPi / 2)
+            angle += kPi;
+    }
+};
+
 // Rests a continuous position on whole steps unless it is moving.
 float rounded(float p, float motion) {
     const float q = std::round(p);
@@ -3685,6 +3766,9 @@ private:
         int abs = 0;        // its absolute degree
         int slot = -1;      // harmony slot
         float y0 = 0, angle0 = 0;
+        bool pad = false;   // a trackpad finger, steadied; the mouse is taken as it is
+        Steady along;       // the pad coordinate that sets the pitch (x on the neck, y on BEND and the rows)
+        Turn turn;          // its contact's angle and length, steadied
         Motion motion, twistMotion;
         double lastSend = 0;
         float sent[8] = {};
@@ -3700,6 +3784,14 @@ private:
         bool on = false, held = false;
         float row = 1, level = 0;
     };
+    // How much further past the middle a resting trackpad finger goes
+    // before its note changes, in cells. A fingertip held still drifts as
+    // it settles and the pressure shifts: two millimetres over a few
+    // seconds on a MacBook Pro's pad, a quarter of a cell of a seven-note
+    // neck; this is two millimetres past the middle there.
+    static constexpr float kRestMargin = 0.15f;
+    // How long a trackpad contact takes to settle, in seconds.
+    static constexpr double kSettle = 0.15;
     static constexpr int kTrail = 360;
     struct TrailPoint {
         double t = -1;
@@ -3829,8 +3921,11 @@ private:
         h.y0 = t.y;
         h.angle0 = t.angle;
         h.lastSend = now;
+        h.pad = t.id != kMouseId;
         if (t.x >= kColumn) {
             h.role = Role::Note;
+            h.along.reset(t.x, now);
+            h.turn.reset(t.angle, t.eccentricity, now);
             if (notesHeld(&h) > 0)
                 ++m_glides; // legato
             if (harmonyOn())
@@ -3868,6 +3963,7 @@ private:
                 return; // three voices of harmony is all there is; this finger rests
             h.role = Role::Harmony;
             h.slot = slot;
+            h.along.reset(t.y, now);
             if (notesHeld(&h) > 0)
                 ++m_harmonized;
             const float row = harmonyRow(t.y);
@@ -3882,6 +3978,7 @@ private:
             return;
         }
         h.role = t.x < kBendSplit ? Role::Bend : Role::Throw;
+        h.along.reset(t.y, now);
         if (h.role == Role::Throw) {
             const float a = throwAmount(t);
             h.sent[0] = a;
@@ -3893,20 +3990,35 @@ private:
         const bool due = now - h.lastSend >= 0.0155;
         switch (h.role) {
         case Role::Note: {
-            const float pos = neckPosition(t.x, m_per);
+            const float pos = neckPosition(steady(h, t.x, now), m_per);
             const int cells = neckCells(m_per);
-            if (std::fabs(pos - float(h.q)) > 0.62f)
-                h.q = std::clamp(int(std::lround(pos)), 0, cells - 1);
             const float m = h.motion.update(pos, now);
+            // The note changes once the finger is well past the middle
+            // between two: further past it while the finger rests, so one
+            // sitting near the line holds its note, and less on a slide,
+            // where the pitch follows the finger anyway.
+            if (std::fabs(pos - float(h.q)) > 0.62f + (h.pad ? kRestMargin * (1.0f - m) : 0.0f))
+                h.q = std::clamp(int(std::lround(pos)), 0, cells - 1);
             // A twist is measured from how the finger sat when it last held
             // still: a contact's angle drifts as a finger slides, so a slide
             // takes the angle along with it rather than bending. And the
             // angle only means anything for a finger that isn't round.
+            float angle = t.angle, eccentricity = t.eccentricity;
+            if (h.pad) {
+                h.turn.update(t.angle, t.eccentricity, now);
+                angle = h.turn.angle;
+                eccentricity = h.turn.eccentricity;
+                // A contact's first frames, while the finger is still
+                // arriving, say little about how it sits: the twist is
+                // measured from where it settles.
+                if (now - h.t0 < kSettle)
+                    h.angle0 = angle;
+            }
             if (m > 0.4f)
-                h.angle0 = t.angle;
+                h.angle0 = angle;
             float twist = 0;
-            if (t.eccentricity > 0.2f) {
-                float d = t.angle - h.angle0;
+            if (eccentricity > 0.2f) {
+                float d = angle - h.angle0;
                 while (d > kPi / 2)
                     d -= kPi;
                 while (d < -kPi / 2)
@@ -3953,7 +4065,7 @@ private:
             return;
         }
         case Role::Harmony: {
-            const float row = harmonyRow(t.y);
+            const float row = harmonyRow(steady(h, t.y, now));
             const float m = h.motion.update(row, now);
             Slot &s = m_slots[h.slot];
             s.row = rounded(row, m);
@@ -3968,7 +4080,7 @@ private:
         }
         case Role::Bend: {
             // About eight millimetres a step on a real pad.
-            const float raw = clampf((t.y - h.y0) / 0.075f, -3.0f, 3.0f);
+            const float raw = clampf((steady(h, t.y, now) - h.y0) / 0.075f, -3.0f, 3.0f);
             const float m = h.motion.update(raw, now);
             const float bend = rounded(raw, m);
             h.shown = bend;
@@ -4022,6 +4134,10 @@ private:
         }
         h.id = -1;
     }
+
+    // The finger's pitch axis as the page plays it: a trackpad finger's
+    // steadied, the mouse's as it is.
+    static float steady(Held &h, float raw, double now) { return h.pad ? h.along.update(raw, now) : raw; }
 
     void fillNote(Command &c, const Held &h, const Touch &t, float pos, float motion, float twist) const {
         c.f[1] = t.y;

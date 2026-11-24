@@ -12,6 +12,7 @@
 #include "lead.h"
 #include "parts.h"
 #include "testkit.h"
+#include "tuning.h"
 
 using namespace tf;
 
@@ -337,6 +338,186 @@ double bandDb(const testkit::Take &take, double from, double to, double lo, doub
     return 10 * std::log10(e);
 }
 
+// Raw trackpad frames played to the Lead on a sound, every one of them at
+// its own time (as the touch source sends them, not on the script's
+// ticks), with the line's published degree after each 8 ms of audio. A
+// finger with the mouse's id is the mouse: what the trackpad played as
+// before it was steadied.
+struct PadRun {
+    std::vector<double> t;
+    std::vector<float> degree; // the live line's, NAN while it is silent
+    testkit::Take take;
+};
+PadRun playFrames(const std::vector<Frame> &frames, int sound = 0) {
+    PadRun run;
+    ScriptPlayer player;
+    std::string setup = "page 0 4\n";
+    for (int k = 0; k < sound; ++k)
+        setup += fmt("key %.3f Right\n", 0.01 + 0.012 * k);
+    player.load(setup + "end 0.3\n", &run.take.error);
+    Studio studio(48000.0f);
+    studio.setTimeOrigin(0);
+    setScriptClock(0);
+    Session session(&studio);
+    session.setClock(&scriptClock);
+    const double end = (frames.empty() ? 0.3 : frames.back().t) + 0.05;
+    size_t next = 0;
+    float buf[384 * 2];
+    for (int tick = 0;; ++tick) {
+        const double t = tick / 125.0;
+        if (t > end)
+            break;
+        setScriptClock(t);
+        session.refresh();
+        // The script only sets the page up: ticked on, it would send its
+        // own frames, with no fingers.
+        if (t < 0.3)
+            player.tick(t, session);
+        while (next < frames.size() && frames[next].t <= t + 1e-9)
+            session.frame(frames[next++]);
+        studio.render(buf, 384);
+        for (int i = 0; i < 384; ++i) {
+            run.take.left.push_back(buf[2 * i]);
+            run.take.right.push_back(buf[2 * i + 1]);
+        }
+        session.refresh();
+        const float *d = session.view().parts[kLead].data;
+        run.t.push_back(t);
+        run.degree.push_back(d[0] >= 1.0f ? d[1] : NAN);
+    }
+    return run;
+}
+
+// One finger's frames: x along the neck over time, y and the rest steady.
+Frame padFrame(double t, int id, float x, float y = 0.5f) {
+    Frame f;
+    f.t = t;
+    f.count = 1;
+    f.touches[0] = {id, x, y, 1.0f, 0.5f, 0.0f, 0.3f};
+    return f;
+}
+
+// A fingertip held still on a MacBook Pro's trackpad (Asahi Linux, the
+// pad 157 mm wide, 123 frames a second), as the touch source read it. Its
+// centre drifts as the finger settles and the pressure shifts, by more
+// than a millimetre over a few seconds, in steps of a few tenths: every
+// 49 ms, in millimetres, from four seconds of a resting finger.
+const float kRestDriftMm[] = {
+    -2.08f, -2.08f, -2.08f, -2.08f, -2.06f, -2.05f, -2.04f, -2.03f, -1.93f, -1.77f, -1.62f, -1.46f, -1.40f, -1.26f,
+    -1.16f, -1.14f, -1.13f, -1.14f, -1.13f, -1.10f, -1.11f, -1.12f, -1.09f, -1.11f, -1.08f, -1.08f, -1.11f, -1.08f,
+    -1.10f, -1.05f, -0.99f, -0.98f, -0.97f, -0.98f, -0.98f, -0.99f, -0.97f, -0.98f, -0.98f, -0.98f, -0.99f, -0.98f,
+    -0.98f, -0.98f, -0.99f, -1.02f, -0.99f, -1.03f, -1.04f, -1.05f, -1.05f, -1.04f, -1.04f, -1.07f, -1.10f, -1.07f,
+    -1.08f, -1.09f, -1.06f, -1.00f, -1.01f, -1.00f, -0.98f, -1.00f, -1.00f, -0.98f, -0.99f, -0.99f, -0.99f, -0.86f,
+    -0.78f, -0.71f, -0.64f, -0.62f, -0.61f, -0.58f, -0.60f, -0.59f, -0.63f, -0.65f, -0.63f, -0.62f};
+// And the angle the same pad read for another resting fingertip, in
+// degrees, every frame: it loses it for runs of frames (exactly 0), then
+// climbs back over a few. With the contact's eccentricity, in hundredths,
+// which wavers about the 0.2 at which the page starts trusting the angle.
+const int kRestTurnDeg[] = {
+    -29, -26, 0,   -11, 0,   -13, 0,   -10, 0,   0,   -12, -14, -15, -17, -17, -18, -19, -20, -21, -19, -21, -20, -19, -20,
+    -20, -18, -17, -18, -17, -17, -19, -19, -19, 0,   -9,  -11, -14, -17, -18, -17, -19, -20, -18, -18, -17, -19, 0,   -8,
+    -8,  0,   -10, -9,  -10, -10, -13, -18, -17, -18, -17, -18, -18, -20, -17, -19, -22, -19, -17, -16, -17, -18, -17, -15,
+    -17, -16, -18, -16, -17, -15, -16, -18, -19, -17, -13, -12, -14, -18, -15, 0,   -9,  -17, -19, 0,   -5,  -12, 0,   0,
+    0,   0,   0,   0,   0,   -15, 0,   -9,  -10, 0,   -5,  0,   0,   0,   0,   0,   -9,  0,   -6,  -10, 0,   0,   -11, -12,
+    0,   0,   0,   -6,  -13, -14, 0,   0,   -6,  -11, -13, -14, -15, 0,   0,   -4,  0,   0,   0,   0,   0,   0,   0,   0,
+    -19, 0,   -17, 0,   0,   0,   -23, 0,   -18, -15, 0,   -9,  0,   0,   0,   -12, 0,   0,   -20, 0,   -10, 0,   0,   0,
+    0,   0,   0,   0,   -12, 0,   0,   0,   0,   0,   0,   0,   -21, -14, 0,   -7,  0,   0,   0,   0,   0,   0,   0,   0,
+    0,   -9,  -12, -15, 0,   -4,  -11, -14, -14, 0,   -7,  0,   0,   0,   0,   0,   0,   0,   -15, -14, -17, 0,   0,   -10,
+    -9,  0,   0,   -7,  -10, 0,   -7,  0,   -10, -14, 0,   -4,  -12, 0,   0,   -6,  0,   -7,  0,   -8,  -10, -10, -15, 0};
+const int kRestEcc[] = {
+    13, 23, 35, 32, 33, 30, 24, 20, 25, 27, 26, 30, 25, 25, 20, 26, 27, 26, 21, 20, 20, 23, 24, 23, 19, 22, 19, 23, 23, 22,
+    20, 20, 21, 24, 23, 22, 17, 17, 15, 22, 19, 18, 19, 18, 18, 23, 20, 21, 20, 20, 17, 24, 22, 22, 21, 19, 18, 18, 21, 17,
+    14, 16, 17, 19, 19, 21, 17, 15, 14, 20, 19, 20, 16, 16, 15, 21, 17, 22, 19, 16, 15, 20, 20, 23, 15, 15, 20, 21, 20, 20,
+    15, 20, 17, 20, 18, 23, 15, 17, 19, 20, 19, 21, 16, 18, 15, 20, 19, 20, 17, 15, 15, 19, 20, 20, 16, 15, 16, 17, 17, 18,
+    15, 14, 15, 18, 19, 17, 15, 14, 15, 17, 15, 16, 13, 14, 15, 17, 19, 17, 15, 15, 15, 18, 19, 17, 13, 17, 17, 18, 21, 19,
+    15, 13, 15, 15, 19, 18, 16, 17, 15, 19, 18, 20, 16, 13, 14, 17, 18, 18, 14, 15, 14, 16, 17, 17, 15, 13, 14, 18, 20, 18,
+    14, 15, 12, 16, 18, 14, 16, 13, 14, 15, 14, 16, 20, 18, 18, 17, 16, 19, 12, 11, 13, 16, 16, 16, 14, 11, 15, 18, 16, 18,
+    11, 14, 11, 16, 13, 15, 14, 13, 12, 16, 18, 16, 17, 21, 19, 15, 17, 15, 14, 14, 12, 13, 17, 14, 13, 11, 12, 16, 16, 16};
+constexpr double kPadMm = 157.0;
+constexpr double kPadRate = 122.8;
+
+// That resting finger, landed at a neck position (in cells), its drift and
+// its angle as recorded, a tenth of a millimetre's shiver on top: what the
+// trackpad sends for a finger the player holds still.
+std::vector<Frame> restingFinger(double from, float cell, int id) {
+    std::vector<Frame> frames;
+    const int n = int(std::size(kRestDriftMm));
+    const double seconds = (n - 1) * 0.049;
+    uint32_t seed = 12345;
+    for (int k = 0; from + k / kPadRate <= from + seconds; ++k) {
+        const double t = k / kPadRate, at = t / 0.049;
+        const int i = std::min(int(at), n - 2);
+        const double u = at - i;
+        const double drift = kRestDriftMm[i] + (kRestDriftMm[i + 1] - kRestDriftMm[i]) * u - kRestDriftMm[0];
+        seed = seed * 1664525u + 1013904223u;
+        const double shiver = (double(seed >> 8) / 16777216.0 - 0.5) * 0.05; // ±0.025 mm
+        Frame f;
+        f.t = from + t;
+        f.count = 1;
+        Touch &tc = f.touches[0];
+        tc.id = id;
+        tc.x = float(lead::neckX(cell, 7) + (drift + shiver) / kPadMm);
+        tc.y = 0.5f;
+        tc.size = 1.0f;
+        tc.pressure = 0.3f;
+        // The angle's record is shorter: it goes round again, without its
+        // first frames (the finger arriving).
+        const int j = k < int(std::size(kRestTurnDeg)) ? k : 2 + (k - 2) % (int(std::size(kRestTurnDeg)) - 2);
+        tc.angle = float(kRestTurnDeg[j]) * 3.14159265f / 180.0f;
+        tc.eccentricity = float(kRestEcc[j]) / 100.0f;
+        frames.push_back(f);
+    }
+    Frame lift;
+    lift.t = frames.back().t + 1.0 / kPadRate;
+    frames.push_back(lift);
+    return frames;
+}
+
+// The same frames as the mouse plays them: the page takes the mouse as it
+// comes, which is how it took the trackpad before it steadied it.
+std::vector<Frame> asMouse(std::vector<Frame> frames) {
+    for (auto &f : frames)
+        for (int i = 0; i < f.count; ++i)
+            f.touches[i].id = kMouseId;
+    return frames;
+}
+
+// How a run's degree sits: how often it changed note (the nearest whole
+// degree), and its spread in cents (A minor, as the studio opens) between
+// two times.
+struct Steadiness {
+    int changes = 0;
+    double cents = 0; // standard deviation
+    double span = 0;  // highest less lowest, in cents
+};
+Steadiness steadiness(const PadRun &run, double from, double to) {
+    Tuning tuning;
+    tuning.set(9, 0, 4, false);
+    Steadiness s;
+    std::vector<double> c;
+    long last = LONG_MIN;
+    for (size_t i = 0; i < run.t.size(); ++i) {
+        if (run.t[i] < from || run.t[i] > to || std::isnan(run.degree[i]))
+            continue;
+        const long n = std::lround(run.degree[i]);
+        if (last != LONG_MIN && n != last)
+            ++s.changes;
+        last = n;
+        c.push_back(100.0 * tuning.continuousSemis(double(run.degree[i])));
+    }
+    if (c.empty())
+        return s;
+    double mean = 0;
+    for (double v : c)
+        mean += v / double(c.size());
+    double var = 0;
+    for (double v : c)
+        var += (v - mean) * (v - mean) / double(c.size());
+    s.cents = std::sqrt(var);
+    s.span = *std::max_element(c.begin(), c.end()) - *std::min_element(c.begin(), c.end());
+    return s;
+}
+
 // A script that turns to a sound with → and then plays `rest`.
 std::string onSound(int snd, const std::string &rest) {
     std::string s = "page 0 4\n";
@@ -481,6 +662,116 @@ private slots:
         QVERIFY(hi - lo > 0.15f); // the pitch moves with the finger
         QVERIFY(hi - lo < 0.6f);  // but stays around the note
         QVERIFY(std::fabs(tr.at(2.4).data[1] - 12.0f) < 0.02f);
+    }
+
+    void aRestingFingerHoldsItsNoteOnEverySound() {
+        // A finger held still just left of the line between E4 and F4, as
+        // a trackpad really reads one: its centre drifts 1.5 mm towards
+        // F4, and its angle drops out and comes back. Taken as it came (the
+        // mouse's path, and the trackpad's before it was steadied), the
+        // note tipped over into F4 and the twist bent it by fits.
+        const auto frames = restingFinger(0.4, 4.48f, 1);
+        const double from = 0.6, end = frames.back().t - 0.02;
+        const Steadiness raw = steadiness(playFrames(asMouse(frames)), from, end);
+        QVERIFY2(raw.changes >= 1 && raw.span > 50.0, qPrintable(QStringLiteral("%1 %2").arg(raw.changes).arg(raw.span)));
+        // Steadied, it holds E4, in tune to the cent, on every sound.
+        for (int snd = 0; snd < lead::kSounds; ++snd) {
+            const Steadiness s = steadiness(playFrames(frames, snd), from, end);
+            const QString said = QStringLiteral("%1: %2 changes, %3 cents across").arg(soundName(snd)).arg(s.changes).arg(s.span);
+            if (lead::sound(snd).model == lead::Sound::Dax) {
+                // The daxophone sings wherever the finger is: it goes with
+                // the drift (the 1.5 mm is some twenty cents here), and
+                // adds nothing to it.
+                QVERIFY2(s.span < 25.0 && s.cents < 6.0, qPrintable(said));
+                continue;
+            }
+            QVERIFY2(s.changes == 0 && s.span < 1.0, qPrintable(said));
+        }
+    }
+
+    void aSlideKeepsUpWithTheFinger() {
+        // Slides at constant speed across the neck, from one taking a
+        // third of a second a note to one at twenty notes a second (24 to
+        // 160 mm/s on that trackpad): the steadied finger is where the raw
+        // one is, five milliseconds behind it at most on average. Slower
+        // than about 5 mm/s the page takes a finger as resting, steadied
+        // or not, so its note holds rather than glides.
+        for (double cps : {3.0, 8.0, 20.0}) {
+            std::vector<Frame> frames;
+            const double from = 0.4, dur = 10.0 / cps;
+            for (int k = 0; k / kPadRate <= dur + 0.3; ++k) {
+                const double t = k / kPadRate;
+                frames.push_back(padFrame(from + t, 1, lead::neckX(float(2.0 + cps * std::min(t, dur)), 7)));
+            }
+            Frame lift;
+            lift.t = frames.back().t + 0.01;
+            frames.push_back(lift);
+            const auto pad = playFrames(frames), raw = playFrames(asMouse(frames));
+            double lag = 0, worst = 0;
+            int n = 0;
+            for (size_t i = 0; i < pad.t.size(); ++i)
+                if (pad.t[i] > from + 0.25 * dur && pad.t[i] < from + 0.75 * dur) {
+                    // On the neck a degree is a cell.
+                    const double l = (raw.degree[i] - pad.degree[i]) / cps;
+                    lag += l;
+                    worst = std::max(worst, l);
+                    ++n;
+                }
+            const QString said = QStringLiteral("%1 cells/s: %2 ms behind, %3 at worst").arg(cps).arg(1000 * lag / n).arg(1000 * worst);
+            QVERIFY2(n > 10 && lag / n < 0.005 && worst < 0.015, qPrintable(said));
+            // And it lands where the finger stops, as the raw one does.
+            size_t still = 0;
+            while (pad.t[still] < from + dur + 0.25)
+                ++still;
+            QVERIFY2(std::fabs(pad.degree[still] - 19.0f) < 0.01f, qPrintable(said));
+        }
+    }
+
+    void aWiggleOnThePadKeepsItsDepth() {
+        // A vibrato of a millimetre each way, five and a half times a
+        // second: steadied, the pitch swings at least nine tenths as far
+        // as the finger's raw position would swing it.
+        std::vector<Frame> frames;
+        for (int k = 0; k / kPadRate <= 2.0; ++k) {
+            const double t = k / kPadRate;
+            const double mm = t < 0.3 ? 0.0 : std::sin(2 * M_PI * 5.5 * (t - 0.3));
+            frames.push_back(padFrame(0.4 + t, 1, lead::neckX(5.0f, 7) + float(mm / kPadMm)));
+        }
+        Frame lift;
+        lift.t = frames.back().t + 0.01;
+        frames.push_back(lift);
+        const Steadiness pad = steadiness(playFrames(frames), 1.0, 2.3), raw = steadiness(playFrames(asMouse(frames)), 1.0, 2.3);
+        QVERIFY2(raw.span > 15.0 && pad.span > 0.9 * raw.span,
+                 qPrintable(QStringLiteral("%1 cents, raw %2").arg(pad.span).arg(raw.span)));
+    }
+
+    void theMouseIsTakenAsItComes() {
+        // The mouse isn't steadied: it creeps from E4 towards F4 at the
+        // speed a resting fingertip drifts, and changes note just past the
+        // middle, as it always has (a finger the same would hold E4); it
+        // jumps to a note far up and is there at once.
+        std::string mouse = "page 0 4\n" + fmt("mouse 0.3 %.5f 0.5 down\n", cellX(4));
+        std::string finger = "page 0 4\n" + fmt("down 0.3 1 %.5f 0.5\n", cellX(4));
+        for (int k = 1; k <= 170; ++k) {
+            const float x = lead::neckX(4.0f + 0.004f * float(k), 7);
+            mouse += fmt("mouse %.4f %.5f 0.5 move\n", 0.3 + 0.01 * k, x);
+            finger += fmt("move %.4f 1 %.5f 0.5\n", 0.3 + 0.01 * k, x);
+        }
+        const auto m = trace(mouse + fmt("mouse 2.4 %.5f 0.5 move\nmouse 2.8 %.5f 0.5 up\nend 2.9\n", cellX(10), cellX(10)));
+        const auto f = trace(finger + "up 2.8 1\nend 2.9\n");
+        QCOMPARE(m.at(2.3).data[1], 12.0f);
+        QCOMPARE(f.at(2.3).data[1], 11.0f);
+        // Where the mouse crossed: past 0.62 of a cell, not before.
+        double crossed = 0;
+        for (const auto &k : m.ticks)
+            if (k.t > 0.3 && k.t < 2.3 && k.data[1] > 11.5f) {
+                crossed = k.t;
+                break;
+            }
+        QVERIFY2(crossed > 0.3 + 0.01 * 155 && crossed < 0.3 + 0.01 * 160, qPrintable(QString::number(crossed)));
+        // The tick the move arrives on, and the studio's publishing it on
+        // the next: no later than any note's start.
+        QCOMPARE(m.at(2.409).data[1], 17.0f);
     }
 
     void harmonyRowsMoveWithTheMelodyInTheKey() {

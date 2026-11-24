@@ -27,9 +27,9 @@ one is published, and none was at hand.
     every touch (from C♯2 to E2, low on the pad, it can fail to speak);
   - harder is louder and rougher;
   - the hardest goes past the window's roof: the hair holds on too long.
-    From a fresh attack, at A3, E4 and E5 the note breaks up, rough; from
-    A4 up it falls to a clean tone a few semitones flat; at A2 it still
-    sings (see the regimes below). Pressed up to it gradually, a note can
+    From a fresh attack the note is lost, the tone falling 2.5 to 6
+    semitones under it, rough around A3–E4, clean from A4 up; at A2 it
+    still sings (see the regimes below). Pressed up to it gradually, a note can
     stay sung, flat and rough;
   - on the way up, gradually, a light bow can catch an upper mode instead
     of the note: A3 pressed slowly through the lighter half whistles on
@@ -62,10 +62,10 @@ sample, the friction solved implicitly at the bow every sample.
 | Two parts | In front of the dax, the bowed part: a cantilever held at the dax against swinging and twisting, and sprung against rocking by 70 EI/L (the dax's cardboard patch, **inf**) plus the part behind (its static stiffness, 4 EI/d). Behind the dax: its own modes, clamped in the block, held at the dax by the same contact, driven by the moment and torque the bowed part puts on the dax; at the clamp, its modes plus, held still, what the rest give. Its 12 families are followed from where it is longest (the dax near the tip) toward the clamp, so every one of its modes under 4 kHz (at most 11) is simulated at every dax position. One way only: the part behind doesn't act back (see the open points) | calc |
 | The dax rocking | Its curved face holds at most the press times half its patch (6 mm): 8 N (lightly) to 40 N (firmly), 0.05–0.24 N·m (**inf**); an ordinary touch presses at 0.35 of the way (19 N). What it would hold beyond that flattens off (a tanh), and what it fails to hold works back on the bowed part's modes. A nonlinear support. Under an ordinary bow, against a dax no bow could rock, without the ear (E3–A5): pressed as lightly as a flat finger presses it, the note falls 66–149 c and its harmonics rise 6–22 dB; at an ordinary press, 28–89 c and 1–10 dB | [PW-D]: the yodel, the heavier dax; calc |
 | Glides | The modes are followed by their shapes from one dax position to the next (64 positions; a twisting and a bending mode that cross between two of them keep their own motion), their frequencies and weights interpolated, the step's coefficients blended across each 32-sample block. Each mode's state is its swing and its speed over its frequency, so a blended step is a rotation that only shrinks; a retuned mode keeps its action (energy over frequency), carried a sample at a time | [LL] |
-| Bow | Rosin's friction a hyperbola in sliding speed, μ = 0.35 + 0.45 · 0.1/(0.1 + \|v\|), 0.8 gripping; its grip varies 4 % from grain to grain, and sliding, by up to 25 % as fast as the slide (the hair's strands catching: the bow's noise) (**inf**). The bow lands with its weight in 2 ms, drawn up to speed in 30 ms. At 0.3 of the half-width across the end; along it, from the very end to an eighth of the bowed part in | [SW], [GAL], [GUE] |
+| Bow | Rosin's friction a hyperbola in sliding speed, μ = 0.35 + 0.45 · 0.1/(0.1 + \|v\|), 0.8 gripping; its grip varies 4 % from grain to grain, and sliding, by up to 25 % as fast as the slide (the hair's strands catching: the bow's noise, each catch let go at once, so the noise has nothing below a few kilohertz and leaves the friction's mean, and so the period, alone) (**inf**). The bow lands with its weight in 2 ms, drawn up to speed in 30 ms. At 0.3 of the half-width across the end; along it, from the very end to an eighth of the bowed part in | [SW], [GAL], [GUE] |
 | Bow force | A table of the window (N, at 0.2 m/s) in which the tongue sings each note at every touch the Lead gives, every three semitones from C2 to C7, from the model's own scan below: what a player's arm learns. An ordinary press bows at the window's middle, or where it is narrow a fifth over its floor; lighter, in proportion (to the power 1.3); harder, slowly then steeply, to 2.5 times the roof at the hardest | calc |
 | Bow speed | 0.15–0.25 m/s, faster for a firmer landing; turns every 4 s (**inf**) | |
-| The player's ear | The dax goes where the bowed part's fundamental is the note, corrected by what the player has learned of the tongue: for each of 64 places along it, how far the dax goes past where the mode alone would put it (a bowed tone sits flat of its mode, more as the dax rocks). The learning: once the bow is drawn, the fundamental's zero crossings are timed to a fraction of a sample, and while they are within three semitones of the note the place is nudged over 60 ms until they are on it, by as much as four semitones. The Lead's tongues share one player's learning. A place played for the first time settles in about a third of a second (within 40 c from 160 ms); one played before, within 25 c from 120 ms | calc |
+| The player's ear | The dax goes where the bowed part's fundamental is the note, corrected by what the player has learned of the tongue: for each of 64 places along it, how far the dax goes past where the mode alone would put it (a bowed tone sits flat of its mode, more as the dax rocks). The learning: once the bow is drawn, the fundamental's zero crossings are timed to a fraction of a sample, and while they are within three semitones of the note the place is nudged over 60 ms until they are on it, by as much as four semitones. The Lead's tongues share one player's learning. A place played for the first time settles in about a third of a second (within 40 c from 160 ms, within 5 c from 0.2–0.3 s); one played before, within 25 c from 160 ms (a note's first tenth of a second stands up to 30 c sharp, before the rocking's flattening has built up). The learning moves the correction read back where the note lies by the whole step, wherever it lies between two places | calc |
 | Losses | Wood: 0.008 along the grain, 0.02 twisting (**inf** within [ON], [OBA]). The dax's hold: what it holds of the rocking loses through the cardboard at 0.25 (more for a lighter press, **inf**), what passes behind it at 0.1. Behind the dax, the block and its stand take 0.06. Air: 1 s⁻¹ | |
 | Pickup | The clamp's moment: two piezo discs either side of the middle, wired in parallel, so a twist cancels. Then the block: rolled off under 45 Hz, a broad lift (Q 1.4) at 2.8 kHz, little over 8 kHz (**inf**) | [WIKI], [PW-B] |
 | Level | The clamp hears what passes the dax, which jumps wherever a mode behind it meets the note or a strong harmonic. The Lead evens three quarters of that out: the tongue measures what reaches the clamp against the bowed part's energy over 80 ms (before that, 0.69 of the part behind's response at the fundamental, what is heard on average), never lifting by more than 25 dB. Evened, an ordinary note is within ±3 dB from E2 to C7 | calc |
@@ -101,19 +101,24 @@ all four touches (the playable range is F2 to C7 at every touch).
 
 ### The regimes, measured
 
-From a fresh attack, the dax at an ordinary press, the bow half way
-along, the ear on (the noise is measured between the harmonics of the tone
-actually sounding, on its own pitch):
+From a fresh attack, the dax at an ordinary press, the bow at 0.3 along,
+the ear on (the noise is measured between the harmonics of the tone
+actually sounding, on its own pitch; the same on gcc and clang where a
+single figure is given):
 
 | | the lightest (1/20 of ordinary) | ordinary | the hardest (2.5 × the roof) |
 |---|---|---|---|
-| 110 Hz | skating, 34 dB under | in tune, noise 49 dB under the harmonics | still sung, rougher (it period-doubles at about 1.5 × the roof) |
-| 220 Hz | skating, 36 dB under | in tune, noise 55 dB under | broken up: the period lost, a rough tone about 2.4 semitones down, noise 22 dB under |
-| 330 Hz | skating | in tune | broken up, rough |
-| 440 Hz | skating | in tune | a clean tone about 3 semitones flat |
-| 660 Hz | skating | in tune | rough, about 5–6 semitones flat, noise 29 dB under |
+| 110 Hz | skating, 34 dB under | in tune, noise 66 dB under the harmonics | still sung, rougher (noise 40 dB under) |
+| 220 Hz | skating, 36 dB under | in tune, noise 64–68 dB under | lost: a tone 2.5 semitones down, rough (noise 28–33 dB under) |
+| 330 Hz | skating | in tune | lost: 3 semitones down, rough or nearly clean (noise 30–41 dB under) |
+| 440 Hz | skating | in tune | lost: a clean tone 3–5 semitones down |
+| 660 Hz | skating | in tune | lost: about 6 semitones down (noise 40 dB under) |
 | 880 Hz | skating | in tune | a clean tone 2.7 semitones flat |
-| 1320 Hz | skating | in tune | a clean tone about 3.5 semitones flat |
+| 1320 Hz | skating | in tune | a clean tone 3.6 semitones flat |
+
+Where a broken note lands is the same from one build to another; whether
+what is left is rough or clean, near A3–E4, turns on the attack's last
+detail and differs between compilers' rounding.
 
 ### Where its harmonics come from
 
@@ -185,9 +190,9 @@ against the fundamental, in dB:
   (and the measure hearing a step of 0.3 of the swing);
 - the regimes: skating 25 dB under at a twentieth of the force, in tune
   and clean (noise 40 dB under) at an ordinary one, more than 6 dB
-  rougher from a light bow to one just under the roof, the note lost and
-  rough at the hardest at A3, E4 and E5 (measured on what is left), the
-  floor rising with the note;
+  rougher from a light bow to one just under the roof, the note lost at
+  the hardest at A3, E4 and E5 (more than two semitones down), the floor
+  rising with the note;
 - the dax rocking, at both presses, as above;
 - where it is bowed: the end rougher than further in;
 - the dax's damping: 40 dB down within a second, quicker for a lighter
@@ -269,9 +274,10 @@ Left open:
   near 385 Hz, with further crossings near 830 Hz and 1.4 kHz, all in the
   Lead's range: a playable lead would need the ear to cope with wolves
   there.
-- **The hardest press,** from a fresh attack, breaks up at A3, E4 and E5,
-  still sings at A2 (it period-doubles at about 1.5 × the roof), and at
-  A4–E6 gives a clean tone 2.7–3.5 semitones flat rather than a croak.
+- **The hardest press,** from a fresh attack, loses the note from A3 up,
+  the tone falling 2.5 to 6 semitones under it, rough around A3–E4 and
+  clean from A4 up, rather than a croak; at A2 it still sings (it
+  period-doubles at about 1.5 × the roof).
 - **The dax pressing from one side.** It presses down only; it can't pull
   the tongue up. Under a flat finger the shear at the dax is 0.5–0.9 of
   the press over most of the neck, exceeds it at D♯5–E5 and from A♯6, and
@@ -280,6 +286,11 @@ Left open:
 - **The dax has no inertia.** It is held by springs, not a 100–200 g block
   in a hand whose inertia to rocking is about as stiff as the cardboard at
   220 Hz, so Reichel's "a heavier dax intonates better" is not modelled.
+- **The bow's noise is quiet.** The hair's noise has nothing below a few
+  kilohertz (lower, it wandered the pitch), and the tongue passes little
+  of it: between the harmonics of an ordinary note it stands 57–80 dB
+  under them, where Reichel's recordings have audible bow noise (by the
+  reviewer's recollection).
 - **No real daxophone has been measured.** Every comparison with the
   instrument is by recollection; the numbers above are predictions a
   recording could check.

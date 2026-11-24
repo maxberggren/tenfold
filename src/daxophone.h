@@ -811,10 +811,14 @@ public:
             const float off = std::log2(m_rate / m_period / m_target);
             if (std::fabs(off) < 3.0f / 12.0f) {
                 const float step = std::exp2(-off * std::min(1.0f, float(n) * m_dt / kEarS));
+                // Into the two places either side, in proportion to how near
+                // each is, normalised so that what is read back where the
+                // note is (their interpolation) moves by the whole step,
+                // wherever between them it lies.
                 const int j = std::min(int(m_place), kU - 2);
-                const float t = m_place - float(j);
-                m_ear->map[j] = std::clamp(m_ear->map[j] * std::pow(step, 1.0f - t), 0.79f, 1.26f);
-                m_ear->map[j + 1] = std::clamp(m_ear->map[j + 1] * std::pow(step, t), 0.79f, 1.26f);
+                const float t = m_place - float(j), norm = 1.0f / ((1.0f - t) * (1.0f - t) + t * t);
+                m_ear->map[j] = std::clamp(m_ear->map[j] * std::pow(step, (1.0f - t) * norm), 0.79f, 1.26f);
+                m_ear->map[j + 1] = std::clamp(m_ear->map[j + 1] * std::pow(step, t * norm), 0.79f, 1.26f);
             }
         }
     }
@@ -1019,8 +1023,17 @@ private:
         m_slip = sgn * x;
         // Sliding, the hair's grip is not smooth: its strands catch and let
         // go on the rosin's grains, a noise in the friction as loud as the
-        // slide is fast (up to kSlipNoise of it).
-        m_hiss = 0.5f * m_hiss + 0.5f * m_rng.bipolar();
+        // slide is fast (up to kSlipNoise of it). Each catch is let go at
+        // once: the noise is the change from one sample to the next, with
+        // nothing below a few kilohertz, so it roughens the tone without
+        // moving the friction's mean from one period to the next (which
+        // would move the period: a low noise here wandered the pitch by
+        // ±10–15 c, and which way depended on the compiler's rounding).
+        {
+            const float w = m_rng.bipolar();
+            m_hiss = 0.7f * (w - m_hissWas);
+            m_hissWas = w;
+        }
         const float rough = 1.0f + kSlipNoise * m_hiss * std::min(1.0f, x / 0.05f);
         const float F = -sgn * Fb * (kMuD + (kMuS - kMuD) * kV0 / (kV0 + x)) * rough;
         m_lastV = vb + m_slip;
@@ -1035,7 +1048,7 @@ private:
     Coef m_c0, m_c1;
     bool m_fresh = true, m_stick = false;
     float m_slip = 0, m_lastV = 0, m_lastF = 0, m_energy = 0, m_trans = 0, m_gain = -1, m_heard = 0;
-    float m_hiss = 0;
+    float m_hiss = 0, m_hissWas = 0;
     Ear m_ownEar, *m_ear = &m_ownEar;
     float m_place = 0, m_drawn = 0;
     float m_target = 0, m_period = 0, m_grain = 0, m_q0 = 0, m_frac = 0, m_theta = 0, m_slackGain = 1;

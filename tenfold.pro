@@ -57,6 +57,7 @@ HEADERS += \
     src/visualizer.h \
     src/recorder.h \
     src/scream.h \
+    src/kargyraa.h \
     src/translator.h \
     src/tuning.h \
     src/tutorial.h \

@@ -43,6 +43,7 @@
 #include "console.h"
 #include "fx.h"
 #include "parts.h"
+#include "kargyraa.h"
 #include "scream.h"
 
 namespace tf {
@@ -56,10 +57,12 @@ namespace {
 // sitar played by the voice, a Balinese gamelan, and Houston's slowed and
 // chopped tape. Songs keep a style by name, so the order may grow but
 // never change.
-enum Preset { Natural, Tune, Prism, Choir, Vocoder, Robot, Talk, Throat, Sitar, Gamelan, Screwed, Riot, PresetCount };
+enum Preset {
+    Natural, Tune, Prism, Choir, Vocoder, Robot, Talk, Throat, Sitar, Gamelan, Screwed, Riot, Growl, PresetCount
+};
 const char *presetName(int p) {
     static const char *names[] = {"NATURAL", "HARD TUNE", "PRISM", "CHOIR", "VOCODER", "ROBOT",
-                                  "TALK BOX", "THROAT", "SITAR", "GAMELAN", "SCREWED", "RIOT"};
+                                  "TALK BOX", "THROAT", "SITAR", "GAMELAN", "SCREWED", "RIOT", "KARGYRAA"};
     return names[std::clamp(p, 0, PresetCount - 1)];
 }
 const char *presetLine(int p) {
@@ -78,6 +81,7 @@ const char *presetLine(int p) {
         "syllables strike bronze, gongs keep the cycle",
         "you, slowed on tape; fingers chop and spin it",
         "you, screamed from across a field; fingers join in",
+        "you growl an octave under; your vowel sings over it",
     };
     return lines[std::clamp(p, 0, PresetCount - 1)];
 }
@@ -103,7 +107,8 @@ enum ParamId {
     PStyleOpt, // i[1]: the gamelan's tuning (GamTuning), i[2]: the talk box's sub octave (1 on),
                // i[3]: the talk box played from the lanes (1) or by the note sung (0),
                // f[0]: the screwed tape's speed (ScrewSpeed), f[1]: throat singing's style (ThroatStyle),
-               // f[2]: where the riot's screamer is (scream::Place)
+               // f[2]: where the riot's screamer is (scream::Place),
+               // f[3]: the kargyraa's false folds' ratio (kargyraa::Ratio)
 };
 
 // The gamelan's tunings: its own two, rooted on the song's key note, or the
@@ -296,8 +301,11 @@ enum {
     TalkOpen,       // KEYS: how far the synth's filter is open, 0..1
     RiotOctave,     // the octaves the riot's phrase is screamed up (−1..2)
     RiotStrain,     // how hard its throat works, 0..1: the false folds' share
+    GrowlUnder,     // the kargyraa's undertone (Hz; 0: silent)
+    GrowlHarmonic,  // the harmonic of it the vowel's resonance is on (0: none)
+    GrowlFocus,     // and where that resonance is (Hz)
 };
-static_assert(RiotStrain < kPartData, "fits the page's data");
+static_assert(GrowlFocus < kPartData, "fits the page's data");
 }
 
 // The nearest note of the key, or of the chord when follow is on, to a
@@ -639,6 +647,7 @@ public:
             m_screwSpeed = std::clamp(int(std::lround(c.f[0])), 0, ScrewSpeedCount - 1);
             m_throatStyle = std::clamp(int(std::lround(c.f[1])), 0, ThroatStyleCount - 1);
             m_scream.setPlace(int(std::lround(c.f[2])));
+            m_growl.setRatio(int(std::lround(c.f[3])));
             break;
         default: break;
         }
@@ -838,7 +847,8 @@ public:
         // the gamelan's bronze it steps back, so the instrument carries
         // the tune.
         const float wantDry = (m_preset == Prism && anyFinger) || m_preset == Vocoder || m_preset == Talk ||
-                                      m_preset == Throat || m_preset == Screwed || m_preset == Riot
+                                      m_preset == Throat || m_preset == Screwed || m_preset == Riot ||
+                                      m_preset == Growl
                                   ? 0.0f
                               : m_preset == Sitar   ? 0.0f
                               : m_preset == Gamelan ? 0.45f
@@ -1299,6 +1309,9 @@ public:
         d[pub::ScrewDeckB] = m_preset == Screwed ? m_repLvl.y : 0.0f;
         d[pub::RiotOctave] = float(m_scream.octave());
         d[pub::RiotStrain] = m_preset == Riot ? m_scream.strain() : 0.0f;
+        d[pub::GrowlUnder] = m_preset == Growl ? m_growl.under() : 0.0f;
+        d[pub::GrowlHarmonic] = m_preset == Growl ? float(m_growl.harmonic()) : 0.0f;
+        d[pub::GrowlFocus] = m_growl.focusHz();
         // The lag of a shifted copy: about half a period, plus what the
         // formant asks.
         d[pub::Lag] = m_pitch.period() > 0 ? m_pitch.period() * 0.5f / m_rate * 1000.0f : 3.0f;
@@ -1368,6 +1381,8 @@ private:
         m_throatMix.setTime(0.04f, rate);
         m_riotMix.setTime(0.03f, rate);
         m_scream.init(rate);
+        m_growlMix.setTime(0.03f, rate);
+        m_growl.init(rate);
         m_whOn.setTime(0.06f, rate);
         m_underLvl.setTime(0.03f, rate);
         m_throatTone.set(3400.0f, 0.6f, rate);
@@ -2451,6 +2466,33 @@ private:
             if (on && m_scream.hz() > 0 && voiced)
                 m_leadMidi = midiOfHz(m_scream.hz());
         }
+
+        // Kargyraa: the Tuvan growl (kargyraa.h). Your throat replaced by a
+        // kargyraa singer's: the vocal folds at your note, moved by octaves
+        // to a man's low register, and the false folds above them closing
+        // on every other pulse, so the undertone an octave under sounds;
+        // your vowel's resonances each tuned onto a harmonic of it, so
+        // moving the vowel sings a melody. A finger steers the resonance to
+        // the harmonic nearest its note instead (the highest, if several).
+        if (m_preset == Growl || m_growlMix.y > 0.001f) {
+            const bool on = m_preset == Growl;
+            if (m_growlMix.y < 0.001f)
+                m_growl.reset();
+            m_growl.setPitch(voiced ? hz : 0.0f, voicedNow, m_pitch.clarity());
+            double best = -1;
+            const double ref = sungMidi > 0 ? sungMidi : 45;
+            for (const auto &v : m_voices)
+                if (v.on)
+                    best = std::max(best, noteMidi(h, v.value, v.mode, ref, m_follow));
+            m_growl.setSteer(best > 0 ? midiToHz(best) : 0.0f);
+            const float m0 = m_growlMix.y;
+            for (int i = 0; i < n; ++i)
+                m_growlMix.step(on ? 1.0f : 0.0f);
+            m_growl.process(dry, leadL, leadR, n, m0, m_growlMix.y);
+            // (What the instruments follow is what is heard: the undertone.)
+            if (on && m_growl.under() > 0 && voiced)
+                m_leadMidi = midiOfHz(m_growl.under());
+        }
     }
 
     // The kotekan: two parts, polos (left) and sangsih (right), that
@@ -2741,6 +2783,9 @@ private:
     // Riot: the scream and how far in it is.
     scream::Scream m_scream;
     Smooth m_riotMix;
+    // Kargyraa: the growl and how far in it is.
+    kargyraa::Kargyraa m_growl;
+    Smooth m_growlMix;
     int m_whHold = 0, m_throatStyle = Sygyt;
     float m_droneSlow = 0, m_droneFast = 0, m_whLevel = 0, m_kgPhase = 0, m_kgJitter = 0, m_kgJit = 0;
     float m_whPhA = 0, m_zr[2] = {}, m_zi[2] = {}, m_zsr = 0, m_zsi = 0, m_ur = 1, m_ui = 0;
@@ -3275,12 +3320,19 @@ public:
             "vowels and consonants kept, but the throat made again (pressed folds, the false folds drawn in and "
             "fluttering at half the pitch, the rush of air on every pulse), moved by octaves into a screamer's "
             "register for each phrase and heard three metres off (B: in a FIELD, a small ROOM, or CLOSE); sing "
-            "louder and it strains more; a finger adds another screamer at its harmony, as a gang shout. The row of styles under the pad scrolls with the lit one; click any to "
+            "louder and it strains more; a finger adds another screamer at its harmony, as a gang shout. "
+            "KARGYRAA: you, as a Tuvan kargyraa singer: your throat made again (pressed vocal folds at your note, "
+            "moved to a man's low register, and the false folds above them closing on every other pulse, so an "
+            "undertone growls an octave under), your vowel kept and each of its resonances tuned onto a harmonic "
+            "of the undertone: move the vowel (oo, oh, aw, ah) and it steps from harmonic to harmonic, the "
+            "melody; a finger steers it to the harmonic nearest its note; B: the false folds at half the pitch "
+            "(2:1) or a third (3:1). The row of styles under the pad scrolls with the lit one; click any to "
             "pick it\n"
             "B\tthe style's own option, also the chip at the end of the row of styles, and named straight after "
             "the style in the status line: the TALK BOX sung or played from the lanes (KEYS), THROAT's style "
             "(sygyt, kargyraa, khoomei), the GAMELAN's tuning (pelog, slendro, the song's key), the SCREWED "
-            "tape's speed (a fourth down, a fifth, 0.8), where the RIOT screams (field, room, close)\n"
+            "tape's speed (a fourth down, a fifth, 0.8), where the RIOT screams (field, room, close), the "
+            "KARGYRAA's undertone (2:1, 3:1)\n"
             "Shift+B\tthe TALK BOX's sub octave (on, off)\n"
             "Shift+Left / Right (or [ ])\tthe stutter's rate: 1/8, 1/8T, 1/16, 1/16T, 1/32\n"
             "Up / Down\tthe keys an octave up or down\n"
@@ -3355,7 +3407,8 @@ public:
     // what a hand is doing.
     // The styles by the names a file gives them (the page's are for show).
     static constexpr const char *kStyleNames[PresetCount] = {"natural", "tune", "prism", "choir", "vocoder", "robot",
-                                                                 "talkbox", "throat", "sitar", "gamelan", "screwed", "riot"};
+                                                                 "talkbox", "throat", "sitar", "gamelan", "screwed", "riot",
+                                                                 "kargyraa"};
     void save(QJsonObject &out) const override {
         out[QStringLiteral("style")] = QLatin1String(kStyleNames[std::clamp(m_preset, 0, PresetCount - 1)]);
         out[QStringLiteral("formant")] = m_formant;
@@ -3368,6 +3421,7 @@ public:
         out[QStringLiteral("screwedSpeed")] = QLatin1String(screwSpeedKey(m_screwSpeed));
         out[QStringLiteral("throatStyle")] = QString::fromLatin1(throatStyleName(m_throatStyle)).toLower();
         out[QStringLiteral("riotPlace")] = QLatin1String(scream::placeKey(m_riotPlace));
+        out[QStringLiteral("kargyraaRatio")] = QLatin1String(kargyraa::ratioKey(m_growlRatio));
     }
     void load(const QJsonObject &in, ControlContext &ctx) override {
         m_preset = Natural;
@@ -3389,6 +3443,11 @@ public:
         for (int k = 0; k < scream::PlaceCount; ++k)
             if (place == QLatin1String(scream::placeKey(k)))
                 m_riotPlace = k;
+        m_growlRatio = kargyraa::Half;
+        const QString ratio = in.value(QStringLiteral("kargyraaRatio")).toString();
+        for (int k = 0; k < kargyraa::RatioCount; ++k)
+            if (ratio == QLatin1String(kargyraa::ratioKey(k)))
+                m_growlRatio = k;
         m_talkSub = in.value(QStringLiteral("talkboxSub")).toBool(true);
         m_talkKeys = in.value(QStringLiteral("talkboxKeys")).toBool(false);
         m_screwSpeed = ScrewFourth;
@@ -4004,7 +4063,8 @@ private:
     // lanes (and with Shift, its sub octave); throat singing's style; the
     // screwed tape's speed.
     bool hasOption(int preset) const {
-        return preset == Gamelan || preset == Talk || preset == Screwed || preset == Throat || preset == Riot;
+        return preset == Gamelan || preset == Talk || preset == Screwed || preset == Throat || preset == Riot ||
+               preset == Growl;
     }
     QString optionLabel() const {
         if (m_preset == Throat)
@@ -4015,6 +4075,8 @@ private:
             return QStringLiteral("%1  B").arg(QString::fromUtf8(screwSpeedName(m_screwSpeed)));
         if (m_preset == Riot)
             return QStringLiteral("%1  B").arg(QString::fromLatin1(scream::placeName(m_riotPlace)));
+        if (m_preset == Growl)
+            return QStringLiteral("%1  B").arg(QString::fromLatin1(kargyraa::ratioName(m_growlRatio)));
         // (The sub, on by default, is named only when it is off.)
         return QStringLiteral("%1%2  B")
             .arg(m_talkKeys ? QStringLiteral("KEYS") : QStringLiteral("SUNG"))
@@ -4030,6 +4092,8 @@ private:
             return QString::fromUtf8(screwSpeedName(m_screwSpeed)).toLower();
         if (m_preset == Riot)
             return QString::fromLatin1(scream::placeKey(m_riotPlace));
+        if (m_preset == Growl)
+            return QStringLiteral("undertone %1").arg(QString::fromLatin1(kargyraa::ratioName(m_growlRatio)));
         return m_talkKeys ? QStringLiteral("keys") : QStringLiteral("sung");
     }
     void styleOption(ControlContext &ctx, bool shift) {
@@ -4069,9 +4133,15 @@ private:
                                         "three metres off in a small room, its walls and a tail",
                                         "close: the scream with no place round it"};
             ctx.notice(QStringLiteral("Riot: %1").arg(QString::fromLatin1(why[m_riotPlace])));
+        } else if (m_preset == Growl) {
+            m_growlRatio = (m_growlRatio + 1) % kargyraa::RatioCount;
+            static const char *why[] = {"the false folds at half your pitch: the undertone an octave under",
+                                        "the false folds at a third of your pitch: an octave and a fifth under"};
+            ctx.notice(QStringLiteral("Kargyraa: %1").arg(QString::fromLatin1(why[m_growlRatio])));
         } else {
             ctx.notice(QStringLiteral("%1 has no option of its own (B: the TALK BOX's keys, THROAT's style, the "
-                                      "GAMELAN's tuning, the SCREWED tape's speed, where the RIOT screams)")
+                                      "GAMELAN's tuning, the SCREWED tape's speed, where the RIOT screams, the "
+                                      "KARGYRAA's undertone)")
                            .arg(QString::fromLatin1(presetName(m_preset))));
             return;
         }
@@ -4088,6 +4158,7 @@ private:
         c.f[0] = float(m_screwSpeed);
         c.f[1] = float(m_throatStyle);
         c.f[2] = float(m_riotPlace);
+        c.f[3] = float(m_growlRatio);
         ctx.send(c);
     }
     void setStutter(int s, ControlContext &ctx) {
@@ -4503,6 +4574,7 @@ private:
     // The styles' own options: the gamelan's tuning, the tape's speed,
     // throat singing's style, the talk box's sub and keys.
     int m_gamTuning = Pelog, m_screwSpeed = ScrewFourth, m_throatStyle = Sygyt, m_riotPlace = scream::Field;
+    int m_growlRatio = kargyraa::Half;
     bool m_talkSub = true, m_talkKeys = false;
     double m_loopSince = -1e18;
     uint32_t m_takesSeen = 0;
@@ -4746,6 +4818,20 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                     QStringLiteral("SCREAMED %1 · %2 · HOLD A LANE: A GANG SHOUT AT ITS HARMONY")
                         .arg(up, QString::fromLatin1(where[std::clamp(m_riotPlace, 0, 2)])),
                     c::alpha(col, 0.6f), labelPx - 1, true, Qt::AlignCenter);
+        }
+        if (m_preset == Growl) {
+            // The undertone, and the harmonic of it the vowel is on.
+            const float under = d[pub::GrowlUnder];
+            const int k = int(std::lround(d[pub::GrowlHarmonic]));
+            const QString line =
+                under > 0 && k > 0
+                    ? QStringLiteral("UNDERTONE %1 HZ · YOUR VOWEL ON ITS HARMONIC %2, %3 HZ · HOLD A LANE: STEER IT")
+                          .arg(int(std::lround(under)))
+                          .arg(k)
+                          .arg(int(std::lround(d[pub::GrowlFocus])))
+                    : QStringLiteral("SING LOW: AN UNDERTONE AN OCTAVE UNDER YOU · MOVE THE VOWEL TO SING ITS HARMONICS");
+            c::text(p, pc.rect(kLeft, kTapeTop + 0.05f, kRight, kTapeTop + 0.09f), line, c::alpha(col, 0.6f),
+                    labelPx - 1, true, Qt::AlignCenter);
         }
         // Your own note sits between the thirds.
         const float ux = kLeft + laneW * 3.0f;

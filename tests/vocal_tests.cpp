@@ -995,14 +995,14 @@ private slots:
     }
 
     void theNewStylesComeBackByName() {
-        const char *names[] = {"talkbox", "throat", "sitar", "gamelan", "screwed", "riot"};
-        for (int k = 0; k < 6; ++k) {
+        const char *names[] = {"talkbox", "throat", "sitar", "gamelan", "screwed", "riot", "kargyraa"};
+        for (int k = 0; k < 7; ++k) {
             const auto song = reopenVocal(std::string(kPage) + rights(Talk + k) + "voice 0.5 0.6 hz=220\nend 1.4\n", 0.5);
             QCOMPARE(song.settings[QStringLiteral("style")].toString(), QString::fromLatin1(names[k]));
         }
         // And Left from NATURAL wraps round to the last of them.
         const auto wrapped = reopenVocal(std::string(kPage) + "key 0.1 Left\nend 0.6\n", 0.5);
-        QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("riot"));
+        QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("kargyraa"));
         // The styles' own options too: slendro; the talk box on the keys,
         // and (Shift+B) with no sub; the tape a fifth down.
         const auto gam = reopenVocal(std::string(kPage) + rights(Gamelan) + "key 0.5 B\nend 0.8\n", 0.5);
@@ -1018,6 +1018,8 @@ private slots:
         QCOMPARE(riot.settings[QStringLiteral("riotPlace")].toString(), QStringLiteral("room"));
         const auto close = reopenVocal(std::string(kPage) + rights(Riot) + "key 0.5 B\nkey 0.6 B\nend 0.8\n", 0.5);
         QCOMPARE(close.settings[QStringLiteral("riotPlace")].toString(), QStringLiteral("close"));
+        const auto growl = reopenVocal(std::string(kPage) + rights(Growl) + "key 0.5 B\nend 0.8\n", 0.5);
+        QCOMPARE(growl.settings[QStringLiteral("kargyraaRatio")].toString(), QStringLiteral("third"));
     }
 
     // --- riot ------------------------------------------------------------------------
@@ -1084,6 +1086,54 @@ private slots:
         // there, 20–30 dB under its harmonics. The singer's own voice would
         // be level with them.)
         QVERIFY(up > 30 * sungBand);
+    }
+
+    // --- kargyraa ---------------------------------------------------------------------
+
+    void theKargyraaGrowlsAnOctaveUnder() {
+        // Sung on C3 (130.8 Hz): the folds stay there and the false folds
+        // close on every other pulse, so the half-harmonics (odd multiples
+        // of 65.4 Hz) stand among the harmonics, where the voice sung has
+        // none; about as loud as the natural voice; and the page says so.
+        const std::string sing = "voice 0.3 2.2 hz=130.8 vowel=o level=0.3\nend 2.8\n";
+        const auto take = playStyle(Growl, sing);
+        checkStyle(take, "KARGYRAA");
+        QVERIFY2(take.status.contains(QLatin1String("undertone 2:1, B")), qPrintable(take.status));
+        const auto natural = testkit::play(std::string(kPage) + sing);
+        // (Each half-harmonic against the harmonics either side, in dB, so
+        // the vowel's envelope cancels.)
+        auto shr = [&](const testkit::Take &t) {
+            double sum = 0;
+            int n = 0;
+            for (int k = 3; k * 65.4 < 1500; k += 2, ++n)
+                sum += 10 * std::log10(peakPower(t, 65.4 * k, 1.0, 2.2) /
+                                       std::sqrt(peakPower(t, 65.4 * (k - 1), 1.0, 2.2) * peakPower(t, 65.4 * (k + 1), 1.0, 2.2)));
+            return sum / n;
+        };
+        const double half = shr(take), halfSung = shr(natural);
+        qInfo("kargyraa: half-harmonics %.1f dB re their neighbours (the voice sung: %.1f)", half, halfSung);
+        QVERIFY2(half > -8, "no undertone");
+        QVERIFY2(halfSung < -25, "the sung voice already had one");
+        const double db = 20 * std::log10(take.rms(1.0, 2.2) / natural.rms(1.0, 2.2));
+        qInfo("kargyraa: %.1f dB from the natural voice", db);
+        QVERIFY2(std::fabs(db) < 4, qPrintable(QString("%1 dB").arg(db)));
+    }
+
+    void theKargyraasFingerSteersTheMelody() {
+        // A finger on a lane moves the resonance to the undertone's harmonic
+        // nearest its note: that harmonic far stronger than without it.
+        const std::string sing = "voice 0.3 2.0 hz=130.8 vowel=o level=0.3\n";
+        const auto alone = playStyle(Growl, sing + "end 2.4\n");
+        const auto steered = playStyle(Growl, sing + "down 0.2 1 0.8 0.5 p=0.7\nend 2.4\n");
+        QVERIFY(steered.finite());
+        double gain = 0, at = 0;
+        for (int k = 4; k * 65.4 < 1500; ++k) {
+            const double g = peakPower(steered, 65.4 * k, 1.0, 2.0) / std::max(1e-12, peakPower(alone, 65.4 * k, 1.0, 2.0));
+            if (g > gain)
+                gain = g, at = 65.4 * k;
+        }
+        qInfo("kargyraa: a finger lifts %.0f Hz by %.1f dB", at, 10 * std::log10(gain));
+        QVERIFY2(gain > 4, qPrintable(QString("only %1x").arg(gain)));
     }
 
     // --- the five styles, round three ---------------------------------------------
@@ -1473,7 +1523,7 @@ private slots:
 
 private:
     // The styles by their place on Left / Right (after the page's own six).
-    enum { Talk = 6, Throat, Sitar, Gamelan, Screwed, Riot };
+    enum { Talk = 6, Throat, Sitar, Gamelan, Screwed, Riot, Growl };
     static std::string rights(int n) {
         std::string s;
         for (int k = 0; k < n; ++k)

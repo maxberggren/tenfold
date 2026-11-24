@@ -29,6 +29,9 @@ SOURCES += main.cpp framework_tests.cpp \
     ../src/console.cpp ../src/contacts.cpp ../src/offline.cpp ../src/parts.cpp ../src/session.cpp ../src/songfile.cpp ../src/studio.cpp \
     ../src/tuning.cpp ../src/tutorial.cpp ../src/visual.cpp ../src/recorder.cpp \
     $$PARTS
+# Kargyraa, the vocal page's Tuvan growl.
+HEADERS += ../src/kargyraa.h
+SOURCES += kargyraa_tests.cpp
 
 # The typeface the pages lay out their buttons with, as in the app.
 RESOURCES += ../src/fonts.qrc

@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "console.h"
+#include "daxophone.h"
 #include "electro.h"
 #include "gong.h"
 #include "lead.h"
@@ -208,6 +209,33 @@ constexpr int kTamTams = 4;
 // how long the bow is, in seconds of an ordinary stroke.
 constexpr float kTrombaLevel = 0.5f;
 constexpr float kTrombaStrokeS = 2.6f;
+
+// Daxophone: what the contact microphones' newton-metres are worth on the
+// page, and how much of what reaches the clamp of the bowed part's swing
+// (as the tongue hears it, Tongue::transmission) is evened out across the
+// neck (it peaks wherever one of the modes behind the dax meets the note
+// or a strong harmonic), so a line is one instrument with a voice that
+// still swells where the tongue rings; the bow's speed (m/s) at an ordinary stroke and how much faster a
+// firm landing draws it; and how long a stroke of a double-bass bow lasts
+// before it turns.
+constexpr float kDaxLevel = 4.0f, kDaxEven = 0.75f, kDaxEvenFloor = 0.02f;
+constexpr float kDaxSpeed = 0.15f, kDaxSpeedVel = 0.1f;
+constexpr float kDaxStrokeS = 4.0f;
+// How firmly the dax is pressed at an ordinary touch, from lightly (0, 8 N)
+// to firmly (1, 40 N): see daxophone.h's Spec.
+constexpr float kDaxPress = 0.35f;
+
+// A lighter touch than ordinary bows lighter in proportion (to the power
+// kDaxSoft), down to nothing, where the bow skates and the tongue barely
+// speaks; a harder one leans further, slowly at first (a firm press stays
+// in the window) then steeply, the hardest to kDaxCrush times the roof,
+// where the hair holds on too long and the note breaks: rough (A3–E5),
+// or falling to a clean tone a few semitones under it (A4 and up).
+constexpr float kDaxSoft = 1.3f, kDaxCrush = 2.5f;
+// The contact microphones' colour: the block on its stand rolls the
+// bottom off, the small box's top and the piezo discs ring a broad band
+// near three kilohertz, and little over eight comes through.
+constexpr float kDaxLowHz = 45.0f, kDaxBandHz = 2800.0f, kDaxBandQ = 1.4f, kDaxBand = 0.35f, kDaxTopHz = 8000.0f;
 
 // An accordion's bellows: how much air one way holds (seconds of sound at
 // an ordinary press), and how long a rest is a breath, long enough to turn
@@ -404,6 +432,8 @@ struct Bank {
     tromba::TrombaMarina tromba;
     bool trombaLive = false;
     float trombaFor = -100;
+    // Daxophone: the voice's tongue (each voice of a line its own daxophone).
+    dax::Tongue tongue;
 };
 
 struct Voice {
@@ -451,6 +481,8 @@ struct Voice {
     float slideSize = 1; // Bow: how far it slides, in semitones
     float slideDip = 1;  // Bow: how much it lightens the line
     Svf bodyLp[2][3];    // Bow: the small body's roll-off over the top
+    float daxBow = 0;    // Daxophone: the bow drawn, 0 still .. 1 at its speed
+    float daxLand = 0;   // Daxophone: its weight on the tongue, 0 lifted .. 1 resting
     float reg[kRegisters] = {1, 0, 0}; // Reed: the registers drawn, smoothed
     float bellows = 1;   // Reed: push or pull
     float jerk = 0;      // Reed: the bellows turning round, falling to 0
@@ -486,9 +518,13 @@ public:
             d.init(size_t(rate / 90.0f));
         // The gongs' designs are built once, here, never on the audio thread.
         gong::prepare();
+        dax::prepare();
         for (auto &v : m_voices)
-            for (auto &k : v.banks)
+            for (auto &k : v.banks) {
                 k.gong.init(rate);
+                k.tongue.init(rate);
+                k.tongue.shareEar(&m_daxEar); // one player, who knows the tongue
+            }
         // The tromba marina's soundboard too.
         tromba::prepare();
         for (auto &v : m_voices)
@@ -973,6 +1009,8 @@ private:
             k.trombaFor = -100;
             if (s.model == Sound::TrombaMarina)
                 k.tromba.silence();
+            if (s.model == Sound::Dax)
+                k.tongue.silence();
             k.thudLp.reset();
             k.pingF.reset();
             k.pingLp.reset();
@@ -1011,6 +1049,7 @@ private:
         v.vibW = 0;
         v.slide = 0;
         v.slideDip = 1;
+        v.daxBow = v.daxLand = 0;
         for (auto &ch : v.bodyLp)
             for (auto &f : ch)
                 f.reset();
@@ -1077,7 +1116,7 @@ private:
         // is already on the string, so it doesn't scoop into the note
         // from under it (that would step the string's length at once, a
         // tick): it slides there from the last.
-        if ((s.model == Sound::Bow || s.model == Sound::TrombaMarina) && v.amp.v > 0.05f) {
+        if (((s.model == Sound::Bow || s.model == Sound::TrombaMarina) && v.amp.v > 0.05f) || (s.model == Sound::Dax && v.daxBow > 0.05f)) {
             v.bowDir = -v.bowDir;
             v.bowPos = 0;
             scoop = false;
@@ -1241,7 +1280,11 @@ private:
         const int tgt = n.follow ? nearestChordTone(abs, h) : abs;
         // Resting, the note sits on its degree (or the chord tone); moving,
         // the pitch follows the finger. The twist and the bend wheel add steps.
-        const float cont = (float(abs) + n.off - float(tgt)) * n.motion + n.twist + line.bend;
+        // A daxophone glides wherever the finger is, the dax sliding with
+        // it, unless the line follows the chord: then it rests in the key
+        // as every other lead does.
+        const float motion = sound(line.sound).model == Sound::Dax && !n.follow ? 1.0f : n.motion;
+        const float cont = (float(abs) + n.off - float(tgt)) * motion + n.twist + line.bend;
         const float base = float(h.tuning.baseMidi()) + 12.0f * line.octave;
         pitch[0] = base + float(h.tuning.continuousSemis(double(tgt) + double(cont)));
         level[0] = 1.0f;
@@ -1830,6 +1873,70 @@ private:
                 k.tromba.render(m_trombaL[b], m_trombaR[b], n, kTrombaLevel * even);
             }
         }
+        // Daxophone: every voice of the line its own tongue, bowed on its
+        // end. The dax goes where the note is, sliding with the finger, the
+        // vibrato and the bend, and the player's ear brings it in; the press
+        // is the bow's force against what the note needs (the lightest
+        // skates, the hardest breaks the note, rough or falling flat); the
+        // finger's height is where the bow is, high on the pad on the very
+        // end, where every mode swings most and the tone is roughest, lower
+        // in along the edge, rounder; a flatter finger presses the dax
+        // lighter, so its cardboard gives and loses more. A held bow
+        // turns at the end of its stroke, and a note played again while one
+        // sounds changes the bow. Let go, the bow lifts and the tongue rings
+        // out on the dax.
+        float daxOut = 0;
+        if (model == Sound::Dax) {
+            // A player lands the bow with its weight first and then draws
+            // it, so the hair grips and drags the tongue before it first
+            // slips, and the tone speaks at once; let go, the bow lifts.
+            const float want = v.releasing ? 0.0f : 1.0f;
+            v.daxLand += (want - v.daxLand) * (1.0f - std::exp(-dt / (want > v.daxLand ? 0.002f : 0.025f)));
+            v.daxBow += (want - v.daxBow) * (1.0f - std::exp(-dt / (want > v.daxBow ? 0.03f : 0.025f)));
+            if (!v.releasing) {
+                v.bowPos += dt;
+                if (v.bowPos >= kDaxStrokeS) {
+                    v.bowDir = -v.bowDir;
+                    v.bowPos = 0;
+                }
+            }
+            v.bowDirS += (v.bowDir - v.bowDirS) * (1.0f - std::exp(-dt / 0.03f));
+            const float drawn = kDaxSpeed + kDaxSpeedVel * v.vel;
+            const float speed = drawn * v.daxBow * v.bowDirS;
+            const float along = clampf(1.0f - v.y, 0.0f, 1.0f);
+            // (A player's ordinary press on the dax is moderate, as firm as
+            // still lets it rock under a firm bow; flatter, lighter.)
+            const float press = clampf(kDaxPress * (1.0f - v.fat), 0.0f, 1.0f);
+            const float speedUp = drawn / 0.2f * v.daxLand;
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                Bank &k = v.banks[b];
+                std::fill(m_daxL[b], m_daxL[b] + n, 0.0f);
+                std::fill(m_daxR[b], m_daxR[b] + n, 0.0f);
+                if (!live[b])
+                    continue;
+                const float hz = clampf(inc1[b] * rate, 20.0f, 0.4f * rate);
+                k.tongue.setPitch(hz);
+                k.tongue.setDaxPress(press);
+                // An ordinary press draws the note where the window says
+                // (dax::ordinaryForce), lighter and harder from there.
+                float lo = 0, hi = 0;
+                dax::window(hz, lo, hi);
+                const float ordinary = dax::ordinaryForce(hz);
+                const float force = v.press < 0.5f ? ordinary * std::pow(clampf(v.press / 0.5f, 0.0f, 1.0f), kDaxSoft)
+                                                   : ordinary * std::pow(kDaxCrush * hi / ordinary, (v.press - 0.5f) * (v.press - 0.5f) * 4.0f);
+                k.tongue.setBow(force * speedUp, speed, 0.3f, along);
+                // (Evened only so far: a tone broken off its note, croaking,
+                // puts its sound where the part behind the dax passes far
+                // more than at the note, and must not be lifted with it.)
+                k.tongue.render(m_daxL[b], m_daxR[b], n, std::pow(std::max(k.tongue.transmission(), kDaxEvenFloor), -kDaxEven));
+            }
+            for (int c = 0; c < 2; ++c) {
+                v.form[c][0].set(kDaxLowHz, 0.7f, rate);
+                v.form[c][1].set(kDaxBandHz, kDaxBandQ, rate);
+                v.form[c][2].set(kDaxTopHz, 0.7f, rate);
+            }
+            daxOut = s.gain * 0.3f * kDaxLevel;
+        }
         // Sync: each slave's ratio sweeps down from the attack to where it
         // settles, never all the way to the note, so the tear holds; height
         // and pressure lift it, a slow wander moves it, and so does the
@@ -2253,6 +2360,10 @@ private:
                     bl += m_trombaL[b][i];
                     br += m_trombaR[b][i];
                     break;
+                case Sound::Dax:
+                    bl += m_daxL[b][i];
+                    br += m_daxR[b][i];
+                    break;
                 case Sound::Sync: {
                     // At four times the rate: four quarter steps, the second
                     // voice's master an octave up, through two half-band
@@ -2441,6 +2552,14 @@ private:
                 const float dl = sl, dr = sr;
                 sl += yowMix * v.form[0][0].step(dl).band + vowelMix * v.form[0][1].step(dl).band;
                 sr += yowMix * v.form[1][0].step(dr).band + vowelMix * v.form[1][1].step(dr).band;
+            } else if (model == Sound::Dax) {
+                // The contact microphones in the block.
+                for (int c = 0; c < 2; ++c) {
+                    float &x = c ? sr : sl;
+                    x = v.form[c][0].step(x).high;
+                    x += kDaxBand * v.form[c][1].step(x).band;
+                    x = v.form[c][2].step(x).low;
+                }
             } else if (model == Sound::Reed) {
                 // The musette's chamber is wet and bright; the bandoneon's
                 // pair wants the box's darker, woody body under it.
@@ -2491,11 +2610,12 @@ private:
             // A gong's level is its own: a hand stills it, not an envelope.
             // A tromba marina's is its bow's, which the envelope draws.
             const float env = model == Sound::Bow                                     ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
-                              : model == Sound::Gong || model == Sound::TrombaMarina ? 1.0f
+                              : model == Sound::Gong || model == Sound::TrombaMarina || model == Sound::Dax ? 1.0f
                                                                                       : a;
             const float jerk = model == Sound::Reed ? 1.0f + 0.5f * (jerk0 + (jerk1 - jerk0) * t) * std::min(1.0f, v.held / 0.03f) : 1.0f;
             const float level = model == Sound::Bow            ? bowGain0 + (outGain - bowGain0) * t
                                 : model == Sound::TrombaMarina ? s.gain * 0.3f
+                                : model == Sound::Dax          ? daxOut
                                                                : outGain;
             const float g2 = env * level * gate * jerk * (amp0 + (amp1 - amp0) * t);
             sl *= g2;
@@ -2528,7 +2648,11 @@ private:
         // A released voice is done once it's 70 dB down; the envelope's own
         // idea of silence is far below anything audible, and every voice
         // still ringing costs its full price.
-        if (model == Sound::Gong) {
+        if (model == Sound::Dax) {
+            // Done once the bow is off and the tongues have rung out.
+            if (v.releasing && v.daxLand < 1e-3f && v.level < 3e-4f)
+                v.active = false;
+        } else if (model == Sound::Gong) {
             // Done once every gong of the voice has rung out.
             bool ringing = false;
             for (const auto &k : v.banks)
@@ -2725,6 +2849,8 @@ private:
     float m_gongL[Voice::kBanks][kBlock] = {}, m_gongR[Voice::kBanks][kBlock] = {};
     float m_trombaL[Voice::kBanks][kBlock] = {}, m_trombaR[Voice::kBanks][kBlock] = {};
     float m_trombaRef = 55; // the tromba marina's open string, two octaves under the neck's root (Hz)
+    float m_daxL[Voice::kBanks][kBlock] = {}, m_daxR[Voice::kBanks][kBlock] = {};
+    dax::Ear m_daxEar;
     Delay m_sym[kTaraf];
     float m_symLp[kTaraf] = {};
     Chikari m_chik[kChikari];
@@ -3189,7 +3315,10 @@ public:
             "high the small domed ones, gliding up), Tam-tam (film score: a thud an octave down that, struck hard, "
             "blossoms over a second into a shimmer; held, it is rolled), Tromba marina (baroque: one long bowed "
             "string that sounds only its harmonics, the thumb sliding from node to node, on a bridge whose free foot "
-            "knocks on the board every period, a trumpet's bray when bowed firmly; no vibrato); "
+            "knocks on the board every period, a trumpet's bray when bowed firmly; no vibrato), "
+            "Daxophone (free improv: a wooden tongue "
+            "bowed on its end, the finger the dax sliding along it, so it glides wherever the finger goes; "
+            "it rests in the key only when following the chord); "
             "the row under the pad shows the ones around the chosen "
             "sound, faded at an end with more beyond; the status line says what music each is for\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
@@ -3206,20 +3335,22 @@ public:
             "finger on the neck\ta note of the scale; one voice, singing\n"
             "second finger while one is held\tlegato: glides there, lift to fall back (trills, runs); on Sitar, "
             "tapped high on the pad, the chikari: the high drone strings struck beside the melody\n"
-            "slide\tglide through the scale; rest and it settles in tune\n"
+            "slide\tglide through the scale; rest and it settles in tune (on Daxophone, it stays where the finger is)\n"
             "wiggle\tvibrato as wide as the wiggle; hold still and it comes by itself\n"
             "higher on the pad\tbrighter (on Vox, the vowel: oo, oh, ah, eh, ee; on Sync, the sweep held higher and "
             "the vowel from ow to ee; on "
             "Erhu, bowed nearer the bridge; on Accordion, the register: clarinet low, bandoneon in the middle, musette "
             "high, and the bandoneon from the keys; on the gongs, the strike moves out from the middle toward the rim; "
-            "on Tromba marina, bowed nearer the nut)\n"
+            "on Tromba marina, bowed nearer the nut; on Daxophone, bowed on the very end, rougher; lower, further in "
+            "along its edge, rounder)\n"
             "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
             "on Flute, a quicker attack; on Steel pan, a harder roll, and high on the note a ping; on Sync, a snarl of FM into the sync; on Erhu, "
             "the bow's weight: a light touch whistles, a hard one grinds; on the gongs, a harder mallet: further glides, "
             "a stronger ombak, a brighter blossom, and a harder tam-tam roll; on Tromba marina, the bow's weight: "
-            "light is a soft flageolet, firmer sets the bridge knocking, all the way scratches)\n"
+            "light is a soft flageolet, firmer sets the bridge knocking, all the way scratches; on Daxophone, the bow's weight: "
+            "the lightest skates, harder is rougher, the hardest breaks the note: rough, or falling a few semitones)\n"
             "flatten the finger\tfatter: the unison spreads (on Flute, breathier; on Sitar, more buzz; "
-            "on Accordion, a wetter musette; on the gongs, a softer beater)\n"
+            "on Accordion, a wetter musette; on the gongs, a softer beater; on Daxophone, the dax pressed lighter)\n"
             "twist the finger\tbend up or down one step of the scale\n"
             "click the pad\tleap an octave up while held\n"
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"

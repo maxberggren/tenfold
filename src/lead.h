@@ -221,7 +221,11 @@ struct Sound {
     //           free foot knocks on the soundboard every period (the
     //           trumpet's buzz), into a long tapered box. The note picks the
     //           harmonic of a string tuned two octaves under the neck's root.
-    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina };
+    //   Dax:    a daxophone as physics (daxophone.h): a wooden tongue
+    //           clamped in a block, bowed on its end, a dax pressed on it
+    //           sliding to set its sounding length, heard by contact
+    //           microphones in the block; every voice its own tongue.
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax };
     int model = Osc;
     float jawari = 0;      // String: how hard the string buzzes on its bridge
     float sympathy = 0;    // String: how loud the taraf rings
@@ -269,7 +273,7 @@ inline const char *registerName(float y) {
 // note is held, strikes the high drone strings instead of a hammer-on.
 constexpr float kChikariY = 0.8f;
 
-constexpr int kSounds = 19;
+constexpr int kSounds = 20;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -499,6 +503,23 @@ inline const Sound &sound(int i) {
         {.name = "Tromba marina", .style = "baroque", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.08f,
          .d = 0.6f, .s = 1.0f, .r = 0.15f, .aHard = 0.04f, .glide = 0.05f, .vibDepth = 0.0f, .echo = 0.1f,
          .echoFb = 0.28f, .gain = 1.0f, .model = Sound::TrombaMarina},
+        // A daxophone, Hans Reichel's: a thin maple tongue clamped in a
+        // block, bowed on its end with a double-bass bow, a wooden dax
+        // pressed on it and slid along to set how much of it sounds, heard
+        // through contact microphones in the block. The finger is the dax:
+        // it glides wherever the finger goes, a voice's glide, snapping to
+        // the key only when the line follows the chord. The press is the bow:
+        // the lightest skates and barely speaks, an ordinary one sings,
+        // harder is rougher, the hardest breaks the note: rough, or falling
+        // to a clean tone a few semitones under it.
+        // Higher on the pad bows on the very end, roughest; lower, further
+        // in along the edge, rounder; a flatter finger presses the dax
+        // lighter. A held
+        // note's bow turns at the end of its stroke; let go, the tongue
+        // rings out briefly on the dax.
+        {.name = "Daxophone", .style = "free improv", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.01f,
+         .d = 1.0f, .s = 1.0f, .r = 0.3f, .glide = 0.09f, .porta = 0.04f, .vibRate = 5.2f, .vibDepth = 0.22f,
+         .vibDelay = 0.35f, .swoop = true, .echo = 0.12f, .echoFb = 0.3f, .gain = 1.0f, .model = Sound::Dax},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

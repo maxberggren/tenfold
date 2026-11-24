@@ -18,7 +18,9 @@
 // once a frame as the console did), a tabla's bayan (a skin whose pitch the
 // wrist pushes up, closed by a light hand) and a didgeridoo (a lip buzz
 // down a bore that rings on odd harmonics, its one mouth formant on the
-// finger).
+// finger). The sixteenth is no recipe at all: a marimbula, the Caribbean
+// box lamellophone, simulated as it is built (marimbula.h), which the
+// lane only plays.
 //
 // There are two lanes, each a mono synth with its own note stack: the
 // player's fingers and keys, and the clip that is looping. While the
@@ -31,6 +33,7 @@
 #include <cmath>
 
 #include "electro.h"
+#include "marimbula.h"
 #include "part.h"
 
 namespace tf::bass {
@@ -40,7 +43,7 @@ namespace tf::bass {
 // Saved songs name their sound, so the order may grow but never change.
 enum Sound : int {
     Sub, Pluck, Reese, Acid, Wobble, Growl, Boom, Bounce, Moog, Upright,
-    Log, Tuba, Chip, Tabla, Didge,
+    Log, Tuba, Chip, Tabla, Didge, Marimbula,
     SoundCount
 };
 // The first sounds have a letter each (Q to P); the rest are reached by
@@ -279,6 +282,11 @@ struct Recipe {
     // overblows a toot, a tenth (toot semitones) above. Rolled, the breath
     // pumps on the pattern's steps instead of the note being struck again.
     float didge = 0, toot = 0;
+    // A marimbula: not a recipe at all but the instrument simulated
+    // (marimbula.h), tongues of spring steel on a plywood box; the lane
+    // only plays it (the thumb plucks or slaps, lifting lays it back on
+    // the tongue, the click knocks the box) and sets its level.
+    float marimbula = 0;
 };
 
 inline const Recipe &recipe(int sound) {
@@ -724,6 +732,32 @@ inline const Recipe &recipe(int sound) {
             s.knee = 0.26f;
             s.kneeDucks = true;
         }
+        {
+            // The marimbula of Cuban son and changüí and of Jamaican mento:
+            // a box a player sits on, tongues of old gramophone spring
+            // bolted over a bridge on its front, plucked down with the
+            // thumbs and let slip. The tongue barely sounds on its own;
+            // through the bridge it shakes the front panel, and panel and
+            // air (the hole is cut for the key's root) give the deep,
+            // woody thump of the note. Pressed hard, the thumb slaps: it
+            // lands at speed, and the tongue's tip may clack on the panel.
+            // Height is the thumb's soft pad (low) or its nail (high).
+            // Held, a tongue rings; lifted, the thumb lands back on it and
+            // stills it, and pressing into a held note lays it there
+            // early. The click knocks the box. Every finger plucks its own
+            // tongue, and a tongue still held rings on under the next.
+            Recipe &s = r[Marimbula];
+            s.name = "MARIMBULA";
+            s.what = "box thumb piano: pluck, press to slap, click to knock";
+            s.marimbula = 1;
+            s.sub = 0;
+            s.glide = 0.03f;
+            s.accent = 0.6f;
+            s.level = 1.0f;
+            s.pump = 0.3f, s.subPump = 0.3f;
+            s.knee = 0.42f;
+            s.kneeDucks = true;
+        }
         return r;
     }();
     return recipes[size_t(std::clamp(sound, 0, SoundCount - 1))];
@@ -866,6 +900,9 @@ public:
     void init(float rate, uint32_t seed) {
         m_rate = rate;
         m_rng = Rng(seed);
+        m_mar.init(rate);
+        for (int &o : m_marOwner)
+            o = -1;
         m_chorus.init(size_t(0.03f * rate));
         m_post.reset();
         m_sideHp.set(300.0f, 0.7f, rate);
@@ -910,7 +947,7 @@ public:
         // always overlap a little, still articulate. A string is plucked
         // each time: a slide onto a string that has rung away is silence.
         const bool legato = m_count > 0 && (n.degree != m_cur.degree || n.octave != m_cur.octave) &&
-                            recipe(n.sound).string <= 0 && !recipe(n.sound).struck;
+                            recipe(n.sound).string <= 0 && !recipe(n.sound).struck && recipe(n.sound).marimbula <= 0;
         if (m_count == kStack)
             remove(m_notes[0].id);
         m_notes[m_count++] = n;
@@ -946,6 +983,11 @@ public:
 
     void noteOff(int id) {
         const bool top = m_count > 0 && m_notes[m_count - 1].id == id;
+        // A tongue let go: the thumb lands back on it.
+        if (const int s = marSlotOf(id); s >= 0) {
+            m_mar.damp(s, 1.0f);
+            m_marOwner[s] = -1;
+        }
         remove(id);
         if (!top)
             return;
@@ -992,12 +1034,22 @@ public:
                 // note begins, not a slide.
                 if (slide)
                     m_glideTau = m_sinceOn < int(0.005f * m_rate) ? 0.0f : glideTime(n) / 3.0f;
+                // On a marimbula the thumb has moved to the next tongue:
+                // render plucks it (once it knows the pitch).
+                if (slide && recipe(n.sound).marimbula > 0 && m_sinceOn >= int(0.005f * m_rate))
+                    m_marMove = true;
             }
         }
     }
 
     // The click: the sounding note again, accented.
     void strike() {
+        if (m_count > 0 && recipe(m_cur.sound).marimbula > 0) {
+            // On a marimbula the click is the other hand knocking the box.
+            m_mar.knock(clampf(0.4f + 0.6f * m_cur.pressure, 0.0f, 1.0f), m_cur.tone);
+            m_active = true;
+            return;
+        }
         if (m_count > 0)
             trigger(1, true);
     }
@@ -1023,6 +1075,13 @@ public:
             m_boreLp = m_toot = m_tootA = m_pump = m_growl = 0;
             m_tootLeft = m_lipLeft = 0;
             m_slapT = 1e9f;
+            m_mar.silence();
+            for (int &o : m_marOwner)
+                o = -1;
+            m_marMove = false;
+            m_marHp.reset();
+            for (int k = 0; k < 2; ++k)
+                m_marEqX[k] = m_marEqY[k] = 0;
         } else {
             release();
         }
@@ -1034,6 +1093,13 @@ public:
     void render(float *l, float *r, int n, int off0, AudioContext &ctx, const Shape &sh, float muteTarget,
                 uint8_t *wraps) {
         m_mute.setTime(0.012f, m_rate);
+        if (recipe(m_cur.sound).marimbula > 0) {
+            renderMarimbula(l, r, n, off0, ctx, sh, muteTarget, wraps);
+            return;
+        }
+        // A marimbula still ringing under another sound rings out.
+        if (m_mar.active())
+            marimbulaOut(l, r, 0, n, off0, ctx, sh);
         if (!m_active) {
             m_mute.reset(muteTarget);
             m_level *= 0.9f;
@@ -1782,6 +1848,8 @@ private:
         const Recipe &R = recipe(m_cur.sound);
         if (R.string > 0)
             pluckString();
+        if (R.marimbula > 0)
+            marPluck();
         // Pressed lightly, a skin that damps is the closed "ke": all of it
         // under 0.52 (a touch at about a fifth of the trackpad's pressure),
         // none of it over 0.62 (a third), so an ordinary light tap is a ke
@@ -1822,6 +1890,10 @@ private:
         m_active = true;
     }
     void closeGate() {
+        // A roll's step over: the thumb back on the tongue.
+        if (recipe(m_cur.sound).marimbula > 0)
+            if (const int s = marSlotOf(m_cur.id); s >= 0)
+                m_mar.damp(s, 1.0f);
         m_gate = false;
         if (m_stage != Idle)
             m_stage = Release;
@@ -1871,6 +1943,233 @@ private:
     float ladder(float x, float heat) {
         const float trim = heat * 0.45f / (1.0f + 0.5f * m_ladder.k);
         return m_ladder.step(x * trim) / trim;
+    }
+
+    // --- the marimbula ---------------------------------------------------------
+    //
+    // The lane plays the instrument (marimbula.h) as a player's thumbs do:
+    // every note a tongue of its own, plucked when it lands, still while
+    // the finger is lifted.
+
+    // How loud a marimbula is on the page, per pascal at a metre, and where
+    // its box's air sits against the key's root.
+    static constexpr float kMarLevel = 0.40f, kMarBox = 0.92f;
+
+    int marSlotOf(int id) const {
+        for (int s = 0; s < marimbula::kSlots; ++s)
+            if (m_marOwner[s] == id)
+                return s;
+        return -1;
+    }
+    // The key's marimbula: its hole cut so the box's air sounds just under
+    // the key's root, as a maker tunes a bass instrument's box to its
+    // lowest notes, within what a real box and hole give (45–72 Hz).
+    static float marBoxHz(const Harmony &h) {
+        return clampf(midiToHz(h.midi(0, 0) + rootShift(h.tuning)) * kMarBox, 45.0f, 72.0f);
+    }
+
+    // The thumb on the sounding note's tongue: how hard (the strike's
+    // velocity), with what (height: the soft pad low, the nail high; a flat
+    // finger is the pad), and whether it slaps (a hard press, or an
+    // accent). The tongue this finger played before is let go.
+    void marPluck() {
+        const float hz = midiToHz(m_target + double(m_bend));
+        const int was = marSlotOf(m_cur.id);
+        const int s = m_mar.tongue(hz);
+        if (was >= 0 && was != s) {
+            m_mar.damp(was, 1.0f);
+            m_marOwner[was] = -1;
+        }
+        for (int k = 0; k < marimbula::kSlots; ++k)
+            if (k != s && m_marOwner[k] == m_cur.id)
+                m_marOwner[k] = -1;
+        m_marOwner[s] = m_cur.id;
+        marimbula::Marimbula::Stroke st;
+        st.vel = clampf((m_vel - 0.2f) / 0.8f, 0.0f, 1.0f);
+        st.tone = clampf(m_cur.tone - 0.35f * m_cur.fat, 0.0f, 1.0f);
+        st.slap = m_accent > 0 ? 1.0f : clampf((m_vel - 0.88f) / 0.12f, 0.0f, 1.0f);
+        st.off = m_rng.bipolar();
+        // The twist: where along the tongue the finger meets it, from the
+        // tip (round, all fundamental) a third of the way in (thinner, its
+        // overtones louder against it).
+        st.spot = clampf(m_cur.morph, 0.0f, 1.0f);
+        m_mar.pluck(s, st);
+        // Muted (the switch), the thumb comes straight back down on it.
+        m_marMuteLeft = (m_cur.flags & Square) ? int(0.025f * m_rate) : -1;
+    }
+
+    void renderMarimbula(float *l, float *r, int n, int off0, AudioContext &ctx, const Shape &sh, float muteTarget,
+                         uint8_t *wraps) {
+        const Harmony &h = ctx.harmony();
+        const Transport &tr = ctx.transport();
+        const float rate = m_rate;
+        m_mar.setBoxHeard(marBoxHz(h));
+        if (!m_active && !m_mar.active()) {
+            m_mute.reset(muteTarget);
+            m_level *= 0.9f;
+            return;
+        }
+        // The chord moved under a line that follows it: the root's tongue.
+        if (h.chordSeq != m_chordSeq) {
+            m_chordSeq = h.chordSeq;
+            if (m_count > 0 && (m_cur.flags & Follow) && sh.roll <= 0) {
+                m_target = pitchOf(m_cur, h) + 12.0 * double(m_oct);
+                trigger(0.92f, false);
+            }
+        }
+        // An octave finger: the tongue an octave up, plucked.
+        if (sh.oct != m_oct) {
+            m_oct = sh.oct;
+            if (m_count > 0 && m_gate) {
+                m_target = pitchOf(m_cur, h) + 12.0 * double(m_oct);
+                trigger(0.9f, false);
+            }
+        }
+        m_target = pitchOf(m_cur, h) + 12.0 * double(m_oct);
+        m_midi = m_target;
+        m_sinceOn = std::min(m_sinceOn + n, 1 << 30);
+        if (m_marMove) {
+            m_marMove = false;
+            if (m_count > 0)
+                trigger(1, false);
+        }
+        const bool rolling = sh.roll > 0 && m_count > 0;
+        if (rolling && !m_rolling)
+            enterRoll(sh, tr.beatAt(off0));
+        else if (!rolling && m_rolling && m_count > 0 && !m_gate)
+            trigger(1, false);
+        m_rolling = rolling;
+
+        const float blockSmooth = 1.0f - std::exp(-float(n) / (0.006f * rate));
+        const float press = m_press.y += (m_cur.pressure - m_press.y) * blockSmooth;
+        // A bend bends the tongue (a player presses its tail behind the bridge).
+        float bendTarget = sh.bend;
+        if (sh.bendSettled && sh.bend != 0)
+            bendTarget = float(nearestInKey(h, m_target + double(sh.bend)) - m_target);
+        m_bend += (bendTarget - m_bend) * (1.0f - std::exp(-float(n) / (0.015f * rate)));
+        const int s = marSlotOf(m_cur.id);
+        if (s >= 0 && m_count > 0) {
+            m_mar.setPitch(s, midiToHz(m_target + double(m_bend)));
+            // Pressing into a held note lays the thumb on its tongue: the
+            // harder, the sooner it is still. Muted, it is there at once.
+            float damp = clampf((press - m_strikePress - 0.1f) / 0.3f, 0.0f, 1.0f);
+            if (m_marMuteLeft > 0)
+                m_marMuteLeft = std::max(0, m_marMuteLeft - n);
+            if (m_marMuteLeft == 0)
+                damp = 1;
+            if (m_gate)
+                m_mar.damp(s, damp);
+        }
+
+        float buf[kBlock] = {};
+        n = std::min(n, int(kBlock));
+        int done = 0;
+        if (m_rolling) {
+            const int pattern = std::clamp(sh.pattern, 0, kPatternCount - 1);
+            const int steps = patternSteps(pattern);
+            const float gateLen = std::clamp(sh.roll, 0.12f, 1.0f);
+            for (int i = 0; i < n; ++i) {
+                const double beat = tr.beat + double(off0 + i) * tr.beatsPerSample;
+                const long step = long(std::floor(beat * double(steps)));
+                if (step != m_step) {
+                    m_step = step;
+                    const int within = int(((step % steps) + steps) % steps);
+                    if (kPatterns[pattern].steps[within] == 'x') {
+                        m_mar.render(buf + done, i - done);
+                        done = i;
+                        const bool lean = within * 2 == steps || (steps == 3 && within == 1);
+                        trigger(lean ? 1.0f : 0.86f, false);
+                        m_gateEnd = (double(step) + gateLen * double(untilNext(pattern, within))) / double(steps);
+                    }
+                }
+                if (m_gate && beat >= m_gateEnd && gateLen < 0.999f) {
+                    m_mar.render(buf + done, i - done);
+                    done = i;
+                    closeGate();
+                }
+            }
+        }
+        m_mar.render(buf + done, n - done);
+        marPost(l, r, buf, n, off0, ctx, sh, &muteTarget);
+        // The scope: cycles of the note sounding.
+        if (wraps) {
+            const float inc = midiToHz(m_target + double(m_bend)) / rate;
+            for (int i = 0; i < n; ++i) {
+                m_phase += inc;
+                if (m_phase >= 1.0f) {
+                    m_phase -= 1.0f;
+                    wraps[i] = 1;
+                }
+            }
+        }
+        m_amp = std::min(1.0f, m_mar.level());
+        m_active = m_count > 0 || m_mar.active();
+        if (!m_active)
+            m_stage = Idle;
+    }
+
+    // A marimbula ringing on after another sound was chosen.
+    void marimbulaOut(float *l, float *r, int from, int to, int off0, AudioContext &ctx, const Shape &sh) {
+        float buf[kBlock] = {};
+        const int n = std::min(to - from, int(kBlock));
+        m_mar.render(buf, n);
+        marPost(l + from, r + from, buf, n, off0 + from, ctx, sh, nullptr);
+    }
+
+    // The instrument's pressure to the page: its level, the engineer's
+    // EQ (a small box radiates its low notes far less than its high ones,
+    // about 12 dB an octave less up to its panel's first mode: two
+    // shelves lift what is under 115 Hz by as much, down to 36 Hz, and a
+    // high-pass takes the rumble under that), the FILTER finger's
+    // low-pass, GRIT's drive, the kick's pump and the lane's knee.
+    void marPost(float *l, float *r, const float *buf, int n, int off0, AudioContext &ctx, const Shape &sh,
+                 const float *muteTarget) {
+        const Recipe &R = recipe(Marimbula);
+        const float rate = m_rate;
+        const float *duck = ctx.duck();
+        const float blockSmooth = 1.0f - std::exp(-float(n) / (0.006f * rate));
+        const float cutOff = m_marCut += (sh.cut - m_marCut) * blockSmooth;
+        const bool dj = cutOff < -0.005f;
+        if (dj)
+            m_marDj.set(16000.0f * std::exp2(cutOff / 0.7f * 6.7f), 0.7f, rate);
+        if (m_marEqRate != rate) {
+            // (s + 2π·115)/(s + 2π·36), twice, by the bilinear transform.
+            m_marEqRate = rate;
+            const float c = 2.0f * rate, a = kTwoPi * 115.0f, b = kTwoPi * 36.0f;
+            m_marEq[0] = (c + a) / (c + b), m_marEq[1] = (a - c) / (c + b), m_marEq[2] = (b - c) / (c + b);
+            m_marHp.set(30.0f, 0.7071f, rate);
+        }
+        const float gainTo = kMarLevel * R.level;
+        const float gainC = 1.0f - std::exp(-1.0f / (0.01f * rate));
+        const float drive = 1.0f + 8.0f * sh.grit * sh.grit;
+        const float comp = 1.0f / std::sqrt(drive);
+        float peak = 0;
+        for (int i = 0; i < n; ++i) {
+            m_marGain += (gainTo - m_marGain) * gainC;
+            float y = buf[i] * m_marGain;
+            for (int k = 0; k < 2; ++k) {
+                const float o = m_marEq[0] * y + m_marEq[1] * m_marEqX[k] - m_marEq[2] * m_marEqY[k];
+                m_marEqX[k] = y;
+                m_marEqY[k] = o;
+                y = o;
+            }
+            y = m_marHp.step(y).high;
+            if (dj)
+                y = m_marDj.step(y).low;
+            if (sh.grit > 0.001f)
+                y = fastTanh(y * drive) * comp;
+            const float dk = duck[std::min(off0 + i, kBlock - 1)];
+            const float mute = muteTarget ? m_mute.step(*muteTarget) : m_mute.y;
+            float mono = y * (1.0f - R.pump * dk) * mute;
+            const float knee = R.kneeDucks ? R.knee * (1.0f - R.pump * std::min(1.0f, 8.0f * dk)) : R.knee;
+            const float mag = std::fabs(mono);
+            if (mag > knee)
+                mono *= (knee + 0.45f * knee * fastTanh((mag - knee) / (0.45f * knee))) / mag;
+            l[i] += mono;
+            r[i] += mono;
+            peak = std::max(peak, std::fabs(mono));
+        }
+        m_level = std::max(peak, m_level * 0.97f);
     }
 
     // --- the plucked string ------------------------------------------------
@@ -2420,6 +2719,16 @@ private:
     float m_triU = 7.5f;
     int m_triLvl = 8;
     Blep4 m_blep;
+    // The marimbula: the instrument, which held note plays each of its
+    // tongues, a mute's thumb on its way back, a slide's pluck waiting for
+    // render, and its level and filter.
+    marimbula::Marimbula m_mar;
+    int m_marOwner[marimbula::kSlots] = {};
+    int m_marMuteLeft = -1;
+    bool m_marMove = false;
+    float m_marGain = 0, m_marCut = 0;
+    Svf m_marDj, m_marHp;
+    float m_marEq[3] = {}, m_marEqX[2] = {}, m_marEqY[2] = {}, m_marEqRate = 0;
 };
 
 class Engine : public PartEngine {

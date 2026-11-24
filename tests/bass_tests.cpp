@@ -354,7 +354,11 @@ private slots:
                 Rig rig;
                 rig.send(noteOn(1, 0, sound, 0, 0.75f, tones[k]));
                 rig.run(0.5);
-                level[k] = rig.band(0.05, 0.45, 1000, 6000);
+                // (A marimbula's brightness is in its pluck, the finger's pad
+                // or nail slipping off the tongue: what follows is the box,
+                // all of it under a kilohertz. Heard from the stroke.)
+                const double from = bass::recipe(sound).marimbula > 0 ? 0.0 : 0.05;
+                level[k] = rig.band(from, from + 0.4, 1000, 6000);
             }
             const QString what = QStringLiteral("%1: %2 %3 %4 dB").arg(bass::recipe(sound).name)
                                      .arg(level[0], 0, 'f', 1).arg(level[1], 0, 'f', 1).arg(level[2], 0, 'f', 1);
@@ -1129,7 +1133,7 @@ private slots:
             return v;
         };
         QCOMPARE(int(probe("key 0.1 Right\n", "sound")), int(bass::Reese));          // from PLUCK
-        QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\n", "sound")), int(bass::Didge)); // round from SUB
+        QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\n", "sound")), int(bass::Marimbula)); // round from SUB
         QCOMPARE(int(probe("key 0.1 P\nkey 0.2 Right\n", "sound")), int(bass::Log));   // on past P
         QCOMPARE(int(probe("key 0.1 Q\nkey 0.2 Left\nkey 0.25 Right\n", "sound")), int(bass::Sub)); // and back
         QCOMPARE(int(probe("key 0.1 O\n", "sound")), int(bass::Moog));
@@ -1184,21 +1188,22 @@ private slots:
     // 0.12, 0.12, 0.12 wide, the left half down, the right half up), then
     // five switches.
     void theBandUnderThePadIsClickable() {
-        // From PLUCK it shows SUB to BOUNCE: ACID is the fourth.
+        // From PLUCK it shows SUB to 808 (seven chips, as many as fit
+        // MARIMBULA's name whole): ACID is the fourth.
         testkit::play("page 0 2\nbutton 0.2 0.651 -0.048\nend 0.4\n", [](Session &s) {
             QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Acid));
         });
-        // BOUNCE, faded at the right end, picks it and moves the window
-        // along (ACID to LOG): UPRIGHT is then the seventh.
+        // 808, faded at the right end, picks it and moves the window
+        // along (ACID to UPRIGHT): MOOG is then the sixth.
         testkit::play("page 0 2\nbutton 0.2 0.961 -0.048\nend 0.4\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Bounce));
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Boom));
         });
         testkit::play("page 0 2\nbutton 0.2 0.961 -0.048\nbutton 0.4 0.884 -0.048\nend 0.6\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Upright));
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Moog));
         });
-        // From DIDGE, the last, the window ends with it: LOG is the fourth.
+        // From MARIMBULA, the last, the window ends with it: CHIP is the fourth.
         testkit::play("page 0 2\nkey 0.1 Q\nkey 0.15 Left\nbutton 0.3 0.651 -0.048\nend 0.5\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Log));
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Chip));
         });
         // FOLLOW, the second switch.
         testkit::play("page 0 2\nbutton 0.2 0.727 -0.119\nend 0.4\n", [](Session &s) {

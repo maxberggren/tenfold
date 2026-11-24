@@ -34,6 +34,7 @@ HEADERS += \
     src/daxophone.h \
     src/guitar.h \
     src/hang.h \
+    src/marimbula.h \
     src/slitdrum.h \
     src/pipedrum.h \
     src/khishba.h \

@@ -16,7 +16,7 @@ DEPENDPATH += ../src
 # Everything but the window: the studio, the session, every part, the
 # offline player.
 HEADERS += testkit.h \
-    ../src/console.h ../src/contacts.h ../src/dsp.h ../src/electro.h ../src/fx.h ../src/gong.h ../src/trombamarina.h ../src/daxophone.h ../src/guitar.h ../src/hang.h ../src/tabla.h ../src/udu.h ../src/slitdrum.h ../src/pipedrum.h ../src/khishba.h ../src/cuica.h ../src/offline.h ../src/part.h \
+    ../src/console.h ../src/contacts.h ../src/dsp.h ../src/electro.h ../src/fx.h ../src/gong.h ../src/trombamarina.h ../src/daxophone.h ../src/guitar.h ../src/hang.h ../src/marimbula.h ../src/tabla.h ../src/udu.h ../src/slitdrum.h ../src/pipedrum.h ../src/khishba.h ../src/cuica.h ../src/offline.h ../src/part.h \
     ../src/parts.h ../src/phrase.h ../src/session.h ../src/songfile.h ../src/studio.h ../src/touch.h \
     ../src/padprompt.h ../src/platform.h ../src/tuning.h ../src/tutorial.h ../src/vocal.h ../src/visual.h ../src/recorder.h ../src/scream.h ../src/wav.h
 
@@ -24,7 +24,7 @@ PARTS = ../src/drums.cpp ../src/bass.cpp ../src/chords.cpp ../src/lead.cpp ../sr
         ../src/atmos.cpp ../src/risers.cpp ../src/vocal.cpp ../src/arrange.cpp
 
 SOURCES += main.cpp framework_tests.cpp \
-    drums_tests.cpp hang_tests.cpp tabla_tests.cpp udu_tests.cpp khishba_tests.cpp slitdrum_tests.cpp pipedrum_tests.cpp cuica_tests.cpp scream_tests.cpp gong_tests.cpp trombamarina_tests.cpp daxophone_tests.cpp guitar_tests.cpp bass_tests.cpp chords_tests.cpp lead_tests.cpp arp_tests.cpp \
+    drums_tests.cpp hang_tests.cpp tabla_tests.cpp udu_tests.cpp khishba_tests.cpp slitdrum_tests.cpp pipedrum_tests.cpp cuica_tests.cpp scream_tests.cpp gong_tests.cpp trombamarina_tests.cpp daxophone_tests.cpp guitar_tests.cpp bass_tests.cpp marimbula_tests.cpp chords_tests.cpp lead_tests.cpp arp_tests.cpp \
     atmos_tests.cpp risers_tests.cpp vocal_tests.cpp arrange_tests.cpp tutorial_tests.cpp song_tests.cpp visual_tests.cpp \
     ../src/console.cpp ../src/contacts.cpp ../src/offline.cpp ../src/parts.cpp ../src/session.cpp ../src/songfile.cpp ../src/studio.cpp \
     ../src/tuning.cpp ../src/tutorial.cpp ../src/visual.cpp ../src/recorder.cpp \

@@ -26,7 +26,7 @@
 // The keyboard is a second way in: two rows of the scale (Z to / and A to '
 // an octave up; Ö Ä on a Nordic keyboard), the first ten sounds on Q to P
 // (Shift: square), and the keys every part page shares (docs/PARTS.md 4b):
-// ← → the sound (every one of the fifteen: the five past P have no
+// ← → the sound (every one of the sixteen: the six past P have no
 // letter, and → from P steps on to them), ↑ ↓ the octave, Shift+← → the
 // roll, - + the tone, Return latch, Shift+Return overdub, the key left
 // of 1 (§ or `) follow the chords, Delete free the shapers, F1–F8 and
@@ -118,6 +118,7 @@ QString morphName(int sound) {
     case Chip: return QStringLiteral("ARP");
     case Tabla: return QStringLiteral("SWOOP");
     case Didge: return QStringLiteral("VOICE");
+    case Marimbula: return QStringLiteral("SPOT");
     default: return QStringLiteral("MORPH");
     }
 }
@@ -594,13 +595,15 @@ public:
     }
 
     // Whether a sound has the switch Shift and its letter flips: a saw to
-    // turn square, or a string to mute with the palm.
-    static bool hasSwitch(int sound) { return recipe(sound).saw > 0 || recipe(sound).string > 0; }
+    // turn square, or a string (or a marimbula's tongue) to mute.
+    static bool hasSwitch(int sound) {
+        return recipe(sound).saw > 0 || recipe(sound).string > 0 || recipe(sound).marimbula > 0;
+    }
 
     void toggleSquare(ControlContext &ctx) {
         // On a string the same switch is the palm: muted, every note a
         // dead thud.
-        const bool string = recipe(m_sound).string > 0;
+        const bool string = recipe(m_sound).string > 0 || recipe(m_sound).marimbula > 0;
         if (!hasSwitch(m_sound)) {
             ctx.notice(QStringLiteral("%1 has no saw to turn square").arg(QString::fromUtf8(recipe(m_sound).name)));
             return;
@@ -701,8 +704,9 @@ public:
     QString help() const override {
         return QStringLiteral(
             "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce, moog, upright (or Q W E R T Y U I O P), "
-            "then past P, → once to five times (their chips say P→1 … P→5): log (amapiano log drum), "
-            "tuba (Balkan brass), chip (NES bass), tabla (the bayan), didge (didgeridoo)\n"
+            "then past P, → once to six times (their chips say P→1 … P→6): log (amapiano log drum), "
+            "tuba (Balkan brass), chip (NES bass), tabla (the bayan), didge (didgeridoo), "
+            "marimbula (the Caribbean box lamellophone)\n"
             "↑ ↓\tthe pad's octave\n"
             "Shift+← → (or [ ])\tthe roll: off, then OFFBEAT … 8THS, latched on whatever plays\n"
             "- + (or =)\tdarker, brighter: the tone of notes played on the keys\n"
@@ -718,7 +722,7 @@ public:
             "slide sideways, or land another note\tglide to it without a new attack; lift to slide back "
             "(UPRIGHT: another note is plucked, and lifting pulls off to the one held)\n"
             "twist / flatten the finger\tmorph the sound (ACID squelch, MOOG contour, UPRIGHT ring, LOG honk, "
-            "TUBA blare, CHIP arpeggio, TABLA swoop, DIDGE voice) / fatten it\n"
+            "TUBA blare, CHIP arpeggio, TABLA swoop, DIDGE voice, MARIMBULA spot) / fatten it\n"
             "OCT: +12 row / BEND row\tup an octave while held (two fingers, two): tap to pump; any finger there bends with its height\n"
             "ROLL\tland on a pattern: the held note strikes it on the bar; slide along the row, up/down the gate\n"
             "WOB\tland on a rate (straight on top, triplets below): a wobble on the tempo; up/down the depth\n"
@@ -747,6 +751,13 @@ public:
             "DIDGE\theight is the mouth (800 Hz to 2 kHz); pressing harder blows harder and opens it more, so "
             "pressing in and easing off pumps the breath by hand; twist sings a voice into it "
             "that growls; an accent toots a tenth up; ROLL pumps the breath on its steps\n"
+            "MARIMBULA\ta steel tongue plucked on a plywood box, the box's air tuned to the key: every finger "
+            "plucks its own tongue and a tongue rings while its finger is down; lift it and the finger "
+            "stills it, press into it to still it sooner (MUTE: every note stilled at once); harder slaps it "
+            "(a hard press or an accent: the finger lands at speed, the tip may clack on the box); height is "
+            "the finger's soft pad (low) or its nail (high), a flat finger the pad; twist plucks further in "
+            "from the tip, thinner; the click knocks the box with the other hand, the palm low on the pad, "
+            "the knuckles high\n"
             "the sound chips\tthe row shows those around the one playing; the faded ends have more beyond, click to move along");
     }
 
@@ -1813,7 +1824,7 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
             p.save();
             p.setOpacity(0.25);
         }
-        toggle(0, recipe(m_sound).string > 0 ? QStringLiteral("MUTE") : !has ? QStringLiteral("—")
+        toggle(0, recipe(m_sound).string > 0 || recipe(m_sound).marimbula > 0 ? QStringLiteral("MUTE") : !has ? QStringLiteral("—")
                   : m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
                has ? m_sound < kLetteredSounds ? QStringLiteral("⇧%1").arg(QChar(keys[m_sound])) : QStringLiteral("\\")
                    : QString(),

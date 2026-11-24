@@ -84,8 +84,10 @@ What it sounds like, measured on the model (Sa = 277 Hz):
 between them, and each sleeps once it has rung 120 dB down (a finger still
 resting on it stays, and damps it again when it is struck). Both heads
 ringing with the ring finger and the heel down cost about half a percent of
-a core, as the hang does. Each finger resting on a head adds about a tenth
-of a percent while the head rings. A retune is lookups and one secular
+a core, as the hang does. A head lets go of its upper modes once they are
+100 dB down (a stroke wakes them again), and a resting finger damps only the
+modes that would ring longer than a tenth of a second by themselves, so each
+finger resting adds well under a tenth of a percent while the head rings. A retune is lookups and one secular
 solve (well under a millisecond); the modes and far-field tables are built
 once per process (about 60 ms).
 

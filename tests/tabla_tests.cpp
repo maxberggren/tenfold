@@ -286,6 +286,38 @@ private slots:
         QVERIFY(std::fabs(cents(peakHz(tun, 0.02, 0.3, 3 * kSa, 40), 3 * kSa)) < 20);
     }
 
+    void theFarFieldIsEachModesOwn() {
+        // Each mode radiates as its shape does (Rayleigh's integral in
+        // closed form, tabulated at build): the (0,1) sweeps a volume, so far
+        // below its size's wavelength it is a monopole of that volume
+        // (∫|F|² → 2π·vol², F → vol at broadside); the (1,1) sweeps none and
+        // is a dipole, 25 dB and more under it there, and its pressure at
+        // broadside is nil. (A toolchain that files the terms under the
+        // wrong angular order turns the dipoles into monopoles.)
+        const tabla::Built &b = tabla::built(tabla::Dayan);
+        int k01 = -1, k11 = -1;
+        for (int k = 0; k < b.n; ++k) {
+            if (k01 < 0 && b.s.order[size_t(k)] == 0)
+                k01 = k;
+            if (k11 < 0 && b.s.order[size_t(k)] == 1)
+                k11 = k;
+        }
+        QVERIFY(k01 >= 0 && k11 >= 0);
+        const double vol = b.s.volume[size_t(k01)];
+        const double kw = 2 * M_PI * 100.0 / tabla::Physics::kC; // well under the head's size
+        const double p01 = b.lookup(b.power, k01, kw), p11 = b.lookup(b.power, k11, kw);
+        QVERIFY2(std::fabs(p01 / (2 * M_PI * vol * vol) - 1) < 0.05, qPrintable(QString::number(p01 / (2 * M_PI * vol * vol))));
+        QVERIFY2(10 * std::log10(p11 / p01) < -25, qPrintable(QString::number(10 * std::log10(p11 / p01))));
+        double jm[12];
+        for (int m = 0; m < 12; ++m)
+            jm[m] = tabla::besselJ(m, 0.0);
+        double re, im;
+        tabla::farField(b, k01, 0.0, 0.3, jm, re, im);
+        QVERIFY2(std::fabs(re / vol - 1) < 1e-6 && std::fabs(im) < 1e-9 * std::fabs(vol), qPrintable(QString::number(re / vol)));
+        tabla::farField(b, k11, 0.0, 0.3, jm, re, im);
+        QVERIFY2(std::fabs(re) + std::fabs(im) < 1e-9 * std::fabs(vol), qPrintable(QString::number(re)));
+    }
+
     void theShellsAirRaisesOnlyTheAxisymmetricModes() {
         // Sealed shells: the air is a spring on the head's net volume, so
         // (0,n) go up (the dayan's (0,1) by a few per cent) and modes with

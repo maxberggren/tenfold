@@ -53,6 +53,7 @@
 
 #include "dsp.h"
 
+
 namespace tf::tabla {
 
 // --- Bessel functions -------------------------------------------------------------------------------------
@@ -378,6 +379,7 @@ inline Solved solve(const Design &d, int mMax = 8, int nMax = 7, int keep = 40) 
     // D·M·D y = (1/λ) y and the shape is D·y.
     struct Found {
         double lambda;
+        int group;
         std::vector<double> v;
     };
     std::vector<Found> found;
@@ -399,6 +401,7 @@ inline Solved solve(const Design &d, int mMax = 8, int nMax = 7, int keep = 40) 
         jacobi(A, V, n);
         for (int c = 0; c < n; ++c) {
             Found f;
+            f.group = g;
             f.lambda = 1.0 / A[size_t(c) * size_t(n) + size_t(c)];
             f.v.assign(size_t(nb), 0.0);
             for (int p = 0; p < n; ++p)
@@ -407,7 +410,9 @@ inline Solved solve(const Design &d, int mMax = 8, int nMax = 7, int keep = 40) 
             found.push_back(std::move(f));
         }
     }
-    std::sort(found.begin(), found.end(), [](const Found &p, const Found &q) { return p.lambda < q.lambda; });
+    std::sort(found.begin(), found.end(), [](const Found &p, const Found &q) {
+        return p.lambda != q.lambda ? p.lambda < q.lambda : p.group < q.group;
+    });
     keep = std::min(keep, int(found.size()));
     out.modes = keep;
     out.coef.assign(size_t(keep) * size_t(nb), 0.0);
@@ -635,6 +640,26 @@ struct Built {
         const float b0 = base[(ir + 1) * kNt + it], b1 = base[(ir + 1) * kNt + it1];
         return (a0 + tt * (a1 - a0)) * (1 - tr) + (b0 + tt * (b1 - b0)) * tr;
     }
+    // Every mode's shape at (x, y), times w, added into out (one lookup of
+    // where the point is for all the modes).
+    void shapesAt(float x, float y, float w, float *out) const {
+        const float r = std::sqrt(x * x + y * y);
+        if (r >= 1.0f)
+            return;
+        float th = std::atan2(y, x);
+        if (th < 0)
+            th += kTwoPi;
+        const float fr = r * kNr, ft = th * (kNt / kTwoPi);
+        const int ir = std::min(int(fr), kNr - 1), it = int(ft) % kNt, it1 = (it + 1) % kNt;
+        const float tr = fr - float(ir), tt = ft - std::floor(ft);
+        const float w00 = w * (1 - tr) * (1 - tt), w01 = w * (1 - tr) * tt, w10 = w * tr * (1 - tt), w11 = w * tr * tt;
+        const size_t stride = size_t((kNr + 1) * kNt);
+        const size_t i00 = size_t(ir * kNt + it), i01 = size_t(ir * kNt + it1), i10 = size_t((ir + 1) * kNt + it),
+                     i11 = size_t((ir + 1) * kNt + it1);
+        const float *base = table.data();
+        for (int k = 0; k < n; ++k, base += stride)
+            out[k] += w00 * base[i00] + w01 * base[i01] + w10 * base[i10] + w11 * base[i11];
+    }
     static double kwAt(int j) { return kKwLo * std::pow(kKwHi / kKwLo, double(j) / (kKw - 1)); }
     // A tabulated value of mode k at wavenumber kw (log-interpolated).
     double lookup(const std::vector<float> &t, int k, double kw) const {
@@ -656,7 +681,12 @@ inline void farSums(const Built &b, int k, double k0, double *cosSum, double *si
         double den = term.kappa2 - k0 * k0;
         if (std::fabs(den) < 1e-6 * term.kappa2)
             den = 1e-6 * term.kappa2;
-        (term.sine ? sinSum : cosSum)[std::min(term.m, 11)] += term.w / den;
+        // (the order as a plain value: gcc 12 and 13 at -O3 read std::min's
+        // reference to a temporary here as garbage, and filed every term
+        // under the wrong order: the dayan's dipoles radiated as monopoles)
+        const int m = term.m < 11 ? term.m : 11;
+        double *sums = term.sine ? sinSum : cosSum;
+        sums[m] += term.w / den;
     }
 }
 
@@ -834,6 +864,7 @@ public:
             const Built &b = built(d);
             Head &h = m_head[d];
             h.n = b.n;
+            h.live = b.n;
             h.b = &b;
             for (int k = 0; k < h.n; ++k) {
                 h.mass[k] = float(b.s.mass[size_t(k)]);
@@ -971,6 +1002,7 @@ public:
         }
         h.sleeping = false;
         h.quietRests = false;
+        h.live = h.n;
         m_touching = true;
     }
 
@@ -1130,6 +1162,8 @@ private:
         float U[3] = {}; // the net volume velocity, the last three samples (m³ per sample)
         float kCav = 0, area = 0, stretch = 0, T = 0, f0 = 0;
         int pitchMode = 0; // the mode tuned to the drum's pitch
+        int live = kMax;   // the modes still ringing (the rest are let go until the next stroke)
+        int restN = kMax;  // the modes a resting finger damps: those that ring longer than a tenth of a second
         float bendEps[kBendSteps + 1] = {}; // the skin's added strain for 0, 1 … 12 semitones of bend
         float radiate = 0; // ρω₁²/(2πc)·rate: the radiation resistance on the net volume, per U
         float heel = 0;
@@ -1256,14 +1290,10 @@ private:
         // away from the player).
         float hx = x, hy = y;
         toFrame(h, hx, hy);
-        for (int k = 0; k < h.n; ++k) {
-            float sum = 0;
-            for (int j = 0; j < 7; ++j)
-                sum += h.b->shapeAt(k, hx + 0.6f * s * ox[j], hy + 0.6f * s * oy[j]) * (j == 0 ? 0.25f : 0.125f);
-            phi[k] = sum;
-        }
-        for (int k = h.n; k < kMax; ++k)
+        for (int k = 0; k < kMax; ++k)
             phi[k] = 0;
+        for (int j = 0; j < 7; ++j)
+            h.b->shapesAt(hx + 0.6f * s * ox[j], hy + 0.6f * s * oy[j], j == 0 ? 0.25f : 0.125f, phi);
     }
 
     void toFrame(const Head &h, float &x, float &y) const {
@@ -1363,6 +1393,14 @@ private:
             }
             h.loud[k] = float(w2 * h.mass[k]);
         }
+        // A resting finger damps the modes that would ring on: up to the last
+        // that rings longer than 0.1 s by itself (in fours, for the vector
+        // unit).
+        h.restN = 8;
+        for (int k = 0; k < h.n; ++k)
+            if (6.91f * h.tau[k] >= 0.1f)
+                h.restN = std::max(h.restN, k + 1);
+        h.restN = std::min(h.n, (h.restN + 3) / 4 * 4);
         // A full-strength tun's amplitude (0.5 mm) for the drawing's scale.
         h.refEnergy = float(h.loud[0] * 0.0005 * 0.0005 * 0.5);
         h.sleepEnergy = h.refEnergy * 1e-12f; // asleep 120 dB under it
@@ -1384,7 +1422,7 @@ private:
 
     void renderHead(int d, float *outL, float *outR, int n) {
         Head &h = m_head[d];
-        const int N = h.n;
+        const int N = h.live;
         float *x = h.x, *u = h.u, *f = h.f;
         const float kCav = h.kCav, G = h.stretch / std::max(h.T, 1.0f);
         for (int i = 0; i < n; ++i) {
@@ -1444,9 +1482,13 @@ private:
             outR[i] += tap(h.line[1], h.wr, h.micDelay[1]);
         }
         float e = 0;
+        int top = 0;
         for (int k = 0; k < N; ++k) {
             const float th = kTwoPi * h.hz[k] / m_rate;
-            e += h.loud[k] * 0.5f * (x[k] * x[k] + (u[k] / th) * (u[k] / th));
+            const float ek = h.loud[k] * 0.5f * (x[k] * x[k] + (u[k] / th) * (u[k] / th));
+            e += ek;
+            if (ek > h.refEnergy * 1e-10f)
+                top = k + 1;
         }
         h.energy = e;
         // Asleep once it has rung out with no finger striking it; a finger
@@ -1454,6 +1496,16 @@ private:
         bool striking = false;
         for (auto &c : m_contacts)
             striking |= c.on && c.drum == d;
+        // The modes above the last one still ringing (100 dB under a full
+        // tun) are let go: high modes die in tenths of a second, the low
+        // ones ring on.
+        // A stroke wakes them all again.
+        if (!striking) {
+            const int live = std::min(N, std::max(std::min(h.n, 8), (top + 3) / 4 * 4));
+            for (int k = live; k < N; ++k)
+                x[k] = u[k] = 0;
+            h.live = live;
+        }
         h.quietRests = !striking && e < h.sleepEnergy * 1e3f;
         if (!striking && e < h.sleepEnergy) {
             if (++h.quiet > 8) {
@@ -1629,17 +1681,20 @@ private:
         for (auto &r : m_rests) {
             if (!r.on || r.drum != d || r.delay > 0 || r.engage <= 0)
                 continue;
-            const int N = h.n;
-            float w = 0, P = 0;
+            // (only the modes that would ring on by themselves: those that
+            // die in a tenth of a second anyway it need not damp)
+            const int N = std::min(h.restN, h.live);
+            float w = 0, P = 0, Q = 0;
             for (int k = 0; k < N; ++k) {
                 w += r.phi[k] * h.x[k];
                 P += r.phi[k] * h.u[k];
+                Q += r.phi[k] * r.phi[k] * h.inv[k];
             }
             const float press = r.heel ? 1.0f + 3.0f * r.press : 1.0f;
             const float k = r.engage * press * r.k, c = r.engage * press * r.c * m_rate;
-            const float force = (-k * w - c * P) / (1.0f + c * r.Q);
-            for (int k = 0; k < N; ++k)
-                h.u[k] += h.inv[k] * r.phi[k] * force;
+            const float force = (-k * w - c * P) / (1.0f + c * Q);
+            for (int j = 0; j < N; ++j)
+                h.u[j] += h.inv[j] * r.phi[j] * force;
         }
     }
 

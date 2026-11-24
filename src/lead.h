@@ -234,7 +234,7 @@ struct Sound {
     //           register, and a tract whose first resonance sits on the
     //           note, a harmonic of that undertone: the throat singer's
     //           melody over the growl.
-    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax, Guitar, Kargyraa };
+    enum Model { Osc = 0, String, Pan, Sync, Bow, Reed, Gong, TrombaMarina, Dax, Guitar, Kargyraa, Sax };
     int model = Osc;
     float jawari = 0;      // String: how hard the string buzzes on its bridge
     float sympathy = 0;    // String: how loud the taraf rings
@@ -254,6 +254,7 @@ struct Sound {
     float hand = 1.0f;     // Gong: seconds a hand laid on it takes to still it once the finger lifts
     float rollHz = 13.0f;  // Pan, Gong: the strokes a second a held note is rolled at, near enough
     float feedback = 0;    // Guitar: how readily a held note feeds back through the amp (Gong's hand: the fretting hand's damping)
+    int sax = 0;           // Sax: which kind (sax::Kind: alto, tenor)
 };
 
 // The accordion's registers, by the finger's height: low on the pad the
@@ -283,7 +284,7 @@ inline const char *registerName(float y) {
 // note is held, strikes the high drone strings instead of a hammer-on.
 constexpr float kChikariY = 0.8f;
 
-constexpr int kSounds = 22;
+constexpr int kSounds = 24;
 
 inline const Sound &sound(int i) {
     static const Sound sounds[kSounds] = {
@@ -558,6 +559,27 @@ inline const Sound &sound(int i) {
         {.name = "Kargyraa", .style = "Tuvan throat singing", .cutoff = 0.85f, .cutoffY = 0.12f, .keyTrack = 0.3f,
          .a = 0.04f, .d = 0.5f, .s = 0.95f, .r = 0.12f, .glide = 0.08f, .vibDepth = 0.04f, .vibDelay = 0.8f,
          .echo = 0.1f, .echoFb = 0.25f, .gain = 1.0f, .model = Sound::Kargyraa},
+        // A tenor saxophone, the lead of R&B, soul and rock'n'roll: a cane
+        // reed beating on its mouthpiece, driving a brass cone whose keys
+        // the neck fingers. Pressure is the breath, from a soft subtone just
+        // over the reed's threshold to a hard, beating edge; the finger's
+        // height is the embouchure, low a dropped jaw and much lip
+        // (subtone, airy), high a firm lip (edge). A flatter finger hums
+        // through the horn (the growl), as a hard press does too. Notes
+        // are tongued; legato slurs, the keys moving under the breath; a
+        // slide or the bend is the lip and jaw, and the vibrato is the
+        // jaw's. Low on the neck the horn's own range; up the neck the
+        // octave key; above its top, a smaller horn's.
+        {.name = "Tenor sax", .style = "R&B", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.03f,
+         .d = 1.0f, .s = 1.0f, .r = 0.07f, .aHard = 0.012f, .glide = 0.03f, .porta = 0.004f, .scoop = 0.35f,
+         .scoopTime = 0.06f, .vibRate = 5.2f, .vibDepth = 0.2f, .vibDelay = 0.35f, .vibAmp = 0.04f, .echo = 0.12f,
+         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 1},
+        // An alto saxophone, smooth jazz's and pop's: the same physics, a
+        // smaller, narrower horn a fourth higher, brighter and more nasal.
+        {.name = "Alto sax", .style = "smooth jazz", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.03f,
+         .d = 1.0f, .s = 1.0f, .r = 0.07f, .aHard = 0.012f, .glide = 0.03f, .porta = 0.004f, .scoop = 0.3f,
+         .scoopTime = 0.05f, .vibRate = 5.4f, .vibDepth = 0.18f, .vibDelay = 0.35f, .vibAmp = 0.04f, .echo = 0.12f,
+         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 0},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

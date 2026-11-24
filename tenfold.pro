@@ -33,6 +33,7 @@ HEADERS += \
     src/trombamarina.h \
     src/daxophone.h \
     src/guitar.h \
+    src/saxophone.h \
     src/hang.h \
     src/marimbula.h \
     src/slitdrum.h \

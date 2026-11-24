@@ -37,6 +37,7 @@
 #include "lead.h"
 #include "parts.h"
 #include "trombamarina.h"
+#include "saxophone.h"
 
 namespace tf {
 namespace lead {
@@ -242,6 +243,12 @@ constexpr float kDaxSoft = 1.3f, kDaxCrush = 2.5f;
 constexpr float kDaxLowHz = 45.0f, kDaxBandHz = 2800.0f, kDaxBandQ = 1.4f, kDaxBand = 0.35f, kDaxTopHz = 8000.0f;
 // Guitar: what the mic'd cab's level (a fortieth of the speaker's volts) is worth on the page.
 constexpr float kGuitarLevel = 0.85f;
+
+// Sax: what a saxophone's pressure (Pa at a metre) is worth on the page, and
+// the hardest a press blows it (the mouth pressure over the reed's closing
+// pressure).
+constexpr float kSaxLevel = 0.9f;
+constexpr float kSaxBlowTop = 0.9f;
 
 // An accordion's bellows: how much air one way holds (seconds of sound at
 // an ordinary press), and how long a rest is a breath, long enough to turn
@@ -450,6 +457,10 @@ struct Bank {
     float rested = 60; // where the finger last rested on the neck (with its bends), the fret a slide counts from
     // Kargyraa: the voice's throat (kargyraa.h), each voice of a line its own.
     kargyraa::Played kg;
+    // Sax: the voice's horn (each voice of a line its own: a section), and
+    // whether it has been put to the lips for this note.
+    sax::Sax sax;
+    bool saxLive = false;
 };
 
 struct Voice {
@@ -558,6 +569,11 @@ public:
         for (auto &v : m_voices)
             for (auto &k : v.banks)
                 k.kg.init(rate);
+        // And the saxophones' bores, each fingering's resonances.
+        sax::prepare();
+        for (auto &v : m_voices)
+            for (auto &k : v.banks)
+                k.sax.init(rate);
         for (auto &c : m_chik) {
             c.string.init(size_t(rate / 150.0f));
             c.jawF.set(3000.0f, 4.0f, rate);
@@ -1053,6 +1069,7 @@ private:
             k.fret = k.anchor = k.rested = targets[b];
             if (s.model == Sound::Kargyraa)
                 k.kg.reset();
+            k.saxLive = false;
             k.thudLp.reset();
             k.pingF.reset();
             k.pingLp.reset();
@@ -1155,6 +1172,10 @@ private:
                 k.thud = 0.6f + 0.4f * vel; // the key's click
             if (s.model == Sound::Kargyraa)
                 k.kg.start(vel > 0.9f, v.rng); // from silence, a new phrase
+            // A detached note on a horn still sounding: the tongue stops
+            // the reed and lets it go again.
+            if (s.model == Sound::Sax && k.saxLive)
+                k.sax.tongue(vel);
         }
         // A bowed note struck again while it still sounds is the bow
         // changing direction: its speed turns through nothing, the hair
@@ -2110,6 +2131,49 @@ private:
                 v.level = std::max(v.level * std::exp(-dt / 0.08f), k.guitar.level());
             }
         }
+        // Sax: each voice's horn, played: the breath rides the envelope (so
+        // the attack is the breath's rise behind the tongue, the release its
+        // fall) from just over the reed's threshold under a light touch to a
+        // hard, beating edge under a hard one; the finger's height is the
+        // embouchure (low subtone, high edge); a flatter finger hums through
+        // it, the growl, which a press at the very top also brings; the
+        // pitch is the fingers, the lip and the vibrato, all in the bank's.
+        if (model == Sound::Sax) {
+            Env ahead = v.amp;
+            for (int i = 0; i < n; ++i)
+                ahead.step();
+            const float a1 = ahead.v;
+            const float touch = std::pow(clampf(v.press, 0.0f, 1.0f), 1.2f) * (0.85f + 0.15f * v.vel);
+            const float growl = clampf((v.fat - 0.45f) / 0.35f, 0.0f, 1.0f) + 0.6f * clampf((v.press - 0.92f) / 0.08f, 0.0f, 1.0f);
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                Bank &k = v.banks[b];
+                std::fill(m_saxOut[b], m_saxOut[b] + n, 0.0f);
+                if (!live[b]) {
+                    k.saxLive = false;
+                    continue;
+                }
+                const float hz = clampf(inc1[b] * rate, 20.0f, 4000.0f);
+                if (!k.saxLive) {
+                    k.sax.start(sax::Kind(std::clamp(s.sax, 0, sax::kKinds - 1)), hz);
+                    k.sax.tongue(v.vel, true);
+                    k.saxLive = true;
+                }
+                sax::Sax::Control c;
+                c.hz = hz;
+                c.lip = clampf((v.y - 0.15f) / 0.7f, 0.0f, 1.0f);
+                const float th = k.sax.threshold();
+                // (From a little over the threshold, which the reed's
+                // embouchure and opening move, to a hard, beating breath.)
+                c.blow = (th + 0.06f + std::max(kSaxBlowTop - th - 0.06f, 0.08f) * touch) * a1;
+                c.growl = growl;
+                c.air = 0.5f * clampf(v.fat, 0.0f, 1.0f);
+                // (A light touch also closes the reed down under the lip: a
+                // pianissimo is a smaller opening, not only less breath.)
+                c.open = 0.5f + 0.6f * touch;
+                c.find = true;
+                k.sax.render(m_saxOut[b], n, c);
+            }
+        }
         // Sync: each slave's ratio sweeps down from the attack to where it
         // settles, never all the way to the note, so the tear holds; height
         // and pressure lift it, a slow wander moves it, and so does the
@@ -2552,6 +2616,12 @@ private:
                     br += o;
                     break;
                 }
+                case Sound::Sax: {
+                    const float o = m_saxOut[b][i] * kSaxLevel;
+                    bl += o;
+                    br += o;
+                    break;
+                }
                 case Sound::Sync: {
                     // At four times the rate: four quarter steps, the second
                     // voice's master an octave up, through two half-band
@@ -2798,15 +2868,17 @@ private:
             // A gong's level is its own: a hand stills it, not an envelope.
             // A tromba marina's is its bow's, which the envelope draws. So is a
             // guitar's own: its string rings, the amp sustains it, a hand mutes it.
+            // A saxophone's is its breath's, already.
             const float env = model == Sound::Bow ? std::min(1.0f, 4.0f * a) * (arc0 + (arc1 - arc0) * t)
-                              : model == Sound::Gong || model == Sound::TrombaMarina || model == Sound::Dax || model == Sound::Guitar
+                              : model == Sound::Gong || model == Sound::TrombaMarina || model == Sound::Dax || model == Sound::Guitar ||
+                                        model == Sound::Sax
                                   ? 1.0f
                                   : a;
             const float jerk = model == Sound::Reed ? 1.0f + 0.5f * (jerk0 + (jerk1 - jerk0) * t) * std::min(1.0f, v.held / 0.03f) : 1.0f;
-            const float level = model == Sound::Bow            ? bowGain0 + (outGain - bowGain0) * t
-                                : model == Sound::TrombaMarina ? s.gain * 0.3f
-                                : model == Sound::Dax          ? daxOut
-                                                               : outGain;
+            const float level = model == Sound::Bow                                ? bowGain0 + (outGain - bowGain0) * t
+                                : model == Sound::TrombaMarina || model == Sound::Sax ? s.gain * 0.3f
+                                : model == Sound::Dax                              ? daxOut
+                                                                                   : outGain;
             const float g2 = env * level * gate * jerk * (amp0 + (amp1 - amp0) * t);
             sl *= g2;
             sr *= g2;
@@ -3055,6 +3127,7 @@ private:
     float m_rigIn[kLines][Voice::kBanks][kBlock] = {};
     bool m_rigFed[kLines][Voice::kBanks] = {};
     int m_rigSound[kLines] = {};
+    float m_saxOut[Voice::kBanks][kBlock] = {};
     Delay m_sym[kTaraf];
     float m_symLp[kTaraf] = {};
     Chikari m_chik[kChikari];
@@ -3529,7 +3602,10 @@ public:
             "Kargyraa (Tuvan throat singing: the note "
             "is the overtone the vowel picks out, a whistle over a growl in the singer's own register, its "
             "undertone, the false folds closing on every other pulse; higher on the pad brightens the vowel, the "
-            "press is the lungs); "
+            "press is the lungs), "
+            "Tenor sax (R&B) and Alto sax (smooth jazz: "
+            "a cane reed beating on a conical brass horn; a light touch is a breathy subtone, a hard one a bright, "
+            "beating edge; legato slurs under the breath, the keys moving); "
             "the row under the pad shows the ones around the chosen "
             "sound, faded at an end with more beyond; the status line says what music each is for\n"
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
@@ -3553,7 +3629,8 @@ public:
             "Erhu, bowed nearer the bridge; on Accordion, the register: clarinet low, bandoneon in the middle, musette "
             "high, and the bandoneon from the keys; on the gongs, the strike moves out from the middle toward the rim; "
             "on Tromba marina, bowed nearer the nut; on Daxophone, bowed on the very end, rougher; lower, further in "
-            "along its edge, rounder; on Guitar, picked nearer the bridge)\n"
+            "along its edge, rounder; on Guitar, picked nearer the bridge; on the saxes, the embouchure: low a dropped "
+            "jaw and much lip, subtone, high a firm lip, edge)\n"
             "press harder\tswell, and a deeper vibrato (on Mini, a quack on each attack, a light touch whistles; "
             "on Flute, a quicker attack; on Steel pan, a harder roll, and high on the note a ping; on Sync, a snarl of FM into the sync; on Erhu, "
             "the bow's weight: a light touch whistles, a hard one grinds; on the gongs, a harder mallet: further glides, "
@@ -3563,7 +3640,7 @@ public:
             "on Guitar, a harder pick as the finger lands, and held, nearer the amp until it feeds back)\n"
             "flatten the finger\tfatter: the unison spreads (on Flute, breathier; on Sitar, more buzz; "
             "on Accordion, a wetter musette; on the gongs, a softer beater; on Daxophone, the dax pressed lighter; "
-            "on Guitar, a palm muting the strings)\n"
+            "on Guitar, a palm muting the strings; on the saxes, a growl, a hum through the horn)\n"
             "twist the finger\tbend up or down one step of the scale\n"
             "click the pad\tleap an octave up while held\n"
             "left column, harmony rows\teach finger adds a voice: −oct, 3rd, 5th, 6th, +oct; slide between; press to bring it out\n"

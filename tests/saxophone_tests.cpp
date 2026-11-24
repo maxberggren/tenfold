@@ -82,10 +82,16 @@ double levelAt(const std::vector<float> &x, double from, double len, double hz) 
 
 // The period heard: the first autocorrelation peak within 90 % of the
 // strongest, over two and a half octaves either side of the note (so an
-// octave jump is heard as one), as a frequency; −1 if it isn't periodic.
+// octave jump is heard as one), as a frequency; −1 if it isn't periodic,
+// or if the stretch and its longest lag run past the end of x (never read
+// what isn't there: past a vector's end is whatever the heap held).
 double periodHz(const std::vector<float> &x, double from, double len, double guess) {
     const size_t a = size_t(from * kRate), n = size_t(len * kRate);
     const int lo = std::max(2, int(kRate / (guess * 2.6))), hi = int(kRate / (guess / 2.6));
+    if (a + n + size_t(hi) + 2 > x.size()) {
+        qWarning("periodHz: %.3f s + %.3f s and a lag of %d run past the %zu samples", from, len, hi + 1, x.size());
+        return -1;
+    }
     double mean = 0;
     for (size_t i = 0; i < n; ++i)
         mean += x[a + i];
@@ -791,8 +797,10 @@ private slots:
 
     void theLowestNotesSettle() {
         // Each horn's lowest three notes, at an ordinary and at a hard
-        // breath: on their pitch within 25 cents from 0.3 s on (a cracked
-        // start, an octave up, may last no longer).
+        // breath: on their pitch within 25 cents from 0.3 s to 1.1 s (a
+        // cracked start, an octave up, may last no longer). (The windows
+        // counted in whole tenths: a sum of 0.1s overshoots, and would add
+        // one at 1.1 s reaching past what was rendered.)
         for (int k = 0; k < sax::kKinds; ++k) {
             const sax::Design &d = sax::design(sax::Kind(k));
             for (int s = 0; s <= 2; ++s)
@@ -800,7 +808,8 @@ private slots:
                     const float midi = float(d.spec.lowMidi + s);
                     std::vector<float> reed;
                     blowNote(sax::Kind(k), midi, blow, 1.2, lip, &reed);
-                    for (double t = 0.3; t < 1.1; t += 0.1) {
+                    for (int w = 3; w <= 10; ++w) {
+                        const double t = 0.1 * w;
                         const double hz = periodHz(reed, t, 0.1, midiToHz(midi));
                         QVERIFY2(hz > 0 && std::fabs(cents(hz, midiToHz(midi))) < 25,
                                  qPrintable(QStringLiteral("kind %1 s %2 blow %3 at %4 s: %5 Hz").arg(k).arg(s).arg(blow).arg(t).arg(hz)));

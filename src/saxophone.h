@@ -82,8 +82,6 @@ constexpr int kAll = kMaxModes + kTract + 1; // and the continuum above the mode
 constexpr int kContinuum = kMaxModes + kTract;
 // How long a key takes to travel (its pad lifting or closing), seconds.
 constexpr float kKeyS = 0.008f;
-// The corner of the high-passed flow the radiation's fit may use (Hz).
-constexpr double kRadHp = 3000.0;
 // The reed's quality factor with the pinched upper-register embouchure.
 constexpr float kUpperQ = 1.5f;
 constexpr int kHoles = 19; // tone holes above the bell (the low B♭'s), to written F5
@@ -106,10 +104,19 @@ struct Spec {
     // break), and by how much it is lifted there (see Sax::start): the
     // alto's own, unlifted.
     double breakHz = 837, breakDb = 0;
+    // Above its open holes' cutoff a horn radiates the reed's flow as a
+    // continuum, through every open hole: from edgeHz up the flow is heard
+    // through two high-passes there, at the horn's transfer level times edgeK.
+    // At 1 the modes, fitted to the transfer less this path, and the path
+    // make up the horn's transfer; over 1 it lifts the edge (est.): the
+    // brightness this model's smooth reed flow lacks, and a mouthpiece's
+    // baffle.
+    double edgeHz = 3000, edgeK = 1;
     int register2 = 16;        // the first overblown note (semitones over the lowest): written D5
     // The reed, at an ordinary embouchure (see Sax::Control::lip for the range).
     double reedHz = 1800;    // its resonance with the lip on it
     double reedQ = 1.5;      // and its quality factor
+    double upperQ = 1.5;     // its quality factor with the upper register's pinched embouchure
     double pm = 6000;        // closing pressure P_M, Pa
     double zeta = 0.45;      // the embouchure parameter, Z_c·w·H0·√(2/ρP_M)
 };
@@ -137,6 +144,13 @@ inline Spec specOf(Kind k) {
         s.pm = 3800;        // K_a·H0, 4.8 MPa/m × 0.8 mm
         s.ventR = 0.0015;
         s.ventT = 0.006;
+        // Its edge: from its lattice's cutoff (1.2 to 1.5 kHz here), at 9
+        // times the horn's transfer there (est.): the brightness this
+        // model's smooth reed flow lacks (as the tenor's 3), and three times
+        // more, a smooth-jazz mouthpiece's high baffle. A forte's partials
+        // then stand 15 to 30 dB under the strongest out to 4 or 5 kHz.
+        s.edgeHz = 1200;
+        s.edgeK = 9;
     } else {
         // The tenor, a fourth below, is not the alto scaled: its parts are
         // proportioned differently, from a tenor's measurements where there
@@ -173,7 +187,7 @@ inline Spec specOf(Kind k) {
         //   measured"). With it, played hard, B♭2 and C3 have their 6th and
         //   5th harmonics strongest (a recorded tenor's low notes peak at
         //   415 to 730 Hz); elsewhere the fundamental still leads.
-        // - The breath: three times the alto's noise in the subtone term
+        // - The breath: six times the alto's noise in the subtone term
         //   (est.: nothing measured), the bigger reed's slit and a slack lip.
         s.kind = Tenor;
         s.lowMidi = 44;
@@ -192,7 +206,17 @@ inline Spec specOf(Kind k) {
         s.pm = 4300;
         s.ventR = 0.0015 * 1.33;
         s.ventT = 0.006 * 1.33;
-        s.breath = 3.0;
+        s.breath = 6.0;
+        // Its edge: from its lattice's cutoff (0.7 to 1.0 kHz), at 3 times
+        // the horn's transfer there (est.: the brightness this model's
+        // smooth reed flow lacks, on a dark, large-chamber R&B mouthpiece,
+        // a third of the alto's), so its weight stays in its 200 to
+        // 800 Hz body and its breath rides the edge as husk. Its upper
+        // register is played on a looser lip than the alto's (Q 0.9 against
+        // 1.5, est.), which darkens it there; the altissimo keeps 1.5.
+        s.edgeHz = 900;
+        s.edgeK = 3;
+        s.upperQ = 0.9;
         return s;
     }
     s.lossK = 1.0;
@@ -319,8 +343,9 @@ struct Fingering {
     // as the horn does (its transfer from the reed's flow to the pressure a
     // metre off, worked out from the same lines) at every frequency.
     float rr[kMaxModes + 1] = {}, ri[kMaxModes + 1] = {};
-    // (And above the modes, where the horn's transfer is broad and flat, the
-    // flow itself through two high-passes at kRadHp, at its level there.)
+    // (And above the open holes' cutoff, where the horn's transfer is broad
+    // and flat, the flow itself through two high-passes at Spec::edgeHz, at
+    // its level there times Spec::edgeK.)
     float uh2 = 0;
     int note = 0;   // the mode the note sounds on
     int mode = 1;   // which resonance of its tube that is
@@ -457,6 +482,22 @@ inline void modesOf(const Design &d, const Bore &b, Fingering &f, double fMax) {
     // jω_d), and 2·Re(W·z) has the response W·g(ω) + W*·conj(g(−ω)), linear
     // in Re W and Im W. Each frequency weighted by the inverse of the
     // transfer there (a fit in relative terms), with a little ridge.
+    // Above the open holes' cutoff the transfer is broad, its phase turning
+    // fast with the paths to the bell and holes: there the flow itself is
+    // radiated, through two high-passes at the edge, at the level the horn
+    // has there on average; the modes are fitted to what is left.
+    double edge1 = 0;
+    {
+        double e = 0;
+        int cnt = 0;
+        for (double hz = std::max(d.spec.edgeHz * 7.0 / 6.0, 1000.0); hz < 7000; hz *= 1.02, ++cnt) {
+            cd t;
+            const cd z = 1.0 / admittance(b, 2 * M_PI * hz, &t) / d.zRef;
+            e += std::norm(t * z);
+        }
+        edge1 = std::sqrt(e / std::max(cnt, 1));
+    }
+    f.uh2 = float(d.spec.edgeK * edge1);
     {
         const int N = f.n + 1, U = 2 * N;
         std::vector<double> AtA(size_t(U * U), 0.0), Atb(size_t(U), 0.0);
@@ -483,7 +524,8 @@ inline void modesOf(const Design &d, const Bore &b, Fingering &f, double fMax) {
                 col[size_t(2 * k)] = (gp + gm) * wt;
                 col[size_t(2 * k + 1)] = j * (gp - gm) * wt;
             }
-            const cd hb = H * wt;
+            const cd jw(0, w), hp = jw / (jw + 2 * M_PI * d.spec.edgeHz);
+            const cd hb = (H - edge1 * hp * hp) * wt;
             for (int r = 0; r < U; ++r) {
                 for (int c = 0; c < U; ++c)
                     AtA[size_t(r * U + c)] += (std::conj(col[size_t(r)]) * col[size_t(c)]).real();
@@ -537,18 +579,6 @@ inline void modesOf(const Design &d, const Bore &b, Fingering &f, double fMax) {
             f.rr[i] = float(x[size_t(2 * k)]);
             f.ri[i] = float(x[size_t(2 * k + 1)]);
         }
-        // Above the modes the transfer is broad, its phase turning fast with
-        // the paths to the bell and holes: there only its level is fitted,
-        // the flow through two high-passes at the level the horn has there
-        // on average.
-        double e = 0;
-        int cnt = 0;
-        for (double hz = 3500; hz < 7000; hz *= 1.02, ++cnt) {
-            cd t;
-            const cd z = 1.0 / admittance(b, 2 * M_PI * hz, &t) / d.zRef;
-            e += std::norm(t * z);
-        }
-        f.uh2 = float(std::sqrt(e / std::max(cnt, 1)));
     }
 }
 
@@ -697,12 +727,6 @@ public:
         m_noiseF.set(2000.0f, 0.5f, rate);
         m_dc.r = std::exp(-2.0f * float(M_PI) * 20.0f / rate);
         m_earA = 1.0f - std::exp(-2.0f * float(M_PI) * 25.0f / rate);
-        {
-            // (A bilinear high-pass, prewarped to kRadHp.)
-            const float k = std::tan(float(M_PI) * float(kRadHp) / rate);
-            m_hpA = (1.0f - k) / (1.0f + k);
-            m_hpB = 1.0f / (1.0f + k);
-        }
     }
 
     void start(const Design &d, float hz) {
@@ -716,6 +740,12 @@ public:
             std::fill(std::begin(m_find), std::end(m_find), 0.0f);
         }
         m_d = &d;
+        {
+            // (A bilinear high-pass, prewarped to the horn's edge.)
+            const float k = std::tan(float(M_PI) * float(d.spec.edgeHz) / m_rate);
+            m_hpA = (1.0f - k) / (1.0f + k);
+            m_hpB = 1.0f / (1.0f + k);
+        }
         {
             // The break: a peaking section (RBJ's), Q 0.4 (three octaves
             // wide), at the horn's break frequency.
@@ -1231,7 +1261,7 @@ private:
         // note down and spends the energy they have less of.)
         const bool low = f.mode < 2 && !f.alt;
         const float wrWant = std::max(2 * float(M_PI) * float(sp.reedHz) * (low ? 0.8f + 0.1f * lip : 0.9f), 1.9f * 2 * float(M_PI) * c.hz);
-        const float qrWant = float(sp.reedQ) * (low ? (m_catch > 0 ? 0.3f : 0.5f) : (m_catch > 0 ? 1.0f : kUpperQ));
+        const float qrWant = float(sp.reedQ) * (low ? (m_catch > 0 ? 0.3f : 0.5f) : (m_catch > 0 ? 1.0f : f.alt ? kUpperQ : float(sp.upperQ)));
         // (The embouchure changes over the keys' travel, not in a sample.)
         if (m_fresh) {
             m_wr = wrWant;

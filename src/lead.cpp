@@ -2144,7 +2144,10 @@ private:
                 ahead.step();
             const float a1 = ahead.v;
             const float touch = std::pow(clampf(v.press, 0.0f, 1.0f), 1.2f) * (0.85f + 0.15f * v.vel);
-            const float growl = clampf((v.fat - 0.45f) / 0.35f, 0.0f, 1.0f) + 0.6f * clampf((v.press - 0.92f) / 0.08f, 0.0f, 1.0f);
+            // (The growl a flatter finger hums, meant; and the one a press at
+            // the very top brings, as much as the sound's player growls.)
+            const float fatGrowl = clampf((v.fat - 0.45f) / 0.35f, 0.0f, 1.0f);
+            const float pressGrowl = 0.6f * s.saxGrowl * clampf((v.press - 0.92f) / 0.08f, 0.0f, 1.0f);
             for (int b = 0; b < Voice::kBanks; ++b) {
                 Bank &k = v.banks[b];
                 std::fill(m_saxOut[b], m_saxOut[b] + n, 0.0f);
@@ -2155,8 +2158,9 @@ private:
                 const float hz = clampf(inc1[b] * rate * std::exp2(s.saxOct), 20.0f, 4000.0f);
                 // The honk: a low note (under concert F♯3) pressed nearly to
                 // the top, blown harder through a wider opening and growled
-                // into (the growl not piling on a top press's own, which
-                // would swamp the reed): the R&B tenor's.
+                // into (in place of a top press's own growl, which would
+                // swamp the reed and muffle it; a flat finger's still adds):
+                // the R&B tenor's.
                 const float honk = s.saxHonk * clampf((v.press - 0.85f) / 0.1f, 0.0f, 1.0f) *
                                    clampf((190.0f - hz) / 40.0f, 0.0f, 1.0f);
                 if (!k.saxLive) {
@@ -2171,7 +2175,7 @@ private:
                 // (From a little over the threshold, which the reed's
                 // embouchure and opening move, to a hard, beating breath.)
                 c.blow = (th + 0.06f + std::max(kSaxBlowTop - th - 0.06f, 0.08f) * touch + 0.1f * honk) * a1;
-                c.growl = std::min(1.0f, std::max(growl, 0.35f * honk));
+                c.growl = std::min(1.0f, fatGrowl + std::max(pressGrowl * (1.0f - honk), 0.3f * honk));
                 c.air = 0.5f * clampf(v.fat, 0.0f, 1.0f);
                 // (A light touch also closes the reed down under the lip: a
                 // pianissimo is a smaller opening, not only less breath.)

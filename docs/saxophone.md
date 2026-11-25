@@ -158,25 +158,25 @@ than adding to it, which would swamp the reed and muffle the note. Under
 that press a forte low note is clean. The alto doesn't honk.
 
 **What tells them apart on the same note.** The same concert notes, D3 to
-C5, blown alike (breath 0.75, lip 0.6), on master's tenor (before) and
-this one (after):
+C5, blown alike (breath 0.75, lip 0.6), on the scaled tenor (before) and
+this one, with the edge and the presets' mouthpieces below (after):
 
 | | Before | After |
 |---|---|---|
-| Tenor's energy above 1 kHz against the alto's (median) | −3.1 dB | −8.5 dB |
+| Tenor's energy above 1 kHz against the alto's (median) | −3.1 dB | −10.7 dB |
 | …darker than the alto's on | 6 of 7 notes | 7 of 7 |
-| The spectrum's −20 dB edge, tenor over alto (median) | 0.83 | 0.60 |
-| Harmonic profiles (first 12) apart, rms (median) | 5.6 dB | 10.8 dB |
-| Spectral centroid, tenor over alto (median) | 0.83 | 0.82 |
-| Subtone hiss over the harmonics, tenor over alto (D3, E3, A3, B3) | — | +4.5 to +7.5 dB |
+| The spectrum's −20 dB edge, tenor over alto (median) | 0.83 | 0.43 |
+| Harmonic profiles (first 12) apart, rms (median) | 5.6 dB | 15.0 dB |
+| Spectral centroid, tenor over alto (median) | 0.83 | 0.64 |
+| Subtone hiss over the harmonics, tenor over alto (D3, E3, A3, B3) | — | +1.6 to +6.6 dB |
 
 Benade and Lutgen's break is at 618 Hz on a tenor and 837 Hz on an alto,
-a ratio of 0.74. Here the edge's ratio is 0.60: the same direction, but
-further, since the alto's lattice cuts off higher than a measured alto's
-(1.2–1.5 kHz against 0.93–1.14). The centroid barely moved, because both
-horns' energy lies mostly in their fundamental and second harmonic. The
-difference is everything above about 600 Hz: the tenor falls off past
-its break, while the alto stays even out to its 7th harmonic and beyond. Both horns are darker than recordings above 1 kHz.
+a ratio of 0.74. The bores alone gave the centroids a ratio of 0.82: both
+horns' energy lay mostly in their fundamental and second harmonic. With
+the presets' mouthpieces (the next section) it is 0.64. The tenor falls
+off past its break, and the alto stays even out to its 7th harmonic and
+then keeps an edge to 4–5 kHz. That edge carries the alto's −20 dB point
+far up, so that ratio, 0.43, no longer measures the break.
 `theTenorIsNotAnAlto` asserts the first four rows and bounds them both
 ways, so it fails if the horns converge again (master's tenor fails three
 of its four: energy above 1 kHz −3.1 dB, edge 0.83, profiles 5.6 dB apart)
@@ -186,6 +186,109 @@ the low notes' starts, the fourth and the honk. `theTenorIsAsBrightAsARealOne`
 is an expected failure: on a recorded tenor's low notes the energy above
 1 kHz is 6–9 dB under the total, on this one about 20 dB under, 11–14 dB
 less.
+
+## Two instruments to the ear
+
+The measured differences above were real, but the user still heard one
+instrument, because both horns were muffled. A forte's partials fell to
+25–45 dB under the strongest by the 8th harmonic, where recorded saxophones
+keep a plateau 10–25 dB down out to 3–5 kHz. With little up there, the
+alto's edge and the tenor's husk had nowhere to be, and both presets
+played alike.
+
+**Where the brightness is lost.** In this model the reed's flow is smooth.
+At a forte its 10th harmonic is about 40 dB under its first, where a
+beating reed's flow falls nearer 6 dB an octave. The mouthpiece pressure
+is close to a sine. Nothing simple changed that by more than a decibel:
+- the reed's damping in the first register (Q 0.5 to 1) and the second
+  (1.5 to 3);
+- its resonance (0.8 to 1.5 times its own);
+- the lay's soft closure (ε ten times smaller).
+
+The bore's impedance above its resonances is there (the model's is even
+above the true one at 1–4 kHz). The motion the reed and the bore settle
+into is simply smooth, and it stays an open point.
+
+**The edge.** Above its open holes' cutoff a horn radiates the flow as a
+continuum, through every open hole. Each horn now hears its reed's flow
+through two high-passes from its own cutoff: the alto's from 1.2 kHz, the
+tenor's from 0.9 kHz. The modes are fitted to the horn's transfer less
+that path, so at its own level (edgeK = 1) modes and edge together are
+the horn's transfer, nothing counted twice. Over that, edgeK lifts the
+edge, **est.**:
+- 3 on both horns: the brightness the model's smooth flow lacks;
+- three times more on the alto, 9 in all: a smooth-jazz mouthpiece's high
+  baffle, against the tenor's dark, large-chamber R&B one. No baffle
+  measurements were found.
+
+A forte alto's partials then stand 15–30 dB under the strongest out to
+4–5 kHz. The edge is the flow's own sharpness, so it grows with the
+dynamic. It changes only what is radiated, not the oscillation, so it
+can't put a note in the wrong regime.
+
+**The tenor's upper register.** The tenor's upper register is played on a
+looser lip (reed Q 0.9 against the alto's 1.5, **est.**), which darkens it
+there (it adds no breath). Without it, at concert D4 and E4 (the alto's
+throat notes, the tenor's second register) the two converged; they are
+still closest there. The altissimo keeps 1.5, or its smaller horn drops a
+register.
+
+**Playing.** The two presets also play as their players do:
+
+| | Tenor (R&B) | Alto (smooth jazz) |
+|---|---|---|
+| Attack (hard press) | 45 ms (15) | 20 ms (6) |
+| Scoop into a note | 0.6 semitones over 90 ms | 0.2 over 35 ms |
+| Vibrato | 4.8 Hz, ±30 cents, from 0.45 s | 5.8 Hz, ±16 cents, from 0.35 s |
+| Release | 120 ms | 50 ms |
+| Legato glide | 50 ms | 25 ms |
+| Growl from a top press | full | a quarter |
+
+The vibratos lie within jazz's 4–6 Hz and ±15–40 cents (Coleman Hawkins'
+median depth is 40.8 cents) [APFZ14, TD00]. The rest is estimated. The
+echo is the same on both.
+
+**Before and after.** The renders are in `scratch-sax/` (not committed):
+- The same performance on both presets through the Lead (`tenfold
+  render alto.tf`, `tenor.tf`): a legato line in the middle of the neck, a
+  low note swelling from mf to ff, and a fast run.
+- The same concert notes (D3 to C5) on both bare horns, at mf and at ff
+  (`same_*`).
+
+| | Before | After |
+|---|---|---|
+| Lead line: alto's centroid / tenor's | 615 / 443 Hz | 663 / 382 Hz |
+| Lead line: energy above 2 kHz, alto / tenor | −19.9 / −30.0 dB | −15.1 / −29.7 dB |
+| Same notes, mf: centroids | 589 / 480 Hz | 704 / 468 Hz |
+| Same notes, mf: above 2 kHz | −18.3 / −28.1 dB | −14.9 / −30.6 dB |
+| Same notes, mf: above 3 kHz | −24.2 / −32.9 dB | −20.0 / −38.8 dB |
+
+**Blind.** The critic named each horn from the renders and spectra alone,
+before reading any code, in two rounds, 6 of 6 pairs correct:
+- **Before:** marginal. The bare horns were told apart, but every playing
+  cue was shared.
+- **After, in the Lead:** clearly two instruments: the pitch a fourth
+  apart, the centroid 665 against 383 Hz, the vibrato 5.8 Hz ±12–23 cents
+  against 4.8 Hz ±22–39.
+- **After, on the bare horns, same notes:** clearly two instruments, told
+  apart by 10–17 dB in the 2 kHz octave, the register breaks and the
+  tenor's breath; except D4 and E4 at mf, which stay marginal.
+
+The critic's judgement was "partly" each itself. The alto is bright and
+edgy except at D4 and E4. The tenor has its body, but at mf it is dark and
+covered more than husky; it turns husky at ff.
+
+`theTenorIsNotAnAlto` holds per note at mf and ff:
+- above 1 kHz, the tenor at least 2 dB under the alto on every note (now
+  4.5 at least);
+- in the 2 kHz octave, the tenor under the alto on every note, with a median
+  gap over 6 dB;
+- over the seven notes, a median centroid ratio over 1.25. At D4 and E4 (the
+  alto's throat notes) it is only 1.04–1.08, the closest the two come.
+
+`thePresetsPlayAsTheirPlayers` holds the presets' vibratos and their growl
+at a top press apart. It also holds their brightness on one concert pitch,
+A4, through the Lead: the alto's centroid is 1.23 times the tenor's there.
 
 ## The model
 
@@ -236,7 +339,7 @@ sample (Guillemain, Kergomard & Voinier).
 | Intonation | All modes scaled alike so the fingered note sounds in tune with the reed on it; and the ear (the reed's swing heard against the note, two 25 Hz poles), drawing it in with a 50 ms time constant, remembered per note | **est.** (the player's) |
 | Growl | The mouth pressure modulated by a glottal pulse (open 62 % of its period) at a voice's pitch, 0.41 of the note folded into 85–190 Hz, ±1.2 % jitter, depth up to 0.45 × 0.69 | descriptions only (no measurements found) |
 | Breath noise | The flow times (1 + σ·n), n turbulence band-passed at 2 kHz; σ 0.02 (edge) to 0.1 (subtone), more with a flatter finger | **est.** |
-| Radiation | From the modes' states: each mode a complex weight, fitted by least squares (relative, column-normalised, ridge 10⁻³, on 220 frequencies up to past the last mode kept) so the modes together radiate as the horn's transfer from the reed's flow to a metre off, H = T·Z, computed from the same lines (each opening a monopole). Above 3.5 kHz, where that transfer's phase turns fast with the paths to the bell and holes, only its level is matched: the flow through two high-passes at 3 kHz. The fit is 3.5 dB rms off the transfer under 1 kHz in the horn's range and about 4.5 dB from 1 to 3.5 kHz, single harmonics up to 23 dB (alto) and 30–33 dB (tenor); and since the modes the reed drives stand higher between their peaks than the horn's own impedance, the radiated sound sits 2–8 dB under the horn's transfer there | [B76] the transformation; harmonics between the modes radiate as the horn does, not only as its resonances do |
+| Radiation | From the modes' states: each mode a complex weight, fitted by least squares (relative, column-normalised, ridge 10⁻³, on 220 frequencies up to past the last mode kept) so the modes together radiate as the horn's transfer from the reed's flow to a metre off, H = T·Z, computed from the same lines (each opening a monopole). Above each horn's open-hole cutoff, where that transfer's phase turns fast with the paths to the bell and holes, only its level is matched: the flow through two high-passes at the horn's edge (alto 1.2 kHz, tenor 0.9 kHz), the modes fitted to the transfer less that path, and the path lifted 9 times (alto) or 3 (tenor), **est.** (see [Two instruments to the ear](#two-instruments-to-the-ear)). (The fit's error against the transfer was measured with the earlier target, the modes alone, and has not been measured again.) | [B76] the transformation; harmonics between the modes radiate as the horn does, not only as its resonances do |
 
 ### Keeping it in real time
 
@@ -316,24 +419,32 @@ These were left open after the critique rounds:
   estimated from it by the reeds' lengths (514 Hz).
 - **The tenor's break is lifted, not grown.** Its 4 dB around 618 Hz is a
   filter on what it radiates, standing in for an excitation this model
-  can't make (see "Darker than measured"). It costs its low notes' bends
-  up to 4 dB (against 3 for the alto) and lifts its low register over its
-  throat notes (written A4 to C♯5), which sit 8–10 dB under the range's
-  median. The alto's break isn't lifted.
+  can't make (see "Darker than measured"). The alto's break isn't lifted.
+- **The edge's levels are estimates.** The 3 that makes up for the smooth
+  flow, and the alto's further 3 for its mouthpiece's baffle, are set by
+  ear and against recordings, not measured. The corners are per horn, not
+  per fingering's own cutoff.
 - **The tenor's breath noise is an estimate.** Nothing is measured. It is
-  three times the alto's in the subtone term, so a low subtone's hiss is
-  4.5–7.5 dB over the alto's.
+  six times the alto's in the subtone term, so a low subtone's hiss is
+  1.6–6.6 dB over the alto's (D3 to B3).
+- **The tenor is darker than recorded above 3 kHz.** Its Lead line has
+  −42 dB of its energy above 3 kHz. The husk it should have up there is
+  mostly missing.
+- **Onsets and slurs overshoot**, on both horns: 27–54 cents sharp, settling
+  over about 120 ms (the ear loop chasing the start). That partly hides the
+  presets' different scoops.
+- **Tonguing is soft.** A re-tongued note dips the line 5–14 dB, where a
+  real tongue stop dips 20–30.
 - **The honk is played, not built.** It is a little more breath, a wider
   opening and the growl on a low note pressed nearly to the top, as an R&B
   tenor plays. It roughens the note without brightening it: in this model a
   low note blown harder grows only a little brighter.
 - **Where the tenor is still not a tenor:**
-  - In subtone on D4 and E4 it has 4–6 dB less hiss than the alto, and it
+  - In subtone on D4 and E4 it may have less hiss than the alto, and it
     speaks faster. The hiss is tested on D3 to B3 only.
   - Its lowest note, A♭2, starts about 20 cents flat for up to 0.4 s;
     master's was in tune by 0.3 s. `theLowestNotesSettle` allows 25 cents
     from 0.3 s.
-  - Its bends are allowed 4 dB, 0.2 dB over its worst case.
   - Its reed, 514 Hz, is about where master's scaled one was (503 Hz), so
     the reed adds little contrast. The cantilever estimate ignores the
     lip's loading.

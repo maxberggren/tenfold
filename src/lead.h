@@ -257,6 +257,7 @@ struct Sound {
     int sax = 0;           // Sax: which kind (sax::Kind: alto, tenor)
     float saxOct = 0;      // Sax: octaves the horn sounds from the neck (the tenor a fourth under it: the same cell, the same fingering)
     float saxHonk = 0;     // Sax: how far a hard breath on a low note tips it into a honk (the R&B tenor's)
+    float saxGrowl = 1;    // Sax: how much a press at the very top growls (a smooth-jazz alto barely does)
 };
 
 // The accordion's registers, by the finger's height: low on the pad the
@@ -576,17 +577,26 @@ inline const Sound &sound(int i) {
         // tenor A♭2 to E5 where the alto plays D♭3 to A5. Pressed to the
         // top on a low note (under F♯3) it honks: blown past a forte,
         // roughened.
-        {.name = "Tenor sax", .style = "R&B", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.03f,
-         .d = 1.0f, .s = 1.0f, .r = 0.07f, .aHard = 0.012f, .glide = 0.03f, .porta = 0.004f, .scoop = 0.35f,
-         .scoopTime = 0.06f, .vibRate = 5.2f, .vibDepth = 0.2f, .vibDelay = 0.35f, .vibAmp = 0.04f, .echo = 0.12f,
+        // Its playing, the R&B tenor's: a breathy onset (the breath before
+        // the tongue lets the reed go), a wide scoop up into the note, a
+        // slow, wide jaw vibrato that comes late (4.8 Hz, ±30 cents; jazz
+        // tenors' run to ±40), a long breath off the end of a note, slurs
+        // that slide.
+        {.name = "Tenor sax", .style = "R&B", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.045f,
+         .d = 1.0f, .s = 1.0f, .r = 0.12f, .aHard = 0.015f, .glide = 0.05f, .porta = 0.006f, .scoop = 0.6f,
+         .scoopTime = 0.09f, .vibRate = 4.8f, .vibDepth = 0.3f, .vibDelay = 0.45f, .vibAmp = 0.06f, .echo = 0.12f,
          .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 1, .saxOct = -5.0f / 12.0f, .saxHonk = 1.0f},
         // An alto saxophone, smooth jazz's and pop's: the same physics, a
         // smaller horn a fourth higher, on the neck as it is: brighter, its
-        // spectrum breaking higher (its open holes cut off higher).
-        {.name = "Alto sax", .style = "smooth jazz", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.03f,
-         .d = 1.0f, .s = 1.0f, .r = 0.07f, .aHard = 0.012f, .glide = 0.03f, .porta = 0.004f, .scoop = 0.3f,
-         .scoopTime = 0.05f, .vibRate = 5.4f, .vibDepth = 0.18f, .vibDelay = 0.35f, .vibAmp = 0.04f, .echo = 0.12f,
-         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 0},
+        // spectrum breaking higher (its open holes cut off higher) and an
+        // edge above them to 4 or 5 kHz.
+        // Its playing, smooth jazz's alto: a crisp, tongued attack, a small
+        // quick scoop, a quicker, narrower vibrato (5.8 Hz, ±16 cents), a
+        // clean release, slurs that snap, and little growl from a top press.
+        {.name = "Alto sax", .style = "smooth jazz", .cutoff = 0.99f, .cutoffY = 0.0f, .keyTrack = 0.0f, .a = 0.02f,
+         .d = 1.0f, .s = 1.0f, .r = 0.05f, .aHard = 0.006f, .glide = 0.025f, .porta = 0.003f, .scoop = 0.2f,
+         .scoopTime = 0.035f, .vibRate = 5.8f, .vibDepth = 0.16f, .vibDelay = 0.35f, .vibAmp = 0.03f, .echo = 0.12f,
+         .echoFb = 0.28f, .gain = 1.0f, .model = Sound::Sax, .sax = 0, .saxGrowl = 0.25f},
     };
     return sounds[std::clamp(i, 0, kSounds - 1)];
 }

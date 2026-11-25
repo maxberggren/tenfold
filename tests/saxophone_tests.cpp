@@ -524,7 +524,9 @@ private slots:
             const double f0 = midiToHz(midi);
             QVERIFY2(rms(edge, 0.6, 1.0) > 3.2 * rms(soft, 0.6, 1.0),
                      qPrintable(QStringLiteral("kind %1: %2 %3").arg(k).arg(rms(edge, 0.6, 1.0)).arg(rms(soft, 0.6, 1.0))));
-            QVERIFY2(centroid(edge, 0.6, 0.4, f0) > 1.4 * centroid(soft, 0.6, 0.4, f0),
+            // (The tenor's edge is a husky one, a third of the alto's, and
+            // its subtone breathier: 1.3 times, not 1.4.)
+            QVERIFY2(centroid(edge, 0.6, 0.4, f0) > (k == sax::Tenor ? 1.3 : 1.4) * centroid(soft, 0.6, 0.4, f0),
                      qPrintable(QStringLiteral("kind %1: %2 %3").arg(k).arg(centroid(edge, 0.6, 0.4, f0)).arg(centroid(soft, 0.6, 0.4, f0))));
         }
     }
@@ -588,11 +590,7 @@ private slots:
                 const double flat = level(0);
                 for (float c : {-45.0f, -30.0f, -15.0f, 15.0f, 30.0f, 45.0f}) {
                     const double bent = level(c);
-                    // (The tenor's low notes have their strength at their
-                    // break, in their upper harmonics, which a bend up on
-                    // the lip alone pulls the reed's support from: its third
-                    // note loses 3.8 dB at 45 cents.)
-                    QVERIFY2(std::fabs(bent - flat) < (k == sax::Tenor ? 4.0 : 3.0),
+                    QVERIFY2(std::fabs(bent - flat) < 3,
                              qPrintable(QStringLiteral("kind %1 s %2 bent %3 c: %4 dB against %5").arg(k).arg(s).arg(c).arg(bent).arg(flat)));
                 }
             }
@@ -677,33 +675,40 @@ private slots:
     }
 
     void theTenorIsNotAnAlto() {
-        // The same notes on both horns, blown alike. The tenor's lattice of
-        // open holes cuts off lower (its holes, b/a 0.54, on a bore 1.33
-        // times longer) and its spectrum peaks at its own break, so it
-        // breaks lower, as Benade & Lutgen measured (618 Hz against the
-        // alto's 837, a ratio of 0.74), and less of its energy lies above
-        // 1 kHz. Bounded both ways: should the two horns converge again (a
-        // tenor that is an alto scaled) this fails, and so it does if the
-        // tenor goes dull.
+        // The same notes on both horns, blown alike, at a mezzo forte and at
+        // a fortissimo. The tenor's lattice of open holes cuts off lower and
+        // its spectrum peaks at its own break, so it breaks lower (Benade &
+        // Lutgen: 618 Hz against the alto's 837, a ratio of 0.74); the alto
+        // has its edge above (its mouthpiece's baffle), the tenor its body.
+        // On every note the tenor is darker above 1 kHz by 2 dB or more,
+        // and much darker in the octave around 2 kHz on most. Bounded both
+        // ways: should the two horns converge again (a tenor that is an
+        // alto scaled) this fails, and so it does if the tenor goes dull.
         struct Look {
-            double high, edge;
+            double high, oct2k, edge, centroid;
             std::vector<double> profile;
         };
-        auto look = [&](sax::Kind kind, float midi) {
-            const auto x = blowNote(kind, midi, 0.75f, 1.0, 0.6f);
+        auto look = [&](sax::Kind kind, float midi, float blow, float lip) {
+            const auto x = blowNote(kind, midi, blow, 1.0, lip);
             const double f0 = midiToHz(midi);
             std::vector<double> p;
             for (int h = 1; h * f0 < 9000; ++h)
                 p.push_back(std::pow(10.0, levelAt(x, 0.6, 0.4, h * f0) / 10));
-            double all = 0, high = 0, top = 0;
+            double all = 0, high = 0, oct = 0, top = 0, num = 0;
             for (size_t h = 0; h < p.size(); ++h) {
+                const double f = double(h + 1) * f0;
                 all += p[h];
+                num += p[h] * f;
                 top = std::max(top, p[h]);
-                if (double(h + 1) * f0 > 1000)
+                if (f > 1000)
                     high += p[h];
+                if (f > 1414 && f < 2828)
+                    oct += p[h];
             }
             Look l;
             l.high = 10 * std::log10(high / all + 1e-30);
+            l.oct2k = 10 * std::log10(oct / all + 1e-30);
+            l.centroid = num / all;
             l.edge = 0; // the highest harmonic within 20 dB of the strongest
             for (size_t h = 0; h < p.size(); ++h) {
                 if (p[h] > 0.01 * top)
@@ -713,32 +718,37 @@ private slots:
             }
             return l;
         };
-        std::vector<double> highs, edges, dists;
-        int darker = 0;
-        const float notes[] = {50, 55, 57, 62, 64, 69, 72}; // D3 to C5, inside both horns' ranges
-        for (const float midi : notes) {
-            const Look a = look(sax::Alto, midi), t = look(sax::Tenor, midi);
-            highs.push_back(t.high - a.high);
-            edges.push_back(t.edge / a.edge);
-            double d = 0;
-            for (size_t h = 0; h < 12; ++h)
-                d += (t.profile[h] - a.profile[h]) * (t.profile[h] - a.profile[h]);
-            dists.push_back(std::sqrt(d / 12));
-            if (t.high < a.high)
-                ++darker;
-            qInfo("%.0f: above 1 kHz alto %.1f tenor %.1f dB, edge alto %.0f tenor %.0f Hz, apart %.1f dB", double(midi), a.high,
-                  t.high, a.edge, t.edge, dists.back());
-            // (Not a muffled horn: some of it still above 1 kHz.)
-            QVERIFY2(t.high > -30, qPrintable(QStringLiteral("%1: tenor %2 dB above 1 kHz").arg(midi).arg(t.high)));
-        }
         auto median = [](std::vector<double> v) {
             std::sort(v.begin(), v.end());
             return v[v.size() / 2];
         };
-        QVERIFY2(darker >= 6, qPrintable(QStringLiteral("darker on %1 of 7").arg(darker)));
-        QVERIFY2(median(highs) < -4 && median(highs) > -14, qPrintable(QStringLiteral("%1 dB").arg(median(highs))));
-        QVERIFY2(median(edges) > 0.5 && median(edges) < 0.78, qPrintable(QStringLiteral("edge ratio %1").arg(median(edges))));
-        QVERIFY2(median(dists) > 6, qPrintable(QStringLiteral("profiles %1 dB apart").arg(median(dists))));
+        const float notes[] = {50, 55, 57, 62, 64, 69, 72}; // D3 to C5, inside both horns' ranges
+        for (const auto &[blow, lip] : {std::pair{0.75f, 0.6f}, std::pair{0.88f, 0.85f}}) {
+            std::vector<double> highs, octs, edges, dists, cents;
+            for (const float midi : notes) {
+                const Look a = look(sax::Alto, midi, blow, lip), t = look(sax::Tenor, midi, blow, lip);
+                highs.push_back(t.high - a.high);
+                octs.push_back(t.oct2k - a.oct2k);
+                edges.push_back(t.edge / a.edge);
+                cents.push_back(a.centroid / t.centroid);
+                double d = 0;
+                for (size_t h = 0; h < 12; ++h)
+                    d += (t.profile[h] - a.profile[h]) * (t.profile[h] - a.profile[h]);
+                dists.push_back(std::sqrt(d / 12));
+                qInfo("blow %.2f, %.0f: above 1 kHz alto %.1f tenor %.1f, 2 kHz octave alto %.1f tenor %.1f dB, edge alto %.0f tenor "
+                      "%.0f Hz, centroid alto %.0f tenor %.0f Hz, apart %.1f dB",
+                      double(blow), double(midi), a.high, t.high, a.oct2k, t.oct2k, a.edge, t.edge, a.centroid, t.centroid, dists.back());
+                QVERIFY2(t.high < a.high - 2, qPrintable(QStringLiteral("%1: above 1 kHz alto %2, tenor %3 dB").arg(midi).arg(a.high).arg(t.high)));
+                QVERIFY2(t.oct2k < a.oct2k, qPrintable(QStringLiteral("%1: 2 kHz octave alto %2, tenor %3 dB").arg(midi).arg(a.oct2k).arg(t.oct2k)));
+                // (Not a muffled horn: some of it still above 1 kHz.)
+                QVERIFY2(t.high > -30, qPrintable(QStringLiteral("%1: tenor %2 dB above 1 kHz").arg(midi).arg(t.high)));
+            }
+            QVERIFY2(median(highs) < -4 && median(highs) > -14, qPrintable(QStringLiteral("%1 dB").arg(median(highs))));
+            QVERIFY2(median(octs) < -6, qPrintable(QStringLiteral("2 kHz octave %1 dB").arg(median(octs))));
+            QVERIFY2(median(edges) > 0.3 && median(edges) < 0.76, qPrintable(QStringLiteral("edge ratio %1").arg(median(edges))));
+            QVERIFY2(median(cents) > 1.25, qPrintable(QStringLiteral("centroid ratio %1").arg(median(cents))));
+            QVERIFY2(median(dists) > 7.5, qPrintable(QStringLiteral("profiles %1 dB apart").arg(median(dists))));
+        }
     }
 
     void theTenorIsAsBrightAsARealOne() {
@@ -836,10 +846,17 @@ private slots:
             }
             return 10 * std::log10(out / in);
         };
+        // (The harmonics' share above 1 kHz, each heard over ±4 % but never
+        // past a third of the way to its neighbours: a top press deepens the
+        // vibrato, which carries the upper harmonics out of a narrow bin;
+        // the noise between them doesn't count.)
         auto high = [&](const std::vector<float> &x, double f0) {
             double all = 0, hi = 0;
             for (int h = 1; h * f0 < 9000; ++h) {
-                const double p = std::pow(10.0, levelAt(x, 0.7, 0.4, h * f0) / 10);
+                double p = 0;
+                const double span = std::min(0.04, 0.3 / h);
+                for (int i = -4; i <= 4; ++i)
+                    p += std::pow(10.0, levelAt(x, 0.7, 0.4, h * f0 * (1 + span * i / 4.0)) / 10);
                 all += p;
                 if (h * f0 > 1000)
                     hi += p;
@@ -855,10 +872,74 @@ private slots:
         qInfo("between the harmonics: tenor honking %.1f, at a forte %.1f, alto %.1f dB", honk, forte, al);
         QVERIFY2(honk > forte + 4, qPrintable(QStringLiteral("tenor honking %1, at a forte %2 dB").arg(honk).arg(forte)));
         QVERIFY2(honk > al + 4, qPrintable(QStringLiteral("tenor %1, alto %2 dB").arg(honk).arg(al)));
-        // (Rough, not muffled: as much above 1 kHz as a forte, within 3 dB.)
+        // (Rough, not muffled: at least as bright above 1 kHz as a forte,
+        // within a decibel.)
         const double hf = high(tenorForte, f0), hh = high(tenor, f0), ht = high(tenorTop, f0);
         qInfo("above 1 kHz: forte %.1f, honking %.1f, at the top %.1f dB", hf, hh, ht);
-        QVERIFY2(hh > hf - 3 && ht > hf - 3, qPrintable(QStringLiteral("forte %1, honking %2, top %3 dB").arg(hf).arg(hh).arg(ht)));
+        QVERIFY2(hh > hf - 1 && ht > hf - 1, qPrintable(QStringLiteral("forte %1, honking %2, top %3 dB").arg(hf).arg(hh).arg(ht)));
+    }
+
+    void thePresetsPlayAsTheirPlayers() {
+        // The same gesture on both of the Lead's saxes, held so both sound
+        // A4 (the alto on the neck's A4, the tenor, a fourth under, on its
+        // D5): the alto's vibrato quicker (5.8 Hz against 4.8), the tenor's
+        // wider; the alto brighter on the same pitch, its centroid 1.15
+        // times the tenor's or more (1.23 as it stands, at this mezzo forte). Pressed to the very top, the alto barely growls
+        // (the sidebands between its harmonics 20 dB under them), the
+        // tenor growls.
+        auto play = [&](int snd, double p) {
+            return mono(testkit::play(onSound(snd, fmt("down 0.3 1 %.4f 0.6 p=%.3f\nup 3.3 1\nend 3.5\n", cellX(snd == kTenor ? 10 : 7), p))));
+        };
+        // The vibrato: the pitch every 10 ms over 1.2 to 3.2 s, its swing's
+        // strongest rate between 3 and 8 Hz and its depth.
+        auto vibrato = [&](const std::vector<float> &x, double f0, double &depth) {
+            std::vector<double> c;
+            for (double t = 1.2; t < 3.2; t += 0.01) {
+                const double hz = periodHz(x, t, 0.03, f0);
+                c.push_back(hz > 0 ? cents(hz, f0) : 0.0);
+            }
+            double mean = 0;
+            for (double v : c)
+                mean += v;
+            mean /= double(c.size());
+            double best = 0, rate = 0;
+            for (double r = 3.0; r <= 8.0; r += 0.05) {
+                double re = 0, im = 0;
+                for (size_t i = 0; i < c.size(); ++i) {
+                    re += (c[i] - mean) * std::cos(2 * M_PI * r * 0.01 * double(i));
+                    im += (c[i] - mean) * std::sin(2 * M_PI * r * 0.01 * double(i));
+                }
+                if (re * re + im * im > best) {
+                    best = re * re + im * im;
+                    rate = r;
+                }
+            }
+            depth = 2 * std::sqrt(best) / double(c.size()); // the swing's amplitude, cents
+            return rate;
+        };
+        auto between = [&](const std::vector<float> &x, double f0) {
+            double in = 0, out = 0;
+            for (double f = 0.6 * f0; f < 8 * f0; f += f0 / 16) {
+                const double fr = f / f0 - std::floor(f / f0);
+                const double pw = std::pow(10.0, levelAt(x, 1.5, 0.5, f) / 10);
+                (fr < 0.1 || fr > 0.9 ? in : out) += pw;
+            }
+            return 10 * std::log10(out / in);
+        };
+        const double fa = midiToHz(69), ft = midiToHz(69);
+        const auto alto = play(kAlto, 0.7), tenor = play(kTenor, 0.7);
+        double da = 0, dt = 0;
+        const double ra = vibrato(alto, fa, da), rt = vibrato(tenor, ft, dt);
+        const double ca = centroid(alto, 1.5, 0.5, fa), ct = centroid(tenor, 1.5, 0.5, ft);
+        qInfo("vibrato alto %.2f Hz ±%.0f c, tenor %.2f Hz ±%.0f c; centroid alto %.0f, tenor %.0f Hz", ra, da, rt, dt, ca, ct);
+        QVERIFY2(ra > rt + 0.6, qPrintable(QStringLiteral("vibrato alto %1, tenor %2 Hz").arg(ra).arg(rt)));
+        QVERIFY2(dt > da * 1.3, qPrintable(QStringLiteral("vibrato depth alto %1, tenor %2 c").arg(da).arg(dt)));
+        QVERIFY2(ca > 1.15 * ct, qPrintable(QStringLiteral("centroid alto %1, tenor %2 Hz").arg(ca).arg(ct)));
+        const auto altoTop = play(kAlto, 1.0), tenorTop = play(kTenor, 1.0);
+        const double ga = between(altoTop, fa), gt = between(tenorTop, ft);
+        qInfo("between the harmonics at the top: alto %.1f, tenor %.1f dB", ga, gt);
+        QVERIFY2(ga < -20, qPrintable(QStringLiteral("alto %1 dB").arg(ga)));
+        QVERIFY2(gt > ga, qPrintable(QStringLiteral("alto %1, tenor %2 dB").arg(ga).arg(gt)));
     }
 
     void aSaxStaysInsideBudget() {

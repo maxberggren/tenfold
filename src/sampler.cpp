@@ -81,6 +81,8 @@ public:
         m_bank->capture.rate.store(rate, std::memory_order_relaxed);
         for (Voice &v : m_voices)
             v = Voice();
+        for (Trimmed &t : m_trimmed)
+            t = Trimmed();
         m_lpL = m_lpR = m_hpL = m_hpR = 0;
         m_kLow = 1.0f - std::exp(-kTwoPi * 150.0f / rate);
         m_kTop = 1.0f - std::exp(-kTwoPi * 4000.0f / rate);
@@ -111,7 +113,14 @@ public:
         case Command::Move:
             for (Voice &v : m_voices)
                 if (v.sound && v.id == c.id && v.dying < 0) {
+                    // A loop's chop that began trimmed as the slide left
+                    // it: the slide replayed is already in it (and what of
+                    // it the loop replays may stop short of where it came
+                    // to).
+                    if (v.asTrimmed)
+                        continue;
                     span(c, *v.sound, v.nextStart, v.nextEnd);
+                    remember(v.id, v.chop, v.nextStart, v.nextEnd);
                     // The end at once (a pass cut short goes round at
                     // once, one made longer plays on); the start from the
                     // next time round, where it is heard.
@@ -250,6 +259,7 @@ private:
         bool keyMatch = false;
         bool held = false;   // it goes round at its end
         bool filling = false; // a loop's held chop, let go, going round until the loop's next chop
+        bool asTrimmed = false; // a loop's chop begun as it was trimmed: it stays so (see start)
         int rounds = 0;       // times it has gone round
         float level = 1;
         int fadeIn = 0;
@@ -263,6 +273,36 @@ private:
     static void span(const Command &c, const Sound &s, double &start, double &end) {
         start = s.beatOf(double(c.i[2]));
         end = std::max(s.beatOf(double(c.i[3])), start + kLeastBeats);
+    }
+
+    // The span each sound (its id and chop: the hand's, and each loop's
+    // copy of it) was last trimmed to, the newest few.
+    struct Trimmed {
+        int id = 0, chop = 0;
+        double start = 0, end = 0;
+        uint32_t age = 0;
+    };
+    static constexpr int kTrimmed = 64;
+    Trimmed m_trimmed[kTrimmed];
+    uint32_t m_trimmedAge = 0;
+
+    const Trimmed *recall(int id, int chop) const {
+        for (const Trimmed &t : m_trimmed)
+            if (t.age && t.id == id && t.chop == chop)
+                return &t;
+        return nullptr;
+    }
+    void remember(int id, int chop, double start, double end) {
+        Trimmed *to = &m_trimmed[0];
+        for (Trimmed &t : m_trimmed) {
+            if (t.age && t.id == id && t.chop == chop) {
+                to = &t;
+                break;
+            }
+            if (t.age < to->age)
+                to = &t;
+        }
+        *to = {id, chop, start, end, ++m_trimmedAge};
     }
 
     void free(Voice &v) {
@@ -291,7 +331,7 @@ private:
                     // sample): only what it plays next time may change. One
                     // let go of stays let go: a round sent just before the
                     // finger lifted doesn't hold it again.
-                    if (v.held)
+                    if (v.held && !v.asTrimmed)
                         span(c, *s, v.nextStart, v.nextEnd);
                     v.rounds = std::max(v.rounds, 1);
                     return;
@@ -348,6 +388,26 @@ private:
         v->stem = stem;
         v->group = group;
         span(c, *s, v->start, v->end);
+        // A loop's chop that was trimmed while it was held: the On the loop
+        // took is from where the finger landed, before the slide, and the
+        // slide's Moves after it would make each pass of the loop the
+        // whole chop again (or the slide over again). What was looped is
+        // the chop as it was trimmed, so the loop plays that, every pass,
+        // from the start: as its own Moves last left it, or the first time
+        // round, as the hand's (the same id) were.
+        v->asTrimmed = false;
+        if (isReplay(c.id) && !(flags & cmd::FlagRound)) {
+            const Trimmed *t = recall(c.id, c.i[0]);
+            if (!t)
+                t = recall(c.id & 0xFFFFFF, c.i[0]);
+            if (t) {
+                const double a = t->start, b = t->end;
+                v->start = a;
+                v->end = b;
+                v->asTrimmed = true;
+                remember(c.id, c.i[0], a, b);
+            }
+        }
         v->nextStart = v->start;
         v->nextEnd = v->end;
         v->pos = v->start;

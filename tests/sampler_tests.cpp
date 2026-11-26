@@ -12,6 +12,7 @@
 #include <cmath>
 #include <random>
 #include <map>
+#include <set>
 #include <sstream>
 
 #include "sampler.h"
@@ -182,6 +183,36 @@ private:
             l.rows = int(probe("rows"));
         });
         return l;
+    }
+    // The spans the engine plays (in the song's beats), every pass: the
+    // hand's between heardFrom and heardTo, one span, trimmed shorter than
+    // its two-beat chop; and the loop's from loopFrom on, the same one.
+    static void loopPlaysAsHeard(const std::string &script, double heardFrom, double heardTo, double loopFrom) {
+        std::set<std::pair<int, int>> heard, looped;
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            for (int i = 0; i < kVoices; ++i) {
+                const float *d = s.view().parts[kSampler].data + pub::First + i * pub::Per;
+                if (d[pub::Handle] <= 0)
+                    continue;
+                const std::pair<int, int> span{int(std::lround(d[pub::Start] * 50)), int(std::lround(d[pub::End] * 50))};
+                const bool loop = (int(d[pub::Flags]) & 2) != 0;
+                if (!loop && t > heardFrom && t < heardTo)
+                    heard.insert(span);
+                if (loop && t > loopFrom)
+                    looped.insert(span);
+            }
+        });
+        auto say = [](const std::set<std::pair<int, int>> &spans) {
+            QStringList out;
+            for (const auto &[a, b] : spans)
+                out << QStringLiteral("%1–%2").arg(a / 50.0).arg(b / 50.0);
+            return out.join(QStringLiteral(", "));
+        };
+        QVERIFY(take.view.parts[kSampler].playing >= 0);
+        QVERIFY2(heard.size() == 1, qPrintable(QStringLiteral("heard: ") + say(heard)));
+        const auto [a, b] = *heard.begin();
+        QVERIFY2(b - a < 50 * 1.7, qPrintable(QStringLiteral("not trimmed: ") + say(heard)));
+        QVERIFY2(looped == heard, qPrintable(QStringLiteral("heard %1; the loop played %2").arg(say(heard), say(looped))));
     }
 
 private slots:
@@ -724,6 +755,59 @@ private slots:
                                                           qPrintable(QString::number(s.view().parts[kSampler].voices)));
                                          });
         QVERIFY(take.view.parts[kSampler].playing >= 0);
+    }
+
+    // A chop trimmed and then looped: the loop plays the chop as it was
+    // trimmed, as the hand was heard playing it going round, not the whole
+    // chop it was cut from. Held, its start slid half a beat later (the
+    // mouse, one finger), held round, then Space: with the finger still
+    // down, or just lifted, after a couple of rounds (the loop then begins
+    // where the finger landed, before the slide) or after many.
+    void aTrimmedHeldChopLoopsAsTrimmed() {
+        const std::string size = "key 0.2 Shift+Right\nkey 0.25 Shift+Right\nkey 0.3 Shift+Right\n"; // two beats
+        const Lay l = layOf(m_song, size);
+        std::istringstream where(l.at(std::round(l.beatOf(0)) + 8));
+        double x = 0, y = 0;
+        where >> x >> y;
+        std::string held = drop(m_song) + size + "mouse 1.0 " + num(x) + " " + num(y) + " down\n";
+        for (int i = 0; i <= 10; ++i)
+            held += "mouse " + num(1.5 + 0.02 * i) + " " + num(x + 0.03 * i) + " " + num(y) + " move\n";
+        const std::string up = " " + num(x + 0.3) + " " + num(y) + " up\n";
+        // The first pass plays out whole (a start slid is heard from the
+        // next time round, at 2.2 s); the trimmed rounds after it are 0.9 s.
+        struct Case { double space, lift; };
+        for (const Case c : {Case{3.3, 3.5}, Case{3.3, 3.25}, Case{6.4, 6.6}}) {
+            const std::string script =
+                held + (c.lift < c.space ? "mouse " + num(c.lift) + up + "key " + num(c.space) + " Space\n"
+                                         : "key " + num(c.space) + " Space\nmouse " + num(c.lift) + up) + "end 12\n";
+            loopPlaysAsHeard(script, 2.3, c.space - 0.1, c.space + 0.1);
+            if (QTest::currentTestFailed())
+                return qWarning("Space at %g, the finger lifted at %g", c.space, c.lift);
+        }
+    }
+
+    // Trimmed (its end, two fingers), let go, then the trimmed chop tapped
+    // and Space: the loop's chops are the trimmed ones, the hold's too.
+    void aTrimmedChopTappedLoopsAsTrimmed() {
+        const std::string size = "key 0.2 Shift+Right\nkey 0.25 Shift+Right\nkey 0.3 Shift+Right\n"; // two beats
+        const Lay l = layOf(m_song, size);
+        std::istringstream where(l.at(std::round(l.beatOf(0)) + 8));
+        double x = 0, y = 0;
+        where >> x >> y;
+        // A second finger beside the held one, slid half the pad left: the
+        // end half a beat earlier, at once (the pass playing is past it, and
+        // goes round). The chop as trimmed is a beat and a half: 0.9 s.
+        const std::string trimmed = drop(m_song) + size + "down 1.0 1 " + num(x) + " " + num(y) + "\ndown 1.5 2 " + num(x + 0.1) +
+                                    " " + num(y) + "\nglide 1.8 2.1 2 " + num(x - 0.45) + " " + num(y) + "\nup 2.3 2\nup 2.35 1\n";
+        for (const int taps : {1, 6}) {
+            std::string script = trimmed;
+            for (int i = 0; i < taps; ++i)
+                script += "tap " + num(2.9 + 0.9 * i) + " " + num(x) + " " + num(y) + "\n";
+            const double space = 2.9 + 0.9 * taps - 0.02;
+            loopPlaysAsHeard(script + "key " + num(space) + " Space\nend " + num(space + 7) + "\n", 2.15, space - 0.1, space + 0.1);
+            if (QTest::currentTestFailed())
+                return qWarning("%d taps", taps);
+        }
     }
 
     // The visualizer hears the Sampler: a loop of a beat with a kick moves

@@ -109,8 +109,10 @@ about 60 times a second and the page reads as `pc.view->data`.
 ## Rules
 
 1. **Own only your files:** `src/<part>.cpp`, and if you need one, a header
-   `src/<part>.h` included only by it. Your tests go in `tests/<part>_tests.cpp`.
-   Don't edit anything else: `part.h`, `studio.*`, `session.*`, `console.*`,
+   `src/<part>.h` included only by it. Your tests go in `tests/<part>_tests.cpp`;
+   name the quick, critical few (it plays, stays finite, loops, saves) in
+   the class's `Q_CLASSINFO("dev", "fn other")` for the dev tier, never one
+   that times the studio. Don't edit anything else: `part.h`, `studio.*`, `session.*`, `console.*`,
    `phrase.h`, `electro.h`, `fx.h`, `dsp.h`, the QML, or the `.pro`
    files. Copy what you need into your own file. If the framework truly lacks
    something, work around it and say so in your report.
@@ -201,7 +203,8 @@ about 60 times a second and the page reads as `pc.view->data`.
 
 ```sh
 bin/build                      # build/tenfold
-bin/test                       # every test, yours included
+bin/test                       # the dev tier: your class's Q_CLASSINFO("dev", ...) among them
+bin/test --full                # every test, yours included
 build/tenfold render script.tf out.wav     # a scripted performance; see src/offline.h
 build/tenfold screenshot out.png script.tf --page N --at SECONDS
 build/tenfold bench

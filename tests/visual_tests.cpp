@@ -102,6 +102,15 @@ Frame ring(double t, int n, float cx, float cy, float r, float a, float aspect =
 
 class VisualTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "chordsAreColouredRoundTheCircleOfFifths twoFingersTwistToRollAndSpreadToZoom "
+                "threeFingersTravelAndTheWorldStays fiveFingersDialTheSeed twoHandsSplitTheWork "
+                "tenFingersAreTheExtreme liftedFingersFade fingersAreCountedInTheOrderTheyLand "
+                "theEarlyFingersHaveTheirOwnColours theAutopilotWandersOnlyWhenLeftAlone "
+                "aLookSurvivesJsonAndBadValues everyShaderUniformIsFed theBakedShadersMatchTheirSources "
+                "signalsReachTheirUniforms theMusicMovesTheWorldOnItsOwn theVideoKeepsInStepWithTheSound "
+                "ffmpegIsAskedForWhatTheRecordingNeeds aVideoIsMadeWithItsSound theLookIsSavedWithTheSong")
 
 private slots:
     // --- the music, read part by part ------------------------------------------------

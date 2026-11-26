@@ -29,6 +29,23 @@ class FrameworkTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs it with the machine to itself.
     Q_CLASSINFO("alone", "theBenchRunsWellInsideRealTime")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "thePadIsAskedForOnlyWhenThePlayerHasToAct spaceLoopsWhatWasJustPlayedAndSetsTheTempo "
+                "overAPlayingLoopSpaceTakesTheBarsJustPlayed pauseStopsEveryLoopAndPlayBringsThemBackOnTheOne "
+                "playWithNothingToPlaySaysSo aNewLoopPlaysItsFirstBeatOnTheFirstPass aLateSpaceAddsNoEmptyBars "
+                "ctrlZTakesBackTheNewestLoopAndBringsBackTheOneBefore ctrlZTakesBackThisPagesOwnLoop "
+                "ctrlShiftZBringsBackWhatCtrlZTookBack arrowsJustAfterSpaceSetTheLoopsLength "
+                "theLastLoopStaysResizableUntilAnotherIsMade startingOverSetsTheMixBack ctrlNTwiceStartsOver "
+                "aMelodyThatStartsMidBarLoopsWithoutAGap clipsCanBeCopiedLayeredAndChained "
+                "spaceLayersOntoThePlayingLoop aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn "
+                "aLayerLandsWithoutCuttingTheLoop shiftSpaceMakesANewLoopInstead "
+                "spaceWithNothingPlayedMakesNoLoop numberKeysChangePages ctrlKeysMoveTempoAndKey "
+                "leavingAPageLetsGoOfHeldNotes stoppingWaitsForTheBar muteSilencesAChannel "
+                "armedRecordingMakesABarLongClip everyPageDrawsWithoutTouches "
+                "anUnreadablePadWithoutPkexecSaysWhatIsMissing keysAreNamedAsTheSystemNamesThem "
+                "quantiseIsOnUntilThePlayerTurnsItOffAndKeptWithTheSong "
+                "theMetronomeClicksWithNothingPlaying newLoopStopsThePagesLoopAndTheNextSpaceMakesAnother")
 private slots:
     // Esc with the trackpad not taken (a script never has it) pauses and
     // plays, as Ctrl+P does: every loop stops at once, and comes back.

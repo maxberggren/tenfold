@@ -120,6 +120,16 @@ Reopened reopenVocal(const std::string &script, double secs, const std::function
 
 class VocalTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "theMicrophoneIsHeardWithNoDelayOfTheStudiosOwn noMicrophoneIsSaid "
+                "aPhraseInsideTheBarsIsTakenOnTheBars aPickupBeforeTheBarIsKeptAndNoWordIsCut "
+                "aTailOverTheBarLineIsKept aLongerPhraseTakesMoreBarsAndOnlyTheLastPhrase "
+                "upAndDownStepTheBarsAndStillCutInTheGaps singingStraightThroughIsCutAtItsQuietest "
+                "freeTimeTakesThePhraseToSpace aPhraseLoopedWithNothingPlayingSetsTheTempoAndReplaysInTime "
+                "withNoMicrophoneTheDemoSingerSingsAndLoops spaceMakesANewLoopAndShiftSpaceLayers "
+                "ctrlZTakesTheVocalLoopBack everyStripAndTheClickPlayWithoutTrouble "
+                "aSongKeepsTheVocalLoopsAndTheirAudio theGongSinksAndThrobs bronzeNeverStepsWhenAStrikeIsStolen")
 private slots:
     // --- the microphone, heard -----------------------------------------------------
 

@@ -8,11 +8,10 @@
 #include "testkit.h"
 
 int main(int argc, char **argv) {
-    // bin/test asks for the list of tests and runs them in parallel.
-    if (argc == 2 && std::strcmp(argv[1], "--list") == 0) {
-        testkit::list();
-        return 0;
-    }
+    // bin/test asks for the list of tests, every one or the dev tier's
+    // ("--list dev"), and runs them in parallel.
+    if ((argc == 2 || argc == 3) && std::strcmp(argv[1], "--list") == 0)
+        return testkit::list(argc == 3 && std::strcmp(argv[2], "dev") == 0) ? 0 : 1;
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     tf::console::loadFonts();

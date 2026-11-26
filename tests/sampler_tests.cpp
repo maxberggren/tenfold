@@ -157,6 +157,12 @@ std::string num(double v) {
 class SamplerTests : public QObject {
     Q_OBJECT
     Q_CLASSINFO("alone", "tenFingersHeldStayCheap sPutsTheSongThroughTheModelAndKeepsItsStems")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "atItsOwnTempoTheSongPlaysSampleForSample aDroppedSongIsReadAndTheStudioTakesItsTempo "
+                "aTapPlaysItsChopOnceAsTheSongHasIt "
+                "spaceLoopsTheChopsJustPlayed ctrlZTakesBackTheSamplersLoop aSongFileBringsTheSongBackWithItsLoop "
+                "aFileThatIsNoSoundSaysSo thePageDrawsEmptyLoadedAndPlaying")
 
 private:
     QTemporaryDir m_dir;

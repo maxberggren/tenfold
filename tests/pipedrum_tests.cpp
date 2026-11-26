@@ -169,6 +169,8 @@ class PipeDrumTests : public QObject {
     Q_OBJECT
     // Time the model and the studio against the clock: bin/test runs them with the machine to itself.
     Q_CLASSINFO("alone", "tenPipesCostLittle tenFingersOnThePipesStayInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "aRollNeverRunsAway aLoopOfThePipesKeepsThePipes")
 private slots:
 
     // --- tuning by length -------------------------------------------------------

@@ -224,6 +224,8 @@ QJsonObject bassSettings(const QJsonObject &doc) {
 
 class MarimbulaTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "itStaysFiniteAndSleeps itIsChosenSavedAndReopened")
 private slots:
     // --- the tongue: a beam --------------------------------------------------------------------------------
 

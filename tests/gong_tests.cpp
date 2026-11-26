@@ -129,6 +129,8 @@ class GongTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs them with the machine to itself.
     Q_CLASSINFO("alone", "aGongStaysInsideBudget fourTamTamsStayInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "nothingRunsAway theLeadPlaysItsGongs")
 private slots:
     void initTestCase() { gong::prepare(); }
 

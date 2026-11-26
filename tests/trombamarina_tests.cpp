@@ -129,6 +129,8 @@ class TrombaMarinaTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs them with the machine to itself.
     Q_CLASSINFO("alone", "aStringStaysInsideBudget aLineWithHarmonyStaysInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "nothingRunsAway theLeadPlaysItsTrombaMarina")
 private slots:
     void initTestCase() { tromba::prepare(); }
 

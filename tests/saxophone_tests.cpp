@@ -217,6 +217,8 @@ class SaxophoneTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs them with the machine to itself.
     Q_CLASSINFO("alone", "aSaxStaysInsideBudget aSaxSectionStaysInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "nothingRunsAway theLeadPlaysItsSaxes")
 private slots:
     void initTestCase() { sax::prepare(); }
 

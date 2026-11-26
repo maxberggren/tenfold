@@ -185,6 +185,19 @@ std::string gridX(int col) { return std::to_string(0.58 * (col + 0.5) / 8.0); }
 
 class ArpTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "euclideanRhythmsSpreadTheirHits patternsWalkTheChordTheirOwnWay "
+                "settingsSurviveTheTripThroughACommand everyStepLandsOnTheGridToTheSample "
+                "aLateFingerIsCaughtAnEarlyOneWaits aTapShorterThanAStepStillSounds rollsSplitAStepEvenly "
+                "euclidThinsTheBarToItsHits theFirstNoteGrowsIntoItsChordAndAllStayInKey "
+                "followingTheChordsTracksEveryChange aLoopComingRoundStartsWhereThePatternWas "
+                "chaosIsRepeatableAndStaysInKey tripletsRunThreeToTheBeat aRateChangeKeepsTheBar "
+                "aTiedAcidLineSlidesOnOneVoice aHighRunStopsClimbingInsteadOfFolding "
+                "stopsWhenTheNotesGoAndFallsSilent oneFingerIsARunningTriadInKey "
+                "everySoundIsInTuneCleanAndDiesAway spaceLoopsWhatWasPlayedFromWhereThePatternWas "
+                "thePageDrawsWithHandsOnIt aSavedSongOpensWithTheArpAsItWasSet aBrokenSongLeavesTheArpSane "
+                "aLoopFromAFileCannotPushTheEngineOffItsGrid")
 private slots:
     void aLayeredPatternPlaysBesideTheLoops() {
         // A minor held at 1/16 is looped; then, slower and on another sound,

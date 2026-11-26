@@ -234,6 +234,8 @@ class DaxophoneTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs them with the machine to itself.
     Q_CLASSINFO("alone", "aTongueStaysInsideBudget aDaxophoneLineStaysInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "nothingRunsAway theFingerIsTheDax")
 private slots:
     void initTestCase() { dax::prepare(); }
 

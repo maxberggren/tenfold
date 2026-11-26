@@ -1,24 +1,39 @@
 #!/bin/sh
 # Builds the tests and runs them.
 #
-#   bin/test                       every test, spread over all the cores
-#   bin/test DrumsTests            one suite, in order, with QtTest's own output
+#   bin/test                       the dev tier: the critical tests, quickly
+#   bin/test --full                every test (also: bin/test full), as before
+#                                  a release and in CI
+#   bin/test DrumsTests            one suite, every test of it, in order, with
+#                                  QtTest's own output
 #   bin/test DrumsTests someTest   one test of it (or DrumsTests::someTest, as a
 #                                  failure prints it); QtTest's options work
 #                                  after the suite, e.g. bin/test DrumsTests -v2
 #   bin/test -h                    this help
 #
-# The full run starts the tests in parallel, the slowest first (by how long
-# each took last time), on as many cores as there are, or TENFOLD_JOBS.
-# The tests that time the studio against the clock run afterwards, one at a
-# time, so the others don't eat into the budget they measure. Only the
-# failures' output is shown; every test's is in build/tests/out.
+# The dev tier is what each test class names in Q_CLASSINFO("dev", ...):
+# the framework, the studio, the session, loops and Space and undo, song
+# files, every page's basic play path, and a smoke test for each
+# instrument. It leaves out the long renders, the sweeps over every sound
+# and the tests that time the studio. Run --full before you push something
+# large; CI runs it on every push.
+#
+# A tier starts its tests in parallel, the slowest first (by how long each
+# took last time), on as many cores as there are, or TENFOLD_JOBS. The
+# full tier's tests that time the studio against the clock run afterwards,
+# one at a time, so the others don't eat into the budget they measure. Only
+# the failures' output is shown; every test's is in build/tests/out.
 set -eu
 
+tier=dev
 case "${1:-}" in
 -h | --help)
     sed -n '2,/^$/s/^# \{0,1\}//p' "$0"
     exit 0
+    ;;
+--full | full)
+    tier=full
+    shift
     ;;
 esac
 
@@ -60,8 +75,16 @@ mkdir -p "$out"
 # line runs in a process of its own, the slowest first by how long its
 # tests took last time (new ones, not timed yet, before them all). Tests
 # that took under 0.3 s share a process with others of their suite, about a
-# second's worth, as starting a process costs a tenth of a second.
-./tenfold_tests --list >"$out/list"
+# second's worth, as starting a process costs a tenth of a second. The dev
+# tier lists only what the classes name for it (see tests/testkit.h), and
+# the listing fails if a dev list names a test that isn't there. Its tests
+# know the tier (TENFOLD_TIER), so a test that times the studio fails there.
+export TENFOLD_TIER="$tier"
+if [ "$tier" = dev ]; then
+    ./tenfold_tests --list dev >"$out/list"
+else
+    ./tenfold_tests --list >"$out/list"
+fi
 touch times
 order() {
     grep "^$1 " "$out/list" | cut -d' ' -f2- |
@@ -93,13 +116,15 @@ chmod +x "$out/run"
 
 jobs=${TENFOLD_JOBS:-$cores}
 count=$(awk '{ n += NF - 2 } END { print n }' "$out/list")
-echo "Running $count tests on $jobs cores…"
+echo "Running $count tests ($tier tier) on $jobs cores…"
 order parallel | tr '\n' '\0' | xargs -0 -n 1 -P "$jobs" "$out/run" "$out"
 order alone | while IFS= read -r line; do "$out/run" "$out" "$line"; done
 
-# Seconds per test, for the next run.
+# Seconds per test, for the next run: this run's, and the last known of
+# the tests it didn't run (a dev run keeps the full tier's order).
 cat "$out"/*.xml | sed -n 's/.*<testcase name="\([^"]*\)" classname="\([^"]*\)" time="\([^"]*\)".*/\3 \2 \1/p' |
-    grep -v ' initTestCase$\| cleanupTestCase$' >times || true
+    grep -v ' initTestCase$\| cleanupTestCase$' >"$out/times" || true
+awk '!seen[$2 " " $3]++' "$out/times" times >times.new && mv times.new times
 
 # The failures' output in full; a test that crashed has no FAIL line, so
 # it counts as one failure of its own.
@@ -124,5 +149,6 @@ skipped=$(printf '%s\n' "$results" | grep -c '^SKIP   :' || true)
 echo
 printf '%s\n' "$results" | grep '^SKIP   :' || true
 took=$((($(now) - start) / 100000000))
-echo "$passed passed, $fails failed, $skipped skipped in $((took / 10)).$((took % 10)) s"
+echo "$passed passed, $fails failed, $skipped skipped in $((took / 10)).$((took % 10)) s ($tier tier)"
+if [ "$tier" = dev ]; then echo "bin/test --full runs every test"; fi
 [ "$fails" -eq 0 ]

@@ -163,6 +163,8 @@ double rms(const std::vector<float> &x, double a, double b) {
 class ScreamTests : public QObject {
     Q_OBJECT
     Q_CLASSINFO("alone", "aScreamCostsUnderAPercent")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "silenceStaysSilentAndAPhraseDiesAway shoutedIntoItStaysBounded")
 private slots:
     // --- the throat -----------------------------------------------------------------
 

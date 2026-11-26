@@ -530,6 +530,11 @@ std::string onSound(int snd, const std::string &rest) {
 
 class LeadTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "fingersPlayAndStayFinite aFingerSingsItsDegreeInTune aKeyChangeRetunesAHeldNote "
+                "spaceOnTheNextOneLoopsThePhrase thePagePaints aSongKeepsTheSettingsChosenHere "
+                "aSongWithNonsenseSettingsOpensSane clipEventsFromAFileStayInBounds")
 private slots:
     void fingersPlayAndStayFinite() {
         const auto take = testkit::play("page 0 4\n"

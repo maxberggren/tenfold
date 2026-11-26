@@ -192,6 +192,8 @@ Pulses pulses(const Out &o, double a, double b) {
 
 class KargyraaTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "silenceIsSilent loudInputStaysBounded aPlayedNoteIsItsOvertoneAndFallsSilent")
 private slots:
     void theUndertoneIsAtHalfTheSungPitch() {
         // A man sings C3 on /o/: the folds stay on it, and the false folds

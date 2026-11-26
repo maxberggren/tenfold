@@ -62,7 +62,7 @@ jobs:
         run: bin/build
 
       - name: Test
-        run: bin/test
+        run: bin/test --full
 
       # makepkg won't run as root; the package is built by a user of its own.
       # On a tag the package takes the tag's version (v0.2.0 → 0.2.0).
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Test
-        run: bin/test
+        run: bin/test --full
 
       - name: Bundle
         run: |
@@ -259,7 +259,7 @@ jobs:
       # studio against the clock are skipped here (they say so), and the
       # bench below prints what this machine measures.
       - name: Test
-        run: bin/test
+        run: bin/test --full
         env:
           TENFOLD_SKIP_TIMING: 1
 

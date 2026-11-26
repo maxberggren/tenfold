@@ -80,6 +80,13 @@ QJsonObject saved(const std::string &script) {
 
 class SongTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "aNewSongIsNamedForWhenAndWhatItIs aSongComesBackAsItWasSaved anOpenedSongSounds "
+                "theFileReadsTopDown theMixInTheFileIsTheMixOpened aBadSongIsRefusedAndNothingChanges "
+                "aFileThatIsNotASongIsRefused ctrlSSavesThroughThePickerAndCtrlOOpens aNewerSongSaysSoInTheWindow "
+                "quittingKeepsTheSongAndTheNextStartPicksItUp "
+                "savingAfterStartingOverAsksWhere")
 private slots:
     void aNewSongIsNamedForWhenAndWhatItIs() {
         const QDateTime when(QDate(2026, 11, 22), QTime(9, 5));

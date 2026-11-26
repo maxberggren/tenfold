@@ -295,6 +295,11 @@ Character characterOf(const testkit::Take &t) {
 
 class ChordsTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "fingersPlayAndStayFinite keysPlayChords aProgressionPlayedTwiceLoopsOnce "
+                "aLooseLayerKeepsTheLoopWhole aSongKeepsTheSoundAndItsGates aGarbledSongOpensSane "
+                "everySoundIsCleanAndInTune theWorldSoundsReopenByName theTinesAndBarsInterlock")
 private slots:
     void aLayeredChordLeavesTheLoopsChordSounding() {
         // A pad held on the key's chord all bar is looped; then piano stabs on

@@ -366,6 +366,11 @@ std::vector<double> clapOffsets(const std::string &before, const char *tap, doub
 
 class DrumsTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "fingersPlayAndStayFinite velocityMatters theKickIsTunedToTheKey keysArePads spaceLoopsTheDrums "
+                "clipsDontDoubleWhatWasJustPlayedLive patternsAreWhatTheKitsPromise aSongKeepsTheDrumsSettings "
+                "aSongFileOfNonsenseLeavesTheDrumsSane anyDegreeAClipSaysIsSafe")
 private slots:
     void kicksPlayedAlongArentLayeredTwice() {
         // Four kicks looped; then the kick played along with the loop and a

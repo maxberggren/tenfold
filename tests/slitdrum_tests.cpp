@@ -163,6 +163,8 @@ class SlitDrumTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs it with the machine to itself.
     Q_CLASSINFO("alone", "tenMalletsOnTheSlitDrumStayInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "aRollNeverPumpsEnergyIn aLoopOfTheSlitDrumKeepsTheSlitDrum")
 private slots:
     // --- tuning ---------------------------------------------------------------
 

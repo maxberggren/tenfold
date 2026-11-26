@@ -326,6 +326,10 @@ constexpr int kReplay = 1 << 30; // how the studio marks a clip's ids
 
 class BassTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "fingersPlayAndStayFinite everySoundIsItsOwn keyboardPlaysAndPicksSounds loopButtonRecordsABar "
+                "aRiffPlayedTwiceLoopsOneBar aSongKeepsTheBassAsItWasSet aBadBassInAFileOpensSane")
 private slots:
     void aNoteHeldAndLetGoBeforeSpaceLoopsWhole() {
         // Nothing else playing but the click: a note held for most of a bar,

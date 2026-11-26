@@ -8,6 +8,7 @@
 #include <QMetaMethod>
 #include <QObject>
 #include <QtTest>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -25,9 +26,13 @@ namespace testkit {
 // much as the code. On a shared virtual machine (the macOS CI runner, three
 // cores among other jobs) a scheduling hiccup reads as a slow render, so
 // TENFOLD_SKIP_TIMING=1 there skips them, visibly, with the reason. The
-// job runs `tenfold bench` instead and prints what it measures.
+// job runs `tenfold bench` instead and prints what it measures. They never
+// belong to the dev tier (see list below): run beside the others they time
+// the other tests, so one named in a dev list fails and says so.
 #define TENFOLD_TIMED()                                                                                     \
     do {                                                                                                    \
+        if (qgetenv("TENFOLD_TIER") == "dev")                                                               \
+            QFAIL("times the studio against the clock: full tier only, take it out of the dev list");       \
         if (qEnvironmentVariableIsSet("TENFOLD_SKIP_TIMING"))                                               \
             QSKIP("timing on a shared virtual machine (TENFOLD_SKIP_TIMING); see the job's bench instead"); \
     } while (0)
@@ -221,12 +226,44 @@ inline QStringList classInfo(const QMetaObject &mo, const char *key) {
 // Q_CLASSINFO("alone", "fn other"), and tests that share work (a long take
 // rendered once) in Q_CLASSINFO("together", "fn other"): they share a line,
 // "parallel Class fn other", so the work is done once.
-inline void list() {
+//
+// Two tiers. The full one is every test, run before a release and in CI.
+// The dev one (devOnly), what plain bin/test runs while developing, is the
+// tests a class names in Q_CLASSINFO("dev", "fn other"): the critical ones
+// that answer quickly (the page plays, loops, undoes, saves and opens; the
+// instrument plays and stays finite). Never an "alone" test. A test of a
+// "together" group in the dev list brings the group. Every class names at
+// least one, so each part has a smoke test; a name that is no test of the
+// class (a rename) is an error, so the list can't quietly rot. Returns
+// whether the lists are sound; what isn't is said on stderr.
+inline bool list(bool devOnly) {
+    bool sound = true;
     for (const Suite &s : registry()) {
-        const QStringList alone = classInfo(*s.meta, "alone"), shared = classInfo(*s.meta, "together");
+        const QStringList alone = classInfo(*s.meta, "alone"), shared = classInfo(*s.meta, "together"),
+                          dev = classInfo(*s.meta, "dev");
         const QString cls = QString::fromLatin1(s.meta->className());
+        const QStringList fns = testFunctions(*s.meta);
+        if (dev.isEmpty()) {
+            std::fprintf(stderr, "%s names no dev tests: give it Q_CLASSINFO(\"dev\", ...)\n", qPrintable(cls));
+            sound = false;
+        }
+        for (const QString &fn : dev) {
+            if (!fns.contains(fn)) {
+                std::fprintf(stderr, "%s's dev list names %s, which is no test of it\n", qPrintable(cls),
+                             qPrintable(fn));
+                sound = false;
+            } else if (alone.contains(fn)) {
+                std::fprintf(stderr, "%s's dev list names %s, which runs alone: it is full tier only\n",
+                             qPrintable(cls), qPrintable(fn));
+                sound = false;
+            }
+        }
+        const bool sharedInDev =
+            std::any_of(shared.begin(), shared.end(), [&](const QString &f) { return dev.contains(f); });
         bool sharedDone = false;
-        for (const QString &fn : testFunctions(*s.meta)) {
+        for (const QString &fn : fns) {
+            if (devOnly && !(dev.contains(fn) || (shared.contains(fn) && sharedInDev)))
+                continue;
             QString line;
             if (alone.contains(fn)) {
                 line = "alone " + cls + ' ' + fn;
@@ -241,6 +278,7 @@ inline void list() {
             std::printf("%s\n", qPrintable(line));
         }
     }
+    return sound;
 }
 
 }

@@ -203,6 +203,8 @@ class TablaTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs it with the machine to itself.
     Q_CLASSINFO("alone", "tenFingersOnThePairStayInsideBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev", "aRollNeverPumpsEnergyIn aLoopOfThePairKeepsThePair")
 private slots:
     // --- the heads as built ---------------------------------------------------
 

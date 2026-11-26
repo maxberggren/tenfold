@@ -334,14 +334,20 @@ player. The tests never touch the platform, so they run unchanged on a
 port.
 
 ```bash
-bin/build      # qmake6 + make into build/tenfold (TENFOLD_PORTABLE=1: for any CPU)
-bin/test       # every page's tests and the studio's
-bin/install    # package and install, so it shows up in the launcher
+bin/build        # qmake6 + make into build/tenfold (TENFOLD_PORTABLE=1: for any CPU)
+bin/test         # the dev tier: the critical tests, in seconds
+bin/test --full  # every page's tests and the studio's, before a release
+bin/install      # package and install, so it shows up in the launcher
 ```
 
 `bin/test` runs the tests in parallel on every core, the slowest first, and
-shows only what failed. One suite or one test runs on its own, with QtTest's
-output:
+shows only what failed. Plain `bin/test` is the dev tier, to keep running
+while working: the framework, loops, Space and undo, song files, every
+page's basic play path and a smoke test for each instrument, the tests each
+class names in its `Q_CLASSINFO("dev", ...)`. `bin/test --full` runs every
+test, the long renders, the sweeps over every sound and the tests that time
+the studio against the clock among them; CI runs it on every push. One suite
+or one test runs on its own, every test of it, with QtTest's output:
 
 ```bash
 bin/test DrumsTests                                     # one suite

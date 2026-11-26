@@ -172,6 +172,11 @@ std::vector<std::array<int, 7>> songBars(const QJsonObject &song, Session &s) {
 
 class ArrangeTests : public QObject {
     Q_OBJECT
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "fingersPlayAndStayFinite aSceneLaunchesOnTheBar aMouseClickStopsAClipAndAnotherStartsIt "
+                "aRecordedSongReplaysBarByBarFromAnyPage deleteClearsAClipAndCtrlZBringsItBack "
+                "aSongFileOfNonsenseOpensSane")
 private slots:
     // Shift held, a tap on another loop of a part that plays: the two play
     // together from the next bar, layered into a free slot; both originals

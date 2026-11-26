@@ -48,6 +48,10 @@ class StemsTests : public QObject {
     // Separating takes every fast core, which the tests that time the
     // studio would feel: these two run on their own, after the rest.
     Q_CLASSINFO("alone", "aSongIsSplitIntoStemsThatAddUpToIt separatingStopsWhenCalledOff")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "theProductIsThePlainSumAtAnyShapeAndThreadCount aToneThroughTheResamplerKeepsItsLevelAndPlace "
+                "aFileThatIsNotTheModelIsSaidToBe")
 private slots:
     void theProductIsThePlainSumAtAnyShapeAndThreadCount() {
         // Shapes on both sides of every block size, both operands either way

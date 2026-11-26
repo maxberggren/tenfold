@@ -278,6 +278,10 @@ class AtmosTests : public QObject {
     Q_OBJECT
     // Times the studio against the clock: bin/test runs it with the machine to itself.
     Q_CLASSINFO("alone", "tenLayersStayClearOfTheSubAndInBudget")
+    // The tests bin/test runs while developing; the rest run with --full.
+    Q_CLASSINFO("dev",
+                "oneFingerIsInstantlyMusical theDroneIsRootAndFifth aClickLatchesAndATapOnTheOrbLetsGo "
+                "spaceLoopsTheLatchedBedWithoutADropOrADouble theBedComesBackWithTheSong aBrokenFileOpensASaneBed")
 private slots:
     void oneClickOverALatchedBedLoopsOneBar() {
         // An old swell held and let go, three layers latched, then a while

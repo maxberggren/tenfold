@@ -202,7 +202,7 @@ private slots:
         float build = 0;
         int drops = 0;
         float drop = 0;
-        watch(QStringLiteral("page 0 7\nkey 0.5 S\nkey %1 Return\nend %2\n").arg(5.5 * spb).arg(8.0 * spb + 0.5).toStdString(),
+        watch(QStringLiteral("page 0 7\nkey 0.5 S\nkey %1 Shift+Return\nend %2\n").arg(5.5 * spb).arg(8.0 * spb + 0.5).toStdString(),
               [&](Session &, const Signals &s, double t) {
                   if (t < 8.0 * spb)
                       build = std::max(build, s.build);

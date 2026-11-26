@@ -32,9 +32,19 @@ struct Finger {
 // a MacBook trackpad's proportions, as the scripts were written for.
 constexpr double kButtonItemW = 960, kButtonItemH = 562.5 + 14 + 5 + 96;
 
+// A key as Qt names it (A, F1, Shift+Left); the comma and the full stop
+// also by name, since a comma in such a name separates two keys.
+QKeySequence keysOf(const std::string &name) {
+    if (name == "Comma")
+        return QKeySequence(Qt::Key_Comma);
+    if (name == "Period")
+        return QKeySequence(Qt::Key_Period);
+    return QKeySequence(QString::fromStdString(name));
+}
+
 struct Event {
     double t = 0, t2 = 0;
-    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, Mic, Voice, End } kind = End;
+    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, Mic, Voice, Drop, End } kind = End;
     int keyMode = 0; // 0 press, 1 down, 2 up
     int id = 0;
     float x = 0, y = 0;
@@ -200,7 +210,7 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                     else
                         return fail("key mode is down or up");
                 }
-                if (QKeySequence(QString::fromStdString(e.key)).isEmpty())
+                if (keysOf(e.key).isEmpty())
                     return fail("unknown key");
                 events.push_back(e);
             } else if (word == "mouse") {
@@ -264,9 +274,22 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                 }
                 events.push_back(e);
             } else if (word == "page") {
+                // A page by its key (1–8, 0, 9) or its name (sampler).
                 e.kind = Event::Page;
-                if (!(ls >> e.t >> e.id))
+                if (!(ls >> e.t >> e.key))
                     return fail("expected T N");
+                events.push_back(e);
+            } else if (word == "drop") {
+                // A file dragged onto the window, or a link pasted into it:
+                // the rest of the line, so a path may have spaces.
+                e.kind = Event::Drop;
+                if (!(ls >> e.t))
+                    return fail("expected T FILE");
+                std::getline(ls >> std::ws, e.key);
+                while (!e.key.empty() && (e.key.back() == ' ' || e.key.back() == '\r'))
+                    e.key.pop_back();
+                if (e.key.empty())
+                    return fail("expected T FILE");
                 events.push_back(e);
             } else if (word == "tempo") {
                 e.kind = Event::Tempo;
@@ -424,7 +447,7 @@ void ScriptPlayer::tick(double t, Session &session) {
             d->clickUntil = e.t2;
             break;
         case Event::Key: {
-            const QKeyCombination combo = QKeySequence(QString::fromStdString(e.key))[0];
+            const QKeyCombination combo = keysOf(e.key)[0];
             const int key = int(combo.key()), mods = int(combo.keyboardModifiers());
             if (e.keyMode == 0) {
                 sendKey(key, mods, true);
@@ -459,7 +482,12 @@ void ScriptPlayer::tick(double t, Session &session) {
             break;
         }
         case Event::Page:
-            session.setPage(e.id == 0 ? session.arrangePage() : e.id == 9 ? session.visualPage() : e.id - 1);
+            if (const int page = session.pageNamed(QString::fromStdString(e.key)); page >= 0)
+                session.setPage(page);
+            break;
+        case Event::Drop:
+            // Done before the next frame: a script has no threads to wait on.
+            session.drop(QString::fromStdString(e.key));
             break;
         case Event::Tempo:
             session.shiftTempo(std::round(e.x) - std::round(session.view().bpm));

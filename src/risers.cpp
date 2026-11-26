@@ -321,7 +321,7 @@ public:
             "Shift+Left / Right (or [ ])\tdrop style: clean; gap, a half-beat breath before the ONE with only the "
             "risers' room ringing; or strip, the risers alone for the build's last bar, then the breath\n"
             "Up / Down\tlonger or shorter risers from the keys (1, 2, 4, 8, 16 bars)\n"
-            "Return\tdrop on the next bar line: everything rising rushes into it\n"
+            "Shift+Return\tdrop on the next bar line: everything rising rushes into it\n"
             "Delete (or Q)\tthe whole build falls away\n"
             "F1–F8 · Shift+F1–F8\tlaunch a slot at the next bar · empty it\n"
             "Backspace\tstop the FX clip at the next bar\n"
@@ -336,7 +336,7 @@ public:
             "slide up / sideways\tbigger and brighter / pitch or voicing, always in the key\n"
             "press, twist, flatten\tswell it / set it moving / add grit\n"
             "flick down as you lift\tpull that riser out: it falls away\n"
-            "click the pad\tdrop on the next bar line instead, as Return does\n"
+            "click the pad\tdrop on the next bar line instead, as Shift+Return does\n"
             "bottom row\timpact, sub drop, downlifter, laser zap, power-down, echo throw, reverb wash, DJ sweep\n"
             "sub drop during a build\tarms a sub onto the drop (the drop's boom gives way to it); a line bass "
             "(LOG DRUM, TRIANGLE, phonk's 808) plays at once instead\n"
@@ -1643,7 +1643,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
             SpotLonger);
     const QRectF right = c::bandRow(pc, 1, 0.59, 1);
     const double rw = (right.width() + 4) / 3;
-    c::chip(p, pc, QRectF(right.left(), right.top(), rw - 4, right.height()), QStringLiteral("DROP ↵"), drop > beat,
+    c::chip(p, pc, QRectF(right.left(), right.top(), rw - 4, right.height()), QStringLiteral("DROP ⇧↵"), drop > beat,
             &m_spots, SpotDrop);
     c::chip(p, pc, QRectF(right.left() + rw, right.top(), rw - 4, right.height()), QStringLiteral("FALL DEL"), false,
             &m_spots, SpotFall);

@@ -15,7 +15,7 @@ namespace {
 
 // The pages, as the session counts them (the number keys are one more,
 // arrange is 0).
-enum Page { Drums = 0, Bass, Chords, Lead, Arp, Atmos, FX, Vocal, Arrange };
+enum Page { Drums = 0, Bass, Chords, Lead, Arp, Atmos, FX, Vocal, Sampler, Arrange };
 
 // The probes the steps compare against their start.
 const Tutorial::Probe kProbes[] = {
@@ -347,7 +347,7 @@ void Tutorial::build() {
           {QStringLiteral("The arp runs"), [](Look &l) { return l.probe(Arp, "running") > 0.5f || l.playing(Arp); }}}});
 
     add({QStringLiteral("Arp"), Arp, QStringLiteral("Pick a pattern, latch, loop"),
-         QStringLiteral("Tap a pattern along the top, UP·DN or CONV. Click while the notes run (or press Return): they "
+         QStringLiteral("Tap a pattern along the top, UP·DN or CONV. Click while the notes run (or press Shift+Return): they "
                         "latch and run on when you lift. Then Space: the loop takes them over and the latch lets go."),
          QStringLiteral("The pads on the right shape it: RATE, RHYTHM, RANGE, TONE, GROOVE, ECHO."),
          QStringLiteral("The arp runs on its own."),
@@ -394,7 +394,7 @@ void Tutorial::build() {
            [](Look &l) { return l.probe(FX, "risers") >= 1 || l.since(FX, "drops") >= 1; }}}});
 
     add({QStringLiteral("FX"), FX, QStringLiteral("Drop, and loop it"),
-         QStringLiteral("Let it peak, or click the pad (or Return) to drop on the next bar: an impact on the ONE. Then, "
+         QStringLiteral("Let it peak, or click the pad (or Shift+Return) to drop on the next bar: an impact on the ONE. Then, "
                         "in the bar after the drop, press Space: the build and its drop become one loop."),
          QStringLiteral("Missed the bar? Land another riser and go again. X is the sub drop."),
          QStringLiteral("DROP. And it comes round again."),
@@ -507,12 +507,12 @@ void Tutorial::build() {
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("Build and drop"),
          QStringLiteral("Press B: the mix builds to the end of the phrase (filter rising, an echo roll, your FX loop "
-                        "leading in), takes a breath, and drops on the ONE: everything back, from the top. Return drops "
+                        "leading in), takes a breath, and drops on the ONE: everything back, from the top. Shift+Return drops "
                         "sooner, on the next bar."),
          QStringLiteral("A drop is the payoff of a build or a breakdown; on a full mix there is nothing to drop. The "
                         "tension fader on the right builds by hand: push up, let go high to drop."),
          QStringLiteral("That's the moment people wait for."),
-         {QStringLiteral("B"), QStringLiteral("Return")},
+         {QStringLiteral("B"), QStringLiteral("Shift+Return")},
          {},
          {spot(0.0f, 0.885f, 0.12f, 1.0f, QStringLiteral("B")), spot(0.87f, 0.885f, 1.0f, 1.0f, QStringLiteral("RETURN"))},
          {{QStringLiteral("B: a build"), [](Look &l) { return l.probe(Arrange, "building") > 0.5f; }},
@@ -536,7 +536,7 @@ void Tutorial::build() {
          QStringLiteral("The song is yours to change. While it plays, Space punches in: from the next bar, what you do "
                         "here replaces what the song did. Mute the drums with Q, bring them back with Q, then Space "
                         "again: those bars are yours now."),
-         QStringLiteral("Anything goes in: mutes, N, B and Return, the fader, the lanes' rides."),
+         QStringLiteral("Anything goes in: mutes, N, B and Shift+Return, the fader, the lanes' rides."),
          QStringLiteral("Your moves are in the song."),
          {QStringLiteral("Space"), QStringLiteral("Q"), QStringLiteral("Space")},
          {},

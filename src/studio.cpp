@@ -405,7 +405,16 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             // A layer carries in no sound begun before it: that one is the
             // loop's own, and it would sound twice.
             if (c.type == Command::On && !(c.flags & Command::Quantize) && lg.beat >= playedFrom - eps) {
-                if (heldCount < 32) {
+                // A sound already held, struck again with the same id (a
+                // chop going round on the Sampler) is still one sound: the
+                // newest strike stands for it, and its one Off ends it.
+                int i = 0;
+                while (i < heldCount && held[i].id != c.id)
+                    ++i;
+                if (i < heldCount) {
+                    held[i] = c;
+                    heldMoved[i] = false;
+                } else if (heldCount < 32) {
                     heldMoved[heldCount] = false;
                     held[heldCount++] = c;
                 }
@@ -465,8 +474,16 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         if (c.type == Command::On || (c.flags & Command::Quantize)) {
             const double target = std::round(pos / grid) * grid;
             const double q = pos + double(quantize) * (target - pos);
-            if (c.type == Command::On && openCount < 64)
-                open[openCount++] = {c.id, pos, q};
+            if (c.type == Command::On) {
+                // (One entry a sound: a held one struck again is still it.)
+                int i = 0;
+                while (i < openCount && open[i].id != c.id)
+                    ++i;
+                if (i < openCount)
+                    open[i] = {c.id, pos, q};
+                else if (openCount < 64)
+                    open[openCount++] = {c.id, pos, q};
+            }
             pos = q;
         } else if (c.type == Command::Off) {
             bool found = false;
@@ -918,8 +935,9 @@ void Studio::apply(const StudioMsg &m) {
                 for (auto &lg : q->history)
                     lg.beat += delta;
         }
-        for (size_t i = 0; i < m_parts.size() && i < 8; ++i) {
-            const int slot = int((uint32_t(m.value) >> (4 * i)) & 0xFu) - 1;
+        const uint64_t which = uint64_t(m.d0);
+        for (size_t i = 0; i < m_parts.size() && i < size_t(kMaxParts); ++i) {
+            const int slot = int((which >> (4 * i)) & 0xFu) - 1;
             PartState &q = *m_parts[i];
             if (slot < 0 || slot >= kClipSlots || q.clips[slot].length <= 0)
                 continue;

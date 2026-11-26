@@ -938,7 +938,7 @@ private slots:
     // and leaves hold on for the next one.
     void returnHoldsAndDeleteLetsGo() {
         const auto held =
-            testkit::play("page 0 3\nkey 0.1 Return\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
+            testkit::play("page 0 3\nkey 0.1 Shift+Return\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
         const auto loose = testkit::play("page 0 3\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nend 2.5\n");
         QVERIFY(held.rms(2.0, 2.5) > 0.01);
         QVERIFY(loose.rms(2.0, 2.5) < 0.3 * held.rms(2.0, 2.5));
@@ -946,7 +946,7 @@ private slots:
             QCOMPARE(int(held.view.parts[kChords].clips[c].state), int(ClipView::Empty));
         QString status;
         const auto gone = testkit::play(
-            "page 0 3\nkey 0.1 Return\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nkey 1.0 Delete\nend 2.5\n",
+            "page 0 3\nkey 0.1 Shift+Return\ndown 0.2 1 " + cell(0, Triad) + "\nup 0.6 1\nkey 1.0 Delete\nend 2.5\n",
             [&](Session &s) { status = s.pageStatus(); });
         QVERIFY(gone.rms(2.0, 2.5) < 0.3 * held.rms(2.0, 2.5));
         QVERIFY2(status.contains("hold"), qPrintable(status));

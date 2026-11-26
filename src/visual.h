@@ -34,7 +34,7 @@
 namespace tf::visual {
 
 // The parts in the studio's order (parts.cpp).
-enum PartIndex : int { Drums = 0, Bass, Chords, Lead, Arp, Atmos, Fx, Vocal, kParts };
+enum PartIndex : int { Drums = 0, Bass, Chords, Lead, Arp, Atmos, Fx, Vocal, Sampler, kParts };
 
 // A note the shaders draw as it happens: arp notes burst into sparks, lead
 // notes leave a streak.
@@ -97,6 +97,9 @@ private:
     Signals m_s;
     float m_peak[kParts] = {};
     float m_prevDrum[3] = {};
+    // The Sampler's song: its lows, middle and highs against their own
+    // loudest lately, and the last frame's, to hear its hits in.
+    float m_samplePeak[3] = {}, m_prevSample[3] = {};
     float m_prevLeadOn = 0;
     float m_prevLeadPos = -1e9f;
     float m_prevDrop = 0;

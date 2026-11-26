@@ -3,7 +3,8 @@
 tenfold is a studio of pages. Each part of an electronic track has its own
 page and is played with up to ten fingers on the trackpad, plus the keyboard
 where that helps. The pages are 1 Drums, 2 Bass, 3 Chords, 4 Lead, 5 Arp,
-6 Atmos, 7 FX, 8 Vocal, and 0 Arrange, where the parts' clips become a track. Each page
+6 Atmos, 7 FX, 8 Vocal, Shift+1 Sampler (the ninth part: the digits ran out),
+and 0 Arrange, where the parts' clips become a track. Each page
 is a different instrument, designed from scratch for what that part needs to
 do in a great track.
 
@@ -82,6 +83,16 @@ about 60 times a second and the page reads as `pc.view->data`.
   launch, layers, Ctrl+Z, the Song page) works as for any clip. It answers
   `loopBeats` / `resizeLoop` for the window's loop buttons. The Vocal page
   (`src/vocal.cpp`, `src/vocal.h`) is the example.
+- **Files and links.** A file dragged onto the window or text pasted into
+  it reaches `PartControl::dropped(what, ctx)`: the showing page's first, then
+  any page that takes such things, which is then shown. Work that takes
+  time (reading a song, fetching one) goes on a thread of the page's own,
+  its result taken in `background()`; when `ctx.scripted()` says the
+  session is played by a script, it is done before returning instead, so
+  renders and tests hear it. A page that hands its engine memory the engine
+  did not make (a loaded song) publishes it by an atomic pointer and frees
+  it only once no voice plays it. The Sampler (`src/sampler.cpp`,
+  `src/sampler.h`) is the example.
 - **Background time.** `PartControl::background(t, ctx)` reaches every page,
   showing or not, with every frame and idle tick (about 60–125 Hz). Use it for
   anything that must keep going while another page is showing, such as an
@@ -131,8 +142,9 @@ about 60 times a second and the page reads as `pc.view->data`.
    | ↑ ↓ | octave or register (FX: riser length). For three seconds after Space the session takes them for the loop's length; Drums, with no octave, take them for it at any time (`ctx.resizeLoop`), and for the roll rate only while keys hold a roll |
    | Shift+← → (or [ ]) | the rhythm: swing, gate pattern, arp pattern, trance gate, FX drop style |
    | - and + (or =) | tone: darker, brighter (the page's filter or brightness) |
-   | Return | hold or latch (FX: drop on the next bar; Drums: keep what rolls) |
-   | Shift+Return | overdub on or off |
+   | Enter | play and pause everything: the session's (it never reaches a page) |
+   | Shift+Enter | hold or latch (FX: drop on the next bar; Drums: keep what rolls). The page hears it as plain Return: the session translates |
+   | F10 | overdub on or off. The page hears it as Shift+Return |
    | the key left of 1 (§ on Nordic and Mac layouts, ` on US; or \\) | follow the Chords page, on or off |
    | Delete | let go or reset (latched layers, held chords, drum sounds) |
    | F1–F8 · Shift+F1–F8 · Backspace | launch a slot · clear it · stop the loop at the bar |

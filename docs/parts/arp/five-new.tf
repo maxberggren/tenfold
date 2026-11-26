@@ -25,7 +25,7 @@ key 0.150 Shift+Z
 key 0.200 E
 tap 0.300 0.6705 0.01
 down 0.500 1 0.0362 0.3200 p=0.55
-key 1.000 Return
+key 1.000 Shift+Return
 up 1.200 1
 # The second bar in eighths, the gate held long: rolled.
 tap 2.600 0.7850 0.7120

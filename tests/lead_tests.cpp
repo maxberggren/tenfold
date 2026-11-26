@@ -1060,10 +1060,10 @@ private slots:
             QVERIFY2(s.pageStatus().contains(QStringLiteral("gated 1/8T")), qPrintable(s.pageStatus()));
         });
         // Shift+Return overdubs.
-        const auto dub = testkit::play("page 0 4\nkey 0.1 Shift+Return\nend 0.3\n");
+        const auto dub = testkit::play("page 0 4\nkey 0.1 F10\nend 0.3\n");
         QVERIFY(dub.view.parts[kLead].overdub);
         // Return holds the harmony after the finger lifts, and Delete lets it go.
-        const std::string held = "page 0 4\nkey 0.1 Return\n" +
+        const std::string held = "page 0 4\nkey 0.1 Shift+Return\n" +
                                  fmt("down 0.3 1 %.4f 0.6\ndown 0.4 2 0.1 %.4f\nup 0.8 2\n", cellX(4), rowY(1));
         testkit::play(held + "end 1.0\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("harmony 3RD")), qPrintable(s.pageStatus()));
@@ -2034,7 +2034,7 @@ private slots:
         // it was and the loop plays again.
         const std::string s = riffInBarTwo() + kChip +
                               "key 0.2 Up\nkey 0.25 Shift+Up\nkey 0.3 Shift+Right\nkey 0.35 Shift+Right\n"
-                              "key 0.4 -\nkey 0.45 -\nkey 0.5 §\nkey 0.55 Return\n" +
+                              "key 0.4 -\nkey 0.45 -\nkey 0.5 §\nkey 0.55 Shift+Return\n" +
                               fmt("key %.4f Space\nend 6.5\n", 8 * 60.0 / 124.0);
         testkit::reopen(s, 3.0, [](Session &before, Session &opened, const QJsonObject &doc) {
             const QJsonObject saved = leadSettings(doc);

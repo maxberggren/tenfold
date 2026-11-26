@@ -5,7 +5,9 @@
 // It runs on the audio thread and hears only messages from a lock-free
 // queue; the session (touch and UI threads) is its only producer.
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -42,7 +44,8 @@ struct ClipSet {
     };
     int parts = 0;
     Clip clips[kMaxParts][kClipSlots];
-    int playing[kMaxParts] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    int playing[kMaxParts];
+    ClipSet() { std::fill(std::begin(playing), std::end(playing), -1); }
     bool tooSmall = false; // reading: a clip had more events than room was made for
 };
 
@@ -75,8 +78,8 @@ struct StudioMsg {
         ReadClips,   // ptr = a ClipSet, value = ticket: every clip copied into it
         WriteClips,  // ptr = a ClipSet, value = ticket: every clip swapped for its own,
                      // nothing playing, nothing to take back
-        Resume,      // value = for each part four bits, the slot it plays again + 1 (0: none):
-                     // a pause ends, from the top of a bar, at once if nothing plays
+        Resume,      // d0 = for each part four bits, the slot it plays again + 1 (0: none), as a
+                     // whole number: a pause ends, from the top of a bar, at once if nothing plays
     };
     Kind kind = ToPart;
     int8_t part = 0;

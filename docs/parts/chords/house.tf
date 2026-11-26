@@ -17,7 +17,7 @@ key 3.881 Shift+D down
 key 5.766 Shift+D up
 key 5.816 Shift+A down
 key 7.702 Shift+A up
-key 6.871 Return
+key 6.871 Shift+Return
 # bars 5-8: the piano over the loop, tapped where its Charleston gate hits: 1, the and of 2, 3, the and of 4
 key 7.790 Right
 tap 7.742 0.5000 0.720 len=0.14 p=0.75

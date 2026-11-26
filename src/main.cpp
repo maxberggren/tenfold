@@ -59,7 +59,7 @@ static void usage(FILE *out) {
                "  tenfold latency [--json]                measure the microphone's trip to the ears\n"
                "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
                "                     [--tutorial STEP] [--gpu] [--window]\n"
-               "                                          draw the window mid-performance (page 1-8, 0 arrange, 9 visual),\n"
+               "                                          draw the window mid-performance (page 1-8, 0 arrange, 9 visual, sampler),\n"
                "                                          with the tutorial on that step (from 1) if asked; --gpu\n"
                "                                          on the desktop's GPU (the Visual page's picture needs\n"
                "                                          it), --window with the visualizer's window too\n"
@@ -157,9 +157,10 @@ static int screenshot(int argc, char **argv) {
         s.tutorial().jump(std::atoi(step) - 1, s);
     }
     if (const char *page = option(argc, argv, "--page")) {
-        const int n = std::atoi(page);
+        // By its key (1–8, 0, 9) or its name (sampler).
         tf::Session &s = *backend.session();
-        backend.setPage(n == 0 ? s.arrangePage() : n == 9 ? s.visualPage() : n - 1);
+        if (const int n = s.pageNamed(QString::fromLocal8Bit(page)); n >= 0)
+            backend.setPage(n);
     }
     if (hasFlag(argc, argv, "--help-page"))
         window->setProperty("helpVisible", true);

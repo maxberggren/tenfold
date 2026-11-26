@@ -877,7 +877,7 @@ private slots:
     // Enter does what LOOP does; tapped twice before the bar, it makes a
     // one-bar loop.
     void enterRecordsTooAndTwiceIsOneBar() {
-        const auto take = testkit::play("page 0 2\ntempo 0 120\nkey 0.3 Return\nkey 0.6 Return\n"
+        const auto take = testkit::play("page 0 2\ntempo 0 120\nkey 0.3 Shift+Return\nkey 0.6 Shift+Return\n"
                                         "tap 2.0 0.21 0.4\ntap 2.5 0.37 0.4\ntap 3.0 0.21 0.4\ntap 3.5 0.46 0.4\nend 5\n");
         QCOMPARE(int(take.view.parts[1].clips[0].state), int(ClipView::Playing));
         QCOMPARE(int(take.view.parts[1].clips[0].lengthBeats), 4);
@@ -1171,7 +1171,7 @@ private slots:
     // Return with a shaper held latches it, as a click does, and makes no
     // loop; with nothing held it is still LOOP (enterRecordsToo…).
     void returnLatchesHeldShapers() {
-        const auto take = testkit::play("page 0 2\nkey 0.1 W\ndown 0.2 2 0.6 0.9\nkey 0.4 Return\nup 0.7 2\n"
+        const auto take = testkit::play("page 0 2\nkey 0.1 W\ndown 0.2 2 0.6 0.9\nkey 0.4 Shift+Return\nup 0.7 2\n"
                                         "down 0.9 1 0.3 0.3\nend 1.5\n");
         const PartView &bass = take.view.parts[1];
         QVERIFY(bass.data[bass::PubWobDepth] > 0.05f && bass.data[bass::PubLfo] >= 0);

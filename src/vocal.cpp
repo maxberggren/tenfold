@@ -3337,7 +3337,7 @@ public:
             "Shift+Left / Right (or [ ])\tthe stutter's rate: 1/8, 1/8T, 1/16, 1/16T, 1/32\n"
             "Up / Down\tthe keys an octave up or down\n"
             "- and +\tthe voice's own throat: darker (giant), brighter (elf)\n"
-            "Return\tlatch: notes stay when you lift (sing over a held chord)\n"
+            "Shift+Return\tlatch: notes stay when you lift (sing over a held chord)\n"
             "the key left of 1 (§)\tfollow the Chords page: the keys are the chord's notes, hard tune snaps to "
             "them\n"
             "Delete\tlet go: latched notes, freeze, every strip\n"
@@ -5384,7 +5384,7 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     c::chip(p, pc, at(0.11, 0.23), QStringLiteral("LAYER  ⇧SPACE"), false, &m_spots, SpotLayer);
     static const char *mon[] = {"MONITOR PAGE  M", "MONITOR ALL  M", "MONITOR OFF  M"};
     c::chip(p, pc, at(0.23, 0.36), QString::fromLatin1(mon[m_monitorMode]), m_monitorMode != 2, &m_spots, SpotMonitor);
-    c::chip(p, pc, at(0.36, 0.44), QStringLiteral("LATCH  ↵"), m_latch, &m_spots, SpotLatch);
+    c::chip(p, pc, at(0.36, 0.44), QStringLiteral("LATCH ⇧↵"), m_latch, &m_spots, SpotLatch);
     c::chip(p, pc, at(0.44, 0.53), QStringLiteral("FOLLOW  §"), m_follow, &m_spots, SpotFollow);
     c::chip(p, pc, at(0.53, 0.60), QStringLiteral("DEMO  V"), m_demo, &m_spots, SpotDemo);
     c::chip(p, pc, at(0.60, 0.635), QStringLiteral("−"), false, &m_spots, SpotGainDown);

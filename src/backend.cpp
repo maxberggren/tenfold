@@ -1,6 +1,9 @@
 #include "backend.h"
 
+#include <QClipboard>
 #include <QCoreApplication>
+#include <QGuiApplication>
+#include <QUrl>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -137,6 +140,39 @@ QStringList Backend::pageNames() const {
     for (int i = 0; i < m_session->pageCount(); ++i)
         l << m_session->pageName(i);
     return l;
+}
+
+QStringList Backend::pageKeys() const {
+    QStringList l;
+    for (int i = 0; i < m_session->pageCount(); ++i)
+        l << m_session->pageKey(i);
+    return l;
+}
+
+bool Backend::drop(const QString &what) {
+    // A dragged file arrives as a file:// URL; a link stays as it is.
+    const QUrl url(what.trimmed());
+    const QString given = url.isLocalFile() ? url.toLocalFile() : what.trimmed();
+    if (given.isEmpty())
+        return false;
+    const bool taken = m_session->drop(given);
+    if (!taken)
+        m_session->say(tr("Nothing here takes that: drop a sound file, or paste a link to a song"));
+    if (m_session->page() != m_lastPage) {
+        m_lastPage = m_session->page();
+        emit pageChanged();
+    }
+    return taken;
+}
+
+void Backend::paste() {
+    const QString text = QGuiApplication::clipboard()->text().trimmed();
+    if (text.isEmpty()) {
+        m_session->say(tr("Nothing to paste: copy a link to a song, or a sound file's path"));
+        return;
+    }
+    // Only the first line: a link, or a path.
+    drop(text.section(QLatin1Char('\n'), 0, 0));
 }
 
 QStringList Backend::pageBlurbs() const {

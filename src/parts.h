@@ -19,6 +19,7 @@ PartSpec makeArp();    // 5
 PartSpec makeAtmos();  // 6
 PartSpec makeRisers(); // 7, the FX page
 PartSpec makeVocal();  // 8, the microphone
+PartSpec makeSampler(); // Shift+1, a song dropped in and chopped
 
 std::vector<PartSpec> makeParts();
 // The arrange page knows the parts by name and colour.

@@ -49,6 +49,8 @@ class Backend : public QObject {
     Q_PROPERTY(int page READ page WRITE setPage NOTIFY pageChanged)
     Q_PROPERTY(int pageCount READ pageCount CONSTANT)
     Q_PROPERTY(QStringList pageNames READ pageNames CONSTANT)
+    // The key each page answers to, as its tab says it (1–8, ⇧1, 0, 9).
+    Q_PROPERTY(QStringList pageKeys READ pageKeys CONSTANT)
     Q_PROPERTY(QStringList pageBlurbs READ pageBlurbs CONSTANT)
     Q_PROPERTY(QVariantList pageColors READ pageColors CONSTANT)
     Q_PROPERTY(QString pageHelp READ pageHelp NOTIFY pageChanged)
@@ -83,6 +85,8 @@ class Backend : public QObject {
     Q_PROPERTY(int loopBeats READ loopBeats NOTIFY changed)
     Q_PROPERTY(int loopShorterBeats READ loopShorterBeats NOTIFY changed)
     Q_PROPERTY(int loopLongerBeats READ loopLongerBeats NOTIFY changed)
+    // The showing page has a loop playing that New loop would stop.
+    Q_PROPERTY(bool canNewLoop READ canNewLoop NOTIFY changed)
     Q_PROPERTY(bool tutorialActive READ tutorialActive NOTIFY changed)
     Q_PROPERTY(int tutorialStep READ tutorialStep NOTIFY changed)
     Q_PROPERTY(int tutorialCount READ tutorialCount CONSTANT)
@@ -124,6 +128,7 @@ public:
     // engine its offscreen video picture is made in (main.cpp).
     void setVisualizer(Visualizer *visual, QQmlEngine *engine);
     QStringList pageNames() const;
+    QStringList pageKeys() const;
     QStringList pageBlurbs() const;
     QVariantList pageColors() const;
     QString pageHelp() const { return tf::console::keyNames(m_session->pageHelp(m_session->page())); }
@@ -201,6 +206,8 @@ public:
     int loopBeats() const { return m_session->loopBeats(0); }
     int loopShorterBeats() const { return m_session->loopBeats(-1); }
     int loopLongerBeats() const { return m_session->loopBeats(1); }
+    bool canNewLoop() const { return m_session->canNewLoop(); }
+    Q_INVOKABLE void newLoop() { m_session->newLoop(); }
     Q_INVOKABLE void startOver() { m_session->startOver(); }
     // Song files: Ctrl+S, Ctrl+Shift+S, Ctrl+O, and Ctrl+Shift+O for the
     // song kept when tenfold last quit.
@@ -213,6 +220,11 @@ public:
     Q_INVOKABLE void toggleTutorial();
     Q_INVOKABLE void tutorialNext();
     Q_INVOKABLE void tutorialBack();
+    // A file dragged onto the window (its path or URL), or a link: the
+    // page that takes such things (the Sampler) gets it and is shown.
+    // paste() hands over the clipboard's text the same way (Ctrl+V).
+    Q_INVOKABLE bool drop(const QString &what);
+    Q_INVOKABLE void paste();
     // A key for the pages; returns true when one used it.
     Q_INVOKABLE bool sendKey(int key, int modifiers, bool down, bool repeat, const QString &text);
 

@@ -3714,7 +3714,7 @@ public:
             "↑ ↓ · Shift+↑ ↓\tregister: where the grid starts · range: how many octaves the pattern climbs\n"
             "Shift+← → (or [ ])\tthe rate: 1/8 to 1/32, with triplets\n"
             "- +\ttone: darker, brighter\n"
-            "Return · Shift+Return\tlatch · overdub on or off (what you play joins the loop)\n"
+            "Shift+Return · F10\tlatch · overdub on or off (what you play joins the loop)\n"
             "§ (the key left of 1; or \\ or M)\tfollow the chords page\n"
             "Delete\tlet go of what is latched\n"
             "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · clear it · stop the loop at the bar\n"

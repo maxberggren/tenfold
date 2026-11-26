@@ -16,7 +16,7 @@ up 3.371 2
 up 3.371 3
 # The 808, overdubbed for one bar: A held, down to G and back; A again; up to C
 # and down through B to E.
-key 3.543 Shift+Return
+key 3.543 F10
 down 3.629 4 0.12 0.38 p=0.75
 glide 4.143 4.229 4 0.07 0.38
 glide 4.314 4.379 4 0.12 0.38
@@ -28,7 +28,7 @@ glide 5.043 5.086 6 0.22 0.38
 glide 5.129 5.171 6 0.17 0.38
 glide 5.214 5.279 6 -0.03 0.38
 up 5.321 6
-key 5.364 Shift+Return
+key 5.364 F10
 # A hat roll over the loop, started from the REPEAT strip so it rolls the moment it
 # lands: triplets, then thirty-seconds, bending up a few semitones and back, pressing
 # harder into the end of the phrase.

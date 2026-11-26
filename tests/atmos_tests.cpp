@@ -1581,16 +1581,16 @@ private slots:
 
     void returnLatchesWhatIsHeldOrHolds() {
         // With a finger down, Return latches it, as the click does.
-        const auto take = testkit::play("page 0 6\ndown 0.2 1 0.3 0.5 p=0.7\nkey 1.0 Return\nup 2.0 1\nend 8\n",
+        const auto take = testkit::play("page 0 6\ndown 0.2 1 0.3 0.5 p=0.7\nkey 1.0 Shift+Return\nup 2.0 1\nend 8\n",
                                         [](Session &s) { QCOMPARE(s.probe(kAtmos, QStringLiteral("latched")), 1.0f); });
         QVERIFY(take.rms(6, 8) > 0.02);
         // With none, it turns hold on: a layer held a moment stays.
-        testkit::play("page 0 6\nkey 0.2 Return\ndown 0.5 1 0.3 0.5 p=0.7\nup 1.5 1\nend 3\n", [](Session &s) {
+        testkit::play("page 0 6\nkey 0.2 Shift+Return\ndown 0.5 1 0.3 0.5 p=0.7\nup 1.5 1\nend 3\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("hold")), qPrintable(s.pageStatus()));
             QCOMPARE(s.probe(kAtmos, QStringLiteral("latched")), 1.0f);
         });
         // Shift+Return is overdub.
-        const auto dub = testkit::play("page 0 6\nkey 0.2 Shift+Return\nend 0.5\n");
+        const auto dub = testkit::play("page 0 6\nkey 0.2 F10\nend 0.5\n");
         QVERIFY(dub.view.parts[kAtmos].overdub);
     }
 

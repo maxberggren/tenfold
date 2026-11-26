@@ -665,7 +665,7 @@ public:
             "land fingers together and hold\ta groove: each pad plays its part in the kit's style; "
             "slide one up for busier, sideways to shift it\n"
             "hold another pad while grooving\tadds its drum to the groove\n"
-            "click, Return or Space while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it "
+            "click, Shift+Return or Space while rolling or grooving\tkeep it: at the bar it loops, as many bars (1, 2 or 4) as it "
             "was held, without what you tried before it (or overdubs into the loop playing; Shift+Space: a new loop)\n"
             "click a pad you just touched, drag\twith nothing rolling, shape that drum: sideways tunes, up lengthens, "
             "twist changes its tone\n"
@@ -2678,7 +2678,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     // The arrows: the loop Space last made, shorter or longer.
     c::chip(p, pc, cell(3), QStringLiteral("LOOP− ↓"), false, &m_spots, SpotLoopShorter);
     c::chip(p, pc, cell(4), QStringLiteral("LOOP+ ↑"), false, &m_spots, SpotLoopLonger);
-    c::chip(p, pc, cell(5), QStringLiteral("OVERDUB ⇧↵"), m_userOverdub, &m_spots, SpotOverdub);
+    c::chip(p, pc, cell(5), QStringLiteral("OVERDUB F10"), m_userOverdub, &m_spots, SpotOverdub);
     c::chip(p, pc, cell(6), QStringLiteral("BACK DEL"), false, &m_spots, SpotReset);
 }
 

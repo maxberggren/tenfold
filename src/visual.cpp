@@ -10,6 +10,7 @@
 #include "bass.h"
 #include "drums.h"
 #include "lead.h"
+#include "sampler.h"
 #include "risers.h"
 #include "tuning.h"
 
@@ -273,6 +274,35 @@ void SignalTracker::update(const StudioView &v, double dt) {
         s.drop = std::max(decay(s.drop, dt, 0.4), flash);
         s.sweep = std::clamp(d[risers::pub::Sweep], -1.0f, 1.0f) * k;
         s.wash = clamp01(k * std::max(d[risers::pub::Wash], d[risers::pub::Throw]));
+    }
+
+    // The Sampler: a song, drums and bass and all. Its lows, middle and
+    // highs hit the picture as the kit's kick, snare and hats do, and its
+    // lows swell it as the bass does, so a chopped break moves the world
+    // even with the drum page silent.
+    if (v.partCount > Sampler) {
+        const float *d = v.parts[Sampler].data;
+        const float band[3] = {d[sampler::pub::Low], d[sampler::pub::Mid], d[sampler::pub::High]};
+        float *env[3] = {&s.kick, &s.snare, &s.hat};
+        int *count[3] = {&s.kicks, &s.snares, &s.hats};
+        const double falls[3] = {0.06, 0.05, 0.035};
+        for (int i = 0; i < 3; ++i) {
+            const float raw = aud[Sampler] ? band[i] : 0.0f;
+            m_samplePeak[i] = std::max(raw, m_samplePeak[i] * float(std::exp(-dt / 4.0)));
+            const float now = clamp01(raw / std::max(m_samplePeak[i], 0.02f));
+            // A jump up, as the drums' pads are heard: a hit.
+            if (now > m_prevSample[i] + 0.25f && now > 0.6f) {
+                ++*count[i];
+                *env[i] = std::max(*env[i], now);
+            }
+            m_prevSample[i] = now;
+            (void)falls;
+        }
+        if (aud[Sampler]) {
+            const float low = clamp01(band[0] / std::max(m_samplePeak[0], 0.02f));
+            s.bass = std::max(s.bass, 0.8f * low * s.level[Sampler]);
+            s.sub = std::max(s.sub, 0.6f * low * s.level[Sampler]);
+        }
     }
 
     // Vocal: the microphone while it sings, else the loops it made.
@@ -775,7 +805,7 @@ void VisualPage::paint(QPainter &p, const PaintContext &pc) {
     console::chip(p, pc, console::bandRow(pc, 1, 0.21, 0.4), QStringLiteral("FINGERS M"), s.markers, &m_spots, SpotMarkers);
     console::chip(p, pc, console::bandRow(pc, 1, 0.42, 0.6),
                   QStringLiteral("%1 Q").arg(QLatin1String(kQualityNames[s.quality])), false, &m_spots, SpotQuality);
-    console::chip(p, pc, console::bandRow(pc, 1, 0.62, 0.81), QStringLiteral("WINDOW ↵"), false, &m_spots, SpotWindow);
+    console::chip(p, pc, console::bandRow(pc, 1, 0.62, 0.81), QStringLiteral("WINDOW ⇧↵"), false, &m_spots, SpotWindow);
     console::chip(p, pc, console::bandRow(pc, 1, 0.83, 1), QStringLiteral("FULL SCREEN"), false, &m_spots, SpotFull);
 }
 
@@ -839,7 +869,7 @@ QString VisualPage::help() const {
         "top right, and again to turn it. Each keeps its distance from the chord's colour as the chords change\n"
         "P\tautopilot: left alone it wanders on its own, and a drop throws it into the next world with new "
         "colours · M the fingers drawn over it · Q quality · C a CRT's glass\n"
-        "Return\tthe picture in a window of its own; Shift+Return puts it full screen (there F11 or a "
+        "Shift+Return\tthe picture in a window of its own; F10 puts it full screen (there F11 or a "
         "double-click does too, and Esc leaves it). The fingers keep playing this window's page\n"
         "Ctrl+Shift+R (or Shift+click Record)\trecord the picture and the sound to a video (needs ffmpeg)\n"
         "Lifted fingers\tleave the world as they shaped it: go back to any page and play, the picture keeps it");

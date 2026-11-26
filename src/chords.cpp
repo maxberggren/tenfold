@@ -885,7 +885,7 @@ private:
     void letGo(double t, ControlContext &ctx) {
         if (m_latched == 0) {
             ctx.notice(m_hold ? QStringLiteral("Nothing held yet: the next chord rings until another")
-                              : QStringLiteral("Nothing held: Return holds chords"));
+                              : QStringLiteral("Nothing held: Shift+Return holds chords"));
             return;
         }
         sendOff(m_latched, t, ctx);
@@ -1273,7 +1273,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         bool lit;
     };
     const Setting settings[] = {
-        {"HOLD", "↵", SpotHold, m_hold},
+        {"HOLD", "⇧↵", SpotHold, m_hold},
         {"LET GO", "DEL", SpotLetGo, false},
         {"GATE", "⇧←", SpotGateDown, false},
         {"GATE", "⇧→", SpotGateUp, false},
@@ -1281,7 +1281,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         {"VOICE", "↑", SpotVoicingUp, false},
         {"DARK", "-", SpotDarker, false},
         {"BRIGHT", "+", SpotBrighter, false},
-        {"OVERDUB", "⇧↵", SpotOverdub, m_overdub},
+        {"OVERDUB", "F10", SpotOverdub, m_overdub},
     };
     const QRectF bottom = c::bandRow(pc, 1);
     // On a narrow window the space between a setting and its key closes up.
@@ -1417,9 +1417,9 @@ QString Control::help() const {
         "↑ ↓\tthe voicing higher or lower\n"
         "Shift+← →  (or [ ])\tthe gate pattern for this sound\n"
         "- +  (or =)\tthe filter darker or brighter\n"
-        "Return (or L)\thold: chords ring until the next one (again: hold off)\n"
+        "Shift+Return (or L)\thold: chords ring until the next one (again: hold off)\n"
         "Delete\tlet go of the chord hold keeps ringing\n"
-        "Shift+Return\toverdub on or off: what you play joins the loop\n"
+        "F10\toverdub on or off: what you play joins the loop\n"
         "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot at the next bar · clear it · stop the loop\n"
         "play, then Space\tloops what you just played at once: played twice, one cycle of it\n"
         "under the pad, with the mouse\tthe clips (click: launch or stop), the sounds (more than fit: the row "
@@ -1431,7 +1431,7 @@ QString Control::help() const {
         "another finger\ta new chord takes over; lift it and the one still held returns\n"
         "press harder · flat finger\tswell it · double it an octave under and over\n"
         "twist\tthe filter, a knob under the finger\n"
-        "press until it clicks\thold, as Return does\n"
+        "press until it clicks\thold, as Shift+Return does\n"
         "tap the rail along the top\tkeep that gate rhythm for this sound\n"
         "hold the rail\tplay that rhythm over everything, loops too, while the finger stays\n"
         "higher on the rail · twist there\tlonger hits · swing\n"

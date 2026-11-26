@@ -139,6 +139,31 @@ std::vector<std::array<int, 7>> songBars(const QJsonObject &song, Session &s) {
 class ArrangeTests : public QObject {
     Q_OBJECT
 private slots:
+    // Shift held, a tap on another loop of a part that plays: the two play
+    // together from the next bar, layered into a free slot; both originals
+    // stay as they were.
+    void shiftTapPlaysTwoLoopsOfAPartTogether() {
+        bool shifted = false;
+        const auto take = watch(loops(mouseHold(15.2, cellX(0), laneY(0)) + "key 16.0 D\n" + mouseClick(17.0, cellX(1), laneY(0)) + "end 21\n"),
+                                [&](double t, Session &s) {
+                                    // Shift down before the click on the drums' copy in slot 2.
+                                    if (t >= 16.9 && !shifted) {
+                                        shifted = true;
+                                        KeyEvent k;
+                                        k.key = Qt::Key_Shift;
+                                        k.modifiers = Qt::ShiftModifier;
+                                        s.key(k);
+                                    }
+                                });
+        const PartView &d = take.view.parts[0];
+        QVERIFY2(d.playing >= 2, qPrintable(QString::number(d.playing)));
+        QVERIFY(d.clips[0].state != ClipView::Empty);
+        QVERIFY(d.clips[1].state != ClipView::Empty);
+        // (Slot 2 is a copy of slot 1, so the drums' doubled hits are left
+        // out of the layer: it has the hits of one of them.)
+        QVERIFY(d.clips[d.playing].events >= d.clips[0].events);
+    }
+
     void fingersPlayAndStayFinite() {
         const auto take = testkit::play("page 0 0\n"
                                         "tap 0.2 0.2 0.5\ntap 0.5 0.4 0.6\ndown 0.8 1 0.6 0.4\n"
@@ -311,7 +336,7 @@ private slots:
         // Stop everything, then Return: on the next bar every part with a clip
         // starts from the top of its loop together.
         double anchors[4] = {-1, -1, -1, -1};
-        watch(loops("key 15.2 Backspace\nkey 17.3 Return\nend 20\n"), [&](double t, Session &s) {
+        watch(loops("key 15.2 Backspace\nkey 17.3 Shift+Return\nend 20\n"), [&](double t, Session &s) {
             const StudioView &v = s.view();
             if (t < 17.3)
                 return;
@@ -573,7 +598,7 @@ private slots:
         // B at 17 builds from 18.5; Return at 21 drops it at 22.5: two bars
         // of build, then the drop to the end (34.5).
         labels.clear();
-        testkit::play(loops("key 15.2 Space\nkey 17.0 B\nkey 21.0 Return\nkey 33.0 Space\nend 36\n"), [&](Session &s) {
+        testkit::play(loops("key 15.2 Space\nkey 17.0 B\nkey 21.0 Shift+Return\nkey 33.0 Space\nend 36\n"), [&](Session &s) {
             for (int i = 0; i < int(probeAt(s, "sectionCount")); ++i) {
                 labels << int(probeAt(s, ("sectionLabel" + std::to_string(i)).c_str()));
                 bars << int(probeAt(s, ("sectionBars" + std::to_string(i)).c_str()));
@@ -626,7 +651,7 @@ private slots:
     void aDropWithNothingToBringBackSaysSo() {
         QString notice;
         float dropping = -1;
-        testkit::play(loops("key 16.0 Return\nend 17\n"), [&](Session &s) {
+        testkit::play(loops("key 16.0 Shift+Return\nend 17\n"), [&](Session &s) {
             notice = s.notice(nullptr);
             dropping = probeAt(s, "drops");
         });
@@ -689,12 +714,12 @@ private slots:
     void theDropLaunchesNothingThePlayerHasNotPlayed() {
         // The bass is stopped (a tap on its clip) and stays stopped for more
         // than sixteen bars; the drop brings back the others, not the bass.
-        const auto take = testkit::play(loops(mouseClick(15.3, cellX(0), laneY(1)) + "key 51.3 Return\nend 55\n"));
+        const auto take = testkit::play(loops(mouseClick(15.3, cellX(0), laneY(1)) + "key 51.3 Shift+Return\nend 55\n"));
         QCOMPARE(take.view.parts[1].playing, -1);
         for (int p : {0, 2, 5})
             QCOMPARE(take.view.parts[p].playing, 0);
         // And with nothing played at all, a drop does nothing.
-        const auto none = testkit::play("page 0 0\nkey 0.5 Return\nkey 0.6 B\nend 6\n");
+        const auto none = testkit::play("page 0 0\nkey 0.5 Shift+Return\nkey 0.6 B\nend 6\n");
         QVERIFY(none.rms(0, 6) < 1e-4);
     }
 

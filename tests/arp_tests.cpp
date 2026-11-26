@@ -1527,7 +1527,7 @@ private slots:
     }
 
     void deleteLetsGoOfTheLatch() {
-        const auto take = testkit::play("page 0 5\ndown 0.5 1 " + gridX(2) + " 0.32\nkey 1.0 Return\nup 1.5 1\n"
+        const auto take = testkit::play("page 0 5\ndown 0.5 1 " + gridX(2) + " 0.32\nkey 1.0 Shift+Return\nup 1.5 1\n"
                                         "key 4.0 Delete\nend 7.5\n");
         QVERIFY(take.rms(2.0, 3.8) > 0.02);  // latched: running after the lift
         QVERIFY(take.rms(6.0, 7.5) < 0.003); // let go, the echo gone too
@@ -1648,7 +1648,7 @@ private slots:
         const std::string script = "page 0 5\nkey 0.1 R\nkey 0.15 C\nkey 0.2 Shift+Right\nkey 0.25 Up\n"
                                    "key 0.3 Shift+Up\nkey 0.35 +\nkey 0.4 .\nkey 0.45 N\nkey 0.5 O\nkey 0.55 §\n"
                                    "down 1.0 1 " + gridX(2) + " 0.32\nkey 3.9 Space\nup 4.2 1\n"
-                                   "key 6.0 Return\nend 6.5\n";
+                                   "key 6.0 Shift+Return\nend 6.5\n";
         testkit::reopen(script, 3.0, [](Session &before, Session &opened, const QJsonObject &doc) {
             const QJsonObject part = doc[QStringLiteral("parts")].toArray()[4].toObject();
             QCOMPARE(part[QStringLiteral("name")].toString(), QStringLiteral("Arp"));
@@ -1710,7 +1710,7 @@ private slots:
         parts[4] = part;
         doc[QStringLiteral("parts")] = parts;
         // Opened over a song whose arp ran up·down, latched.
-        testkit::play("page 0 5\nkey 0.1 E\nkey 0.15 Return\nend 0.2\n", [&](Session &s) {
+        testkit::play("page 0 5\nkey 0.1 E\nkey 0.15 Shift+Return\nend 0.2\n", [&](Session &s) {
             QCOMPARE(s.probe(4, QStringLiteral("latched")), 1.0f);
             QString error;
             QVERIFY2(s.openSong(doc, &error), qPrintable(error));

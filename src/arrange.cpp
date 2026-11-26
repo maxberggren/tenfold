@@ -41,6 +41,10 @@ namespace tf {
 namespace {
 
 constexpr int P = kMaxParts;
+// A breakdown's param: the parts it mutes, a bit each, and above them how
+// many bars it lasts.
+constexpr int kBreakShift = 16;
+static_assert(P <= kBreakShift, "a breakdown names its parts in the bits under kBreakShift");
 constexpr int kSteps = 16;        // song steps per bar: sixteenths
 constexpr int kMaxSongBars = 256; // about eight minutes at 124
 constexpr double kGap = 0.5;      // the breath before a drop, in beats
@@ -104,7 +108,7 @@ QString countdown(double beats) {
 
 struct SongBar {
     int8_t slot[P];       // the clip each part plays, -1 none
-    uint8_t relaunch = 0; // parts whose clip starts from its top at this bar
+    uint16_t relaunch = 0; // parts whose clip starts from its top at this bar, a bit each
     uint8_t label = LNone;
     bool join = false;    // continues the section before (two sections joined)
     bool head = false;    // starts a section of its own (one moved or doubled there)
@@ -329,6 +333,7 @@ public:
     }
 
     void leave(ControlContext &) override {
+        m_shiftHeld = false;
         // Rides spring home and held solos let go; the song and the clips go on.
         for (auto &fg : m_fingers)
             if (fg.id >= 0) {
@@ -346,6 +351,11 @@ public:
 
     bool key(const KeyEvent &k, ControlContext &ctx) override {
         const bool shift = k.modifiers & Qt::ShiftModifier;
+        // Shift held while a cell is tapped plays it on top of what plays.
+        if (k.key == Qt::Key_Shift) {
+            m_shiftHeld = k.down;
+            return false;
+        }
         if (k.down)
             m_menu.open = false; // a key closes the menu (and still does its own thing)
         // The edit keys act on what is picked: clips, or a song section.
@@ -369,7 +379,8 @@ public:
             return true;
         }
         // Solos are held: A S D F G H J K, while the key is down (the Vocal
-        // part, eighth, has no mute key: I writes the track).
+        // part, eighth, has no mute key: I writes the track; the Sampler,
+        // ninth, has neither: L lifts the key).
         static const int soloKeys[] = {Qt::Key_A, Qt::Key_S, Qt::Key_D, Qt::Key_F,
                                        Qt::Key_G, Qt::Key_H, Qt::Key_J, Qt::Key_K};
         for (int p = 0; p < 8; ++p)
@@ -507,13 +518,15 @@ public:
             "Left, Right\tplaying: jump a section back or on, on the bar; stopped: pick a section\n"
             "picked section: tap a lane's loop\tthe lanes show what plays in it (IN, or OUT OF THIS SECTION): a tap "
             "plays that loop there, or takes the part out; a lane's name brings it back in (Shift+O takes each back)\n"
+            "Shift held, tap another loop of a part that plays\tthe two play together, on top of each other, from the "
+            "next bar (layered into a free slot; both stay as they were). Shift+tap a third and it joins them\n"
             "picked section: Delete · D · M · Shift+← →\tremove it · double it · join it with the next · swap it with a "
             "neighbour (Shift+O takes each back)\n"
             "Shift+O\tback to the song before the last take, write, clear or edit (eight deep)\n"
             "the moves\tlive, on the bar, on whatever plays; recorded into the song when you record\n"
             "B\tBUILD to the end of the phrase (two bars at least; Shift: eight): the mix lifts and thins, the FX page's "
             "loop leads in, then the drop\n"
-            "Return\tDROP: everything that played comes back on the next ONE, from the top, after a breath; the payoff "
+            "Shift+Return\tDROP: everything that played comes back on the next ONE, from the top, after a breath; the payoff "
             "of a B or an N (a full mix has nothing to drop)\n"
             "N\tbreakdown to chords and atmos; again to bring it back\n"
             "X\techo-out: the last bar into the echo, then out\n"
@@ -820,7 +833,7 @@ private:
             if (b >= mv.b1)
                 return;
             for (int p = 0; p < m_parts; ++p)
-                if (p < 8 && ((mv.param >> p) & 1) && b < mv.endFor[p])
+                if (p < kBreakShift && ((mv.param >> p) & 1) && b < mv.endFor[p])
                     m.mute[p] = true;
             const float ramp = smooth01(float((b - mv.b0) / 4.0));
             // No kick, no pump: what is left breathes freely until the drums return.
@@ -1303,6 +1316,8 @@ private:
         case Target::Clip:
             if (sectionPicked())
                 setSectionClip(t.a, t.b, ctx);
+            else if (m_shiftHeld)
+                layerClip(t.a, t.b, ctx);
             else
                 toggleClip(t.a, t.b, ctx);
             break;
@@ -1688,7 +1703,7 @@ private:
             first.head = true;
             for (int p = 0; p < P; ++p)
                 if (first.slot[p] >= 0)
-                    first.relaunch |= uint8_t(1 << p);
+                    first.relaunch |= uint16_t(1 << p);
             for (const SongMove &m : m_song.moves)
                 if (m.step >= sec.bar0 * kSteps && m.step < (sec.bar0 + sec.bars) * kSteps)
                     out.moves.push_back({m.step + (at - sec.bar0) * kSteps, m.kind, m.param});
@@ -1822,9 +1837,9 @@ private:
             sb.slot[p] = int8_t(out ? -1 : slot);
             // In from the section's top, from the top of the loop.
             if (b == sec.bar0 && !out)
-                sb.relaunch |= uint8_t(1 << p);
+                sb.relaunch |= uint16_t(1 << p);
             else
-                sb.relaunch &= uint8_t(~(1 << p));
+                sb.relaunch &= uint16_t(~(1 << p));
         }
         const QString name = QString::fromUtf8(labelName(sec.label)).toUpper();
         ctx.notice(out ? QStringLiteral("%1 is out of this %2 (Shift+O takes it back)").arg(m_names.value(p), name)
@@ -1849,6 +1864,38 @@ private:
             post(ctx, p, -1, bar, false);
         else
             post(ctx, p, slot, bar, true);
+    }
+
+    // Shift+tap on another loop of a part that is playing: the two play
+    // together, on top of each other, from the next bar. A part plays one
+    // slot at a time, so the two are layered into a free slot (the shorter
+    // repeated through the longer) and that plays; both originals stay as
+    // they were. Shift+tap a third, and it joins that same layered loop.
+    // Ctrl+Z takes it back a step at a time.
+    void layerClip(int p, int slot, ControlContext &ctx) {
+        const StudioView &v = ctx.studio();
+        const int bar = nextBar();
+        const int cur = predicted(v, p, bar) >= 0 ? predicted(v, p, bar) : v.parts[p].playing;
+        if (v.parts[p].clips[slot].state == ClipView::Empty || cur < 0 || cur == slot) {
+            toggleClip(p, slot, ctx);
+            return;
+        }
+        int into = cur;
+        if (m_layeredSlot[p] != cur) {
+            into = emptySlot(v, p, cur, 0);
+            if (into < 0) {
+                ctx.notice(QStringLiteral("%1 has no empty slot to play the two together in").arg(m_names.value(p)));
+                return;
+            }
+            ctx.copyClip(p, cur, into);
+        }
+        ctx.mergeClips(p, into, slot, false);
+        m_layeredSlot[p] = into;
+        post(ctx, p, into, bar, into != cur);
+        ctx.notice(QStringLiteral("%1: slot %2 on top of what plays, together in slot %3 from the bar (Ctrl+Z takes it back)")
+                       .arg(m_names.value(p))
+                       .arg(slot + 1)
+                       .arg(into + 1));
     }
 
     // A scene: each part's clip, or keep playing (-2), or stop (-1). Until
@@ -2184,7 +2231,7 @@ private:
         m.kind = MBreak;
         m.b0 = bar * double(kBeatsPerBar);
         m.b1 = m.b0 + kBreakBars * kBeatsPerBar;
-        m.param = breakMask(ctx.studio()) | (kBreakBars << 8);
+        m.param = breakMask(ctx.studio()) | (kBreakBars << kBreakShift);
         addMove(m, ctx);
         ctx.notice(QStringLiteral("BREAKDOWN on the bar, for %1 bars (N brings it back)").arg(kBreakBars));
     }
@@ -2660,7 +2707,7 @@ private:
                         if ((m.param >> p) & 1)
                             muted.append(m_names[p]);
                     move[QStringLiteral("parts")] = muted;
-                    const int bars = (m.param >> 8) & 0xff;
+                    const int bars = (m.param >> kBreakShift) & 0xff;
                     move[QStringLiteral("bars")] = bars ? bars : int(kBreakBars);
                     break;
                 }
@@ -2749,7 +2796,7 @@ private:
                 }
                 for (const QJsonValue &x : o.value(QStringLiteral("fromTop")).toArray())
                     if (const int p = partOf(x.toString()); p >= 0 && sb.slot[p] >= 0)
-                        sb.relaunch |= uint8_t(1 << p);
+                        sb.relaunch |= uint16_t(1 << p);
             }
             // A channel through the song from its changes. Until its first
             // change, a channel the file leaves out (a part this song was made
@@ -2805,7 +2852,7 @@ private:
                     for (const QJsonValue &name : o.value(QStringLiteral("parts")).toArray())
                         if (const int p = partOf(name.toString()); p >= 0)
                             mask |= 1 << p;
-                    m.param = mask | int(number(o.value(QStringLiteral("bars")), 1, 255, kBreakBars)) << 8;
+                    m.param = mask | int(number(o.value(QStringLiteral("bars")), 1, 255, kBreakBars)) << kBreakShift;
                     break;
                 }
                 case MCut: m.param = int(number(o.value(QStringLiteral("sixteenths")), 1, kSteps, 4)); break;
@@ -2927,7 +2974,7 @@ private:
                 break;
             case MBreak:
                 m.kind = MBreak;
-                m.b1 = at + kBeatsPerBar * std::max(1, (sm.param >> 8) & 0xff ? (sm.param >> 8) & 0xff : kBreakBars);
+                m.b1 = at + kBeatsPerBar * std::max(1, (sm.param >> kBreakShift) & 0xff ? (sm.param >> kBreakShift) & 0xff : kBreakBars);
                 addMove(m, ctx);
                 break;
             case MUnbreak:
@@ -3021,7 +3068,7 @@ private:
                 for (int p = 0; p < m_parts; ++p) {
                     sbar.slot[p] = int8_t(v.parts[p].playing);
                     if ((m_relaunchAt[p] == bar || bar == m_recStartBar) && v.parts[p].playing >= 0)
-                        sbar.relaunch |= uint8_t(1 << p);
+                        sbar.relaunch |= uint16_t(1 << p);
                 }
             }
         }
@@ -3433,7 +3480,7 @@ private:
                 const SongBar *prev = song.bars.empty() ? nullptr : &song.bars.back();
                 for (int p = 0; p < m_parts; ++p)
                     if (sb.slot[p] >= 0 && (k == 0 || !prev || prev->slot[p] != sb.slot[p]))
-                        sb.relaunch |= uint8_t(1 << p);
+                        sb.relaunch |= uint16_t(1 << p);
                 for (int p = 0; p < m_parts; ++p)
                     if (sb.slot[p] >= 0)
                         inSection |= 1 << p;
@@ -3480,7 +3527,7 @@ private:
                 for (int p = 0; p < m_parts; ++p)
                     if (!((inSection >> p) & 1) && p != role(RFx))
                         mask |= 1 << p;
-                song.moves.push_back({start * kSteps, MBreak, mask | (sec.bars << 8)});
+                song.moves.push_back({start * kSteps, MBreak, mask | (sec.bars << kBreakShift)});
             }
             if (sec.move == MEchoOut)
                 song.moves.push_back({(bar - 1) * kSteps, MEchoOut, 0});
@@ -3509,7 +3556,7 @@ private:
                     continue; // no room before this drop for the whole build
                 for (int a = start; a <= b; ++a)
                     song.bars[size_t(a)].slot[fx] = int8_t(clip);
-                song.bars[size_t(start)].relaunch |= uint8_t(1 << fx);
+                song.bars[size_t(start)].relaunch |= uint16_t(1 << fx);
                 floor = b + 1;
             }
         }
@@ -3560,7 +3607,7 @@ private:
     float m_trim[P][ChannelCount] = {};
     bool m_muteFlip[P] = {};
     double m_muteHold[P] = {}; // a timed mute is on its way for this beat
-    int m_muteAtBar[P] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    int m_muteAtBar[P] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
     float m_sent[P][ChannelCount] = {};
     double m_sentAt[P][ChannelCount] = {};
     float m_masterHome[MasterCount] = {}, m_masterSent[MasterCount] = {};
@@ -3573,11 +3620,17 @@ private:
     double m_lastT = 0, m_tickDt = 0.008, m_beat = 0, m_lastBeat = -1e9, m_look = 0;
     int m_plannedBar = -1000000, m_lateBar = -1000000;
     Posted m_posted[P];
-    int m_lastSlot[P] = {-1, -1, -1, -1, -1, -1, -1, -1};
-    int m_relaunchAt[P] = {-1, -1, -1, -1, -1, -1, -1, -1};
-    int m_lastPlayedBar[P] = {-1000000, -1000000, -1000000, -1000000, -1000000, -1000000, -1000000, -1000000};
+    int m_lastSlot[P] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+    int m_relaunchAt[P] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+    int m_lastPlayedBar[P] = {-1000000, -1000000, -1000000, -1000000, -1000000,
+                              -1000000, -1000000, -1000000, -1000000};
+    static_assert(P == 9, "the lists above name every part");
 
     float m_echoShown = -1; // the echo time a move or the fader holds, for drawing
+    bool m_shiftHeld = false;
+    // Per part, the slot Shift+tap last layered loops into, while it plays:
+    // a further Shift+tap joins it rather than taking another slot.
+    int m_layeredSlot[P] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
 
     struct Scene {
         bool stored = false;
@@ -3826,8 +3879,10 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
         const QRectF name = pc.rect(0, y0, kNameW, y1).adjusted(8, 5, -6, -5);
         if (playing && audible)
             p.fillRect(pc.rect(0, y0, kNameW, y1).adjusted(2, 2, -1, -2), c::alpha(col, 0.07f + 0.25f * std::min(1.0f, pv.channel.rms * 5)));
+        // The key that shows its page: a digit, or Shift+1 for the ninth part.
+        const QString pageKey = i < 8 ? QString::number(i + 1) : QStringLiteral("⇧1");
         c::text(p, QRectF(name.left(), name.top(), name.width(), name.height() * 0.4),
-                QStringLiteral("%1 %2").arg(i + 1).arg(m_names.value(i)), audible ? col : c::alpha(col, 0.4f), 13, true);
+                QStringLiteral("%1 %2").arg(pageKey).arg(m_names.value(i)), audible ? col : c::alpha(col, 0.4f), 13, true);
         qreal tx = name.left();
         const qreal ty = name.top() + name.height() * 0.58;
         if (muted)
@@ -3838,7 +3893,7 @@ void ArrangeControl::paintLanes(QPainter &p, const PaintContext &pc, int parts) 
             // Where its clips come from (its page), and its mute and solo keys.
             static const char *keys[] = {"Q A", "W S", "E D", "R F", "T G", "Y H", "U J", "  K"};
             c::text(p, QRectF(tx, ty - 7, name.width(), 14),
-                    QStringLiteral("PAGE %1  %2").arg(i + 1).arg(QString::fromLatin1(i < 8 ? keys[i] : "")),
+                    QStringLiteral("PAGE %1  %2").arg(pageKey).arg(QString::fromLatin1(i < 8 ? keys[i] : "")),
                     c::alpha(col, 0.4f), 9);
         }
         c::gauge(p, QRectF(name.left(), name.bottom() - 6, name.width(), 5),

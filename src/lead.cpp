@@ -3702,8 +3702,8 @@ public:
             "↑ ↓\toctave of the neck and the keys (Shift+↑ ↓: glide longer, shorter)\n"
             "Shift+← →\ttrance gate: off, 1/8, 1/16, 1/8 triplets, on the studio's beat\n"
             "- and + (or =)\ttone: darker, brighter\n"
-            "Return (or F12)\tharmony holds after the fingers lift\n"
-            "Shift+Return (or F10)\toverdub onto the playing loop\n"
+            "Shift+Return (or F12)\tharmony holds after the fingers lift\n"
+            "F10\toverdub onto the playing loop\n"
             "the key left of 1: § (` on US; or \\, F11)\tfollow the chord: notes and harmony land on chord tones\n"
             "Delete\tlet the held harmony go\n"
             "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
@@ -4644,8 +4644,8 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         };
         const Switch switches[] = {
             {QStringLiteral("FOLLOW §"), m_follow, SpotFollow},
-            {QStringLiteral("HOLD ↵"), m_latch, SpotHold},
-            {QStringLiteral("OVERDUB ⇧↵"), pv.overdub, SpotOverdub},
+            {QStringLiteral("HOLD ⇧↵"), m_latch, SpotHold},
+            {QStringLiteral("OVERDUB F10"), pv.overdub, SpotOverdub},
             {QStringLiteral("LET GO DEL"), false, SpotLetGo},
         };
         const qreal end = chipWant(QStringLiteral("⇧↓"));

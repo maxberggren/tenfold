@@ -55,7 +55,7 @@ tap 15.352 0.30 0.44 p=0.6 len=0.2
 tap 15.469 0.50 0.44 p=0.6 len=0.2
 tap 15.586 0.70 0.44 p=0.6 len=0.2
 tap 15.704 0.90 0.44 p=0.6 len=0.2
-key 17.016 Return
+key 17.016 Shift+Return
 tap 17.727 0.1875 0.12 len=0.06
 tap 18.078 0.1875 0.12 len=0.06
 tap 18.547 0.2272 0.12 len=0.06
@@ -77,7 +77,7 @@ tap 22.852 0.30 0.44 p=0.6 len=0.2
 tap 22.969 0.50 0.44 p=0.6 len=0.2
 tap 23.086 0.70 0.44 p=0.6 len=0.2
 tap 23.204 0.90 0.44 p=0.6 len=0.2
-key 24.516 Return
+key 24.516 Shift+Return
 down 26.750 42 0.4375 0.14 p=0.6
 up 28.625 42
 # CHIPTUNE: the noise channel's sweep, an arpeggio stepping by frames, a tracker's pattern (volume column, duty sweep, vibrato, a slide up) with its echo, the noise channel's stepped swell; the triangle's kick on the drop and a triangle bass line, blips, a stepped fall.
@@ -87,7 +87,7 @@ tap 30.352 0.30 0.44 p=0.6 len=0.2
 tap 30.469 0.50 0.44 p=0.6 len=0.2
 tap 30.586 0.70 0.44 p=0.6 len=0.2
 tap 30.704 0.90 0.44 p=0.6 len=0.2
-key 32.016 Return
+key 32.016 Shift+Return
 tap 32.375 0.1875 0.10 len=0.06
 tap 32.609 0.1875 0.10 len=0.06
 tap 32.844 0.2272 0.10 len=0.06
@@ -110,7 +110,7 @@ tap 37.852 0.30 0.44 p=0.6 len=0.2
 tap 37.969 0.50 0.44 p=0.6 len=0.2
 tap 38.086 0.70 0.44 p=0.6 len=0.2
 tap 38.204 0.90 0.44 p=0.6 len=0.2
-key 39.516 Return
+key 39.516 Shift+Return
 down 39.975 44 0.4375 0.19 p=0.6
 up 41.750 44
 down 41.800 45 0.4375 0.07 p=0.6
@@ -131,7 +131,7 @@ tap 45.352 0.30 0.44 p=0.6 len=0.2
 tap 45.469 0.50 0.44 p=0.6 len=0.2
 tap 45.586 0.70 0.44 p=0.6 len=0.2
 tap 45.704 0.90 0.44 p=0.6 len=0.2
-key 47.016 Return
+key 47.016 Shift+Return
 tap 49.250 0.3125 0.15 len=0.4
 down 49.953 47 0.4375 0.14 p=0.6
 up 50.891 47

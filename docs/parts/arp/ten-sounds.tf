@@ -11,7 +11,7 @@ page 0.05 5
 key 0.100 Shift+Z
 key 0.150 E
 down 0.500 1 0.0362 0.3200 p=0.55
-key 1.000 Return
+key 1.000 Shift+Return
 up 1.200 1
 key 5.200 Shift+X
 key 5.250 Q

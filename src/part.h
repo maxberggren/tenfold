@@ -42,7 +42,7 @@ class QPainter;
 
 namespace tf {
 
-constexpr int kMaxParts = 8;
+constexpr int kMaxParts = 9;
 constexpr int kClipSlots = 8;
 constexpr int kPartData = 256;
 constexpr int kBlock = 32; // the studio renders in blocks of at most this many frames
@@ -368,6 +368,11 @@ public:
     virtual float aspect() const = 0;
     // A short message the window shows for a moment.
     virtual void notice(const QString &text) = 0;
+    // The session is played by a script on a clock of its own (a render, a
+    // screenshot, a test), faster or slower than real time: a page that
+    // does long work on a thread of its own (the Sampler reading a song)
+    // does it at once instead, before it returns, so the script hears it.
+    virtual bool scripted() const { return false; }
     // A line in the debug log (~/.cache/tenfold/debug.log), when it is on.
     virtual void log(const QString &line) { (void)line; }
 };
@@ -437,6 +442,13 @@ public:
     // bed latched) joins playing before a pause to playing after it, when
     // Space looks for the phrase. A bed left on isn't playing: false.
     virtual bool soundLeftOnJoinsThePlaying() const { return true; }
+    // Space with nothing else playing loops the pattern the player settled
+    // into. False: its cycle has more than one hit, and two short cycles of
+    // it are taken, for the hand's feel (a drum fill, a riff). True for a
+    // page whose every hit is a phrase of its own (the Sampler's chops): a
+    // single hit repeating is a pattern too, and one cycle of it is the
+    // loop, so a bar-long chop held round makes a bar, not four.
+    virtual bool loopsOneCycle() const { return false; }
     // Just after Space makes a loop, a finger that lands in the next moment
     // is taken for the hand still going and ignored, so it doesn't double
     // the loop's first notes. False for a page where every landing is a hit
@@ -497,6 +509,14 @@ public:
     // when the page doesn't know the name; each page lists its names in its
     // own override.
     virtual float tutorialProbe(const QString &name) const { (void)name; return std::nanf(""); }
+    // Something handed to the page from outside the pad: a file dragged
+    // onto the window, or text pasted into it (a path, or a link to a
+    // song). True if the page takes such things at all; what comes of it
+    // (loading, a notice saying why not) is the page's.
+    virtual bool dropped(const QString &what, ControlContext &ctx) {
+        (void)what, (void)ctx;
+        return false;
+    }
     // A page whose loops are recorded audio, not its Commands (the Vocal
     // page), makes its own takes: it handles Space in key() and calls
     // ControlContext::takeAudio. The window's Loop shorter / longer buttons

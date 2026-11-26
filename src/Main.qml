@@ -89,9 +89,9 @@ ApplicationWindow {
             quitDialog.open()
         }
     }
-    // The number a page answers to: 1–8 for the parts, 0 for the Song page,
-    // 9 for the visualizer.
-    function pageKey(i) { return i === backend.arrangePage ? "0" : i === backend.visualPage ? "9" : String(i + 1) }
+    // The key a page answers to: 1–8 for the first eight parts, Shift+1 for
+    // the Sampler, 0 for the Song page, 9 for the visualizer.
+    function pageKey(i) { return backend.pageKeys[i] }
     // Esc closes what is open first: a right-click menu, the guide, then
     // the tutorial; then it gives the trackpad back.
     function back() {
@@ -123,6 +123,8 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: backend.saveSongAs() }
     Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: backend.openSong() }
     Shortcut { sequence: "Ctrl+Shift+O"; context: Qt.ApplicationShortcut; onActivated: backend.reopenLastSong() }
+    // A link to a song (or a sound file's path) on the clipboard goes to the Sampler.
+    Shortcut { sequence: StandardKey.Paste; context: Qt.ApplicationShortcut; onActivated: backend.paste() }
     Shortcut {
         sequence: "F11"; context: Qt.WindowShortcut
         onActivated: win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
@@ -142,6 +144,37 @@ ApplicationWindow {
         }
         Keys.onReleased: event => {
             event.accepted = backend.sendKey(event.key, event.modifiers, false, event.isAutoRepeat, event.text)
+        }
+
+        // A sound file dragged in from the file manager, or a link dragged
+        // from a browser: the Sampler takes it, and its page is shown.
+        DropArea {
+            id: dropArea
+            anchors.fill: parent
+            onDropped: drop => {
+                if (drop.hasUrls && drop.urls.length > 0)
+                    backend.drop(drop.urls[0].toString())
+                else if (drop.hasText)
+                    backend.drop(drop.text)
+                drop.accept()
+            }
+        }
+        Rectangle {
+            anchors.fill: parent
+            z: 50
+            visible: dropArea.containsDrag
+            color: Qt.rgba(0, 0, 0, 0.72)
+            border.color: win.pageColor
+            border.width: 2
+            Text {
+                anchors.centerIn: parent
+                text: qsTr("DROP TO SAMPLE")
+                color: win.pageColor
+                font.family: theme.fontFamily
+                font.pixelSize: 34
+                font.weight: Font.Black
+                font.letterSpacing: 4
+            }
         }
 
         ColumnLayout {
@@ -228,10 +261,18 @@ ApplicationWindow {
                                 x: 8
                                 y: tab.height >= 44 ? 5 : (tab.height - height) / 2
                                 width: parent.width - 16
-                                text: win.pageKey(tab.index) + " " + backend.pageNames[tab.index]
+                                // A key with a symbol in it (⇧1) is drawn with the
+                                // console's own line art, as the buttons' keys are;
+                                // its longer name a little smaller, so it fits.
+                                readonly property string label: win.pageKey(tab.index) + " " + backend.pageNames[tab.index].toUpperCase()
+                                readonly property bool iconed: backend.hasIcons(label)
+                                textFormat: iconed ? Text.StyledText : Text.PlainText
+                                text: iconed ? backend.rich(label, color, font.pixelSize) : label
                                 color: tab.current ? "#0a0806" : tab.tint
                                 font.family: win.mono
-                                font.pixelSize: 15
+                                font.pixelSize: iconed ? (parent.width >= 124 ? 15 : parent.width >= 96 ? 13 : 11) : 15
+                                fontSizeMode: iconed ? Text.FixedSize : Text.HorizontalFit
+                                minimumPixelSize: 11
                                 font.weight: Font.Bold
                                 font.capitalization: Font.AllUppercase
                                 elide: Text.ElideRight
@@ -500,7 +541,7 @@ ApplicationWindow {
                                     Layout.columnSpan: buttons.columns > 2 ? 1 : 2
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     label: backend.loopsPaused ? qsTr("▶  Play") : qsTr("❚❚  Pause")
-                                    key: "Ctrl P"; color: win.green; active: backend.loopsPaused
+                                    key: "Enter"; color: win.green; active: backend.loopsPaused
                                     onClicked: backend.togglePause()
                                 }
                                 PanelButton {
@@ -570,6 +611,19 @@ ApplicationWindow {
                                     label: backend.tutorialActive ? qsTr("Leave tutorial") : qsTr("Tutorial: make a track")
                                     key: "Ctrl T"; color: win.green; active: backend.tutorialActive
                                     onClicked: backend.toggleTutorial()
+                                }
+                                // A new loop on this page: the one playing stops,
+                                // kept in its slot, and the next Space makes a loop
+                                // of its own instead of a layer on it.
+                                PanelButton {
+                                    Layout.columnSpan: 2
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: !backend.tutorialActive && backend.page < backend.arrangePage
+                                    opacity: backend.canNewLoop ? 1 : 0.35
+                                    label: qsTr("New loop")
+                                    key: backend.canNewLoop ? qsTr("stop · keep · play anew") : "—"
+                                    color: win.pageColor
+                                    onClicked: if (backend.canNewLoop) backend.newLoop()
                                 }
                                 // The loop Space last made on this page, longer or
                                 // shorter, until another loop of its part is made:
@@ -733,7 +787,7 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     visible: win.height >= 640
-                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects, 8 vocal, and 9 shows it all as a picture. Play, then Space loops what you just played on any page; turn the loops into a track on 0, the Song page. ? shows what the fingers do on the page you're on.")
+                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects, 8 vocal, Shift+1 a sampler (drop a song on the window), and 9 shows it all as a picture. Play, then Space loops what you just played on any page; turn the loops into a track on 0, the Song page. ? shows what the fingers do on the page you're on.")
                     color: win.cyan
                     font.family: win.mono
                     font.pixelSize: 14

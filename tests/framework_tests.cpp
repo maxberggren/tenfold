@@ -718,6 +718,54 @@ private slots:
         QCOMPARE(studio.view().parts[1].playing, 2);
     }
 
+    // Enter plays and pauses on every page; Shift+Enter is the page's own
+    // (here the Drums' keep), and never pauses.
+    void enterPlaysAndPausesOnEveryPage() {
+        const std::string taps = "tap 0.5 0.12 0.12\ntap 1.0 0.12 0.12\ntap 1.5 0.12 0.12\ntap 2.0 0.12 0.12\nkey 2.5 Space\n";
+        for (const char *page : {"1", "3", "6", "7", "0", "sampler"}) {
+            const auto paused = testkit::play("page 0.05 1\n" + taps + "page 4.0 " + page + "\nkey 4.5 Return\nend 5.5\n");
+            QVERIFY2(paused.view.parts[0].playing < 0, page);
+            const auto again = testkit::play("page 0.05 1\n" + taps + "page 4.0 " + page + "\nkey 4.5 Return\nkey 5.0 Enter\nend 7\n");
+            QVERIFY2(again.view.parts[0].playing >= 0, page);
+            const auto shifted = testkit::play("page 0.05 1\n" + taps + "page 4.0 " + page + "\nkey 4.5 Shift+Return\nend 5.5\n");
+            QVERIFY2(shifted.view.parts[0].playing >= 0, page);
+        }
+    }
+
+    // New loop: the page's loop stops at once and stays in its slot, and
+    // the next Space makes a loop of its own in another slot, not a layer.
+    void newLoopStopsThePagesLoopAndTheNextSpaceMakesAnother() {
+        const std::string taps = "tap 0.5 0.12 0.12\ntap 1.0 0.12 0.12\ntap 1.5 0.12 0.12\ntap 2.0 0.12 0.12\nkey 2.5 Space\n";
+        testkit::play("page 0.05 1\n" + taps + "end 6\n", [](Session &s) {
+            QVERIFY(s.canNewLoop());
+            const int slot = s.view().parts[0].playing;
+            QVERIFY(slot >= 0);
+            QVERIFY(s.newLoop());
+            QVERIFY(!s.canNewLoop());
+            QCOMPARE(s.view().parts[0].playing, -1);
+            QCOMPARE(int(s.view().parts[0].clips[slot].state) != int(ClipView::Empty), true);
+            QVERIFY(!s.newLoop()); // nothing playing now
+        });
+        // Played on: the second Space is a loop in a slot of its own.
+        int first = -1;
+        bool asked = false;
+        const auto take = testkit::watch("page 0.05 1\n" + taps +
+                                             "tap 5.5 0.37 0.12\ntap 6.0 0.37 0.12\ntap 6.5 0.37 0.12\ntap 7.0 0.37 0.12\n"
+                                             "key 7.5 Space\nend 11\n",
+                                         [&](double t, Session &s) {
+                                             if (t >= 5.0 && !asked) {
+                                                 asked = true;
+                                                 first = s.view().parts[0].playing;
+                                                 QVERIFY(s.newLoop());
+                                             }
+                                         });
+        QVERIFY(first >= 0);
+        const PartView &pv = take.view.parts[0];
+        QVERIFY(pv.playing >= 0);
+        QVERIFY(pv.playing != first);
+        QVERIFY(pv.clips[first].state != ClipView::Empty);
+    }
+
     void everyPageDrawsWithoutTouches() {
         testkit::play("end 0.2\n", [](Session &s) {
             QImage img(1200, 800, QImage::Format_ARGB32);

@@ -51,7 +51,10 @@ public:
         if (!(c.flags & Command::NoRecord)) {
             if (c.type == Command::Move && heldCount > 0)
                 lastShaped = c.t > 0 ? c.t : now();
-            if (c.type == Command::On && heldCount < int(held.size())) {
+            // (An On for a sound already held, a chop going round again,
+            // is the same held sound, not another.)
+            if (c.type == Command::On && heldCount < int(held.size()) &&
+                std::find(held.begin(), held.begin() + heldCount, c.id) == held.begin() + heldCount) {
                 held[size_t(heldCount++)] = c.id;
             } else if (c.type == Command::Off) {
                 for (int i = 0; i < heldCount; ++i)
@@ -188,6 +191,7 @@ public:
         m_s->m_view.brightness = brightness;
     }
     float aspect() const override { return m_s->m_aspect; }
+    bool scripted() const override { return m_s->m_clock != nullptr; }
     void log(const QString &line) override { m_s->dlog("%s", qPrintable(line)); }
     void notice(const QString &text) override {
         m_s->m_notice = text;
@@ -227,6 +231,7 @@ private:
 };
 
 Session::Session(Studio *studio) : m_studio(studio) {
+    std::fill(std::begin(m_pausedSlots), std::end(m_pausedSlots), -1);
     std::vector<PartSpec> parts = makeParts();
     QStringList names;
     std::vector<QColor> colors;
@@ -358,6 +363,25 @@ void Session::setPage(int page) {
     m_page = page;
     Page &next = *m_pages[size_t(m_page)];
     next.spec.control->enter(*next.ctx);
+}
+
+QString Session::pageKey(int page) const {
+    if (page == arrangePage())
+        return QStringLiteral("0");
+    if (page == visualPage())
+        return QStringLiteral("9");
+    if (page >= 0 && page < 8)
+        return QString::number(page + 1);
+    return page == 8 ? QStringLiteral("⇧1") : QString();
+}
+
+int Session::pageNamed(const QString &name) const {
+    for (int i = 0; i < pageCount(); ++i)
+        if (name.compare(pageKey(i), Qt::CaseInsensitive) == 0 || name.compare(pageName(i), Qt::CaseInsensitive) == 0)
+            return i;
+    if (name.compare(QLatin1String("Shift+1"), Qt::CaseInsensitive) == 0 && m_partCount > 8)
+        return 8;
+    return -1;
 }
 
 QString Session::pageName(int page) const {
@@ -495,6 +519,21 @@ bool Session::clickAt(QPointF at) {
     return p.spec.control->click(at, *p.ctx);
 }
 
+bool Session::drop(const QString &what) {
+    std::lock_guard lock(m_lock);
+    Page &showing = *m_pages[size_t(m_page)];
+    if (showing.spec.control->dropped(what, *showing.ctx))
+        return true;
+    for (int i = 0; i < pageCount(); ++i) {
+        Page &p = *m_pages[size_t(i)];
+        if (i != m_page && p.spec.control->dropped(what, *p.ctx)) {
+            setPage(i);
+            return true;
+        }
+    }
+    return false;
+}
+
 void Session::deliver(const Frame &f) {
     m_lastFrame = f.t;
     for (auto &page : m_pages)
@@ -556,12 +595,22 @@ bool Session::key(const KeyEvent &k) {
     const bool ctrl = k.modifiers & Qt::ControlModifier;
     const bool shift = k.modifiers & Qt::ShiftModifier;
     if (k.down && !ctrl) {
+        // The digits reach the first eight parts; 9 and 0 are the picture
+        // and the song, as they were before there was a ninth part. That
+        // one, the Sampler, is Shift+1: the first key again, a row up. It
+        // arrives as "!" on most keyboards; where the digits themselves
+        // are typed with Shift (French), Shift+1 is the 1 and "!" a key
+        // of its own, so the 1 it types stays the Drums.
+        if (m_partCount > 8 && (k.key == Qt::Key_Exclam || (k.key == Qt::Key_1 && shift && k.text != QLatin1String("1")))) {
+            setPage(8);
+            return true;
+        }
         if (k.key >= Qt::Key_1 && k.key <= Qt::Key_9) {
             const int page = k.key - Qt::Key_1;
-            if (page < m_partCount)
-                setPage(page);
-            else if (k.key == Qt::Key_9)
+            if (k.key == Qt::Key_9)
                 setPage(visualPage());
+            else if (page < m_partCount)
+                setPage(page);
             return true;
         }
         if (k.key == Qt::Key_0) {
@@ -607,6 +656,31 @@ bool Session::key(const KeyEvent &k) {
     }
     if (k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
         return false;
+    // Enter plays and pauses everything, on every page, as Ctrl+P does.
+    // What Return did on a page (hold, latch, keep, drop) is Shift+Enter
+    // there now, and the overdub Shift+Return was is F10: the pages still
+    // hear the keys they always did, translated here.
+    if (k.key == Qt::Key_Return || k.key == Qt::Key_Enter) {
+        if (!shift) {
+            if (k.down && !k.repeat)
+                togglePause();
+            return true;
+        }
+        KeyEvent plain = k;
+        plain.modifiers &= ~int(Qt::ShiftModifier);
+        return keyForPage(plain);
+    }
+    if (k.key == Qt::Key_F10) {
+        KeyEvent overdub = k;
+        overdub.key = Qt::Key_Return;
+        overdub.modifiers |= Qt::ShiftModifier;
+        return keyForPage(overdub);
+    }
+    return keyForPage(k);
+}
+
+bool Session::keyForPage(const KeyEvent &k) {
+    std::lock_guard lock(m_lock);
     Page &p = *m_pages[size_t(m_page)];
     // Just after Space, ↑ and ↓ make the loop longer or shorter (the page
     // gets them back once they rest).
@@ -784,9 +858,14 @@ struct Cycle {
     std::vector<double> rounds; // when each whole round began, oldest first
 };
 
-Cycle findCycle(const std::vector<Hit> &hits) {
+// The shortest loop worth making of phrases (the Sampler's chops), in
+// seconds: about a bar at the tempos tracks are made at.
+constexpr double kLeastPhraseLoop = 1.8;
+
+Cycle findCycle(const std::vector<Hit> &hits, bool oneCycle = false) {
     const int n = int(hits.size());
-    if (n < 4)
+    // (A chop that went round three times is a pattern already.)
+    if (n < (oneCycle ? 3 : 4))
         return {};
     // Candidates: the gaps between a recent hit and an earlier one of the
     // same sound.
@@ -877,8 +956,18 @@ Cycle findCycle(const std::vector<Hit> &hits) {
                 ++inPrev;
         }
         // One hit a cycle is a pulse, not a pattern: the phrase decides.
-        if (inPrev <= 1 && inLast <= 1)
-            continue;
+        // Where every hit is a phrase of its own (a chop), one chop held
+        // or played round and round is a pattern too, but only when it is
+        // all that was played lately: one of several chops coming round is
+        // part of a longer pattern.
+        if (inPrev <= 1 && inLast <= 1) {
+            bool alone = oneCycle;
+            for (const Hit &h : hits)
+                if (h.x >= lastStart - 2 * p - tol)
+                    alone &= h.key == hits[size_t(chain.back())].key;
+            if (!alone)
+                continue;
+        }
         if (inLast < 0.6 * inPrev) {
             c.end = lastStart;
             chain.pop_back();
@@ -888,8 +977,12 @@ Cycle findCycle(const std::vector<Hit> &hits) {
         if (chain.empty())
             continue;
         // Two cycles of it when they are short, so the loop keeps the
-        // hand's own feel; one when it is long already.
-        const int take = chain.size() >= 2 && 2 * p <= 6.0 ? 2 : 1;
+        // hand's own feel; one when it is long already. Where each hit is
+        // a phrase, one cycle is the loop, but never under about a bar:
+        // as many cycles as reach that, of those that were played.
+        int take = !oneCycle && chain.size() >= 2 && 2 * p <= 6.0 ? 2 : 1;
+        if (oneCycle)
+            take = std::clamp(int(std::ceil(kLeastPhraseLoop / p - 1e-6)), 1, int(chain.size()));
         c.cycles = take;
         for (int i : chain)
             c.rounds.push_back(hits[size_t(i)].x);
@@ -1068,7 +1161,7 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
                 hits.push_back({o.t, o.key});
         double start = first, stop = nowT;
         bool settled = false;
-        const Cycle cycle = findCycle(hits);
+        const Cycle cycle = findCycle(hits, m_pages[size_t(m_page)]->spec.control->loopsOneCycle());
         if (cycle.cycles > 0) {
             start = cycle.start;
             stop = cycle.end;
@@ -1336,6 +1429,36 @@ int Session::loopBeats(int dir) const {
             return beats;
     }
     return int(std::lround(retakeLength(dir)));
+}
+
+bool Session::canNewLoop() const {
+    std::lock_guard lock(m_lock);
+    const Page &p = *m_pages[size_t(m_page)];
+    return p.part >= 0 && p.part < m_view.partCount &&
+           (m_view.parts[p.part].playing >= 0 || m_view.parts[p.part].queued >= 0);
+}
+
+bool Session::newLoop() {
+    std::lock_guard lock(m_lock);
+    Page &p = *m_pages[size_t(m_page)];
+    if (p.part < 0 || p.part >= m_view.partCount)
+        return false;
+    PartView &pv = m_view.parts[p.part];
+    const int slot = pv.playing >= 0 ? pv.playing : pv.queued;
+    if (slot < 0) {
+        p.ctx->notice(QStringLiteral("No loop plays here: play, then Space makes one"));
+        return false;
+    }
+    // Stopped now, not at the bar: the hands are about to play the new one.
+    p.ctx->stopPart(p.part, true);
+    pv.playing = pv.queued = -1;
+    // The loop just stopped is no longer one to make longer or shorter,
+    // and what was played over it isn't part of what comes next.
+    if (m_lastTake.part == p.part)
+        m_lastTake = {};
+    m_loopSince[p.part] = m_view.beat + std::max(0.0, now() - m_view.time) * m_view.bpm / 60.0;
+    p.ctx->notice(QStringLiteral("NEW LOOP: slot %1 is kept (F%1 plays it again) · play, then Space").arg(slot + 1));
+    return true;
 }
 
 void Session::resizeLoop(int dir) {
@@ -1608,12 +1731,12 @@ void Session::togglePause() {
         ctx.notice(QStringLiteral("Paused · Ctrl+P plays it again"));
         return;
     }
-    uint32_t which = 0;
+    uint64_t which = 0;
     int count = 0;
     for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
         const int slot = m_pausedSlots[p];
         if (slot >= 0 && slot < kClipSlots && m_view.parts[p].clips[slot].state != ClipView::Empty) {
-            which |= uint32_t(slot + 1) << (4 * p);
+            which |= uint64_t(slot + 1) << (4 * p);
             ++count;
         }
     }
@@ -1623,7 +1746,7 @@ void Session::togglePause() {
     }
     StudioMsg m;
     m.kind = StudioMsg::Resume;
-    m.value = int32_t(which);
+    m.d0 = double(which); // four bits a part: whole numbers this size are exact in a double
     m_studio->post(m);
     // The bar the loops start again on: the one coming now (the studio moves
     // its clock on to it at once, as nothing plays).

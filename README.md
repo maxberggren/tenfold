@@ -12,7 +12,9 @@ drops, and a Song page that turns your loops into a track. Everything
 plays in one key and on one clock, and every kick pumps the mix.
 
 All of it is synthesized from scratch, with no samples, at 48 kHz in
-128-frame PipeWire callbacks (2.7 ms).
+128-frame PipeWire callbacks (2.7 ms). The one page that plays recorded
+sound is the Sampler, and the record is yours: drop a song on the window
+and it is chopped on its own beat and played in the track's time and key.
 
 ## Install
 
@@ -84,6 +86,7 @@ pick a page with its number:
 | 6 | Atmos | Five layers (drone, pad, choir, glass, air), one per finger; click to latch, F freezes, S swells. Ten scenes on Q–P, from dawn and cathedral to neon (synthwave) and dub (dub techno), and five more on Shift Q–T: gamelan, raga (a tanpura), mbira, city pop and khoomei (throat singing); L picks the style hand-laid layers play in: classic, neon, dub, tape (lo-fi) or one of the five new scenes. |
 | 7 | FX | Risers that all peak on the next phrase line, impacts, sub drops, sweeps, throws, in fifteen sets from EDM and analog to dub, lo-fi, trap, cinema and ambient, plus amapiano, gamelan, chiptune, phonk and shoegaze. Click to drop now. |
 | 8 | Vocal | Your microphone, heard at once in the headphones. Each finger in the middle is your voice again as a harmony in the key (−8ve to +8ve, the note named in each lane; height the throat, your own on the middle line); touch a word on the tape and it plays again; the left edge is a filter, the right freeze and stutter, the top echo, reverb, radio and crush; the bottom edge is for resting a thumb; click for tape stop. Hard tune, prism, choir, vocoder and robot on ← →, then talk box, throat singing, sitar, gamelan and chopped and screwed (B picks each one's option). Space loops your last phrase as audio, cut in the breaths; Shift+Space layers it. |
+| Shift 1 | Sampler | Drop a sound file on the window, or paste a link to a song (Ctrl+V): it is laid out in five rows of whole bars, cut where its sounds land (↑ ↓ turn the pages of a long one). Tap a chop and it plays in time, each beat of the song one beat of the track; hold and it repeats. Hold a moment, then slide: the chop's start moves; with a second finger beside the first, its end (a tap that skids changes nothing; Delete puts a chop back). Space makes a loop of what you played, as on every page (pressing the pad down does nothing here). S separates the song into drums, bass, vocals and the rest, and ← → choose which plays. See [The Sampler](#the-sampler). |
 | 0 | Arrange | Every part's clips, scenes on the bar, a ten-finger mixer, a tension fader for builds and drops. I writes a whole track from your loops. |
 | 9 | Visual | Everything playing, drawn as a raymarched world you fly through: a city whose towers are the parts, a tunnel, gem crystals, a Menger sponge, a gyroid lattice. One finger steers, two roll and scale the world, three travel between worlds, four turn space inside out, five dial endless variations, two hands do it all at once. See [The visualizer](#the-visualizer). |
 
@@ -123,9 +126,9 @@ pattern on Arp, so layers sound together instead of cutting each other off.
 drop, breakdown, outro) in the band under the lanes. I writes one from your
 loops and plays it; Space records one as you play here (clips, mutes, the
 moves, the fader), and while a song plays Space punches in, replacing the bars
-you play over. P plays it from the top, Ctrl+P pauses. The moves work live on
+you play over. P plays it from the top, Enter (or Ctrl+P) pauses. The moves work live on
 whatever plays: B builds to the end of the phrase with your FX loop leading
-in, Return drops (everything back on the ONE; the payoff of a build or a
+in, Shift+Return drops (everything back on the ONE; the payoff of a build or a
 breakdown), N breaks down, X echoes out. Pick a section (← → while stopped,
 or tap it in the band) and the lanes show what plays in it: tap a loop to
 play it there or take the part out, D doubles the section, Delete removes it,
@@ -137,7 +140,9 @@ done to it, and the same actions show as buttons under the song while
 something is picked. D doubles a loop into a free slot, Shift+← → (or [ ])
 move it, Delete clears it. Pick a second loop of the same part (hold or
 right-click it too) and M layers it into the first, Shift+M chains it after.
-Ctrl+Z takes back each edit.
+Ctrl+Z takes back each edit. Hold Shift and tap another loop of a part
+that is playing, and the two play together from the next bar, layered into
+a free slot (both originals stay); Shift+tap a third and it joins them.
 
 **The same keys on every page.** Letters are each page's own (pads, notes,
 chords, scenes); the rest means the same everywhere, and every one of them
@@ -149,8 +154,9 @@ also has a button in the band under the pad, so the mouse alone can play:
 | ↑ ↓ | octave or register (Drums: the loop longer or shorter, any time; FX: riser length) |
 | Shift ← → | the rhythm: swing, gate, arp rate, FX drop style |
 | - + | tone: darker, brighter |
-| Return | hold or latch (FX: drop; Drums: keep the roll) |
-| Shift Return | overdub |
+| Enter | play and pause everything (as Ctrl+P) |
+| Shift Enter | hold or latch (FX and Song: drop; Drums: keep the roll) |
+| F10 | overdub |
 | § (the key left of 1) | follow the Chords page |
 | Delete | let go, or sounds back |
 | F1–F8 · Shift F1–F8 · Backspace | launch a slot · clear it · stop |
@@ -165,7 +171,7 @@ change anywhere. Ctrl+Shift+Z brings back what Ctrl+Z took back. Ctrl+N twice st
 cleared, the mix set back, nothing left muted.
 
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
-metronome, Ctrl+P pause and play (every loop stops at once; again, the same
+metronome, Enter or Ctrl+P pause and play (every loop stops at once; again, the same
 loops play on together from a downbeat, and a song on the Song page from
 the bar it stopped in), Ctrl+R record to `~/Music/tenfold` (Ctrl+Shift+R, or
 Shift+click Record: with the Visual page's picture, as an `.mp4`), Ctrl+Q quit.
@@ -185,6 +191,58 @@ says whether one opens and what is in it.
 | Ctrl O | open a song |
 | Ctrl Shift O | the song as it was when tenfold last quit |
 
+## The Sampler
+
+Shift+1 is the Sampler (Tab reaches it too, after Vocal). It plays a song you bring: a file dragged onto the window (anything
+`ffmpeg` reads; a WAV needs nothing), or a link on the clipboard pasted
+with Ctrl+V (anything `yt-dlp` fetches; the download is kept in
+`~/.cache/tenfold/sampler`). tenfold finds the song's beat, its bar lines
+and its key, and lays it out on the pad: five rows of four bars, each row
+starting where a section of the song does as far as that can be heard,
+cut on every bar line and every beat a sound lands on (Shift ← → cut it
+finer or coarser: half a beat, a beat, two, a bar, two bars).
+
+A chop plays in the track's time: the song's beat grid is followed beat by
+beat, so each of its beats lasts exactly one of the studio's, whatever
+tempo the song was made at and however a drummer wandered. The stretching
+keeps the song's pitch and never repeats, drops or smears a drum: it
+splices between hits, and aims one last small splice just before each hit
+so the hit itself comes out on the beat. At the song's own tempo nothing is
+stretched at all. So:
+
+- **With nothing made yet**, the studio takes the song's tempo and key: it
+  plays untouched, and every other page is in tune with it.
+- **Into a track already going**, the song is stretched to the tempo
+  (halved or doubled first when that is closer) and moved to the key by the
+  shortest way; the top edge says what is being done (`93.5 → 124 BPM`,
+  `F MIN +2`). The key left of 1 turns the key matching off, `,` and `.`
+  tune by hand, T hands the song's tempo and key to the studio after all.
+
+| Key | Does |
+|---|---|
+| ← → | the stem played: mix, drums, bass, vocals, other (after S) |
+| S | separate the stems (S again calls it off) |
+| ↑ ↓ | the page of the song |
+| Shift ← → | how it is cut |
+| , . · the key left of 1 | tune a semitone · match the studio's key |
+| T · B | the studio takes the song's tempo and key · the bar lines a beat later |
+| Delete | the chop's own start and end back (Shift: every chop's) |
+| Q W E R | the songs loaded (four at most) |
+
+**Stems.** S runs the song through a source-separation model on this
+computer (`src/stems.py`, which travels inside tenfold and is run with
+[`uv`](https://docs.astral.sh/uv/); the first time it fetches the model and
+what it needs, a few hundred megabytes). The stems are kept beside the
+download, so a song separated once has them at once the next time.
+
+**Songs.** A song file names the sampled song (its path or link), the grid
+its loops were made on and every chop you moved, not its sound: opened on
+a computer without the sound it says so, and dropping the song in again
+puts it back in its place with its loops.
+
+`TENFOLD_FFMPEG`, `TENFOLD_YTDLP` and `TENFOLD_UV` name the tools when they
+aren't on the PATH; `TENFOLD_SAMPLER_CACHE` moves the cache.
+
 ## The visualizer
 
 Page 9 turns everything playing into a picture: one hue for the chord at a
@@ -203,7 +261,7 @@ voice is a filament down the middle. With the drums alone it is near black.
 | K · W · T · Z · H · + − | kaleidoscope · warp · trails · zoom · colours · speed |
 | Space · Backspace | another variation · the world back home |
 | P · M · Q · C | autopilot (wanders when left alone; a drop moves it on) · the fingers drawn · quality · CRT glass |
-| Return · Shift Return | the picture in a window of its own · that window full screen (on the other screen, if there is one) |
+| Shift Return · F10 | the picture in a window of its own · that window full screen (on the other screen, if there is one) |
 
 In the second window F11 or a double-click goes full screen and Esc comes
 back. The trackpad keeps playing the page the main window shows, whichever
@@ -246,8 +304,8 @@ tenfold visualize docs/visual/live-set-visual.tf out.mp4 --from 98 --to 120
 ```
 
 `src/offline.h` documents the script language (`page`, `down`, `move`,
-`glide`, `up`, `tap`, `click`, `key`, `tempo`), and `docs/parts/` has demos
-for every page.
+`glide`, `up`, `tap`, `click`, `key`, `tempo`, `drop` for a sound file onto
+the Sampler), and `docs/parts/` has demos for every page.
 
 ## How it's built
 
@@ -283,7 +341,10 @@ bin/test -h                                             # more
 ```
 
 Needs Qt 6.8 or newer (base, declarative, wayland), PipeWire and polkit.
-Noto Sans Mono is compiled in (`src/fonts`, under the OFL).
+Noto Sans Mono is compiled in (`src/fonts`, under the OFL). Three tools
+are used when they are there and missed politely when not: `ffmpeg` (video
+recording; the Sampler reading more than WAV), `yt-dlp` (links pasted into
+the Sampler) and `uv` (its stems).
 
 Every push to master builds and tests tenfold for x86_64 and arm64
 (`.github/workflows/build.yml`): the pacman package on Arch, the bundle with

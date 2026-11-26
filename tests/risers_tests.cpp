@@ -837,7 +837,7 @@ private slots:
     }
 
     // The keyboard: A to G start risers of the keys' length on the phrase
-    // grid, Up makes it longer, Z fires the impact, Return drops.
+    // grid, Up makes it longer, Z fires the impact, Shift+Return drops.
     void keysPlayRisersAndHits() {
         std::vector<VoiceInfo> v;
         testkit::play("page 0 7\nkey 0.3 Up\nkey 0.5 A\nkey 0.6 Z\nend 0.8\n",
@@ -852,7 +852,7 @@ private slots:
         }
         QVERIFY(riser && impact);
         StudioView after;
-        testkit::play(fmt("page 0 7\nkey 0.5 S\nkey %.3f Return\nend %.3f\n", timeOf(5.5), timeOf(8.0) + 0.2),
+        testkit::play(fmt("page 0 7\nkey 0.5 S\nkey %.3f Shift+Return\nend %.3f\n", timeOf(5.5), timeOf(8.0) + 0.2),
                       [&](Session &s) { after = s.view(); });
         QCOMPARE(double(after.parts[kFx].data[risers::pub::LastDrop]), 8.0);
     }

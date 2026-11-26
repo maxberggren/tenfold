@@ -6,6 +6,9 @@ arch=('x86_64' 'aarch64')
 license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'polkit' 'pipewire')
 makedepends=('gcc' 'make')
+optdepends=('ffmpeg: record the picture with the sound; the Sampler reads any sound file, not only WAV'
+            'yt-dlp: the Sampler takes a pasted link to a song'
+            'uv: the Sampler separates a song into stems (runs its model)')
 source=()
 sha256sums=()
 options=('!debug') # one package, not a separate one of debug symbols

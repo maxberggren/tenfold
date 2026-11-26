@@ -6,6 +6,7 @@
 //
 // Global keys, whatever page is showing:
 //   1–8 (and the keypad's)  the parts' pages     0  the arrange page
+//   Shift+1                 the Sampler, the ninth part
 //   9                       the visualizer
 //   Tab / Shift+Tab         next / previous page
 //   Ctrl+↑ / Ctrl+↓         tempo ±1 BPM (with Shift ±5)
@@ -13,6 +14,9 @@
 //   Ctrl+[ / Ctrl+]         mode darker / brighter
 //   Ctrl+M                  metronome
 //   Ctrl+P                  pause every loop at once; again, play them on from a downbeat
+//   Enter                   play and pause every loop (as Ctrl+P); Shift+Enter
+//                           is what Return was on the page (hold, latch, drop),
+//                           F10 overdub
 //   Ctrl+Backspace          stop every clip at the next bar
 //   Ctrl+Z                  take back the newest loop (on any page)
 //   Ctrl+N, Ctrl+N          start over: every loop cleared
@@ -67,6 +71,13 @@ public:
     int page() const { return m_page; }
     void setPage(int page);
 
+    // The key that shows a page, as a tab says it: "1"…"8" for the first
+    // eight parts, "⇧1" for the ninth (the digits ran out: Shift+1), "0"
+    // for the arrange page, "9" for the visualizer. And the page a name or
+    // such a key names ("sampler", "Shift+1", "4"), for scripts; −1 when
+    // there is none.
+    QString pageKey(int page) const;
+    int pageNamed(const QString &name) const;
     QString pageName(int page) const;
     QString pageBlurb(int page) const;
     QColor pageColor(int page) const;
@@ -95,6 +106,10 @@ public:
     static QRectF padRect(QSizeF item);
     static constexpr double kBandHeight = 96; // under the pad: two rows of controls (console::bandRow)
     bool clickAt(QPointF at);
+    // A file dragged onto the window or text pasted into it (a path, a
+    // link): the showing page's if it takes such things, else the first
+    // page that does, which is then shown. False if no page wanted it.
+    bool drop(const QString &what);
     // A right click (the page's menu, if it has one), a left click while
     // that menu is open, and Esc closing it. True if the page used it.
     bool rightClickAt(QPointF at);
@@ -104,6 +119,7 @@ public:
 
     // UI thread. Returns true when the key was used.
     bool key(const KeyEvent &k);
+
 
     // UI thread: take the newest studio view; then paint the showing page.
     void refresh();
@@ -136,6 +152,12 @@ public:
     // nothing can be changed). The window's buttons use these.
     int loopBeats(int dir) const;
     void resizeLoop(int dir); // the buttons: as ↑ / ↓ just after Space, at any time
+    // The window's New loop button: the showing page's loop stops at once,
+    // kept in its slot, so what is played next and looped with Space is a
+    // loop of its own rather than a layer on it. False when the page has
+    // no loop playing (or is no part's).
+    bool newLoop();
+    bool canNewLoop() const;
     void startOver();
     // How many times Ctrl+Z took a loop back, for the tutorial.
     int undos() const { return m_undos; }
@@ -181,6 +203,8 @@ public:
 private:
     double now() const;
     Context &context(int page);
+    // The rest of key(), once Enter and F10 are translated for the page.
+    bool keyForPage(const KeyEvent &k);
 
     Studio *m_studio;
     std::FILE *m_debugLog = nullptr;
@@ -262,7 +286,7 @@ private:
     void handOver();
     QString m_notice;
     // What a pause (or Ctrl+Backspace) stopped: each part's slot, or −1.
-    int m_pausedSlots[kMaxParts] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    int m_pausedSlots[kMaxParts];
     bool m_songPaused = false;
     uint32_t m_noticeSeq = 0;
     double (*m_clock)() = nullptr;

@@ -55,6 +55,8 @@ HEADERS += \
     src/theme.h \
     src/touch.h \
     src/vocal.h \
+    src/sampler.h \
+    src/sampleanalysis.h \
     src/visual.h \
     src/visualizer.h \
     src/recorder.h \
@@ -75,6 +77,7 @@ PARTS = \
     src/atmos.cpp \
     src/risers.cpp \
     src/vocal.cpp \
+    src/sampler.cpp \
     src/arrange.cpp
 
 SOURCES += \

@@ -14,7 +14,7 @@ Rectangle {
     readonly property var globalLines: [
         "1 – 8\t" + qsTr("the parts: drums, bass, chords, lead, arp, atmosphere, effects, vocal"),
         "0\t" + qsTr("the Song page: your loops become a track (sections, builds and drops)"),
-        "9\t" + qsTr("the Visual page: everything playing as a picture, which your fingers reshape; Return there opens it in a window of its own, for a second screen"),
+        "9\t" + qsTr("the Visual page: everything playing as a picture, which your fingers reshape; Shift+Return there opens it in a window of its own, for a second screen"),
         "Tab\t" + qsTr("next page (Shift: previous)"),
         "Space\t" + qsTr("loop what you just played. With nothing else playing, press it where your phrase would start again: that sets the tempo. Over a playing loop, the bars you just played loop from the bar line. Over this page's own loop it layers on top, as one loop"),
         "Take pad / Esc\t" + qsTr("take the trackpad (the button) / give it back"),
@@ -23,7 +23,8 @@ Rectangle {
         "Ctrl [ ]\t" + qsTr("mode, darker or brighter"),
         "Ctrl M\t" + qsTr("metronome"),
         "Ctrl P\t" + qsTr("pause: every loop stops at once. Again (or Play beside the pad): the same loops play on together from a downbeat, and the Song page's song from the bar it stopped in"),
-        "Ctrl ⌫\t" + qsTr("stop every clip at the next bar (Ctrl P plays them again)"),
+        "Enter\t" + qsTr("play and pause: every loop stops at once, and again plays on from a downbeat (as Ctrl P). Shift Enter is what Return was on each page: hold, latch, keep a roll, drop; F10 is overdub"),
+        "Ctrl ⌫\t" + qsTr("stop every clip at the next bar (Enter plays them again)"),
         "↑ ↓ after Space\t" + qsTr("for three seconds, the loop just made longer or shorter (1, 2, 4, 8, 16 bars); it stays once you stop. Loop shorter / Loop longer beside the pad do the same until you make another loop; on Drums, ↑ ↓ do too, at any time"),
         "Shift Space\t" + qsTr("a new loop of what you just played, in place of this part's playing loop"),
         "Ctrl Shift Z\t" + qsTr("bring back what Ctrl Z took back, on the same page"),

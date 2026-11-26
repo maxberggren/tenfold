@@ -288,6 +288,10 @@ private:
     // What a pause (or Ctrl+Backspace) stopped: each part's slot, or −1.
     int m_pausedSlots[kMaxParts];
     bool m_songPaused = false;
+    // The metronome, left on across a pause, is silent until play: the
+    // studio keeps its count, so it comes back on the one.
+    bool m_metronomeHeld = false;
+    void holdMetronome(bool hold);
     uint32_t m_noticeSeq = 0;
     double (*m_clock)() = nullptr;
     visual::VisualPage *m_visual = nullptr;

@@ -1637,6 +1637,7 @@ void Session::clearEverything(bool studio) {
     m_lastTake = {};
     std::fill(std::begin(m_pausedSlots), std::end(m_pausedSlots), -1);
     m_songPaused = false;
+    holdMetronome(false); // nothing is paused any more
     for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p) {
         m_view.parts[p].playing = -1;
         for (auto &c : m_view.parts[p].clips)
@@ -1668,10 +1669,26 @@ void Session::shiftMode(int step) {
 
 void Session::toggleMetronome() {
     std::lock_guard lock(m_lock);
+    // M is the player's say: on is heard at once, paused or not.
+    m_metronomeHeld = false;
     StudioMsg m;
     m.kind = StudioMsg::Metronome;
     m.value = !m_view.metronome;
     m_view.metronome = m.value;
+    m_studio->post(m);
+}
+
+// Silences the metronome for a pause, or lets it sound again; it stays on
+// (and shown on) throughout. Called with m_lock held.
+void Session::holdMetronome(bool hold) {
+    if (hold == m_metronomeHeld)
+        return;
+    m_metronomeHeld = hold;
+    if (!m_view.metronome)
+        return;
+    StudioMsg m;
+    m.kind = StudioMsg::Metronome;
+    m.value = 1 | (hold ? 2 : 0);
     m_studio->post(m);
 }
 
@@ -1728,6 +1745,7 @@ void Session::togglePause() {
         // A loop can't be made longer or shorter across a pause: the clock
         // moves on to a bar line when play comes.
         m_lastTake = {};
+        holdMetronome(true);
         ctx.notice(QStringLiteral("Paused · Ctrl+P plays it again"));
         return;
     }
@@ -1741,6 +1759,7 @@ void Session::togglePause() {
         }
     }
     if (count == 0 && !m_songPaused) {
+        holdMetronome(false);
         ctx.notice(QStringLiteral("Nothing to play yet: play, then Space makes a loop"));
         return;
     }
@@ -1748,6 +1767,8 @@ void Session::togglePause() {
     m.kind = StudioMsg::Resume;
     m.d0 = double(which); // four bits a part: whole numbers this size are exact in a double
     m_studio->post(m);
+    // After the clock has moved on to the bar line: the first click is the one.
+    holdMetronome(false);
     // The bar the loops start again on: the one coming now (the studio moves
     // its clock on to it at once, as nothing plays).
     const double beat = m_view.beat + std::max(0.0, now() - m_view.time) * m_view.bpm / 60.0;

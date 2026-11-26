@@ -119,6 +119,48 @@ private slots:
         QVERIFY(take.finite());
     }
 
+    // The metronome left on is silent through a pause and clicks again on
+    // play: it is still on (and shown on) throughout.
+    void theMetronomeRestsWhileTheSongIsPaused() {
+        const std::string head = std::string(kBeat) + "key 3.0 Ctrl+M\n";
+        const std::string tail = "key 5.3 Ctrl+P\nkey 7.9 Ctrl+P\nend 9.5\n";
+        bool onWhilePaused = true;
+        const auto take = testkit::watch(head + tail, [&](double t, Session &s) {
+            if (t > 5.4 && t < 7.85)
+                onWhilePaused &= s.view().metronome;
+        });
+        QVERIFY(take.error.empty());
+        QVERIFY(onWhilePaused);
+        // Paused: nothing at all, not a click (once the last hits have rung away).
+        QVERIFY2(take.rms(5.8, 7.85) < 0.002, qPrintable(QString::number(take.rms(5.8, 7.85))));
+        // Playing again, the clicks are back over the loop: the same song
+        // without the metronome differs from it by the clicks alone.
+        const auto bare = testkit::play(std::string(kBeat) + tail);
+        QVERIFY(bare.error.empty());
+        const size_t a = size_t(8.0 * 48000), b = std::min({size_t(9.5 * 48000), take.left.size(), bare.left.size()});
+        double d = 0;
+        for (size_t i = a; i < b; ++i)
+            d += std::pow(double(take.left[i]) - bare.left[i], 2);
+        const double clicks = b > a ? std::sqrt(d / double(b - a)) : 0;
+        QVERIFY2(clicks > 0.002, qPrintable(QString::number(clicks)));
+        QVERIFY(take.finite());
+    }
+
+    // With nothing played yet nothing is paused: the metronome counts in.
+    void theMetronomeClicksWithNothingPlaying() {
+        const auto take = testkit::play("page 0 1\nkey 0.2 Ctrl+M\nend 2.5\n");
+        QVERIFY(take.error.empty());
+        QVERIFY2(take.rms(0.5, 2.5) > 0.002, qPrintable(QString::number(take.rms(0.5, 2.5))));
+    }
+
+    // Turned off while paused, it stays off when play comes.
+    void theMetronomeTurnedOffInAPauseStaysOff() {
+        bool on = true;
+        testkit::play(std::string(kBeat) + "key 3.0 Ctrl+M\nkey 5.3 Ctrl+P\nkey 6.0 Ctrl+M\nkey 7.9 Ctrl+P\nend 9\n",
+                      [&](Session &s) { on = s.view().metronome; });
+        QVERIFY(!on);
+    }
+
     void playWithNothingToPlaySaysSo() {
         QString notice;
         testkit::play("page 0 1\nkey 0.5 Ctrl+P\nend 1\n", [&](Session &s) { notice = s.notice(nullptr); });

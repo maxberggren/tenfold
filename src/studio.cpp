@@ -197,6 +197,7 @@ struct Studio::Impl : AudioContext {
     Limiter limiter;
 
     bool metronome = false;
+    bool metronomeHeld = false; // on, but silent while the song is paused
     float clickEnv = 0, clickPhase = 0, clickHz = 1000;
     long lastBeat = -1;
 
@@ -1001,7 +1002,8 @@ void Studio::apply(const StudioMsg &m) {
         ++s.harmonyState.chordSeq;
         break;
     case StudioMsg::Metronome:
-        s.metronome = m.value != 0;
+        s.metronome = (m.value & 1) != 0;
+        s.metronomeHeld = (m.value & 2) != 0;
         break;
     case StudioMsg::CopyClip: {
         // slot → value: the copy keeps the clip's place against the bars.
@@ -1707,10 +1709,14 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         if (s.metronome) {
             const double beat = b0 + double(i) * tr.beatsPerSample;
             const long whole = long(std::floor(beat));
+            // Held by a pause, it keeps count without sounding, so play
+            // starts it on the one rather than on a beat it missed.
             if (whole != s.lastBeat) {
                 s.lastBeat = whole;
-                s.clickEnv = 1.0f;
-                s.clickHz = whole % kBeatsPerBar == 0 ? 1760.0f : 1320.0f;
+                if (!s.metronomeHeld) {
+                    s.clickEnv = 1.0f;
+                    s.clickHz = whole % kBeatsPerBar == 0 ? 1760.0f : 1320.0f;
+                }
             }
             if (s.clickEnv > 1e-4f) {
                 s.clickPhase += s.clickHz / s.rate;

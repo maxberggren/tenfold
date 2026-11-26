@@ -66,7 +66,7 @@ struct StudioMsg {
         SetMaster,   // slot = master param, f = value, d0 = when
         Tempo,       // d0 = bpm
         Key,         // part = root, slot = family, value = brightness
-        Metronome,   // value = on
+        Metronome,   // value: bit 0 on, bit 1 held silent by a pause (still on, so play brings it back)
         Silence,     // part (−1: all), value = hard
         UndoTake,    // part: take back that part's latest take or edit, and play what played before
         RedoTake,    // part: bring back the last step Ctrl+Z took back

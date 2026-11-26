@@ -61,7 +61,6 @@ class Backend : public QObject {
     Q_PROPERTY(QString mode READ mode NOTIFY changed)
     Q_PROPERTY(QString chord READ chord NOTIFY changed)
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
-    Q_PROPERTY(QString position READ position NOTIFY changed)
     Q_PROPERTY(bool metronome READ metronome NOTIFY changed)
     Q_PROPERTY(bool loopsPaused READ loopsPaused NOTIFY changed)
     Q_PROPERTY(int clips READ clips NOTIFY changed)
@@ -141,7 +140,6 @@ public:
     QString mode() const;
     QString chord() const;
     double bpm() const { return m_session->view().bpm; }
-    QString position() const;
     bool metronome() const { return m_session->view().metronome; }
     bool loopsPaused() const { return m_session->paused(); }
     int clips() const;

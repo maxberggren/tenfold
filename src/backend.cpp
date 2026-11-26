@@ -235,12 +235,6 @@ QString Backend::chord() const {
     return QString::fromLatin1(numerals[r]);
 }
 
-QString Backend::position() const {
-    const double beat = std::max(0.0, m_session->view().beat);
-    const long b = long(std::floor(beat));
-    return QStringLiteral("%1.%2").arg(b / kBeatsPerBar + 1).arg(b % kBeatsPerBar + 1);
-}
-
 int Backend::clips() const {
     int n = 0;
     const StudioView &v = m_session->view();

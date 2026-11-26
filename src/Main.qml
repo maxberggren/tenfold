@@ -388,7 +388,7 @@ ApplicationWindow {
                             Column {
                                 spacing: 2
                                 Text {
-                                    text: qsTr("%1 BPM").arg(backend.bpm.toFixed(0)) + "   " + backend.position
+                                    text: qsTr("%1 BPM").arg(backend.bpm.toFixed(0))
                                     color: win.amber
                                     font.family: win.mono
                                     font.pixelSize: 26

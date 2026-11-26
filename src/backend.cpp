@@ -28,6 +28,7 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
     m_touch = platform::openPad(m_session.get());
     m_picker = platform::filePicker([this](const QString &why) { m_session->say(why); });
     m_songs = std::make_unique<SongFiles>(m_session.get(), m_picker.get());
+    m_session->setFilePicker(m_picker.get());
     if (!live) {
         m_session->setClock(&scriptClock);
         // A screenshot neither keeps nor offers a song of its own.

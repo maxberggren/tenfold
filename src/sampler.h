@@ -244,9 +244,23 @@ inline double foldFor(double songBpm, double studioBpm) {
 }
 
 // Where the page publishes its songs for the engine.
+// The microphone while the page records it (RECORD under DROP A SONG
+// HERE): the engine, on the audio thread, writes what comes in to a ring;
+// the page reads it out between frames and keeps the take. One writer, one
+// reader, nothing locked or allocated on the audio thread.
+struct Capture {
+    static constexpr uint64_t kSize = uint64_t(1) << 18; // 5.4 s at 48 kHz between two reads
+    std::atomic<bool> on{false};
+    std::atomic<uint64_t> written{0}; // samples ever written (the ring holds the last kSize)
+    std::atomic<float> rate{48000.0f};
+    std::atomic<float> peak{0.0f};    // the loudest sample since the page last looked
+    std::unique_ptr<float[]> ring{new float[kSize]()};
+};
+
 struct Bank {
     std::atomic<const Sound *> sounds[kSounds + 1] = {};
     std::atomic<uint32_t> epoch{0}; // counts the engine's renders, so the page knows when a song it took away is let go of
+    Capture capture;
 };
 
 // Plays a song at any speed without changing its pitch (or at any pitch

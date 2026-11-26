@@ -15,6 +15,7 @@
 #include <sstream>
 
 #include "sampler.h"
+#include "songfile.h"
 #include "visual.h"
 #include "testkit.h"
 
@@ -188,6 +189,7 @@ private slots:
         QVERIFY(m_dir.isValid());
         // Nothing of the tests' goes into the player's own cache.
         qputenv("TENFOLD_SAMPLER_CACHE", QFile::encodeName(m_dir.filePath(QStringLiteral("cache"))));
+        qputenv("TENFOLD_SAMPLES_DIR", QFile::encodeName(m_dir.filePath(QStringLiteral("samples"))));
         m_song = write(QStringLiteral("beat.wav"), song(100, 24));
         m_slow = write(QStringLiteral("slow.wav"), song(93, 16, 1.5));
     }
@@ -410,6 +412,49 @@ private slots:
         // 9 is still the picture, 0 the song.
         testkit::play("key 0.1 9\nend 0.3\n", [](Session &s) { QCOMPARE(s.page(), s.visualPage()); });
         testkit::play("page 0.1 sampler\nend 0.3\n", [](Session &s) { QCOMPARE(s.page(), kSampler); });
+    }
+
+    // OPEN FILE, under DROP A SONG HERE: the file the dialog picks is read
+    // in, as if it had been dropped.
+    void openFileReadsWhatTheDialogPicks() {
+        struct Picker : FilePicker {
+            QString path;
+            int asked = 0;
+            void openFile(const QString &, std::function<void(const QString &)> done) override {
+                ++asked;
+                done(path);
+            }
+            void saveFile(const QString &, const QString &, const QString &, std::function<void(const QString &)>) override {}
+        } picker;
+        picker.path = m_song;
+        float songs = -1;
+        const auto take = testkit::watch("page 0.05 sampler\nmouse 0.2 0.39 0.31 down\nmouse 0.25 0.39 0.31 up\nend 0.8\n",
+                                         [&](double, Session &s) {
+                                             s.setFilePicker(&picker);
+                                             songs = s.probe(kSampler, QStringLiteral("songs"));
+                                         });
+        QVERIFY2(take.error.empty(), take.error.c_str());
+        QCOMPARE(picker.asked, 1);
+        QCOMPARE(songs, 1.0f);
+    }
+
+    // RECORD, under DROP A SONG HERE: the microphone until RECORD again,
+    // then the take is read in as a song, saved as a WAV.
+    void recordTakesTheMicrophoneAsASong() {
+        QDir(m_dir.filePath(QStringLiteral("samples"))).removeRecursively();
+        float songs = -1;
+        const auto take = testkit::watch("page 0.05 sampler\nmic 0.1 " + m_song.toStdString() +
+                                             "\nmouse 0.3 0.61 0.31 down\nmouse 0.32 0.61 0.31 up\n"
+                                             "mouse 4.3 0.61 0.31 down\nmouse 4.32 0.61 0.31 up\nend 4.8\n",
+                                         [&](double, Session &s) { songs = s.probe(kSampler, QStringLiteral("songs")); });
+        QVERIFY2(take.error.empty(), take.error.c_str());
+        QCOMPARE(songs, 1.0f);
+        const QStringList saved = QDir(m_dir.filePath(QStringLiteral("samples"))).entryList({QStringLiteral("*.wav")}, QDir::Files);
+        QCOMPARE(saved.size(), 1);
+        // About the four seconds between the two presses.
+        const QFileInfo info(m_dir.filePath(QStringLiteral("samples/") + saved.first()));
+        const double secs = double(info.size() - 44) / (48000.0 * 6);
+        QVERIFY2(secs > 3.7 && secs < 4.2, qPrintable(QString::number(secs)));
     }
 
     void aDroppedSongIsReadAndTheStudioTakesItsTempo() {

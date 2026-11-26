@@ -50,6 +50,8 @@
 
 namespace tf {
 
+class FilePicker;
+
 namespace visual {
 class VisualPage;
 }
@@ -111,6 +113,8 @@ public:
     // link): the showing page's if it takes such things, else the first
     // page that does, which is then shown. False if no page wanted it.
     bool drop(const QString &what);
+    // Where a page's file dialog comes from (OPEN FILE on the Sampler).
+    void setFilePicker(FilePicker *picker) { m_picker = picker; }
     // A right click (the page's menu, if it has one), a left click while
     // that menu is open, and Esc closing it. True if the page used it.
     bool rightClickAt(QPointF at);
@@ -249,6 +253,11 @@ private:
     int m_lastPlaying[kMaxParts] = {};
     double m_startOverAsked = -1, m_tutorialAsked = -1;
     std::atomic<uint32_t> m_freshStarts{0};
+    FilePicker *m_picker = nullptr;
+    std::mutex m_pickedLock; // the dialog's answer may come on any thread
+    std::vector<std::pair<int, QString>> m_picked; // (part, path) waiting for idle()
+    void pickFile(int part, const QString &title);
+    void deliverPicked();
     // Every loop, the mix home, each page's song state. Opening a song
     // leaves the studio's part to its own message (studio = false).
     void clearEverything(bool studio = true);

@@ -193,6 +193,7 @@ public:
     float aspect() const override { return m_s->m_aspect; }
     bool scripted() const override { return m_s->m_clock != nullptr; }
     void log(const QString &line) override { m_s->dlog("%s", qPrintable(line)); }
+    void pickFile(const QString &title) override { m_s->pickFile(m_part, title); }
     void notice(const QString &text) override {
         m_s->m_notice = text;
         ++m_s->m_noticeSeq;
@@ -537,6 +538,7 @@ bool Session::drop(const QString &what) {
 
 void Session::deliver(const Frame &f) {
     m_lastFrame = f.t;
+    deliverPicked();
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
@@ -575,9 +577,38 @@ void Session::handOver() {
     deliver(lifted);
 }
 
+void Session::pickFile(int part, const QString &title) {
+    if (!m_picker) {
+        context(m_page).notice(QStringLiteral("No file dialog here: drop a sound file on the window"));
+        return;
+    }
+    // The dialog may answer at once or long after, under this lock or not:
+    // what it picks waits here, and idle() hands it to the page.
+    m_picker->openFile(title, [this, part](const QString &path) {
+        if (path.isEmpty())
+            return;
+        std::lock_guard picked(m_pickedLock);
+        m_picked.push_back({part, path});
+    });
+}
+
+// A file the dialog picked goes to the page that asked, as a drop.
+void Session::deliverPicked() {
+    std::vector<std::pair<int, QString>> picked;
+    {
+        std::lock_guard l(m_pickedLock);
+        picked.swap(m_picked);
+    }
+    for (const auto &[part, path] : picked)
+        for (auto &page : m_pages)
+            if (page->part == part && page->ctx)
+                page->spec.control->dropped(path, *page->ctx);
+}
+
 void Session::idle(double t) {
     std::lock_guard lock(m_lock);
     drainDebug();
+    deliverPicked();
     for (auto &page : m_pages)
         page->spec.control->background(t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];

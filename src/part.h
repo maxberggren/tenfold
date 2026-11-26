@@ -368,6 +368,10 @@ public:
     virtual float aspect() const = 0;
     // A short message the window shows for a moment.
     virtual void notice(const QString &text) = 0;
+    // Asks the player for a file, in the system's open dialog. The path
+    // picked comes back to this page later, as a drop (dropped()); nothing
+    // comes if the dialog is closed or there is no dialog to show.
+    virtual void pickFile(const QString &title) { (void)title; }
     // The session is played by a script on a clock of its own (a render, a
     // screenshot, a test), faster or slower than real time: a page that
     // does long work on a thread of its own (the Sampler reading a song)

@@ -28,6 +28,7 @@
 #include "sampler.h"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -54,6 +55,7 @@
 #include "parts.h"
 #include "recorder.h"
 #include "sampleanalysis.h"
+#include "wav.h"
 
 namespace tf {
 
@@ -76,6 +78,7 @@ public:
 
     void init(float rate) override {
         m_rate = rate;
+        m_bank->capture.rate.store(rate, std::memory_order_relaxed);
         for (Voice &v : m_voices)
             v = Voice();
         m_lpL = m_lpR = m_hpL = m_hpR = 0;
@@ -129,6 +132,20 @@ public:
 
     void render(float *l, float *r, int n, AudioContext &ctx) override {
         m_bank->epoch.fetch_add(1, std::memory_order_release);
+        // RECORD: the microphone into the capture ring, as it arrived.
+        Capture &cap = m_bank->capture;
+        if (cap.on.load(std::memory_order_acquire)) {
+            if (const float *in = ctx.input()) {
+                uint64_t w = cap.written.load(std::memory_order_relaxed);
+                float pk = cap.peak.load(std::memory_order_relaxed);
+                for (int i = 0; i < n; ++i, ++w) {
+                    cap.ring[w & (Capture::kSize - 1)] = in[i];
+                    pk = std::max(pk, std::fabs(in[i]));
+                }
+                cap.peak.store(pk, std::memory_order_relaxed);
+                cap.written.store(w, std::memory_order_release);
+            }
+        }
         m_clock += uint64_t(n);
         const Transport &tr = ctx.transport();
         const Harmony &h = ctx.harmony();
@@ -984,6 +1001,11 @@ public:
             m_loopPlaying = pv.playing;
             m_loopTakes = pv.takes;
         }
+        if (m_recording) {
+            drainTake();
+            if (m_take.size() >= size_t(kMaxSeconds * m_bank->capture.rate.load(std::memory_order_relaxed)))
+                finishTake(ctx); // as long as a song may be
+        }
         Loaded done;
         while (m_importer.take(done))
             arrived(std::move(done), ctx);
@@ -1504,8 +1526,10 @@ private:
             return;
         }
         Song *s = current();
-        if (!s || !s->sound)
+        if (!s || !s->sound) {
+            emptyTap(t, ctx); // OPEN FILE and RECORD, under DROP A SONG HERE
             return;
+        }
         const int row = s->page * kRows + std::clamp(int((1.0f - t.y) * kRows), 0, kRows - 1);
         const int chop = s->layout.find(row, std::clamp(t.x, 0.0f, 0.9999f));
         if (chop < 0)
@@ -2175,6 +2199,103 @@ private:
     void paintRows(QPainter &p, const PaintContext &pc, const Song &s);
     void paintEmpty(QPainter &p, const PaintContext &pc);
 
+    // OPEN FILE and RECORD, under DROP A SONG HERE (where they are on the
+    // pad, 0..1 with y up), and the take while the microphone is recorded.
+    static constexpr float kButtonY0 = 0.27f, kButtonY1 = 0.36f;
+    static constexpr float kOpenX0 = 0.29f, kOpenX1 = 0.49f, kRecX0 = 0.51f, kRecX1 = 0.71f;
+    bool m_recording = false;
+    uint64_t m_recRead = 0;  // how far into the capture ring the take has been read
+    float m_recLevel = 0;    // the take's level, for the meter under RECORD
+    std::vector<float> m_take; // mono, at the capture's rate
+
+    void emptyTap(const Touch &t, ControlContext &ctx) {
+        if (m_importer.busy() || t.y < kButtonY0 || t.y > kButtonY1)
+            return;
+        if (t.x >= kOpenX0 && t.x <= kOpenX1)
+            ctx.pickFile(QStringLiteral("Open a sound file"));
+        else if (t.x >= kRecX0 && t.x <= kRecX1)
+            toggleRecord(ctx);
+    }
+
+    void toggleRecord(ControlContext &ctx) {
+        if (m_recording) {
+            finishTake(ctx);
+            return;
+        }
+        const int in = ctx.studio().input;
+        if (in != StudioView::InputLive) {
+            ctx.notice(in == StudioView::InputConnecting
+                           ? QStringLiteral("The microphone is still connecting: RECORD again in a moment")
+                           : QStringLiteral("No microphone: plug one in (or let tenfold use it), then RECORD"));
+            return;
+        }
+        Capture &cap = m_bank->capture;
+        m_take.clear();
+        m_take.reserve(size_t(cap.rate.load(std::memory_order_relaxed) * 60));
+        m_recRead = cap.written.load(std::memory_order_acquire);
+        cap.peak.store(0, std::memory_order_relaxed);
+        cap.on.store(true, std::memory_order_release);
+        m_recording = true;
+        m_recLevel = 0;
+        ctx.notice(QStringLiteral("Recording the microphone · RECORD again to stop"));
+    }
+
+    // What the engine has written since the last look, into the take.
+    void drainTake() {
+        Capture &cap = m_bank->capture;
+        const uint64_t w = cap.written.load(std::memory_order_acquire);
+        uint64_t r = m_recRead;
+        if (w - r > Capture::kSize) // fallen a whole ring behind: the oldest is gone
+            r = w - Capture::kSize;
+        const size_t limit = size_t(kMaxSeconds * cap.rate.load(std::memory_order_relaxed));
+        for (; r < w && m_take.size() < limit; ++r)
+            m_take.push_back(cap.ring[r & (Capture::kSize - 1)]);
+        m_recRead = w;
+        m_recLevel = std::max(m_recLevel * 0.8f, cap.peak.exchange(0, std::memory_order_relaxed));
+    }
+
+    // RECORD again: the take is written as a WAV beside tenfold's other
+    // recordings and read in as if it had been dropped on the window.
+    void finishTake(ControlContext &ctx) {
+        Capture &cap = m_bank->capture;
+        cap.on.store(false, std::memory_order_release);
+        drainTake();
+        m_recording = false;
+        const float rate = cap.rate.load(std::memory_order_relaxed);
+        if (m_take.size() < size_t(0.3 * rate)) {
+            m_take.clear();
+            ctx.notice(QStringLiteral("Nothing recorded: RECORD, play or sing, then RECORD again"));
+            return;
+        }
+        // Beside tenfold's recordings (TENFOLD_SAMPLES_DIR elsewhere, for the tests).
+        QString dir = qEnvironmentVariable("TENFOLD_SAMPLES_DIR");
+        if (dir.isEmpty()) {
+            dir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+            if (dir.isEmpty())
+                dir = QDir::homePath();
+            dir += QStringLiteral("/tenfold/samples");
+        }
+        QDir().mkpath(dir);
+        const QString path = dir + QStringLiteral("/sample-") +
+                             QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")) + QStringLiteral(".wav");
+        {
+            WavWriter wav;
+            if (!wav.open(path.toStdString(), int(std::lround(rate)))) {
+                m_take.clear();
+                ctx.notice(QStringLiteral("Can't write %1").arg(path));
+                return;
+            }
+            std::vector<float> both(m_take.size() * 2);
+            for (size_t i = 0; i < m_take.size(); ++i)
+                both[2 * i] = both[2 * i + 1] = m_take[i];
+            wav.write(both.data(), m_take.size());
+            wav.close();
+        }
+        m_take.clear();
+        m_take.shrink_to_fit();
+        dropped(path, ctx);
+    }
+
     std::shared_ptr<Bank> m_bank;
     Importer m_importer;
     Song m_songs[kSounds + 1];
@@ -2250,6 +2371,18 @@ void Page::paintEmpty(QPainter &p, const PaintContext &pc) {
     c::text(p, QRectF(pad.left(), pad.center().y() + 14 * u, pad.width(), 30 * u),
             QStringLiteral("it is cut on its own beat and plays in the studio's time: tap a chop, hold to repeat it"),
             c::alpha(pc.color, 0.55f), int(13 * u), false, Qt::AlignCenter);
+    // Or a file picked, or the microphone recorded.
+    const QRectF open = pc.rect(kOpenX0, kButtonY0, kOpenX1, kButtonY1);
+    const QRectF rec = pc.rect(kRecX0, kButtonY0, kRecX1, kButtonY1);
+    c::button(p, open, QStringLiteral("OPEN FILE"), pc.color, false);
+    if (m_recording) {
+        const float rate = m_bank->capture.rate.load(std::memory_order_relaxed);
+        const int secs = int(double(m_take.size()) / std::max(1.0f, rate));
+        c::button(p, rec, QStringLiteral("STOP  %1:%2").arg(secs / 60).arg(secs % 60, 2, 10, QLatin1Char('0')), c::red(), true);
+        c::gauge(p, QRectF(rec.left(), rec.bottom() + 8 * u, rec.width(), 10 * u), std::min(1.0f, m_recLevel), c::red(), 16);
+    } else {
+        c::button(p, rec, QStringLiteral("RECORD"), pc.color, false);
+    }
 }
 
 void Page::paintRows(QPainter &p, const PaintContext &pc, const Song &s) {

@@ -433,6 +433,7 @@ void Session::toggleTutorial() {
     m_tutorialAsked = -1;
     m_startOverAsked = -1;
     clearEverything();
+    ++m_freshStarts;
     context(m_page).setKey(9, 0, 4);
     context(m_page).setTempo(124);
     m_tutorial.start(*this);
@@ -1609,6 +1610,7 @@ void Session::startOver() {
     }
     m_startOverAsked = -1;
     clearEverything();
+    ++m_freshStarts;
     context(m_page).notice(QStringLiteral("Starting over: the next loop sets the tempo"));
 }
 

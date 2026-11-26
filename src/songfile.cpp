@@ -396,8 +396,12 @@ SongFiles::SongFiles(Session *session, FilePicker *picker) : m_session(session),
         m_autosave = state + QStringLiteral("/tenfold/last.tenfold");
 }
 
+// A new song since the file was saved or opened: that file is the old
+// song's, and saving the new one over it would lose it.
+bool SongFiles::startedOver() const { return m_session->freshStarts() != m_pathStarts; }
+
 void SongFiles::save() {
-    if (m_path.isEmpty())
+    if (m_path.isEmpty() || startedOver())
         saveAs();
     else
         saveTo(m_path);
@@ -421,8 +425,10 @@ void SongFiles::saveAs() {
     const StudioView &v = m_session->view();
     const ScaleFamily &f = family(v.family);
     const QString mode = QString::fromUtf8(f.modeNames[std::clamp(v.brightness, 0, f.modeCount - 1)]);
-    const QString name = m_path.isEmpty() ? songFileName(v.bpm, v.root, mode, QDateTime::currentDateTime())
-                                          : was.fileName();
+    // A new song is offered a new name (in the folder the last one went to).
+    const QString name = m_path.isEmpty() || startedOver()
+                             ? songFileName(v.bpm, v.root, mode, QDateTime::currentDateTime())
+                             : was.fileName();
     m_picker->saveFile(QStringLiteral("Save song"), name, folder, [this](const QString &path) {
         if (path.isEmpty())
             return;
@@ -448,6 +454,7 @@ bool SongFiles::saveTo(const QString &path) {
         return false;
     }
     m_path = path;
+    m_pathStarts = m_session->freshStarts();
     m_session->say(QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()));
     return true;
 }
@@ -462,6 +469,7 @@ bool SongFiles::openFrom(const QString &path) {
     // The song kept on quit is opened as a copy: Ctrl+S asks where to put it.
     const bool kept = path == m_autosave;
     m_path = kept ? QString() : path;
+    m_pathStarts = m_session->freshStarts();
     // A song that opened with something left out says so after its name.
     m_session->say((kept ? QStringLiteral("Picked up where you left off · Ctrl+S saves it")
                          : QStringLiteral("Opened %1").arg(QFileInfo(path).fileName())) +

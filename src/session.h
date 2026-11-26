@@ -38,6 +38,7 @@
 #include <QRectF>
 #include <QSizeF>
 #include <QString>
+#include <atomic>
 #include <cstdio>
 #include <memory>
 #include <mutex>
@@ -159,6 +160,9 @@ public:
     bool newLoop();
     bool canNewLoop() const;
     void startOver();
+    // Counts the times the player started a new song (Ctrl+N twice, the
+    // tutorial): a song saved before one is not where the next save goes.
+    uint32_t freshStarts() const { return m_freshStarts; }
     // How many times Ctrl+Z took a loop back, for the tutorial.
     int undos() const { return m_undos; }
     // Whether the window records the mix to a file (the window says so; a
@@ -244,6 +248,7 @@ private:
     double m_loopSince[kMaxParts] = {};
     int m_lastPlaying[kMaxParts] = {};
     double m_startOverAsked = -1, m_tutorialAsked = -1;
+    std::atomic<uint32_t> m_freshStarts{0};
     // Every loop, the mix home, each page's song state. Opening a song
     // leaves the studio's part to its own message (studio = false).
     void clearEverything(bool studio = true);

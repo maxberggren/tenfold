@@ -601,7 +601,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Save song"); key: "Ctrl S"; color: win.cyan
-                                    onClicked: backend.saveSong()
+                                    // Shift-click: save as, as Ctrl+Shift+S does.
+                                    onClicked: modifiers => (modifiers & Qt.ShiftModifier) ? backend.saveSongAs() : backend.saveSong()
                                 }
                                 PanelButton {
                                     Layout.columnSpan: 2

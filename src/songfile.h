@@ -103,7 +103,7 @@ public:
     SongFiles(Session *session, FilePicker *picker);
 
     // Ctrl+S: to the file the song came from or was last saved to; the
-    // first time, the picker asks where.
+    // first time, and after starting over, the picker asks where.
     void save();
     // Ctrl+Shift+S: always asks.
     void saveAs();
@@ -127,6 +127,8 @@ private:
     Session *m_session;
     FilePicker *m_picker;
     QString m_path, m_autosave;
+    uint32_t m_pathStarts = 0; // the session's freshStarts() when m_path was saved or opened
+    bool startedOver() const;
 };
 
 }

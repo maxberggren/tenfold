@@ -279,6 +279,36 @@ private slots:
         });
     }
 
+    // After starting over, Ctrl+S asks again (offering a new name) rather
+    // than saving the new song over the last one's file.
+    void savingAfterStartingOverAsksWhere() {
+        QTemporaryDir dir;
+        FakePicker picker;
+        picker.savePath = dir.filePath(QStringLiteral("first.tenfold"));
+        testkit::play(kSong, [&](Session &s) {
+            SongFiles files(&s, &picker);
+            files.save();
+            QCOMPARE(picker.asked, 1);
+            const QByteArray first = [&] {
+                QFile f(picker.savePath);
+                return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+            }();
+            QVERIFY(!first.isEmpty());
+            s.startOver();
+            s.startOver(); // Ctrl+N twice
+            picker.savePath = dir.filePath(QStringLiteral("second.tenfold"));
+            files.save();
+            QCOMPARE(picker.asked, 2);
+            QCOMPARE(files.path(), picker.savePath);
+            QFile f(dir.filePath(QStringLiteral("first.tenfold")));
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            QCOMPARE(f.readAll(), first); // the old song's file is untouched
+            // And the new file is where Ctrl+S goes from now on.
+            files.save();
+            QCOMPARE(picker.asked, 2);
+        });
+    }
+
     void aNewerSongSaysSoInTheWindow() {
         QTemporaryDir dir;
         const QString path = dir.filePath(QStringLiteral("future.tenfold"));

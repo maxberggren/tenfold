@@ -17,7 +17,8 @@
 // Space loops what was just played, as on every page.
 //
 // S separates the song into drums, bass, vocals and the rest (a model run
-// beside tenfold, see src/stems.py), and ← → then choose which is played.
+// on this computer's cores, see src/stems.h), and ← → then choose which is
+// played.
 // With nothing made yet, the studio takes the song's tempo and key, so it
 // plays untouched and every other page is in tune with it; into a track
 // already going, the song is stretched to the tempo and moved to the key.
@@ -27,6 +28,7 @@
 
 #include "sampler.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -44,6 +46,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <map>
@@ -55,6 +58,7 @@
 #include "parts.h"
 #include "recorder.h"
 #include "sampleanalysis.h"
+#include "stems.h"
 #include "wav.h"
 
 namespace tf {
@@ -546,12 +550,36 @@ QString findTool(const char *env, const QString &name) {
                QDir::homePath() + QStringLiteral("/.local/bin"), QDir::homePath() + QStringLiteral("/.cargo/bin")});
 }
 
-// Where downloads, stems and the separator's script are kept.
+// Where downloads and stems are kept.
 QString cacheRoot() {
     const QString env = qEnvironmentVariable("TENFOLD_SAMPLER_CACHE");
     if (!env.isEmpty())
         return env;
     return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/tenfold/sampler");
+}
+
+// The stem model's weights: TENFOLD_STEMS_MODEL, else where tenfold's
+// packages put them (../share/tenfold for the Arch and Nix packages and
+// the tarball, ../Resources in the macOS app), else in build/ beside a
+// program built there (bin/model), else Hugging Face's cache, where the
+// Python separator tenfold once had left them. "" if none of these has it.
+QString stemModel() {
+    const QString env = qEnvironmentVariable("TENFOLD_STEMS_MODEL");
+    if (!env.isEmpty())
+        return QFileInfo::exists(env) ? env : QString();
+    const QString file = QStringLiteral("htdemucs.safetensors");
+    const QString app = QCoreApplication::applicationDirPath();
+    QString hub = qEnvironmentVariable("HF_HOME");
+    if (hub.isEmpty())
+        hub = QDir::homePath() + QStringLiteral("/.cache/huggingface");
+    for (const QString &path :
+         {app + QStringLiteral("/../share/tenfold/") + file, app + QStringLiteral("/../Resources/") + file,
+          app + QLatin1Char('/') + file, app + QStringLiteral("/../../../") + file,
+          hub + QStringLiteral("/hub/models--adefossez--HTDemucs/snapshots/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/"
+                               "955717e8.safetensors")})
+        if (QFileInfo::exists(path))
+            return QFileInfo(path).canonicalFilePath();
+    return {};
 }
 
 bool isLink(const QString &what) {
@@ -909,40 +937,41 @@ private:
         if (!there()) {
             if (mix.empty())
                 return failed(QStringLiteral("The stems aren't made yet"));
-            const QString uv = findTool("TENFOLD_UV", QStringLiteral("uv"));
-            if (uv.isEmpty())
-                return failed(QStringLiteral("Stems need uv to run the separator (astral.sh/uv), and there is none here"));
+            const QString modelPath = stemModel();
+            if (modelPath.isEmpty())
+                return failed(QStringLiteral("The stem model isn't installed with this tenfold "
+                                             "(htdemucs.safetensors; TENFOLD_STEMS_MODEL names one)"));
             m_separating = true;
-            say(QStringLiteral("STEMS: GETTING READY"));
+            say(QStringLiteral("STEMS: LOADING THE MODEL"));
+            std::string why;
+            const auto model = tf::stems::load(QFile::encodeName(modelPath).toStdString(), &why);
+            if (!model)
+                return failed(QString::fromStdString(why));
+            say(QStringLiteral("STEMS: SEPARATING"));
+            std::vector<int16_t> parts[tf::stems::kSources];
+            tf::stems::Options options;
+            options.cancel = &m_cancel;
+            options.progress = [this](float p) { say(QStringLiteral("STEMS: SEPARATING"), p); };
+            if (!tf::stems::separate(*model, mix.data(), mix.size() / 2, rate, parts, options, &why))
+                return failed(m_cancel ? QStringLiteral("Stems called off") : QString::fromStdString(why));
+            say(QStringLiteral("STEMS: WRITING"), 1.0f);
+            // Under other names until all four are there, so that half a
+            // set is never taken for stems.
             QDir().mkpath(dir);
-            // The separator's script travels inside tenfold; it runs from
-            // the cache, in an environment uv makes for it the first time.
-            const QString script = cacheRoot() + QStringLiteral("/stems.py");
-            QFile::remove(script);
-            if (!QFile::copy(QStringLiteral(":/stems.py"), script))
-                return failed(QStringLiteral("The separator's script isn't in this tenfold"));
-            QFile::setPermissions(script, QFile::ReadOwner | QFile::WriteOwner);
-            const QString mixPath = cache + QStringLiteral("/mix.wav");
-            if (!writeWavStereo(QFile::encodeName(mixPath).toStdString(), mix.data(), mix.size() / 2, rate))
-                return failed(QStringLiteral("No room to write the song for the separator in %1").arg(cache));
-            QString errors;
-            const bool ok = process(
-                uv,
-                {QStringLiteral("run"), QStringLiteral("--script"), script, QStringLiteral("--in"), mixPath,
-                 QStringLiteral("--out"), dir},
-                [&](const QString &l) {
-                    if (l.startsWith(QLatin1String("STAGE ")))
-                        say(QStringLiteral("STEMS: ") + l.mid(6).trimmed().toUpper(), m_progress.load());
-                    else if (l.startsWith(QLatin1String("PROGRESS ")))
-                        say(stageNow(), float(std::clamp(l.mid(9).trimmed().toDouble(), 0.0, 1.0)));
-                },
-                &errors);
-            QFile::remove(mixPath);
-            if (!ok || !there()) {
-                const QString said = lastLine(errors);
-                return failed(m_cancel ? QStringLiteral("Stems called off")
-                                       : said.isEmpty() ? QStringLiteral("The stems couldn't be made")
-                                                        : QStringLiteral("No stems: ") + said);
+            for (int s = Drums; s < kStems; ++s) {
+                int k = 0;
+                while (k < tf::stems::kSources && std::strcmp(tf::stems::sourceName(k), stemFile(s)) != 0)
+                    ++k;
+                const QString part = dir + QStringLiteral("/.") + QLatin1String(stemFile(s)) + QStringLiteral(".part");
+                if (!writeWavStereo(QFile::encodeName(part).toStdString(), parts[k].data(), parts[k].size() / 2, rate))
+                    return failed(QStringLiteral("No room to write the stems in %1").arg(dir));
+            }
+            for (int s = Drums; s < kStems; ++s) {
+                const QString name = dir + QLatin1Char('/') + QLatin1String(stemFile(s));
+                QFile::remove(name + QStringLiteral(".wav"));
+                if (!QFile::rename(dir + QStringLiteral("/.") + QLatin1String(stemFile(s)) + QStringLiteral(".part"),
+                                   name + QStringLiteral(".wav")))
+                    return failed(QStringLiteral("No room to write the stems in %1").arg(dir));
             }
         }
         say(QStringLiteral("STEMS: READING"), 1.0f);
@@ -957,10 +986,6 @@ private:
         }
         out.kind = Loaded::Stems;
         return out;
-    }
-    QString stageNow() const {
-        std::lock_guard lock(m_mutex);
-        return m_stage;
     }
 
     mutable std::mutex m_mutex;
@@ -1422,8 +1447,8 @@ public:
             "song does\n"
             "Left / Right\twhich stem the pad plays: the mix, or once S has separated them, the drums, bass, "
             "vocals or the rest\n"
-            "S\tseparate the stems: the song goes through a model on this computer (the first time it downloads "
-            "itself; it needs uv). S again calls it off\n"
+            "S\tseparate the stems: the song goes through a model on this computer, about a tenth of the song's "
+            "length on eight cores. S again calls it off\n"
             "Up / Down\tthe page of the song: five rows before, five rows on\n"
             "Shift+Left / Shift+Right\thow the song is cut: AUTO (where sounds land), half a beat, a beat, two, a "
             "bar, two bars\n"
@@ -2061,13 +2086,13 @@ private:
             return;
         }
         const Pcm *mix = s.sound->pcm[Mix].load(std::memory_order_acquire);
-        // A script takes stems already made and doesn't wait a minute for
-        // a model, unless it is told to (TENFOLD_STEMS_IN_SCRIPTS: a
+        // A script takes stems already made and doesn't wait for the
+        // model, unless it is told to (TENFOLD_STEMS_IN_SCRIPTS: a
         // render that wants the real thing).
         const bool model = mix && (!ctx.scripted() || qEnvironmentVariableIsSet("TENFOLD_STEMS_IN_SCRIPTS"));
         m_importer.separate(s.serial, s.cache, model ? mix->data : std::vector<int16_t>(), int(s.sound->rate), ctx.scripted());
         if (!ctx.scripted())
-            ctx.notice(QStringLiteral("Separating the stems: this takes a minute or so (S calls it off)"));
+            ctx.notice(QStringLiteral("Separating the stems: about a tenth of the song's length on eight cores (S calls it off)"));
         background(ctx.now(), ctx);
     }
 

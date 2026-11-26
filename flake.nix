@@ -22,7 +22,13 @@
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAll (pkgs: {
+      packages = forAll (pkgs: let
+        # The stem separator's weights (bin/model fetches the same file).
+        model = pkgs.fetchurl {
+          url = "https://huggingface.co/adefossez/HTDemucs/resolve/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/955717e8.safetensors";
+          hash = "sha256-2foUEzz8wDSmdYkjuzqMqfjf0LWCE0ZDu/g/csF1dt0=";
+        };
+      in {
         default = pkgs.stdenv.mkDerivation {
           pname = "tenfold";
           version = "0.5.0";
@@ -41,6 +47,8 @@
             install -Dm644 pkgbuild/tenfold.svg $out/share/icons/hicolor/scalable/apps/tenfold.svg
             install -Dm644 extras/70-tenfold.rules $out/lib/udev/rules.d/70-tenfold.rules
             install -Dm644 LICENSE $out/share/licenses/tenfold/LICENSE
+            install -Dm644 ${model} $out/share/tenfold/htdemucs.safetensors
+            install -Dm644 extras/LICENSE-htdemucs $out/share/licenses/tenfold/LICENSE-htdemucs
             runHook postInstall
           '';
 

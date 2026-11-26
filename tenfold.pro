@@ -57,6 +57,7 @@ HEADERS += \
     src/vocal.h \
     src/sampler.h \
     src/sampleanalysis.h \
+    src/stems.h \
     src/visual.h \
     src/visualizer.h \
     src/recorder.h \
@@ -98,6 +99,7 @@ SOURCES += \
     src/visual.cpp \
     src/visualizer.cpp \
     src/recorder.cpp \
+    src/stems.cpp \
     $$PARTS
 
 # Part headers are not all listed above; this makes edits to them rebuild.

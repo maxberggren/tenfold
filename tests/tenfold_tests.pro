@@ -32,6 +32,9 @@ SOURCES += main.cpp framework_tests.cpp \
 # Kargyraa, the vocal page's Tuvan growl.
 HEADERS += ../src/kargyraa.h
 SOURCES += kargyraa_tests.cpp
+# The stem separator (the network itself is checked when its weights are there).
+HEADERS += ../src/stems.h
+SOURCES += stems_tests.cpp ../src/stems.cpp
 
 # The typeface the pages lay out their buttons with, as in the app.
 RESOURCES += ../src/fonts.qrc

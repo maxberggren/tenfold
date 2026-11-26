@@ -7,7 +7,6 @@
         <file alias="StatusLamp.qml">StatusLamp.qml</file>
         <file alias="TutorialPanel.qml">TutorialPanel.qml</file>
         <file alias="i18n/en.json">i18n/en.json</file>
-        <file alias="stems.py">stems.py</file>
         <file alias="Visualizer.qml">Visualizer.qml</file>
         <file alias="VisualWindow.qml">VisualWindow.qml</file>
         <file alias="visual/scene.frag.qsb">visual/scene.frag.qsb</file>

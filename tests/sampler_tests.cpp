@@ -156,7 +156,7 @@ std::string num(double v) {
 
 class SamplerTests : public QObject {
     Q_OBJECT
-    Q_CLASSINFO("alone", "tenFingersHeldStayCheap")
+    Q_CLASSINFO("alone", "tenFingersHeldStayCheap sPutsTheSongThroughTheModelAndKeepsItsStems")
 
 private:
     QTemporaryDir m_dir;
@@ -1021,6 +1021,35 @@ private slots:
         QVERIFY(take.rms(1.02, 1.4) > 0.02); // the mix
         QVERIFY(take.rms(2.52, 2.9) > 0.02); // the drums
         QVERIFY2(take.rms(4.02, 4.4) < 0.001, qPrintable(QString::number(take.rms(4.02, 4.4)))); // the bass: silence
+    }
+
+    void sPutsTheSongThroughTheModelAndKeepsItsStems() {
+        // The real separator, when its weights are on this machine: S makes
+        // the four stems, leaves them in the song's cache folder, and the
+        // arrows then have them to choose from.
+        QString model = qEnvironmentVariable("TENFOLD_STEMS_MODEL");
+        if (model.isEmpty())
+            model = QStringLiteral(TENFOLD_SRC "/../build/htdemucs.safetensors");
+        if (!QFile::exists(model))
+            QSKIP("no htdemucs.safetensors here (bin/model fetches it)");
+        qputenv("TENFOLD_STEMS_MODEL", QFile::encodeName(model));
+        qputenv("TENFOLD_STEMS_IN_SCRIPTS", "1");
+        const QString path = write(QStringLiteral("separated.wav"), song(120, 4));
+        const QString dir = QString::fromStdString(cacheFolder(path.toStdString())) + QStringLiteral("/stems");
+        testkit::play(drop(path) + "key 1.0 S\nkey 1.5 Right\nend 2\n", [](Session &s) {
+            QCOMPARE(s.probe(kSampler, QStringLiteral("stems")), 1.0f);
+            QCOMPARE(s.probe(kSampler, QStringLiteral("stem")), float(Drums));
+        });
+        qunsetenv("TENFOLD_STEMS_MODEL");
+        qunsetenv("TENFOLD_STEMS_IN_SCRIPTS");
+        for (int st = Drums; st < kStems; ++st) {
+            std::vector<int16_t> pcm;
+            int rate = 0;
+            QVERIFY(readWavStereo(QFile::encodeName(dir + '/' + stemFile(st) + ".wav").toStdString(), pcm, rate));
+            QCOMPARE(rate, kRate);
+            QCOMPARE(pcm.size(), song(120, 4).size());
+        }
+        QVERIFY(QDir(dir).entryList({QStringLiteral(".*.part")}, QDir::Files | QDir::Hidden).isEmpty());
     }
 
     void withoutStemsTheArrowsSayHowToGetThem() {

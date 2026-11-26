@@ -7,8 +7,7 @@ license=('MIT')
 depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'polkit' 'pipewire')
 makedepends=('gcc' 'make')
 optdepends=('ffmpeg: record the picture with the sound; the Sampler reads any sound file, not only WAV'
-            'yt-dlp: the Sampler takes a pasted link to a song'
-            'uv: the Sampler separates a song into stems (runs its model)')
+            'yt-dlp: the Sampler takes a pasted link to a song')
 source=()
 sha256sums=()
 options=('!debug') # one package, not a separate one of debug symbols
@@ -22,6 +21,9 @@ package() {
   cd "$startdir/.."
   install -Dm755 build/tenfold "$pkgdir/usr/bin/tenfold"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # The stem separator's weights (bin/model put them there) and their licence.
+  install -Dm644 build/htdemucs.safetensors "$pkgdir/usr/share/$pkgname/htdemucs.safetensors"
+  install -Dm644 extras/LICENSE-htdemucs "$pkgdir/usr/share/licenses/$pkgname/LICENSE-htdemucs"
   install -Dm644 "$startdir/tenfold.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/tenfold.svg"
   install -Dm644 "$startdir/tenfold.desktop" "$pkgdir/usr/share/applications/tenfold.desktop"
 }

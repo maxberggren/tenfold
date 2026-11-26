@@ -232,19 +232,23 @@ stretched at all. So:
 | Delete | the chop's own start and end back (Shift: every chop's) |
 | Q W E R | the songs loaded (four at most) |
 
-**Stems.** S runs the song through a source-separation model on this
-computer (`src/stems.py`, which travels inside tenfold and is run with
-[`uv`](https://docs.astral.sh/uv/); the first time it fetches the model and
-what it needs, a few hundred megabytes). The stems are kept beside the
-download, so a song separated once has them at once the next time.
+**Stems.** S splits the song into drums, bass, vocals and the rest with
+Demucs's Hybrid Transformer model (htdemucs, Meta, MIT licence), computed
+by tenfold itself on the CPU (`src/stems.cpp`): no Python, no download, no
+graphics card. Its weights (84 MB) come with the packages; a build fetches
+them into `build/` (`bin/model`). A four-minute song takes about 27 seconds
+on an M2 Pro's eight fast cores, and comes out as PyTorch's Demucs would
+have it, to within rounding. The stems are kept beside the download, so a
+song separated once has them at once the next time.
 
 **Songs.** A song file names the sampled song (its path or link), the grid
 its loops were made on and every chop you moved, not its sound: opened on
 a computer without the sound it says so, and dropping the song in again
 puts it back in its place with its loops.
 
-`TENFOLD_FFMPEG`, `TENFOLD_YTDLP` and `TENFOLD_UV` name the tools when they
-aren't on the PATH; `TENFOLD_SAMPLER_CACHE` moves the cache.
+`TENFOLD_FFMPEG` and `TENFOLD_YTDLP` name the tools when they aren't on the
+PATH, `TENFOLD_STEMS_MODEL` the model's weights; `TENFOLD_SAMPLER_CACHE`
+moves the cache.
 
 ## The visualizer
 
@@ -344,10 +348,11 @@ bin/test -h                                             # more
 ```
 
 Needs Qt 6.8 or newer (base, declarative, wayland), PipeWire and polkit.
-Noto Sans Mono is compiled in (`src/fonts`, under the OFL). Three tools
-are used when they are there and missed politely when not: `ffmpeg` (video
-recording; the Sampler reading more than WAV), `yt-dlp` (links pasted into
-the Sampler) and `uv` (its stems).
+Noto Sans Mono is compiled in (`src/fonts`, under the OFL), and the stem
+model's weights are installed beside the program (`extras/LICENSE-htdemucs`).
+Two tools are used when they are there and missed politely when not:
+`ffmpeg` (video recording; the Sampler reading more than WAV) and `yt-dlp`
+(links pasted into the Sampler).
 
 Every push to master builds and tests tenfold for x86_64 and arm64
 (`.github/workflows/build.yml`): the pacman package on Arch, the bundle with

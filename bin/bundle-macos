@@ -34,6 +34,9 @@ app="$out/tenfold.app"
 rm -rf "$out"
 mkdir -p "$out"
 cp -R "$ROOT/build/tenfold.app" "$app"
+# The stem separator's weights and their licence, in Resources where the
+# program looks.
+cp "$ROOT/build/htdemucs.safetensors" "$ROOT/extras/LICENSE-htdemucs" "$app/Contents/Resources/"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" -c "Set :CFBundleVersion $version" \
     "$app/Contents/Info.plist" 2>/dev/null || true
 

@@ -186,6 +186,10 @@ public:
     // one of the loop's, within a thirty-second of it, is the hand playing
     // along with the loop (a doubled hit, heard as a flam) and is left out.
     virtual bool layersDropDoubles() const { return false; }
+    // A slot's clip was given back as it was before a change, or the change
+    // again (Ctrl+Z, Ctrl+Shift+Z): an engine that keeps settings per layer
+    // of a loop lets go of what a layer no longer there had set.
+    virtual void clipChanged(int slot) { (void)slot; }
 };
 
 // A clip slot as the pages see it.
@@ -442,6 +446,11 @@ public:
     // whole loop (a page whose playing is changes of state, like a bed's
     // chord, which a shorter layer would repeat inside the loop).
     virtual bool layersSpanTheLoop() const { return false; }
+    // Space layering onto this page's loop: true if what the page's knobs
+    // did over the loop (its Command::Param moves, a filter swept, grit
+    // turned up) is playing Space keeps, with new notes or without: the
+    // layer then spans the loop and plays the moves back as they were made.
+    virtual bool layersKeepKnobMoves() const { return false; }
     // Whether sound left on with no hand on the page (a riser building, a
     // bed latched) joins playing before a pause to playing after it, when
     // Space looks for the phrase. A bed left on isn't playing: false.

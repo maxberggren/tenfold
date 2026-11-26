@@ -701,6 +701,10 @@ public:
 
     void paint(QPainter &p, const PaintContext &pc) override;
 
+    // The shapers moved over a playing loop are playing: Space keeps them
+    // in it, a filter swept or grit turned up as the hand did it.
+    bool layersKeepKnobMoves() const override { return true; }
+
     QString help() const override {
         return QStringLiteral(
             "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce, moog, upright (or Q W E R T Y U I O P), "

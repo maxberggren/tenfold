@@ -3,6 +3,7 @@
 // scripted performances.
 
 #include <QJsonArray>
+#include <array>
 #include <memory>
 
 #include "bass.h"
@@ -194,6 +195,28 @@ double bandPower(const Rig &r, double lo, double hi) {
         sum += re * re + im * im;
     }
     return 10 * std::log10(sum / double(n) / double(n) + 1e-20);
+}
+
+// The acid riff looped with Space, a two-second bar at 120 BPM, its
+// rounds starting at 2.5, 4.5, 6.5 s…; then the FILTER finger lands at
+// its foot during the second round, climbs to its top and lets go, with
+// no new note played.
+std::string sweptOverTheLoop() {
+    std::string script = "page 0 2\nkey 0.1 R\n";
+    const int degrees[16] = {0, -9, 7, 0, 2, -9, 3, 4, 0, -9, 7, 0, 6, -9, 4, 2};
+    for (int k = 0; k < 16; ++k)
+        if (degrees[k] > -9)
+            script += "tap " + std::to_string(0.5 + k * 0.125) + " " +
+                      std::to_string((degrees[k] + 2 + 0.5) / 12.0) + " 0.25 len=0.1\n";
+    return script + "key 2.5 Space\n"
+                    "down 4.75 50 0.745 0.765\nglide 4.8 6.2 50 0.745 0.995\nup 6.3 50\n";
+}
+// The 1–4 kHz power of the four stretches of 0.35 s from t0.
+std::array<double, 4> sweepAt(const testkit::Take &take, double t0) {
+    std::array<double, 4> db{};
+    for (int k = 0; k < 4; ++k)
+        db[size_t(k)] = bandPower(stretch(take, t0 + 0.35 * k, t0 + 0.35 * (k + 1)), 1000, 4000);
+    return db;
 }
 
 Command noteOn(int id, int degree, int sound, int flags = 0, float vel = 0.8f, float tone = 0.5f) {
@@ -1051,6 +1074,51 @@ private slots:
         QVERIFY2(after > before + 15, qPrintable(QStringLiteral("%1 → %2 dB").arg(before).arg(after)));
         QVERIFY(take.rms(8.5, 10.5) > 0.02);
         QVERIFY(take.view.parts[1].data[bass::PubFilter] > 0.6f);
+    }
+
+    // Space after the sweep keeps it in the loop: the rounds after it open
+    // as the finger did, stretch by stretch, with no finger on the pad, and
+    // the loop's notes are the ones it had (no new slot, the same length).
+    void aFilterSweptOverTheLoopIsKeptWithSpace() {
+        const auto take = testkit::play(sweptOverTheLoop() + "key 6.7 Space\nend 10.5\n");
+        const PartView &bass = take.view.parts[1];
+        QCOMPARE(int(bass.clips[0].state), int(ClipView::Playing));
+        QCOMPARE(int(bass.clips[0].lengthBeats), 4);
+        QCOMPARE(int(bass.clips[1].state), int(ClipView::Empty));
+        const auto live = sweepAt(take, 4.8), kept = sweepAt(take, 8.8), first = sweepAt(take, 2.8);
+        QVERIFY2(live[3] > live[0] + 12, qPrintable(QStringLiteral("live %1 → %2 dB").arg(live[0]).arg(live[3])));
+        for (int k = 0; k < 4; ++k)
+            QVERIFY2(std::fabs(kept[size_t(k)] - live[size_t(k)]) < 2.5,
+                     qPrintable(QStringLiteral("stretch %1: live %2 dB, kept %3 dB (before the sweep %4 dB)")
+                                    .arg(k)
+                                    .arg(live[size_t(k)])
+                                    .arg(kept[size_t(k)])
+                                    .arg(first[size_t(k)])));
+        QVERIFY(take.rms(8.5, 10.5) > 0.02);
+    }
+
+    // Ctrl+Z takes the kept sweep back, filter and all: the next round sounds
+    // as the loop did before it. Saved and opened again, the sweep is in the
+    // loop still.
+    void aKeptSweepUndoesAndSaves() {
+        const auto undone = testkit::play(sweptOverTheLoop() + "key 6.7 Space\nkey 9.0 Ctrl+Z\nend 12.5\n");
+        const auto before = sweepAt(undone, 2.8), after = sweepAt(undone, 10.8);
+        for (int k = 0; k < 4; ++k)
+            QVERIFY2(std::fabs(after[size_t(k)] - before[size_t(k)]) < 1.5,
+                     qPrintable(QStringLiteral("stretch %1: %2 dB before the sweep, %3 dB after Ctrl+Z")
+                                    .arg(k)
+                                    .arg(before[size_t(k)])
+                                    .arg(after[size_t(k)])));
+        int plain = 0;
+        testkit::play(sweptOverTheLoop() + "end 7.0\n", [&](Session &s) { plain = s.view().parts[1].clips[0].events; });
+        testkit::reopen(sweptOverTheLoop() + "key 6.7 Space\nend 7.5\n", 0.5,
+                        [&](Session &was, Session &opened, const QJsonObject &) {
+                            const int kept = was.view().parts[1].clips[0].events;
+                            QVERIFY2(kept > plain + 20, qPrintable(QStringLiteral("%1 events, %2 without the sweep")
+                                                                        .arg(kept)
+                                                                        .arg(plain)));
+                            QCOMPARE(opened.view().parts[1].clips[0].events, kept);
+                        });
     }
 
     // The +12 row never bends: an octave tap that drifts stays in tune.

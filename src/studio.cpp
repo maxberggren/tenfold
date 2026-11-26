@@ -462,8 +462,10 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
         if (lg.beat < b0 - early - eps || lg.beat >= b1 - early - eps)
             continue;
         // A layer holds only what was played over the loop, never the
-        // playing the loop was made from.
-        if (lg.beat < playedFrom - eps && lg.c.type != Command::Param)
+        // playing the loop was made from, its settings included: those are
+        // the loop's already, and a part that keeps them per layer would
+        // set them twice.
+        if (lg.beat < playedFrom - eps)
             continue;
         if (int(clip.events.size()) >= kClipEvents - 64)
             break;
@@ -1056,6 +1058,7 @@ void Studio::apply(const StudioMsg &m) {
         clip.events.assign(b.events.begin(), b.events.end());
         clip.length = b.length;
         clip.anchor = b.anchor;
+        p->engine->clipChanged(b.slot);
         {
             Studio::DebugEvent e;
             e.kind = 4;
@@ -1087,6 +1090,7 @@ void Studio::apply(const StudioMsg &m) {
         clip.events.assign(r.events.begin(), r.events.end());
         clip.length = r.length;
         clip.anchor = r.anchor;
+        p->engine->clipChanged(r.slot);
         if (r.playing >= 0 && p->clips[r.playing].length > 0)
             startClip(*p, s, r.playing, p->clips[r.playing].anchor);
         break;

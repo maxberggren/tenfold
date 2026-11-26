@@ -51,6 +51,8 @@ public:
         if (!(c.flags & Command::NoRecord)) {
             if (c.type == Command::Move && heldCount > 0)
                 lastShaped = c.t > 0 ? c.t : now();
+            if (c.type == Command::Param)
+                lastTurned = c.t > 0 ? c.t : now();
             // (An On for a sound already held, a chop going round again,
             // is the same held sound, not another.)
             if (c.type == Command::On && heldCount < int(held.size()) &&
@@ -216,6 +218,9 @@ public:
     // When a held sound was last let go: a note held and released before
     // Space is played until then, not just from its onset.
     double lastRelease = -1;
+    // When a knob (a shaper, a filter) was last moved: over a playing loop,
+    // on a page that says so, that is playing too, and Space keeps it.
+    double lastTurned = -1;
     void post(const StudioMsg &m) { m_s->m_studio->post(m); }
 
 private:
@@ -1150,6 +1155,40 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     }
     if (first < 0)
         first = earliest;
+    // Knobs moved over this part's own loop since it last changed, on a page
+    // whose knob moves are playing (the Bass page's shapers): they go into
+    // the layer as they were moved, in their place in the loop, so a layer
+    // that holds them spans the loop.
+    bool knobsLayer = false;
+    for (const auto &pg : m_pages)
+        knobsLayer = knobsLayer || (pg->part == part && pg->spec.control->layersKeepKnobMoves());
+    const bool turned = layering && knobsLayer && ctx.lastTurned >= 0 && ctx.lastTurned <= nowT + 0.05 &&
+                        ctx.beatAt(ctx.lastTurned) >= since - 0.02;
+    // A layer ends where the knobs last moved, on the sixteenth after it
+    // (what sits within an eighth of a beat of its end belongs to the next
+    // round): the moves up to there, a loop's worth, are the layer.
+    const double turnedEnd = turned ? std::ceil((ctx.beatAt(ctx.lastTurned) + 0.13) * 4.0) / 4.0 : 0;
+    if (first < 0 && turned) {
+        const int into = m_view.parts[part].playing;
+        const double length = m_view.parts[part].clips[into].lengthBeats;
+        StudioMsg m;
+        m.kind = StudioMsg::TakeBars;
+        m.part = int8_t(part);
+        m.slot = int8_t(slot);
+        m.d0 = turnedEnd - length;
+        m.d1 = turnedEnd;
+        m.value = into + 1;
+        m.d2 = since;
+        dlog("  knob moves only, last at %.4f -> TakeBars %.4f..%.4f layered onto slot %d", ctx.beatAt(ctx.lastTurned),
+             m.d0, m.d1, into + 1);
+        ctx.post(m);
+        m_view.parts[part].recording = slot;
+        handOver();
+        m_lastTake = {part, slot, into, turnedEnd, length, since, now(), m_view.parts[part].takes, false, 0, 0, {}, 0};
+        m_lastTake.base = length;
+        ctx.notice(QStringLiteral("Layered your moves onto slot %1 · ↑↓ longer, shorter").arg(into + 1));
+        return;
+    }
     // (A layer with nothing new played has nothing to add: the loop is what
     // sounds.)
     if (first < 0 && m_view.parts[part].voices > 0 && !(layering && ctx.heldCount == 0)) {
@@ -1344,6 +1383,7 @@ bars:
         bool spans = false;
         for (const auto &pg : m_pages)
             spans = spans || (pg->part == part && pg->spec.control->layersSpanTheLoop());
+        spans = spans || turned;
         if (layerBase > 0 && spans) {
             if (std::fabs(layerBase - length) > 1e-6)
                 dlog("  layer over a %.3f-beat loop spans it (the page's choice)", layerBase);
@@ -1361,6 +1401,9 @@ bars:
             length = fit;
         }
     }
+    // Knobs still moving after the last note: the layer runs on to them.
+    if (turned)
+        end = std::max(end, turnedEnd);
     const int bars = int(std::lround(length / kBeatsPerBar));
     StudioMsg m;
     m.kind = StudioMsg::TakeBars;

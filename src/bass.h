@@ -2778,8 +2778,9 @@ public:
         m_pendingCount = 0;
         // The live shapers are the page's to set and clear; the loops' go.
         if (hard)
-            for (Shape &sh : m_shapeSlot)
-                sh = Shape{};
+            for (auto &slot : m_shapeSlot)
+                for (Shape &sh : slot)
+                    sh = Shape{};
     }
 
     void publish(float *data) override {
@@ -2822,6 +2823,15 @@ public:
         scope(data + PubScope, data[PubScopeCycles]);
     }
 
+    // A layer taken back (or given back): its shapers go with it, and come
+    // back with its events if it does. The loop's first layer keeps its own.
+    void clipChanged(int slot) override {
+        if (slot < 0 || slot >= kClipSlots)
+            return;
+        for (int k = 1; k < kClipLayers; ++k)
+            m_shapeSlot[slot][k] = Shape{};
+    }
+
     int voices() const override {
         int n = int(m_live.active());
         for (const Lane &ln : m_clip)
@@ -2841,9 +2851,11 @@ private:
         // Each layer of a loop is a mono line of its own, on its own lane.
         Lane &lane = replay ? m_clip[size_t(replayLayer(c.id))] : m_live;
         // A loop's shapers belong to its slot, so one loop's wobble never
-        // leaks into the next.
-        Shape &own = replay ? m_shapeSlot[slotOf(c.id)] : m_shapeLive;
-        const Shape eff = replay ? Shape::over(own, m_shapeLive) : m_shapeLive;
+        // leaks into the next, and to the layer that set them: a shaper
+        // moved over the loop and kept with Space bends the loop as the
+        // hand did, on top of the loop's own.
+        Shape &own = replay ? m_shapeSlot[slotOf(c.id)][replayLayer(c.id)] : m_shapeLive;
+        const Shape eff = replay ? Shape::over(slotShape(slotOf(c.id)), m_shapeLive) : m_shapeLive;
         switch (c.type) {
         case Command::On: {
             Note n;
@@ -2896,7 +2908,8 @@ private:
             case ResetSlot:
                 // The page is about to fill a slot: what an old loop there
                 // left set goes with it.
-                m_shapeSlot[indexOf(c.f[0], kClipSlots)] = Shape{};
+                for (Shape &sh : m_shapeSlot[indexOf(c.f[0], kClipSlots)])
+                    sh = Shape{};
                 break;
             default:
                 break;
@@ -2919,7 +2932,15 @@ private:
                 return ln;
         return m_clip[0];
     }
-    const Shape &clipShape() const { return m_shapeSlot[slotOf(clipShown().current().id)]; }
+    // A slot's shapers: its first layer's, with each layer above over them
+    // as the live hand was over the loop when that layer was played.
+    Shape slotShape(int slot) const {
+        Shape sh = m_shapeSlot[slot][0];
+        for (int k = 1; k < kClipLayers; ++k)
+            sh = Shape::over(sh, m_shapeSlot[slot][k]);
+        return sh;
+    }
+    Shape clipShape() const { return slotShape(slotOf(clipShown().current().id)); }
 
     void segment(float *l, float *r, int n, int off0, AudioContext &ctx) {
         uint8_t wraps[kBlock] = {};
@@ -2971,7 +2992,7 @@ private:
     float m_rate = 48000;
     Lane m_live;
     std::array<Lane, kClipLayers> m_clip; // a loop's layers, each its own mono line
-    Shape m_shapeLive, m_shapeSlot[kClipSlots];
+    Shape m_shapeLive, m_shapeSlot[kClipSlots][kClipLayers];
     Pending m_pending[kPending];
     int m_pendingCount = 0;
     Harmony m_harmony;

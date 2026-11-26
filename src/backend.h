@@ -76,6 +76,8 @@ class Backend : public QObject {
     Q_PROPERTY(int visualPage READ visualPage CONSTANT)
     Q_PROPERTY(double recordSeconds READ recordSeconds NOTIFY changed)
     Q_PROPERTY(QString lastRecording READ lastRecording NOTIFY changed)
+    // The bottom bar's "Saved …": the last recording, for five seconds after it lands.
+    Q_PROPERTY(QString savedNotice READ savedNotice NOTIFY changed)
     Q_PROPERTY(double level READ level NOTIFY changed)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
     // The tutorial's step, for its panel.
@@ -152,6 +154,7 @@ public:
     bool recording() const { return m_recording || (m_simulated && m_session->mixRecording()); }
     double recordSeconds() const;
     QString lastRecording() const { return m_lastRecording; }
+    QString savedNotice() const { return m_savedNotice; }
     double level() const { return m_session->view().rms; }
     QString notice() const { return tf::console::keyNames(m_notice); }
 
@@ -267,6 +270,9 @@ private:
     Visualizer *m_visual = nullptr;
     std::unique_ptr<VideoRecorder> m_video;
     QString m_recordPath, m_lastRecording;
+    QString m_savedNotice;
+    QTimer m_savedTimer; // clears m_savedNotice
+    void noteSaved(const QString &path);
     std::thread m_recorder;
     // Every page's background() and idle() at 250 Hz on a thread of its own,
     // so a page scheduling steps a few milliseconds ahead (a held key's roll,

@@ -63,12 +63,28 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
 
 Backend::~Backend() { shutdown(); }
 
+// Where a recording went is worth a glance, not a place in the bar for
+// good: it goes after five seconds (the tutorial still has it).
+void Backend::noteSaved(const QString &path) {
+    m_savedNotice = path;
+    if (!m_savedTimer.isActive() && m_savedTimer.interval() != 5000) {
+        m_savedTimer.setSingleShot(true);
+        m_savedTimer.setInterval(5000);
+        connect(&m_savedTimer, &QTimer::timeout, this, [this] {
+            m_savedNotice.clear();
+            emit changed();
+        });
+    }
+    m_savedTimer.start();
+}
+
 void Backend::setVisualizer(Visualizer *visual, QQmlEngine *engine) {
     m_visual = visual;
     m_video = std::make_unique<VideoRecorder>(engine, visual, m_studio.get());
     connect(m_video.get(), &VideoRecorder::done, this, [this](const QString &mp4, const QString &error) {
         if (!mp4.isEmpty()) {
             m_lastRecording = mp4;
+            noteSaved(mp4);
         } else {
             m_session->say(tr("No video: %1").arg(error));
         }
@@ -439,6 +455,7 @@ void Backend::stopRecording() {
         m_recorder.join();
     m_recording = false;
     m_lastRecording = m_recordPath;
+    noteSaved(m_recordPath);
     m_session->setMixRecording(false);
     // The WAV is whole now: the video catches up to its length and is
     // muxed with it (done() says where it went).

@@ -674,7 +674,7 @@ ApplicationWindow {
                              ? "     " + qsTr("Silent: %1 on the Song page").arg(backend.pagesSilenced[backend.page]) : "")
                           + (backend.pageStatus !== "" ? "     " + backend.pageStatus : "")
                           + (backend.audioOk || backend.audioError === "" ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
-                          + (backend.lastRecording !== "" ? "     " + qsTr("Saved %1").arg(backend.lastRecording) : "")
+                          + (backend.savedNotice !== "" ? "     " + qsTr("Saved %1").arg(backend.savedNotice) : "")
                     color: "#0a0806"
                     font.family: win.mono
                     font.pixelSize: 15

@@ -420,7 +420,8 @@ private slots:
         struct Picker : FilePicker {
             QString path;
             int asked = 0;
-            void openFile(const QString &, std::function<void(const QString &)> done) override {
+            void openFile(const QString &, std::function<void(const QString &)> done) override { done({}); }
+            void openSound(const QString &, std::function<void(const QString &)> done) override {
                 ++asked;
                 done(path);
             }

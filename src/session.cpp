@@ -193,7 +193,7 @@ public:
     float aspect() const override { return m_s->m_aspect; }
     bool scripted() const override { return m_s->m_clock != nullptr; }
     void log(const QString &line) override { m_s->dlog("%s", qPrintable(line)); }
-    void pickFile(const QString &title) override { m_s->pickFile(m_part, title); }
+    void pickSound(const QString &title) override { m_s->pickSound(m_part, title); }
     void notice(const QString &text) override {
         m_s->m_notice = text;
         ++m_s->m_noticeSeq;
@@ -577,14 +577,14 @@ void Session::handOver() {
     deliver(lifted);
 }
 
-void Session::pickFile(int part, const QString &title) {
+void Session::pickSound(int part, const QString &title) {
     if (!m_picker) {
         context(m_page).notice(QStringLiteral("No file dialog here: drop a sound file on the window"));
         return;
     }
     // The dialog may answer at once or long after, under this lock or not:
     // what it picks waits here, and idle() hands it to the page.
-    m_picker->openFile(title, [this, part](const QString &path) {
+    m_picker->openSound(title, [this, part](const QString &path) {
         if (path.isEmpty())
             return;
         std::lock_guard picked(m_pickedLock);

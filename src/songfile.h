@@ -86,6 +86,12 @@ public:
     virtual ~FilePicker() = default;
     // done gets the path picked, or an empty one if the dialog was closed.
     virtual void openFile(const QString &title, std::function<void(const QString &)> done) = 0;
+    // The same, for a sound file (the Sampler's OPEN FILE): the dialog shows
+    // audio, not songs. A picker without its own filter for them asks as
+    // openFile does.
+    virtual void openSound(const QString &title, std::function<void(const QString &)> done) {
+        openFile(title, std::move(done));
+    }
     virtual void saveFile(const QString &title, const QString &name, const QString &folder,
                           std::function<void(const QString &)> done) = 0;
 };

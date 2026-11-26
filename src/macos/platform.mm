@@ -48,6 +48,19 @@ void MacFilePicker::openFile(const QString &title, std::function<void(const QStr
     }];
 }
 
+void MacFilePicker::openSound(const QString &title, std::function<void(const QString &)> done) {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.message = title.toNSString();
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = NO;
+    panel.allowedContentTypes = @[ UTTypeAudio, UTTypeAudiovisualContent ];
+    auto answer = std::make_shared<std::function<void(const QString &)>>(std::move(done));
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+        (*answer)(response == NSModalResponseOK && panel.URL ? QString::fromNSString(panel.URL.path) : QString());
+    }];
+}
+
 void MacFilePicker::saveFile(const QString &title, const QString &name, const QString &folder,
                              std::function<void(const QString &)> done) {
     NSSavePanel *panel = [NSSavePanel savePanel];

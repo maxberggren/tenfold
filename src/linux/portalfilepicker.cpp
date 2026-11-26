@@ -88,6 +88,10 @@ void PortalFilePicker::openFile(const QString &title, std::function<void(const Q
     ask(QStringLiteral("OpenFile"), title, {}, std::move(done));
 }
 
+void PortalFilePicker::openSound(const QString &title, std::function<void(const QString &)> done) {
+    ask(QStringLiteral("OpenFile"), title, {}, std::move(done), true);
+}
+
 void PortalFilePicker::saveFile(const QString &title, const QString &name, const QString &folder,
                                 std::function<void(const QString &)> done) {
     QVariantMap options;
@@ -102,7 +106,7 @@ void PortalFilePicker::saveFile(const QString &title, const QString &name, const
 }
 
 void PortalFilePicker::ask(const QString &method, const QString &title, QVariantMap options,
-                           std::function<void(const QString &)> done) {
+                           std::function<void(const QString &)> done, bool sounds) {
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         if (onError)
@@ -119,7 +123,16 @@ void PortalFilePicker::ask(const QString &method, const QString &title, QVariant
     bus.connect(kService, requestPath, QStringLiteral("org.freedesktop.portal.Request"), QStringLiteral("Response"),
                 request, SLOT(response(uint, QVariantMap)));
 
-    const Filters filters{{QStringLiteral("tenfold songs"), {{0, QStringLiteral("*.tenfold")}}}};
+    // Songs, or sounds (WAV read as it is, the rest through ffmpeg), and
+    // everything else as a second choice.
+    QList<FilterRule> soundRules;
+    for (const char *ext : {"wav", "mp3", "flac", "ogg", "opus", "m4a", "aac", "aif", "aiff", "mp4", "webm"}) {
+        soundRules.append({0, QStringLiteral("*.") + QLatin1String(ext)});
+        soundRules.append({0, QStringLiteral("*.") + QString::fromLatin1(ext).toUpper()});
+    }
+    const Filters filters = sounds ? Filters{{QStringLiteral("Sound files"), soundRules},
+                                             {QStringLiteral("All files"), {{0, QStringLiteral("*")}}}}
+                                   : Filters{{QStringLiteral("tenfold songs"), {{0, QStringLiteral("*.tenfold")}}}};
     options.insert(QStringLiteral("handle_token"), token);
     options.insert(QStringLiteral("modal"), true);
     options.insert(QStringLiteral("filters"), QVariant::fromValue(filters));

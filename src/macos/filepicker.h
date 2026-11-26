@@ -9,6 +9,7 @@ namespace tf {
 class MacFilePicker : public FilePicker {
 public:
     void openFile(const QString &title, std::function<void(const QString &)> done) override;
+    void openSound(const QString &title, std::function<void(const QString &)> done) override;
     void saveFile(const QString &title, const QString &name, const QString &folder,
                   std::function<void(const QString &)> done) override;
 };

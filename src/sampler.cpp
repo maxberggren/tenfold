@@ -2212,7 +2212,7 @@ private:
         if (m_importer.busy() || t.y < kButtonY0 || t.y > kButtonY1)
             return;
         if (t.x >= kOpenX0 && t.x <= kOpenX1)
-            ctx.pickFile(QStringLiteral("Open a sound file"));
+            ctx.pickSound(QStringLiteral("Open a sound file"));
         else if (t.x >= kRecX0 && t.x <= kRecX1)
             toggleRecord(ctx);
     }

@@ -32,6 +32,7 @@ public:
     explicit PortalFilePicker(QObject *parent = nullptr);
 
     void openFile(const QString &title, std::function<void(const QString &)> done) override;
+    void openSound(const QString &title, std::function<void(const QString &)> done) override;
     void saveFile(const QString &title, const QString &name, const QString &folder,
                   std::function<void(const QString &)> done) override;
 
@@ -41,7 +42,7 @@ public:
 
 private:
     void ask(const QString &method, const QString &title, QVariantMap options,
-             std::function<void(const QString &)> done);
+             std::function<void(const QString &)> done, bool sounds = false);
 
     int m_next = 0;
 };

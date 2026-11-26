@@ -256,7 +256,7 @@ private:
     FilePicker *m_picker = nullptr;
     std::mutex m_pickedLock; // the dialog's answer may come on any thread
     std::vector<std::pair<int, QString>> m_picked; // (part, path) waiting for idle()
-    void pickFile(int part, const QString &title);
+    void pickSound(int part, const QString &title);
     void deliverPicked();
     // Every loop, the mix home, each page's song state. Opening a song
     // leaves the studio's part to its own message (studio = false).

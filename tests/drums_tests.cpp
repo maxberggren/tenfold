@@ -330,6 +330,38 @@ testkit::Take minus(const testkit::Take &a, const testkit::Take &b) {
     return d;
 }
 
+// Three claps played over a kick loop, off the grid on purpose (37 ms
+// behind beat 2, 19 ms after the second sixteenth, 41 ms ahead of beat 4,
+// in the bar from 4.5 s), then Space: where each sounds a loop later
+// against where it sounded live, in ms. `before` goes first in the script,
+// `tap` is a tap's options (empty: the C key), and `late` as for playLate.
+std::vector<double> clapOffsets(const std::string &before, const char *tap, double late) {
+    // A bar of kicks on 1 and 3 sets the tempo (120) and loops from 2.5 s,
+    // clear of where the claps go.
+    const std::string loop = "page 0 1\n" + before + "tap 0.5 " + at(drums::Kick) + "\ntap 1.5 " + at(drums::Kick) +
+                             "\nkey 2.5 Space\n";
+    const double claps[] = {5.037, 5.269, 5.959};
+    std::string s = loop;
+    for (double t : claps)
+        s += *tap ? "tap " + std::to_string(t) + " " + at(drums::Clap) + tap + "\n" : "key " + std::to_string(t) + " C\n";
+    const auto with = playLate(s + "key 6.2 Space\nend 9.2\n", late);
+    const auto without = playLate(loop + "end 9.2\n", late);
+    const double loopSecs = 4 * 60.0 / with.view.bpm;
+    if (!with.error.empty() || std::fabs(loopSecs - 2.0) > 1e-6)
+        return {};
+    // What the claps added: each where it first sounds live, and a loop later.
+    const auto added = minus(with, without);
+    std::vector<double> out;
+    for (double t : claps) {
+        const double live = firstOnset(added, t - 0.01, t + 0.04);
+        const double kept = firstOnset(added, t + loopSecs - 0.07, t + loopSecs + 0.07);
+        if (live < 0 || kept < 0)
+            return {};
+        out.push_back((kept - loopSecs - live) * 1000.0);
+    }
+    return out;
+}
+
 }
 
 class DrumsTests : public QObject {
@@ -500,51 +532,43 @@ private slots:
 
     // --- timing --------------------------------------------------------------
 
-    // A clap played over the loop, off the grid on purpose, is kept where
-    // it was heard: Space keeps the hand's timing, laid back or pushed, and
+    // Quantise off (Ctrl+G), a clap played over the loop, off the grid on
+    // purpose, is kept where it was heard: Space keeps the hand's timing,
+    // laid back or pushed, and
     // the loop plays each clap on its next pass a loop later to within a
     // couple of milliseconds. Whether it came from a key, a firm tap or a
     // light one (which waits a frame or two to read how hard it pressed),
     // and whether the touch reached the studio at once or 15 ms on.
     void aClapOverTheLoopIsKeptWhereItWasHeard() {
-        // A bar of kicks on 1 and 3 sets the tempo (120) and loops from 2.5 s,
-        // clear of where the claps go.
-        const std::string loop =
-            "page 0 1\ntap 0.5 " + at(drums::Kick) + "\ntap 1.5 " + at(drums::Kick) + "\nkey 2.5 Space\n";
-        // In the bar from 4.5 s: a clap 37 ms behind beat 2, one 19 ms after
-        // the second sixteenth, one 41 ms ahead of beat 4; Space keeps them.
-        const double claps[] = {5.037, 5.269, 5.959};
         struct Way {
             const char *what, *tap;
         };
         const Way ways[] = {{"key", ""}, {"firm tap", " p=0.6 len=0.06"}, {"light tap", " p=0.3 len=0.06"}};
         double worst = 0;
-        for (const Way &w : ways) {
+        for (const Way &w : ways)
             for (double late : {0.0, 0.015}) {
-                std::string s = loop;
-                for (double t : claps)
-                    s += *w.tap ? "tap " + std::to_string(t) + " " + at(drums::Clap) + w.tap + "\n"
-                                : "key " + std::to_string(t) + " C\n";
-                const auto with = playLate(s + "key 6.2 Space\nend 9.2\n", late);
-                const auto without = playLate(loop + "end 9.2\n", late);
-                QVERIFY(with.error.empty());
-                const double loopSecs = 4 * 60.0 / with.view.bpm;
-                QVERIFY(std::fabs(loopSecs - 2.0) < 1e-6);
-                const auto added = minus(with, without);
-                // Each clap where it first sounds live, and a loop later.
+                const auto off = clapOffsets("key 0.1 Ctrl+G\n", w.tap, late);
+                QCOMPARE(int(off.size()), 3);
                 QString line = QStringLiteral("%1, %2 ms late:").arg(w.what).arg(late * 1000);
-                for (double t : claps) {
-                    const double live = firstOnset(added, t - 0.01, t + 0.04);
-                    const double kept = firstOnset(added, t + loopSecs - 0.07, t + loopSecs + 0.07);
-                    QVERIFY(live > 0 && kept > 0);
-                    const double off = (kept - loopSecs - live) * 1000.0;
-                    line += QStringLiteral(" %1").arg(off, 0, 'f', 1);
-                    worst = std::max(worst, std::fabs(off));
+                for (double o : off) {
+                    line += QStringLiteral(" %1").arg(o, 0, 'f', 1);
+                    worst = std::max(worst, std::fabs(o));
                 }
                 qInfo("%s ms (the loop against the live clap)", qPrintable(line));
             }
-        }
         QVERIFY2(worst < 2.0, qPrintable(QString::number(worst)));
+    }
+
+    // Quantise on, as it is to begin with, the same claps are tightened:
+    // each kept most of the way to its sixteenth, so the one laid back comes
+    // earlier and the one pushed later.
+    void quantiseTightensAKeptClapToTheSixteenth() {
+        const auto off = clapOffsets("", "", 0.0);
+        QCOMPARE(int(off.size()), 3);
+        // 37 ms behind beat 2, 19 ms after a sixteenth, 41 ms ahead of beat 4.
+        QVERIFY2(off[0] < -15 && off[0] > -37, qPrintable(QString::number(off[0])));
+        QVERIFY2(off[1] < -6 && off[1] > -19, qPrintable(QString::number(off[1])));
+        QVERIFY2(off[2] > 15 && off[2] < 41, qPrintable(QString::number(off[2])));
     }
 
     void aHeldPadRollsLockedToTheGrid() {

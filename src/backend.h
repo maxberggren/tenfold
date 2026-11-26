@@ -62,6 +62,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString chord READ chord NOTIFY changed)
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
     Q_PROPERTY(bool metronome READ metronome NOTIFY changed)
+    Q_PROPERTY(bool quantise READ quantise NOTIFY changed)
     Q_PROPERTY(bool loopsPaused READ loopsPaused NOTIFY changed)
     Q_PROPERTY(int clips READ clips NOTIFY changed)
     Q_PROPERTY(int voices READ voices NOTIFY changed)
@@ -143,6 +144,7 @@ public:
     QString chord() const;
     double bpm() const { return m_session->view().bpm; }
     bool metronome() const { return m_session->view().metronome; }
+    bool quantise() const { return m_session->view().quantise; }
     bool loopsPaused() const { return m_session->paused(); }
     int clips() const;
     int voices() const;
@@ -190,6 +192,7 @@ public:
     // Record with the picture (needs ffmpeg; without it, the sound alone and a notice).
     Q_INVOKABLE void toggleVideoRecording();
     Q_INVOKABLE void toggleMetronome() { m_session->toggleMetronome(); }
+    Q_INVOKABLE void toggleQuantise() { m_session->toggleQuantise(); }
     Q_INVOKABLE void togglePause() { m_session->togglePause(); }
     Q_INVOKABLE void shiftTempo(double d) { m_session->shiftTempo(d); }
     Q_INVOKABLE void shiftRoot(int fifths) { m_session->shiftRoot(fifths); }

@@ -28,7 +28,7 @@ constexpr qint64 kMaxFileBytes = 512ll * 1024 * 1024;
 // song's settings, then the parts, and in each the small things before the
 // long lists. Keys not named here follow, alphabetically.
 const char *const kKeyOrder[] = {
-    "tenfold", "name", "tempo", "key", "metronome", "page", "master", "slot", "beats", "anchor",
+    "tenfold", "name", "tempo", "key", "metronome", "quantise", "page", "master", "slot", "beats", "anchor",
     "at", "type", "flags", "layer", "id", "i", "f", "root", "family", "brightness",
     "mix", "settings", "playing", "clips", "audio", "events", "parts", "song",
 };

@@ -161,6 +161,45 @@ private slots:
         QVERIFY(!on);
     }
 
+    // Quantise is on until the player turns it off (Ctrl+G, or the button),
+    // says so, and is kept with the song; a song saved before there was a
+    // choice opens with it on, as it was quantised.
+    void quantiseIsOnUntilThePlayerTurnsItOffAndKeptWithTheSong() {
+        bool on = false;
+        testkit::play("page 0 1\nend 0.2\n", [&](Session &s) { on = s.view().quantise; });
+        QVERIFY(on);
+        QString notice;
+        testkit::play("page 0 1\nkey 0.1 Ctrl+G\nend 0.3\n", [&](Session &s) { notice = s.notice(nullptr); });
+        QVERIFY2(notice.startsWith(QStringLiteral("Quantise off")), qPrintable(notice));
+        bool saved = false, kept = false;
+        testkit::reopen("page 0 1\nkey 0.1 Ctrl+G\nend 0.3\n", 0.2,
+                        [&](Session &before, Session &opened, const QJsonObject &doc) {
+                            saved = !before.view().quantise && doc.contains(QStringLiteral("quantise")) &&
+                                    !doc.value(QStringLiteral("quantise")).toBool(true);
+                            kept = !opened.view().quantise;
+                        });
+        QVERIFY(saved);
+        QVERIFY(kept);
+        // An older song, without the key: quantised, as it always was.
+        bool old = false;
+        testkit::play("page 0 1\nkey 0.1 Ctrl+G\nend 0.3\n", [&](Session &before) {
+            QString error;
+            QJsonObject doc = before.saveSong(&error);
+            doc.remove(QStringLiteral("quantise"));
+            Studio studio(48000.0f);
+            Session opened(&studio);
+            opened.setClock(&scriptClock);
+            QVERIFY2(opened.openSong(doc, &error), qPrintable(error));
+            opened.refresh();
+            old = opened.view().quantise;
+        });
+        QVERIFY(old);
+        bool onAgain = false;
+        testkit::play("page 0 1\nkey 0.1 Ctrl+G\nkey 0.2 Ctrl+G\nend 0.4\n",
+                      [&](Session &s) { onAgain = s.view().quantise; });
+        QVERIFY(onAgain);
+    }
+
     void playWithNothingToPlaySaysSo() {
         QString notice;
         testkit::play("page 0 1\nkey 0.5 Ctrl+P\nend 1\n", [&](Session &s) { notice = s.notice(nullptr); });

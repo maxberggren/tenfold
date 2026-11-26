@@ -74,7 +74,8 @@ struct Command {
         User = 16,
     };
     enum Flags : uint16_t {
-        Quantize = 1, // a User command that is an onset (Space finds the phrase from them)
+        Quantize = 1, // a User command that is an onset: Space finds the phrase from them, and
+                      // Quantise (unless the player turns it off) pulls them to the grid
         NoRecord = 2, // never goes into a clip (a page's own preview, a metronome)
         Continue = 4, // an On that carries on a sound already heard (a voice handed over at a
                       // bar line, a latched layer re-asserted): recorded, but not an onset, so
@@ -252,6 +253,7 @@ struct StudioView {
     double time = 0;        // touch-clock seconds at the published sample
     uint64_t sample = 0;
     bool metronome = false;
+    bool quantise = true; // Space and overdubs tighten onsets to the sixteenths; off, loops keep them as heard
     int root = 9, family = 0, brightness = 4;
     bool just = false;
     int chordRoot = 0, chordCount = 3;
@@ -301,12 +303,13 @@ public:
     virtual double now() const = 0; // the touch clock
 
     // Clips. Their lengths are 1, 2, 4, 8, 16 or 32 beats and they start on
-    // the beat; what is in them stays where it was heard, unless a page asks
-    // otherwise.
+    // the beat; their onsets are tightened toward the sixteenth while
+    // Quantise is on (StudioView::quantise), and stay where they were heard
+    // when the player turns it off.
     // Turns what this part played between t0 and t1 into a loop in a slot
     // and plays it at once, in time with what was just played (the
     // tap-then-hold gesture). quantize 0..1 pulls onsets to the straight
-    // 16th grid; every page passes 0, so the loop keeps what was heard.
+    // 16th grid: 0 keeps what was heard (a page's own swung groove too).
     virtual void capture(int slot, double t0, double t1, float quantize = 0.0f) = 0;
     // What this part played between beats b0 and b1 (bar lines, b1 now or
     // soon) becomes a loop at b1, exactly as Space makes one: held notes are

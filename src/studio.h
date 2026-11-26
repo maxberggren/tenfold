@@ -80,6 +80,7 @@ struct StudioMsg {
                      // nothing playing, nothing to take back
         Resume,      // d0 = for each part four bits, the slot it plays again + 1 (0: none), as a
                      // whole number: a pause ends, from the top of a bar, at once if nothing plays
+        Quantise,    // value = on: Space and overdubs pull onsets toward the sixteenths
     };
     Kind kind = ToPart;
     int8_t part = 0;

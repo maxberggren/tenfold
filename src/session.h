@@ -13,6 +13,9 @@
 //   Ctrl+← / Ctrl+→         key down / up a fifth
 //   Ctrl+[ / Ctrl+]         mode darker / brighter
 //   Ctrl+M                  metronome
+//   Ctrl+G                  quantise, on to begin with: Space and overdubs
+//                           tighten hits to the sixteenths (off: loops keep
+//                           the playing as it was heard)
 //   Ctrl+P                  pause every loop at once; again, play them on from a downbeat
 //   Enter                   play and pause every loop (as Ctrl+P); Shift+Enter
 //                           is what Return was on the page (hold, latch, drop),
@@ -140,6 +143,7 @@ public:
     void shiftRoot(int fifths);
     void shiftMode(int step);
     void toggleMetronome();
+    void toggleQuantise();
     void stopAll();
     // Pause and play (Ctrl+P, the window's button): every loop stops at
     // once, remembered; play brings the same loops back, together, from the

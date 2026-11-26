@@ -671,6 +671,7 @@ bool Session::key(const KeyEvent &k) {
         case Qt::Key_BracketLeft: shiftMode(1); return true;
         case Qt::Key_BracketRight: shiftMode(-1); return true;
         case Qt::Key_M: toggleMetronome(); return true;
+        case Qt::Key_G: toggleQuantise(); return true;
         case Qt::Key_Backspace: stopAll(); return true;
         case Qt::Key_P: togglePause(); return true;
         case Qt::Key_Z:
@@ -1264,8 +1265,8 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
         dlog("  decided (free, sets the tempo): first=%.4f start=%.4f end=%.4f -> capture %.4f s (%.4f beats at the old "
              "tempo) settled=%d hits=%d slot=%d",
              first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
-        // As played, not pulled to a grid: each hit where it was heard.
-        ctx.capture(slot, start, stop, 0.0f);
+        // Tightened while quantise is on; off, each hit where it was heard.
+        ctx.capture(slot, start, stop, m_view.quantise ? 0.85f : 0.0f);
         m_view.parts[part].recording = slot;
         handOver();
         m_lastTake = {};
@@ -1575,7 +1576,7 @@ bool Session::adjustTake(int dir) {
         const long r = long(lt.rounds.size()) - n;
         m.d0 = r >= 0 ? lt.rounds[size_t(r)] : lt.rounds.front() + double(r) * lt.unit;
         m.d1 = lt.end;
-        m.f = 0.0f; // as played, as the take it redoes
+        m.f = m_view.quantise ? 0.85f : 0.0f; // as the take it redoes
         ctx.post(m);
         lt.n = n;
         dlog("RECAPTURE part=%d slot=%d %d rounds of %.4f s", lt.part, lt.slot + 1, n, lt.unit);
@@ -1755,6 +1756,17 @@ void Session::toggleMetronome() {
     m_studio->post(m);
 }
 
+void Session::toggleQuantise() {
+    std::lock_guard lock(m_lock);
+    StudioMsg m;
+    m.kind = StudioMsg::Quantise;
+    m.value = !m_view.quantise;
+    m_view.quantise = m.value;
+    m_studio->post(m);
+    context(m_page).notice(m_view.quantise ? QStringLiteral("Quantise on: Space and overdubs tighten hits to the sixteenths")
+                                           : QStringLiteral("Quantise off: loops keep your timing as you played it"));
+}
+
 // Silences the metronome for a pause, or lets it sound again; it stays on
 // (and shown on) throughout. Called with m_lock held.
 void Session::holdMetronome(bool hold) {
@@ -1911,6 +1923,7 @@ QJsonObject Session::saveSong(QString *error) {
         QString::fromUtf8(fam.modeNames[std::clamp(m_view.brightness, 0, fam.modeCount - 1)]));
     doc[QStringLiteral("key")] = key;
     doc[QStringLiteral("metronome")] = m_view.metronome;
+    doc[QStringLiteral("quantise")] = m_view.quantise;
     doc[QStringLiteral("page")] = m_pages[size_t(m_page)]->spec.name;
     QJsonObject master;
     for (int i = 0; i < MasterCount; ++i)
@@ -2085,6 +2098,9 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
     ctx.setKey(root, fam, bright);
     if (doc.value(QStringLiteral("metronome")).toBool() != m_view.metronome)
         toggleMetronome();
+    // A song saved before there was a choice was quantised.
+    if (doc.value(QStringLiteral("quantise")).toBool(true) != m_view.quantise)
+        toggleQuantise();
     const QJsonObject master = doc.value(QStringLiteral("master")).toObject();
     static const float kMasterHome[MasterCount] = {0.35f, 0.1f, 0.5f, 0.35f, 0.5f, 0.0f, 0.8f};
     for (int i = 0; i < MasterCount; ++i)

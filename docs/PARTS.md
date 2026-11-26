@@ -63,7 +63,10 @@ about 60 times a second and the page reads as `pc.view->data`.
   clip left on when it stops. Everything plays where it was heard: an onset
   laid back or pushed stays so, and one that reached the studio late (it
   plays at once) is kept where it played, not at the earlier time it
-  carries. `Move` and `Param` too, so knob sweeps and slides loop.
+  carries. `Move` and `Param` too, so knob sweeps and slides loop. While
+  Quantise is on (it is to begin with; Ctrl+G turns it off) onsets (`On`,
+  or any command flagged `Command::Quantize`) are pulled toward the 16th
+  grid; off, they stay as played, laid back or pushed.
 - **A mixer channel per part:** level, pan, DJ filter, reverb and echo sends,
   pump depth, mute and solo. Set the defaults in `PartSpec::channel`. Any page
   can change any channel with `ctx.setChannel(part, Channel, value)`. The room

@@ -22,6 +22,7 @@ Rectangle {
         "Ctrl ← →\t" + qsTr("key, by fifths"),
         "Ctrl [ ]\t" + qsTr("mode, darker or brighter"),
         "Ctrl M\t" + qsTr("metronome"),
+        "Ctrl G\t" + qsTr("quantise, on to begin with: Space and overdubs tighten hits to the sixteenths. Off (Quantise beside the pad), a loop keeps your timing as you played it, laid back or pushed"),
         "Ctrl P\t" + qsTr("pause: every loop stops at once. Again (or Play beside the pad): the same loops play on together from a downbeat, and the Song page's song from the bar it stopped in"),
         "Enter\t" + qsTr("play and pause: every loop stops at once, and again plays on from a downbeat (as Ctrl P). Shift Enter is what Return was on each page: hold, latch, keep a roll, drop; F10 is overdub"),
         "Ctrl ⌫\t" + qsTr("stop every clip at the next bar (Enter plays them again)"),

@@ -198,6 +198,9 @@ struct Studio::Impl : AudioContext {
 
     bool metronome = false;
     bool metronomeHeld = false; // on, but silent while the song is paused
+    // On (until the player turns it off), Space and overdubs pull onsets
+    // toward the sixteenths; off, a loop keeps the playing as it was heard.
+    bool quantise = true;
     float clickEnv = 0, clickPhase = 0, clickHz = 1000;
     long lastBeat = -1;
 
@@ -747,9 +750,13 @@ void Studio::apply(const StudioMsg &m) {
             if (p->overdub && p->playing >= 0) {
                 auto &clip = p->clips[p->playing];
                 if (int(clip.events.size()) < kClipEvents) {
-                    // As played, not pulled to a grid: the loop plays it
-                    // where it was heard.
-                    const double pos = floorMod(b - clip.anchor, clip.length);
+                    // Quantise on: most of the way to the nearest
+                    // sixteenth. Off: as played, where it was heard.
+                    double pos = floorMod(b - clip.anchor, clip.length);
+                    if (s.quantise && (c.type == Command::On || (c.flags & Command::Quantize))) {
+                        const double target = std::round(pos / 0.25) * 0.25;
+                        pos = floorMod(pos + 0.85 * (target - pos), clip.length);
+                    }
                     // Kept sorted; the capacity is reserved, so this never allocates.
                     auto at = std::upper_bound(clip.events.begin(), clip.events.end(), pos,
                                                [](double v, const PartState::Event &e) { return v < e.pos; });
@@ -1010,6 +1017,9 @@ void Studio::apply(const StudioMsg &m) {
     case StudioMsg::Metronome:
         s.metronome = (m.value & 1) != 0;
         s.metronomeHeld = (m.value & 2) != 0;
+        break;
+    case StudioMsg::Quantise:
+        s.quantise = m.value != 0;
         break;
     case StudioMsg::CopyClip: {
         // slot → value: the copy keeps the clip's place against the bars.
@@ -1408,8 +1418,9 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 const bool layering = layerInto >= 0 && layerInto != slot && p.clips[layerInto].length > 0;
                 if (p.recAudio)
                     makeAudioClip(p, s, slot, p.recStart, end, p.recOrigin, p.recSound, !layering, b0 > end + 1e-6);
-                else // as played: laid back or pushed, each hit where it was heard
-                    makeClip(p, s, slot, p.recStart, end, 0.0f, p.recOrigin, false, p.recFrom, !layering);
+                else // tightened by quantise, or (off) as played, laid back or pushed
+                    makeClip(p, s, slot, p.recStart, end, s.quantise ? 0.6f : 0.0f, p.recOrigin, false, p.recFrom,
+                             !layering);
                 p.recAudio = false;
                 p.recFrom = -1e18;
                 if (p.recRecount && p.takes > takesBefore)
@@ -1827,6 +1838,7 @@ void Studio::publish() {
     v.sample = m_sample;
     v.time = m_time0 + double(m_sample) / double(m_rate);
     v.metronome = s.metronome;
+    v.quantise = s.quantise;
     const Harmony &h = s.harmonyState;
     v.root = h.tuning.root();
     v.family = h.tuning.familyIndex();

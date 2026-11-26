@@ -171,7 +171,10 @@ change anywhere. Ctrl+Shift+Z brings back what Ctrl+Z took back. Ctrl+N twice st
 cleared, the mix set back, nothing left muted.
 
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
-metronome, Enter or Ctrl+P pause and play (every loop stops at once; again, the same
+metronome, Ctrl+G quantise (on to begin with: Space and overdubs tighten hits
+to the sixteenths; off, a loop keeps your timing as you played it, laid back
+or pushed),
+Enter or Ctrl+P pause and play (every loop stops at once; again, the same
 loops play on together from a downbeat, and a song on the Song page from
 the bar it stopped in), Ctrl+R record to `~/Music/tenfold` (Ctrl+Shift+R, or
 Shift+click Record: with the Visual page's picture, as an `.mp4`), Ctrl+Q quit.

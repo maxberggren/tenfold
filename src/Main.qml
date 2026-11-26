@@ -574,6 +574,14 @@ ApplicationWindow {
                                     label: qsTr("Click"); key: "Ctrl M"; color: win.amber; active: backend.metronome
                                     onClicked: backend.toggleMetronome()
                                 }
+                                // On, Space and overdubs tighten the playing to
+                                // the grid; off, loops keep it as it was heard.
+                                PanelButton {
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: !backend.tutorialActive // the key still works; the tutorial needs the room
+                                    label: qsTr("Quantise"); key: "Ctrl G"; color: win.amber; active: backend.quantise
+                                    onClicked: backend.toggleQuantise()
+                                }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     label: qsTr("Undo loop"); key: "Ctrl Z"; color: win.amber

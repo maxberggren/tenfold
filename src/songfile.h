@@ -8,6 +8,7 @@
 //     "tempo": 124,
 //     "key": {"root": 9, "family": 0, "brightness": 4, "name": "A Aeolian"},
 //     "metronome": false,
+//     "quantise": true,                   Space and overdubs tighten hits to the sixteenths
 //     "page": "Drums",                    the page that was showing
 //     "master": {"room": 0.35, "shimmer": 0.1, "echoTime": 0.5, ...},
 //     "parts": [

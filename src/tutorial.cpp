@@ -143,7 +143,7 @@ void Tutorial::build() {
 
     add({QStringLiteral("Beat"), Drums, QStringLiteral("Tap the kick"),
          QStringLiteral("Every track here starts from a kick. Tap KICK, the bottom-left pad: the harder you press, the "
-                        "louder it hits. TAKE PAD gives tenfold the trackpad; the mouse and the keys play too."),
+                        "louder it hits. TAKE THE TRACKPAD, the bright button, gives tenfold the trackpad; the mouse and the keys play too."),
          QStringLiteral("Each pad shows the keys that play it: Z is the kick."),
          QStringLiteral("Boom. That's your first sound."),
          {},

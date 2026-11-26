@@ -44,7 +44,6 @@ HEADERS += \
     src/cuica.h \
     src/offline.h \
     src/part.h \
-    src/padprompt.h \
     src/platform.h \
     src/parts.h \
     src/phrase.h \

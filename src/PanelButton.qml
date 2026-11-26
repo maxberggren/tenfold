@@ -10,10 +10,35 @@ Item {
     property bool active: false
     property int labelSize: 16
     property bool hint: false // the tutorial points at it: a breathing halo
+    // Asks to be pressed: lit, breathing, with a glow round it.
+    property bool beckon: false
+    // A smaller line under the label (where the button is tall enough).
+    property string note: ""
     // With the keys held as it was clicked (Shift+click on Record: video).
     signal clicked(int modifiers)
 
-    readonly property bool lit: active || mouse.pressed
+    readonly property bool lit: active || mouse.pressed || beckon
+
+    // The glow: two rings in the button's colour, breathing with the fill.
+    Repeater {
+        model: button.beckon ? 2 : 0
+        Rectangle {
+            required property int index
+            anchors.fill: parent
+            anchors.margins: -5 - 6 * index
+            color: "transparent"
+            border.color: button.color
+            border.width: 3
+            opacity: (index === 0 ? 0.7 : 0.35) * (0.35 + 0.65 * button.breath)
+        }
+    }
+    property real breath: 1
+    SequentialAnimation on breath {
+        running: button.beckon
+        loops: Animation.Infinite
+        NumberAnimation { to: 0.25; duration: 900; easing.type: Easing.InOutSine }
+        NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine }
+    }
 
     Rectangle {
         visible: button.hint
@@ -35,6 +60,14 @@ Item {
         color: button.lit ? button.color : "transparent"
         border.color: button.color
         border.width: 2
+        // Beckoning, the fill breathes (never so dim that the dark letters
+        // stop reading); pressed, it's full.
+        Rectangle {
+            visible: button.beckon && !mouse.pressed
+            anchors.fill: parent
+            color: "#000000"
+            opacity: 0.4 * (1 - button.breath)
+        }
     }
     // A short button (a small window) has one line: the label on it, and
     // its key only where both fit side by side.
@@ -56,6 +89,20 @@ Item {
         font.weight: Font.DemiBold
         font.capitalization: Font.AllUppercase
         wrapMode: button.roomy ? Text.Wrap : Text.NoWrap
+    }
+    Text {
+        visible: button.note !== "" && button.roomy && y + Math.min(implicitHeight, 34) < button.height - 4
+        x: 10
+        y: labelText.y + labelText.height + 4
+        width: parent.width - 20
+        text: button.note
+        color: labelText.ink
+        font.family: "Noto Sans Mono"
+        font.pixelSize: 13
+        font.weight: Font.DemiBold
+        wrapMode: Text.Wrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
     }
     Text {
         id: keyText

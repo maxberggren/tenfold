@@ -73,8 +73,9 @@ where a port goes.
 
 ## Playing
 
-Click **Take pad** to hand the trackpad to tenfold (Esc gives it back), then
-pick a page with its number:
+Click **Take the trackpad**, the bright button at the top of the panel, to
+hand the trackpad to tenfold. Esc gives it back, and with the trackpad not
+taken Esc pauses and plays, as Ctrl+P. Then pick a page with its number:
 
 | Key | Page | What the fingers do |
 |---|---|---|
@@ -174,7 +175,8 @@ cleared, the mix set back, nothing left muted.
 metronome, Ctrl+G quantise (on to begin with: Space and overdubs tighten hits
 to the sixteenths; off, a loop keeps your timing as you played it, laid back
 or pushed),
-Enter or Ctrl+P pause and play (every loop stops at once; again, the same
+Enter or Ctrl+P pause and play (Esc too, while the trackpad isn't taken;
+every loop stops at once; again, the same
 loops play on together from a downbeat, and a song on the Song page from
 the bar it stopped in), Ctrl+R record to `~/Music/tenfold` (Ctrl+Shift+R, or
 Shift+click Record: with the Visual page's picture, as an `.mp4`), Ctrl+Q quit.

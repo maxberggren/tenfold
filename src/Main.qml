@@ -92,12 +92,15 @@ ApplicationWindow {
     // The key a page answers to: 1–8 for the first eight parts, Shift+1 for
     // the Sampler, 0 for the Song page, 9 for the visualizer.
     function pageKey(i) { return backend.pageKeys[i] }
-    // Esc closes what is open first: a right-click menu, the guide, then
-    // the tutorial; then it gives the trackpad back.
+    // Esc closes what is open first: the guide, a right-click menu, the
+    // tutorial; then it gives the trackpad back while it's taken (or being
+    // taken), and with nothing of that to escape it pauses and plays, as
+    // Ctrl+P (Session::escape).
     function back() {
-        backend.closeMenu() ? undefined
-            : win.helpVisible ? win.helpVisible = false
-            : backend.tutorialActive ? backend.toggleTutorial() : backend.giveBack()
+        if (win.helpVisible)
+            win.helpVisible = false
+        else
+            backend.escape()
     }
     // Record, and Shift+Record: the visualizer's picture with the sound.
     function record(modifiers) {
@@ -517,10 +520,32 @@ ApplicationWindow {
                             columnSpacing: 8
                             rowSpacing: backend.tutorialActive ? 5 : win.compact ? 6 : 8
                             property int bh: backend.tutorialActive ? 34 : 40
+                                // The only way to take the pad: the whole row at
+                                // the top, and while the pad isn't taken, big,
+                                // lit and breathing, so it can't be missed.
                                 PanelButton {
-                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    label: win.playing ? qsTr("Release pad") : qsTr("Take pad")
-                                    key: win.playing ? "Esc" : ""; color: win.green; active: win.playing
+                                    readonly property bool waiting: backend.padState === Backend.Starting
+                                    readonly property bool failed: backend.padState === Backend.Failed
+                                    Layout.columnSpan: buttons.columns
+                                    Layout.fillWidth: true; Layout.fillHeight: true
+                                    Layout.minimumHeight: win.playing ? 30 : backend.tutorialActive || win.compact ? 52 : 84
+                                    Layout.maximumHeight: win.playing ? 60 : 112
+                                    Layout.preferredHeight: win.playing ? buttons.bh : backend.tutorialActive ? 64 : 96
+                                    label: win.playing ? qsTr("Release pad")
+                                         : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Waiting for the trackpad…"))
+                                         : failed ? qsTr("▶  Retry the trackpad")
+                                         : qsTr("▶  Take the trackpad")
+                                    // As big as fits on one line.
+                                    labelSize: win.playing ? 16 : Math.max(14, Math.min(backend.tutorialActive ? 19 : 22, Math.floor((width - 24) / 13)))
+                                    note: win.playing ? ""
+                                        : failed ? backend.error
+                                        : waiting ? qsTr("Click to call it off.")
+                                        : qsTr("The pointer stops and every finger plays. Esc gives it back.")
+                                          + (backend.padNeedsPassword ? " " + qsTr("Needs your password, once each time tenfold starts.") : "")
+                                    key: win.playing || waiting ? "Esc" : ""
+                                    color: failed ? win.red : waiting ? win.amber : win.green
+                                    active: win.playing
+                                    beckon: !win.playing && !waiting
                                     hint: backend.tutorialActive && backend.tutorialButton === "pad" && !win.playing
                                     onClicked: backend.togglePlay()
                                 }
@@ -536,12 +561,13 @@ ApplicationWindow {
                                     onClicked: modifiers => win.record(modifiers)
                                 }
                                 PanelButton {
-                                    // The whole row (of two): the transport. Every loop stops at once,
-                                    // remembered; again, they play on together from a downbeat.
-                                    Layout.columnSpan: buttons.columns > 2 ? 1 : 2
+                                    // The transport. Every loop stops at once, remembered;
+                                    // again, they play on together from a downbeat.
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     label: backend.loopsPaused ? qsTr("▶  Play") : qsTr("❚❚  Pause")
-                                    key: "Enter"; color: win.green; active: backend.loopsPaused
+                                    // Esc too (Enter always), while there's no pad to give back (nor a
+                                    // tutorial to leave): the shorter key, then.
+                                    key: win.playing || backend.tutorialActive ? "Enter" : "Esc"; color: win.green; active: backend.loopsPaused
                                     onClicked: backend.togglePause()
                                 }
                                 PanelButton {
@@ -595,6 +621,9 @@ ApplicationWindow {
                                     onClicked: backend.startOver()
                                 }
                                 PanelButton {
+                                    // A row of its own in two columns, so Open and
+                                    // Save share the next (with the tutorial, beside Undo).
+                                    Layout.columnSpan: buttons.columns === 2 && !backend.tutorialActive ? 2 : 1
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
                                     onClicked: win.helpVisible = !win.helpVisible
@@ -677,8 +706,8 @@ ApplicationWindow {
                             ? (backend.padNeedsPassword ? qsTr("Waiting for your password") : qsTr("Waiting for the trackpad"))
                           : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
                           : backend.padState === Backend.Ready
-                            ? (backend.padAway ? qsTr("Paused until tenfold is in front again") : qsTr("Paused, pointer released"))
-                          : qsTr("Standby: Take pad to play"))
+                            ? (backend.padAway ? qsTr("Trackpad given back until tenfold is in front again") : qsTr("Trackpad given back, the sound plays on"))
+                          : qsTr("Standby: take the trackpad to play"))
                           + ((backend.pagesSilenced[backend.page] || "") !== ""
                              ? "     " + qsTr("Silent: %1 on the Song page").arg(backend.pagesSilenced[backend.page]) : "")
                           + (backend.pageStatus !== "" ? "     " + backend.pageStatus : "")
@@ -690,117 +719,6 @@ ApplicationWindow {
                     font.weight: Font.Bold
                     font.letterSpacing: 1
                     font.capitalization: Font.AllUppercase
-                }
-            }
-        }
-
-        // Not playing yet: a console dialog with the button that takes the pad.
-        Rectangle {
-            anchors.centerIn: parent
-            // The tutorial's own first step says how to take the pad (and the
-            // mouse plays meanwhile), so the dialog stays out of its way. Nor
-            // does it come up when the pad was put down only because tenfold
-            // went behind another window (the pointer crossing onto one, with
-            // focus following the mouse): the pad comes back with the window.
-            visible: backend.padPrompt && !win.helpVisible && !backend.tutorialActive
-            width: Math.min(parent.width - 2 * win.margin, 620)
-            height: startColumn.implicitHeight + 64
-            color: "#000000"
-            border.color: backend.padState === Backend.Failed ? win.red : win.amber
-            border.width: 3
-
-            Rectangle {
-                width: parent.width
-                height: 34
-                color: backend.padState === Backend.Failed ? win.red : win.amber
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: 14
-                    text: backend.padState === Backend.Starting
-                          ? (backend.padNeedsPassword ? qsTr("Waiting for your password") : qsTr("Waiting for the trackpad"))
-                        : backend.padState === Backend.Failed ? qsTr("Alarm — trackpad unavailable")
-                        : backend.padState === Backend.Ready ? qsTr("Paused")
-                        : qsTr("Standby")
-                    color: "#0a0806"
-                    font.family: win.mono
-                    font.pixelSize: 17
-                    font.weight: Font.Bold
-                    font.letterSpacing: 2
-                    font.capitalization: Font.AllUppercase
-                }
-            }
-
-            ColumnLayout {
-                id: startColumn
-                anchors.fill: parent
-                anchors.margins: 22
-                anchors.topMargin: 52
-                spacing: 12
-
-                Text {
-                    Layout.fillWidth: true
-                    visible: backend.padState === Backend.Failed
-                    text: backend.error + " " + qsTr("Take the pad again to retry.")
-                    color: win.red
-                    font.family: win.mono
-                    font.pixelSize: 15
-                    wrapMode: Text.Wrap
-                }
-                // The words change while the pad is being taken (the password
-                // prompt takes focus, which pauses), so the box keeps the
-                // height of its longest wording instead of jumping about
-                // around its centre.
-                Item {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(intro.implicitHeight, introLongest.implicitHeight)
-                    Text {
-                        id: intro
-                        width: parent.width
-                        text: backend.padState === Backend.Ready
-                              ? qsTr("The trackpad is yours again and the sound keeps playing. Take it back with the button below.")
-                              : introLongest.text
-                        color: win.amber
-                        font.family: win.mono
-                        font.pixelSize: 15
-                        wrapMode: Text.Wrap
-                    }
-                    Text {
-                        id: introLongest
-                        visible: false
-                        width: parent.width
-                        text: qsTr("The button below hands the trackpad to tenfold: the pointer stops and every finger plays. Esc gives it back at any time. Meanwhile the mouse plays the pad too.")
-                              + (backend.padNeedsPassword
-                                 ? " " + qsTr("Reading the trackpad needs your password, once each time tenfold starts.") : "")
-                        font: intro.font
-                        wrapMode: Text.Wrap
-                    }
-                }
-                PanelButton {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 56
-                    label: qsTr("Take the trackpad")
-                    color: win.green
-                    labelSize: 20
-                    onClicked: backend.play()
-                }
-                PanelButton {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 48
-                    label: qsTr("New here? The tutorial builds a whole track with you")
-                    key: "Ctrl T"
-                    color: win.amber
-                    labelSize: 15
-                    onClicked: backend.toggleTutorial()
-                }
-                // The window too short for the whole box: the buttons stay.
-                Text {
-                    Layout.fillWidth: true
-                    visible: win.height >= 640
-                    text: qsTr("Every part of a track has its own page: 1 drums, 2 bass, 3 chords, 4 lead, 5 arp, 6 atmosphere, 7 effects, 8 vocal, Shift+1 a sampler (drop a song on the window), and 9 shows it all as a picture. Play, then Space loops what you just played on any page; turn the loops into a track on 0, the Song page. ? shows what the fingers do on the page you're on.")
-                    color: win.cyan
-                    font.family: win.mono
-                    font.pixelSize: 14
-                    wrapMode: Text.Wrap
                 }
             }
         }

@@ -4,7 +4,6 @@
 #include <QPainter>
 
 #include "console.h"
-#include "padprompt.h"
 #include "testkit.h"
 #ifdef __linux__
 #include "touchsource.h"
@@ -31,27 +30,58 @@ class FrameworkTests : public QObject {
     // Times the studio against the clock: bin/test runs it with the machine to itself.
     Q_CLASSINFO("alone", "theBenchRunsWellInsideRealTime")
 private slots:
-    // The box asking for the trackpad stands only when there's something to
-    // do: not because the pointer left the window and took the focus along.
-    void thePadIsAskedForOnlyWhenThePlayerHasToAct() {
-        // Never taken, given back, missing or failed: the box.
-        QVERIFY(padPrompt(true, Pad::Idle, false, false));
-        QVERIFY(padPrompt(true, Pad::Ready, false, false));
-        QVERIFY(padPrompt(true, Pad::Starting, false, false));
-        QVERIFY(padPrompt(false, Pad::Idle, false, false));
-        QVERIFY(padPrompt(true, Pad::Failed, false, false));
-        // Playing: none.
-        QVERIFY(!padPrompt(true, Pad::Grabbed, false, false));
-        // Put down while another window is in front, and on the way back
-        // when it is again: none, the pad comes back by itself.
-        QVERIFY(!padPrompt(true, Pad::Ready, true, false));
-        QVERIFY(!padPrompt(true, Pad::Starting, true, false));
-        QVERIFY(!padPrompt(true, Pad::Idle, true, true));
-        QVERIFY(!padPrompt(true, Pad::Grabbed, true, false));
-        // Unless coming back waits on the password, or fails.
-        QVERIFY(padPrompt(true, Pad::Starting, true, true));
-        QVERIFY(padPrompt(true, Pad::Failed, true, false));
-        QVERIFY(padPrompt(false, Pad::Idle, true, false));
+    // Esc with the trackpad not taken (a script never has it) pauses and
+    // plays, as Ctrl+P does: every loop stops at once, and comes back.
+    void escPausesAndPlaysWithThePadNotTaken() {
+        const std::string script = std::string(kBeat) + "key 3.3 Esc\nkey 4.9 Esc\nend 6\n";
+        bool pausedSeen = false, stoppedAtOnce = true;
+        int afterPlay = -2;
+        const auto take = testkit::watch(script, [&](double t, Session &s) {
+            if (t > 3.32 && t < 4.85) {
+                pausedSeen |= s.paused();
+                stoppedAtOnce &= s.view().parts[0].playing < 0;
+            }
+            if (t > 4.93 && t < 4.95)
+                afterPlay = s.view().parts[0].playing;
+        });
+        QVERIFY(take.error.empty());
+        QVERIFY(pausedSeen);
+        QVERIFY(stoppedAtOnce);
+        QVERIFY2(take.rms(3.8, 4.85) < 0.002, qPrintable(QString::number(take.rms(3.8, 4.85))));
+        QCOMPARE(afterPlay, 0);
+        QVERIFY(take.rms(5, 6) > 0.01);
+    }
+
+    // With the pad taken (or being taken) Esc gives it back and nothing
+    // more: the loops play on. Only the next Esc pauses. And before the pad,
+    // Esc leaves the tutorial.
+    void escGivesTheTakenPadBackBeforeItPauses() {
+        Session::Escaped first = Session::Escaped::Menu, second = Session::Escaped::Menu;
+        bool playedOnAfterPad = true, pausedAfterSecond = false;
+        const auto take = testkit::watch(std::string(kBeat) + "end 5\n", [&](double t, Session &s) {
+            if (t > 3.0 && first == Session::Escaped::Menu)
+                first = s.escape(true);
+            if (t > 3.1 && t < 3.9)
+                playedOnAfterPad &= s.view().parts[0].playing == 0 && !s.paused();
+            if (t > 4.0 && second == Session::Escaped::Menu)
+                second = s.escape(false);
+            if (t > 4.1)
+                pausedAfterSecond |= s.paused();
+        });
+        QVERIFY(take.error.empty());
+        QVERIFY(first == Session::Escaped::Pad);
+        QVERIFY(playedOnAfterPad);
+        QVERIFY(second == Session::Escaped::Pause);
+        QVERIFY(pausedAfterSecond);
+
+        testkit::play("key 0.1 Ctrl+T\nend 0.5\n", [](Session &s) {
+            QVERIFY(s.tutorial().active());
+            QVERIFY(s.escape(true) == Session::Escaped::Tutorial);
+            QVERIFY(!s.tutorial().active());
+            QVERIFY(s.escape(true) == Session::Escaped::Pad);
+        });
+        // A script's Esc leaves the tutorial too, and doesn't pause.
+        testkit::play("key 0.1 Ctrl+T\nkey 0.3 Esc\nend 0.5\n", [](Session &s) { QVERIFY(!s.tutorial().active()); });
     }
     void spaceLoopsWhatWasJustPlayedAndSetsTheTempo() {
         const auto take = testkit::play(std::string(kBeat) + "end 8\n");

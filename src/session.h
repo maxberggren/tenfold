@@ -33,8 +33,11 @@
 //   Shift+Space             a new loop, in place of this page's playing loop
 //                           (the Vocal page takes Space itself and the other
 //                           way round: Space a new loop, Shift+Space a layer)
-// Escape, ?, Ctrl+R, Ctrl+S, Ctrl+O and Ctrl+Q are the window's (give the
-// pad back, help, record the mix, save and open songs, quit). The pad is taken with the window's Play button.
+//   Escape                  escape(): a menu, the tutorial, then the pad
+//                           back; with none of those, pause and play
+// ?, Ctrl+R, Ctrl+S, Ctrl+O and Ctrl+Q are the window's (help, record the
+// mix, save and open songs, quit). The pad is taken with the window's Take
+// the trackpad button.
 
 #include <QJsonObject>
 #include <QPointF>
@@ -151,6 +154,13 @@ public:
     // is remembered and nothing plays.
     void togglePause();
     bool paused() const;
+    // Esc: the first of these that applies. It closes the page's open menu,
+    // leaves the tutorial, gives the trackpad back (padTaken: the window has
+    // it, or is taking it; the caller lets go of it on Pad), and otherwise
+    // pauses or plays, as Ctrl+P. So with the pad taken, Esc twice gives it
+    // back and pauses; with it not taken, Esc is pause and play.
+    enum class Escaped { Menu, Tutorial, Pad, Pause };
+    Escaped escape(bool padTaken);
     // Ctrl+Z: take back the newest loop on any page; what played before
     // plays again. Ctrl+N: start over, every loop cleared (asks first).
     void undoTake();

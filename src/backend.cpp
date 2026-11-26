@@ -16,7 +16,6 @@
 
 #include "console.h"
 #include "offline.h"
-#include "padprompt.h"
 #include "visualizer.h"
 
 using namespace tf;
@@ -115,7 +114,7 @@ void Backend::shutdown() {
 
 int Backend::padState() const {
     if (m_simulated)
-        return Playing;
+        return m_simulatedPad;
     if (!m_touch->found())
         return Failed;
     switch (m_touch->status()) {
@@ -126,10 +125,6 @@ int Backend::padState() const {
     case Pad::Failed: return Failed;
     }
     return Idle;
-}
-
-bool Backend::padPrompt() const {
-    return !m_simulated && tf::padPrompt(m_touch->found(), m_touch->status(), m_pausedByFocus, m_touch->needsPermission());
 }
 
 QString Backend::error() const {
@@ -368,12 +363,19 @@ void Backend::togglePlay() {
         play();
 }
 
+void Backend::escape() {
+    const bool taken = !m_simulated && (m_touch->status() == Pad::Grabbed || m_wantPlay);
+    if (m_session->escape(taken) == Session::Escaped::Pad)
+        giveBack();
+    tick();
+}
+
 void Backend::windowActive(bool active) {
     // Never keep the pad from the rest of the desktop when tenfold isn't in
     // front: a grabbed pad with no window to answer to would leave the user
     // without a pointer.
-    // Taken again when it's back in front: until then the pad is away, and
-    // the window doesn't ask for it (padPrompt).
+    // Taken again when it's back in front: until then the pad is away (the
+    // status line says so).
     m_inFront = active;
     if (!active && (m_wantPlay || m_touch->status() == Pad::Grabbed)) {
         m_pausedByFocus = true;
@@ -474,7 +476,7 @@ void Backend::tick() {
     }
     m_session->refresh();
     // Back in front and taken again: no longer away, so a pad lost from
-    // here on asks for itself again.
+    // here on is waiting for its button again.
     if (m_pausedByFocus && m_inFront && m_touch->status() == Pad::Grabbed)
         m_pausedByFocus = false;
     if (m_visual)

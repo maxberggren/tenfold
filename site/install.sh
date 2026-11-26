@@ -333,4 +333,4 @@ nix) install_nix ;;
 bundle) install_bundle ;;
 *) fail "TENFOLD_METHOD is pacman, nix or bundle, not $method" ;;
 esac
-say "Take the trackpad with the Take pad button, play, and press ? on any page."
+say "Take the trackpad with its button beside the pad, play, and press ? on any page."

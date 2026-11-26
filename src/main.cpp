@@ -52,17 +52,18 @@ private:
 
 static void usage(FILE *out) {
     std::fputs("Usage:\n"
-               "  tenfold [open]                          play (takes the trackpad on Space)\n"
+               "  tenfold [open]                          play (its button takes the trackpad)\n"
                "  tenfold render <script.tf> <out.wav> [--json]\n"
                "                                          render a scripted performance\n"
                "  tenfold bench [--json]                  time a dense case\n"
                "  tenfold latency [--json]                measure the microphone's trip to the ears\n"
                "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
-               "                     [--tutorial STEP] [--gpu] [--window]\n"
+               "                     [--tutorial STEP] [--gpu] [--window] [--pad standby|waiting|paused|fault]\n"
                "                                          draw the window mid-performance (page 1-8, 0 arrange, 9 visual, sampler),\n"
                "                                          with the tutorial on that step (from 1) if asked; --gpu\n"
                "                                          on the desktop's GPU (the Visual page's picture needs\n"
-               "                                          it), --window with the visualizer's window too\n"
+               "                                          it), --window with the visualizer's window too,\n"
+               "                                          --pad with the trackpad not taken\n"
                "  tenfold check <song.tenfold>            say whether a song file opens, and what is in it\n"
                "  tenfold visualize <script.tf> <out.mp4|out.png> [--at SECONDS] [--from S] [--to S]\n"
                "                    [--fps N] [--size WxH] [--quality 0-3]\n"
@@ -161,6 +162,13 @@ static int screenshot(int argc, char **argv) {
         tf::Session &s = *backend.session();
         if (const int n = s.pageNamed(QString::fromLocal8Bit(page)); n >= 0)
             backend.setPage(n);
+    }
+    // --pad: the window as it is with the pad not taken (a screenshot plays
+    // as if it were).
+    if (const char *pad = option(argc, argv, "--pad")) {
+        const std::string p = pad;
+        backend.simulatePad(p == "waiting" ? Backend::Starting : p == "paused" ? Backend::Ready
+                            : p == "fault" ? Backend::Failed : p == "playing" ? Backend::Playing : Backend::Idle);
     }
     if (hasFlag(argc, argv, "--help-page"))
         window->setProperty("helpVisible", true);

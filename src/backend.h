@@ -42,9 +42,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString padName READ padName NOTIFY changed)
     // The pad isn't readable as this user, so taking it asks for the password.
     Q_PROPERTY(bool padNeedsPassword READ padNeedsPassword NOTIFY changed)
-    // The box that asks for the trackpad stands (padprompt.h), and the pad
-    // was put down only because tenfold went behind another window.
-    Q_PROPERTY(bool padPrompt READ padPrompt NOTIFY changed)
+    // The pad was put down only because tenfold went behind another window.
     Q_PROPERTY(bool padAway READ padAway NOTIFY changed)
     Q_PROPERTY(int page READ page WRITE setPage NOTIFY pageChanged)
     Q_PROPERTY(int pageCount READ pageCount CONSTANT)
@@ -118,7 +116,6 @@ public:
     QString error() const;
     QString padName() const;
     bool padNeedsPassword() const;
-    bool padPrompt() const;
     bool padAway() const { return m_pausedByFocus; }
     int page() const { return m_session->page(); }
     void setPage(int page);
@@ -187,6 +184,11 @@ public:
     Q_INVOKABLE void giveBack(); // let go of it, sound keeps going
     Q_INVOKABLE bool closeMenu(); // a page's right-click menu, if one is open
     Q_INVOKABLE void togglePlay();
+    // Esc (Session::escape): a menu, the tutorial, the pad back while it's
+    // taken or being taken; otherwise pause and play.
+    Q_INVOKABLE void escape();
+    // A screenshot's window: the pad as if in this state (Playing at first).
+    void simulatePad(int state) { m_simulatedPad = state; emit changed(); }
     Q_INVOKABLE void windowActive(bool active);
     Q_INVOKABLE void toggleRecording();
     // Record with the picture (needs ffmpeg; without it, the sound alone and a notice).
@@ -264,6 +266,7 @@ private:
     bool m_pausedByFocus = false;
     bool m_inFront = true;
     bool m_simulated = false;
+    int m_simulatedPad = Playing;
     uint32_t m_noticeSeq = 0;
     QString m_notice;
     int m_lastPage = -1;

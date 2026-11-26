@@ -692,7 +692,14 @@ bool Session::key(const KeyEvent &k) {
         default: return false;
         }
     }
-    if (k.key == Qt::Key_Escape || k.key == Qt::Key_Question)
+    // The window's own Esc goes to escape() with the pad's state; a key
+    // that reaches here (a script's) has no pad to give back.
+    if (k.key == Qt::Key_Escape) {
+        if (k.down && !k.repeat)
+            escape(false);
+        return true;
+    }
+    if (k.key == Qt::Key_Question)
         return false;
     // Enter plays and pauses everything, on every page, as Ctrl+P does.
     // What Return did on a page (hold, latch, keep, drop) is Shift+Enter
@@ -1806,6 +1813,20 @@ bool Session::paused() const {
         if (m_pausedSlots[p] >= 0)
             return true;
     return m_songPaused;
+}
+
+Session::Escaped Session::escape(bool padTaken) {
+    std::lock_guard lock(m_lock);
+    if (closeMenu())
+        return Escaped::Menu;
+    if (m_tutorial.active()) {
+        toggleTutorial();
+        return Escaped::Tutorial;
+    }
+    if (padTaken)
+        return Escaped::Pad;
+    togglePause();
+    return Escaped::Pause;
 }
 
 void Session::togglePause() {

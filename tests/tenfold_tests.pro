@@ -18,7 +18,7 @@ DEPENDPATH += ../src
 HEADERS += testkit.h \
     ../src/console.h ../src/contacts.h ../src/dsp.h ../src/electro.h ../src/fx.h ../src/gong.h ../src/trombamarina.h ../src/daxophone.h ../src/guitar.h ../src/saxophone.h ../src/hang.h ../src/marimbula.h ../src/tabla.h ../src/udu.h ../src/slitdrum.h ../src/pipedrum.h ../src/khishba.h ../src/cuica.h ../src/offline.h ../src/part.h \
     ../src/parts.h ../src/phrase.h ../src/session.h ../src/songfile.h ../src/studio.h ../src/touch.h \
-    ../src/padprompt.h ../src/platform.h ../src/tuning.h ../src/tutorial.h ../src/vocal.h ../src/sampler.h ../src/sampleanalysis.h ../src/visual.h ../src/recorder.h ../src/scream.h ../src/wav.h
+    ../src/platform.h ../src/tuning.h ../src/tutorial.h ../src/vocal.h ../src/sampler.h ../src/sampleanalysis.h ../src/visual.h ../src/recorder.h ../src/scream.h ../src/wav.h
 
 PARTS = ../src/drums.cpp ../src/bass.cpp ../src/chords.cpp ../src/lead.cpp ../src/arp.cpp \
         ../src/atmos.cpp ../src/risers.cpp ../src/vocal.cpp ../src/sampler.cpp ../src/arrange.cpp

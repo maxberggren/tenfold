@@ -3,9 +3,12 @@
 // or recorded, replayed from background() whatever page is showing.
 
 #include <QJsonArray>
+#include <QTemporaryDir>
 #include <fstream>
+#include <random>
 #include <sstream>
 
+#include "sampler.h"
 #include "testkit.h"
 
 using namespace tf;
@@ -73,6 +76,37 @@ double lowRms(const testkit::Take &take, double from, double to) {
 }
 
 std::string num(double v) { return QString::number(v, 'f', 4).toStdString(); }
+
+constexpr int kVocalPart = 7, kSamplerPart = 8;
+
+// A song for the Sampler to cut: a kick on every beat, a snare on two and
+// four, a bass note to the bar, at 120 BPM, as a stereo WAV at `path`.
+bool writeBeat(const QString &path, int bars) {
+    const int rate = 48000, beat = rate / 2;
+    const size_t n = size_t(bars) * 4 * beat;
+    std::vector<float> x(n, 0.0f);
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> u(-1, 1);
+    const double notes[4] = {55.0, 43.65, 65.41, 49.0};
+    for (int b = 0; b < bars * 4; ++b) {
+        const size_t at = size_t(b) * beat;
+        const double f = notes[(b / 4) % 4];
+        for (int i = 0; i < beat; ++i) {
+            const double t = double(i) / rate;
+            float &v = x[at + size_t(i)];
+            v += 0.2f * float(std::sin(2 * M_PI * f * t) * std::min(1.0, t * 200) * std::exp(-t * 2));
+            if (i < 12000)
+                v += 0.6f * float(std::sin(2 * M_PI * (48 + 110 * std::exp(-t * 45)) * t) * std::exp(-t * 16)) *
+                     float(std::min(1.0, (12000 - i) / 2400.0));
+            if (b % 2 == 1 && i < 12000)
+                v += 0.3f * u(rng) * float(std::exp(-t * 28));
+        }
+    }
+    std::vector<int16_t> d(2 * n);
+    for (size_t i = 0; i < n; ++i)
+        d[2 * i] = d[2 * i + 1] = int16_t(std::clamp(x[i], -1.0f, 1.0f) * 30000);
+    return tf::sampler::writeWavStereo(QFile::encodeName(path).toStdString(), d.data(), n, rate);
+}
 
 // The mouse: a press and release on a point of the pad, a quick click or a
 // held one (its "hold").
@@ -1337,6 +1371,139 @@ private slots:
         playOn(s, 1.0, {{0.3, Qt::Key_P}});
         QCOMPARE(s.saveSong()[QStringLiteral("song")].toObject(), QJsonObject{});
         QVERIFY(!s.pageStatus(s.arrangePage()).contains(QStringLiteral("song "), Qt::CaseInsensitive));
+    }
+
+    // With loops on the Vocal page (two of them) and the Sampler's (a chop
+    // held and looped) beside the four of kLoops, I writes them into the
+    // track as a producer would: the vocal sits out the intro, sings the
+    // groove (the verse), the builds, the drops and the breakdown over the
+    // pads, and leaves for the outro; the sampler's chop is kept back for
+    // the first build and is the drops' hook, comes back half way through
+    // the breakdown, and is gone in the outro. The vocal's quieter loop
+    // plays before the last drop, its strongest in it.
+    void aWrittenTrackSingsAndPlaysTheSamplersHook() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        qputenv("TENFOLD_SAMPLER_CACHE", QFile::encodeName(dir.filePath(QStringLiteral("cache"))));
+        qputenv("TENFOLD_SAMPLES_DIR", QFile::encodeName(dir.filePath(QStringLiteral("samples"))));
+        const QString beat = dir.filePath(QStringLiteral("beat.wav"));
+        QVERIFY(writeBeat(beat, 16));
+        // The vocal (page 8): three words in the bar from 16.5, Space just
+        // after it; then five over the next, and Space makes a second loop.
+        // The sampler: the beat dropped in, a two-beat chop held round and
+        // looped. I (twice: clips play) at 25.3 plays the track from 26.5.
+        const std::string script = loops("page 15.1 8\n"
+                                         "voice 16.7 0.4 hz=220\nvoice 17.3 0.4 hz=247\nvoice 17.9 0.4 hz=262\n"
+                                         "key 18.6 Space\n"
+                                         "voice 18.7 0.25 hz=262\nvoice 19.1 0.25 hz=294\nvoice 19.5 0.25 hz=330\n"
+                                         "voice 19.9 0.25 hz=294\nvoice 20.2 0.2 hz=262\nkey 20.6 Space\n"
+                                         "drop 21.0 " + beat.toStdString() + "\npage 21.1 sampler\n"
+                                         "key 21.2 Shift+Right\nkey 21.25 Shift+Right\nkey 21.3 Shift+Right\n"
+                                         "down 21.5 1 0.5 0.5\nup 24.3 1\nkey 24.6 Space\n"
+                                         "page 25.0 0\nkey 25.1 I\nkey 25.3 I\nend 163\n");
+        std::vector<std::array<int, kMaxParts>> bars, muted;
+        int vocals = 0, sampled = 0;
+        const auto take = watch(script, [&](double t, Session &s) {
+            if (at(t, 25.0)) {
+                vocals = sampled = 0;
+                for (int c = 0; c < kClipSlots; ++c) {
+                    vocals += s.view().parts[kVocalPart].clips[c].state != ClipView::Empty;
+                    sampled += s.view().parts[kSamplerPart].clips[c].state != ClipView::Empty;
+                }
+            }
+            const double bar = (t - 26.5) / 2.0 - 0.25;
+            if (bar >= 0 && std::fabs(bar - std::round(bar)) < 0.003 && int(bars.size()) <= int(std::round(bar))) {
+                std::array<int, kMaxParts> b{}, m{};
+                for (int p = 0; p < kMaxParts; ++p) {
+                    b[size_t(p)] = s.view().parts[p].playing;
+                    m[size_t(p)] = s.view().parts[p].channel.value[Mute] > 0.5f;
+                }
+                bars.push_back(b);
+                muted.push_back(m);
+            }
+        });
+        QCOMPARE(vocals, 2);
+        QCOMPARE(sampled, 1);
+        QVERIFY(bars.size() >= 68);
+        auto audible = [&](int bar, int part) { return bars[size_t(bar)][size_t(part)] >= 0 && !muted[size_t(bar)][size_t(part)]; };
+        auto say = [&](int bar) {
+            QStringList out;
+            for (int p = 0; p < kMaxParts; ++p)
+                out << QString::number(bars[size_t(bar)][size_t(p)]) + (muted[size_t(bar)][size_t(p)] ? "m" : "");
+            return QStringLiteral("bar %1: %2").arg(bar).arg(out.join(' '));
+        };
+        // Intro (bars 0–7): neither.
+        for (int b : {0, 6})
+            QVERIFY2(!audible(b, kVocalPart) && !audible(b, kSamplerPart), qPrintable(say(b)));
+        // Groove (8–15): the vocal, the hook not yet.
+        QVERIFY2(audible(9, kVocalPart) && !audible(9, kSamplerPart), qPrintable(say(9)));
+        // First build (16–19) and drop (20–35): both.
+        for (int b : {17, 21, 30})
+            QVERIFY2(audible(b, kVocalPart) && audible(b, kSamplerPart), qPrintable(say(b)));
+        // Breakdown (36–43): the vocal over the chords and atmos, the drums
+        // gone; the hook back for its second half.
+        QVERIFY2(audible(37, kVocalPart) && !audible(37, kSamplerPart) && audible(37, 2) && !audible(37, 0), qPrintable(say(37)));
+        QVERIFY2(audible(41, kVocalPart) && audible(41, kSamplerPart), qPrintable(say(41)));
+        // Second build (44–47) and the last drop (48–63): both.
+        for (int b : {45, 50, 62})
+            QVERIFY2(audible(b, kVocalPart) && audible(b, kSamplerPart), qPrintable(say(b)));
+        // The outro (64–71): neither.
+        QVERIFY2(!audible(65, kVocalPart) && !audible(65, kSamplerPart), qPrintable(say(65)));
+        // The vocal's two loops: the calm one before the last drop, the
+        // strongest throughout it.
+        const int calm = bars[9][kVocalPart], strong = bars[50][kVocalPart];
+        QVERIFY2(calm != strong, qPrintable(say(9) + " / " + say(50)));
+        QCOMPARE(bars[37][kVocalPart], calm);
+        QCOMPARE(bars[62][kVocalPart], strong);
+        // The other parts are where they were.
+        QVERIFY2(audible(0, 0) && audible(0, 5) && !audible(0, 1), qPrintable(say(0)));
+        for (int p : {0, 1, 2, 5})
+            QVERIFY2(audible(21, p) && audible(50, p), qPrintable(say(21) + " / " + say(50)));
+        QVERIFY(take.finite());
+        QVERIFY(take.peak() < 1.0);
+        qunsetenv("TENFOLD_SAMPLER_CACHE");
+        qunsetenv("TENFOLD_SAMPLES_DIR");
+    }
+
+    // Drums, bass and a vocal, the short form (Shift+I): the vocal comes in
+    // with the build, sings the drops, and with no pads to keep has the
+    // breakdown to itself; it sits out the intro and the outro.
+    void withoutPadsTheBreakdownIsTheVocalAlone() {
+        const std::string script = "page 0 1\ntap 0.5 0.12 0.12\ntap 1.0 0.38 0.12\ntap 1.5 0.12 0.12\n"
+                                   "tap 2.0 0.38 0.12\nkey 2.5 Space\n"
+                                   "page 3.0 2\ntap 4.5 0.03 0.5 len=0.3\ntap 5.0 0.03 0.5 len=0.15\n"
+                                   "tap 5.5 0.36 0.5 len=0.3\ntap 6.0 0.3 0.5 len=0.15\nkey 6.6 Space\n"
+                                   "page 7.0 8\nvoice 8.7 0.4 hz=220\nvoice 9.3 0.4 hz=247\nvoice 9.9 0.4 hz=262\n"
+                                   "key 10.6 Space\npage 11.0 0\nkey 11.1 Shift+I\nkey 11.3 Shift+I\nend 85\n";
+        // The track from 12.5: intro 0–3, build 4–7, drop 8–15, breakdown
+        // 16–19, build 20–23, drop 24–31, outro 32–35.
+        std::vector<std::array<int, kMaxParts>> bars, muted;
+        watch(script, [&](double t, Session &s) {
+            const double bar = (t - 12.5) / 2.0 - 0.25;
+            if (bar >= 0 && std::fabs(bar - std::round(bar)) < 0.003 && int(bars.size()) <= int(std::round(bar))) {
+                std::array<int, kMaxParts> b{}, m{};
+                for (int p = 0; p < kMaxParts; ++p) {
+                    b[size_t(p)] = s.view().parts[p].playing;
+                    m[size_t(p)] = s.view().parts[p].channel.value[Mute] > 0.5f;
+                }
+                bars.push_back(b);
+                muted.push_back(m);
+            }
+        });
+        QVERIFY(bars.size() >= 34);
+        auto audible = [&](int bar, int part) { return bars[size_t(bar)][size_t(part)] >= 0 && !muted[size_t(bar)][size_t(part)]; };
+        auto say = [&](int bar) {
+            QStringList out;
+            for (int p = 0; p < kMaxParts; ++p)
+                out << QString::number(bars[size_t(bar)][size_t(p)]) + (muted[size_t(bar)][size_t(p)] ? "m" : "");
+            return QStringLiteral("bar %1: %2").arg(bar).arg(out.join(' '));
+        };
+        QVERIFY2(audible(1, 0) && !audible(1, kVocalPart), qPrintable(say(1)));
+        for (int b : {5, 9, 25})
+            QVERIFY2(audible(b, 0) && audible(b, 1) && audible(b, kVocalPart), qPrintable(say(b)));
+        for (int b : {16, 19})
+            QVERIFY2(audible(b, kVocalPart) && !audible(b, 0) && !audible(b, 1), qPrintable(say(b)));
+        QVERIFY2(audible(33, 0) && !audible(33, kVocalPart), qPrintable(say(33)));
     }
 
     void debugSong() {

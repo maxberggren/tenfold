@@ -75,7 +75,7 @@ float smooth01(float u) {
 
 // What each part is to a track, found by name so the page follows the
 // studio's order whatever it becomes.
-enum Role { RDrums, RBass, RChords, RLead, RArp, RAtmos, RFx, RoleCount };
+enum Role { RDrums, RBass, RChords, RLead, RArp, RAtmos, RFx, RVocal, RSampler, RoleCount };
 
 // --- the song -----------------------------------------------------------------
 
@@ -192,6 +192,8 @@ public:
         m_role[RArp] = find({"arp"}, 4);
         m_role[RAtmos] = find({"atmo", "pad"}, 5);
         m_role[RFx] = find({"fx", "riser", "effect"}, 6);
+        m_role[RVocal] = find({"vocal", "voice"}, 7);
+        m_role[RSampler] = find({"sampl"}, 8);
         m_moves.reserve(32);
     }
 
@@ -3382,7 +3384,7 @@ private:
         for (int p = 0; p < m_parts; ++p)
             filled += hasClips(v, p) && p != role(RFx);
         if (!filled) {
-            ctx.notice(QStringLiteral("No loops yet: on pages 1–7, play, then Space loops it"));
+            ctx.notice(QStringLiteral("No loops yet: on pages 1–9, play, then Space loops it"));
             return;
         }
         // Replacing a set that plays takes a second press.
@@ -3413,27 +3415,40 @@ private:
         const bool melody = has(RLead) || has(RArp);
         const bool full = filled >= 4 && !shortForm;
         const int u = full ? 2 : 1; // bars per unit of four
+        // The breakdown keeps the pads, and the vocal over them; with no
+        // pads the vocal alone, the melody joining it half way. The sampler's
+        // chop comes back half way through, a taste of the hook to come.
         std::vector<Role> breakRoles, breakLate;
         if (pads) {
-            breakRoles = {RChords, RAtmos};
-            breakLate = {RLead};
+            breakRoles = {RChords, RAtmos, RVocal};
+            breakLate = {RLead, RSampler};
+        } else if (has(RVocal)) {
+            breakRoles = {RVocal};
+            breakLate = {RLead, RArp, RSampler};
         } else if (melody) {
             breakRoles = {RLead, RArp};
+            breakLate = {RSampler};
+        } else if (has(RSampler)) {
+            breakRoles = {RSampler};
         } else if (has(RBass)) {
             breakRoles = {RBass};
             breakLate = {RDrums};
         } else {
             breakRoles = {RDrums};
         }
+        // The vocal sits out the intro and comes in with the groove, the
+        // verse; it sings over the builds and the drops and leaves for the
+        // outro. The sampler's chop is the hook: kept back until the first
+        // build, then in the builds and the drops, and gone for the outro.
         std::vector<Plan> plan;
         plan.push_back({LIntro, 4 * u, {RAtmos, RDrums, has(RAtmos) ? RAtmos : RChords}, {RArp}});
         if (full)
-            plan.push_back({LGroove, 8, {RDrums, RBass, RAtmos}, {RArp}});
-        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RFx}, {}, MBuild});
-        plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos}, {}});
+            plan.push_back({LGroove, 8, {RDrums, RBass, RAtmos, RVocal}, {RArp}});
+        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RVocal, RSampler, RFx}, {}, MBuild});
+        plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos, RVocal, RSampler}, {}});
         plan.push_back({LBreak, 4 * u, breakRoles, breakLate, MBreak});
-        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RLead, RFx}, {}, MBuild});
-        plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos}, {}, -1, true});
+        plan.push_back({LBuild, 4, {RDrums, RBass, RChords, RArp, RAtmos, RLead, RVocal, RSampler, RFx}, {}, MBuild});
+        plan.push_back({LDrop, 8 * u, {RDrums, RBass, RChords, RLead, RArp, RAtmos, RVocal, RSampler}, {}, -1, true});
         plan.push_back({LOutro, 4 * u, {RDrums, RAtmos, RChords, RBass}, {}, MEchoOut});
         plan.push_back({LEnd, int(kEchoOutBeats / kBeatsPerBar) - 1, {}, {}});
 
@@ -3504,10 +3519,11 @@ private:
                         const int c = role(RChords);
                         st.ch[c][Filter] = q8(m_home[c][Filter] - 0.17f * (1 - prog));
                     }
-                    // Drops pump harder: everything but the drums and bass breathes with the kick.
+                    // Drops pump harder: everything but the drums, the bass
+                    // and the voice (which would wobble) breathes with the kick.
                     if (drop)
                         for (int p = 0; p < m_parts; ++p)
-                            if (p != role(RDrums) && p != role(RBass))
+                            if (p != role(RDrums) && p != role(RBass) && p != role(RVocal))
                                 st.ch[p][PumpDepth] = q8(m_home[p][PumpDepth] + 0.12f);
                     // Drops: the lead throws its last beat into the echo every four bars.
                     if (drop && has(RLead) && k % 4 == 3 && s >= 12) {
@@ -4587,7 +4603,7 @@ QString ArrangeControl::status() const {
     else if (m_recording)
         parts << QStringLiteral("● recording the song (Space stops on the bar)");
     if (parts.isEmpty() && !m_anyClip)
-        return QStringLiteral("no loops yet: on pages 1–7, play, then Space loops it");
+        return QStringLiteral("no loops yet: on pages 1–9, play, then Space loops it");
     if (parts.isEmpty())
         return QStringLiteral("tap clips to launch them on the bar · F1–F8 scenes · I writes a track from your loops");
     return parts.join(QStringLiteral(" · "));

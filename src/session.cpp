@@ -1264,7 +1264,8 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
         dlog("  decided (free, sets the tempo): first=%.4f start=%.4f end=%.4f -> capture %.4f s (%.4f beats at the old "
              "tempo) settled=%d hits=%d slot=%d",
              first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
-        ctx.capture(slot, start, stop, 0.85f);
+        // As played, not pulled to a grid: each hit where it was heard.
+        ctx.capture(slot, start, stop, 0.0f);
         m_view.parts[part].recording = slot;
         handOver();
         m_lastTake = {};
@@ -1574,7 +1575,7 @@ bool Session::adjustTake(int dir) {
         const long r = long(lt.rounds.size()) - n;
         m.d0 = r >= 0 ? lt.rounds[size_t(r)] : lt.rounds.front() + double(r) * lt.unit;
         m.d1 = lt.end;
-        m.f = 0.85f;
+        m.f = 0.0f; // as played, as the take it redoes
         ctx.post(m);
         lt.n = n;
         dlog("RECAPTURE part=%d slot=%d %d rounds of %.4f s", lt.part, lt.slot + 1, n, lt.unit);

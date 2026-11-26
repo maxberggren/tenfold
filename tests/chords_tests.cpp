@@ -70,10 +70,10 @@ std::vector<float> voicing(const StudioView &v, int lane = 0) {
     return out;
 }
 
-// The power spectrum of a stretch (0.68 s from `from`, mid channel,
-// Hann-windowed), bin k at k·48000/32768 Hz; empty past the end.
-std::vector<double> spectrum(const testkit::Take &take, double from) {
-    const size_t a = size_t(from * 48000), n = 1 << 15;
+// The power spectrum of a stretch (n samples from `from`, 0.68 s unless
+// asked, mid channel, Hann-windowed), bin k at k·48000/n Hz; empty past the end.
+std::vector<double> spectrum(const testkit::Take &take, double from, size_t n = 1 << 15) {
+    const size_t a = size_t(from * 48000);
     if (a + n > take.left.size())
         return {};
     std::vector<std::complex<double>> x(n);
@@ -109,14 +109,15 @@ std::vector<double> spectrum(const testkit::Take &take, double from) {
 constexpr double kBinHz = 48000.0 / 32768.0;
 
 // The share of a stretch's energy between lo and hi Hz, from one long FFT
-// (or, with absolute, the energy itself).
-double bandShare(const testkit::Take &take, double from, double lo, double hi, bool absolute = false) {
-    const auto spec = spectrum(take, from);
+// of n samples (or, with absolute, the energy itself).
+double bandShare(const testkit::Take &take, double from, double lo, double hi, bool absolute = false,
+                 size_t n = 1 << 15) {
+    const auto spec = spectrum(take, from, n);
     if (spec.empty())
         return 1;
     double in = 0, all = 0;
     for (size_t k = 1; k < spec.size(); ++k) {
-        const double f = double(k) * kBinHz;
+        const double f = double(k) * 48000.0 / double(n);
         all += spec[k];
         if (f >= lo && f < hi)
             in += spec[k];
@@ -891,8 +892,10 @@ private slots:
         const std::string loop = recordedLoop({0, 0, 0, 0});
         const auto alone = testkit::play(loop + "end " + num(t + 1.0) + "\n");
         const auto over = testkit::play(loop + "down " + num(t) + " 80 " + cell(5, Triad) + " p=0.01\nend " + num(t + 1.0) + "\n");
-        // The loop's E (A minor's fifth, not in F major) from 60 ms on.
-        const double e0 = bandShare(alone, t + 0.06, 325, 335, true), e1 = bandShare(over, t + 0.06, 325, 335, true);
+        // The loop's E (A minor's fifth, not in F major) from 60 ms on, to
+        // before the loop's next chord: a third of a second.
+        const double e0 = bandShare(alone, t + 0.06, 325, 335, true, 1 << 14),
+                     e1 = bandShare(over, t + 0.06, 325, 335, true, 1 << 14);
         QVERIFY2(e1 < 0.3 * e0, qPrintable(QString("E alone %1, under the new chord %2").arg(e0).arg(e1)));
     }
 

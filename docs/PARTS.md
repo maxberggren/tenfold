@@ -60,9 +60,10 @@ about 60 times a second and the page reads as `pc.view->data`.
 
   Clips replay your own Commands through `command()`, with ids rewritten
   (bits above 1 << 24) and exact times. The studio sends Offs for anything a
-  clip left on when it stops. Onsets (`On`, or any command flagged
-  `Command::Quantize`) are pulled toward the 16th grid. `Move` and `Param` are
-  replayed as they were, so knob sweeps and slides loop too.
+  clip left on when it stops. Everything plays where it was heard: an onset
+  laid back or pushed stays so, and one that reached the studio late (it
+  plays at once) is kept where it played, not at the earlier time it
+  carries. `Move` and `Param` too, so knob sweeps and slides loop.
 - **A mixer channel per part:** level, pan, DJ filter, reverb and echo sends,
   pump depth, mute and solo. Set the defaults in `PartSpec::channel`. Any page
   can change any channel with `ctx.setChannel(part, Channel, value)`. The room

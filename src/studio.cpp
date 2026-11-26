@@ -733,18 +733,23 @@ void Studio::apply(const StudioMsg &m) {
         if (!p)
             return;
         const Command &c = m.cmd;
-        const double b = beatOf(c.t);
+        const bool later = !s.dispatching && c.t > s.blockTime + double(kBlock) / double(s.rate) &&
+                           s.pendingCount < Impl::kPending;
+        // Kept where it is heard. One that reached the studio after its
+        // time (the touch's frame older than this block: the wait for the
+        // block, a drum reading how hard it landed) plays now, at the
+        // block's start, and the player hears it there and plays to that,
+        // so a loop keeps it there too, not at the earlier time it carries.
+        const double b = later ? beatOf(c.t) : std::max(beatOf(c.t), nowBeat);
         if (!(c.flags & Command::NoRecord)) {
             p->history[p->historyHead % size_t(kHistory)] = {b, c};
             ++p->historyHead;
             if (p->overdub && p->playing >= 0) {
                 auto &clip = p->clips[p->playing];
                 if (int(clip.events.size()) < kClipEvents) {
-                    double pos = floorMod(b - clip.anchor, clip.length);
-                    if (c.type == Command::On || (c.flags & Command::Quantize)) {
-                        const double target = std::round(pos / 0.25) * 0.25;
-                        pos = floorMod(pos + 0.85 * (target - pos), clip.length);
-                    }
+                    // As played, not pulled to a grid: the loop plays it
+                    // where it was heard.
+                    const double pos = floorMod(b - clip.anchor, clip.length);
                     // Kept sorted; the capacity is reserved, so this never allocates.
                     auto at = std::upper_bound(clip.events.begin(), clip.events.end(), pos,
                                                [](double v, const PartState::Event &e) { return v < e.pos; });
@@ -752,8 +757,7 @@ void Studio::apply(const StudioMsg &m) {
                 }
             }
         }
-        if (!s.dispatching && c.t > s.blockTime + double(kBlock) / double(s.rate) &&
-            s.pendingCount < Impl::kPending) {
+        if (later) {
             s.pending[s.pendingCount++] = m;
             break;
         }
@@ -1404,8 +1408,8 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
                 const bool layering = layerInto >= 0 && layerInto != slot && p.clips[layerInto].length > 0;
                 if (p.recAudio)
                     makeAudioClip(p, s, slot, p.recStart, end, p.recOrigin, p.recSound, !layering, b0 > end + 1e-6);
-                else
-                    makeClip(p, s, slot, p.recStart, end, 0.6f, p.recOrigin, false, p.recFrom, !layering);
+                else // as played: laid back or pushed, each hit where it was heard
+                    makeClip(p, s, slot, p.recStart, end, 0.0f, p.recOrigin, false, p.recFrom, !layering);
                 p.recAudio = false;
                 p.recFrom = -1e18;
                 if (p.recRecount && p.takes > takesBefore)

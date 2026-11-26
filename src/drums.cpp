@@ -1882,7 +1882,9 @@ private:
             m_keep = Keep{};
         }
         if (m_keep.active && !m_keep.overdub && beatNow >= m_keep.from + 0.02) {
-            ctx.capture(m_keep.slot, ctx.timeAt(m_keep.from - m_keep.length), ctx.timeAt(m_keep.from), 0.85f);
+            // As it played: its steps are on the page's grid, swung as the
+            // page swings them, and a pull to straight sixteenths would undo it.
+            ctx.capture(m_keep.slot, ctx.timeAt(m_keep.from - m_keep.length), ctx.timeAt(m_keep.from), 0.0f);
             m_keep = Keep{};
         }
     }

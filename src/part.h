@@ -74,7 +74,7 @@ struct Command {
         User = 16,
     };
     enum Flags : uint16_t {
-        Quantize = 1, // a User command that is an onset: recorded clips pull it to the grid
+        Quantize = 1, // a User command that is an onset (Space finds the phrase from them)
         NoRecord = 2, // never goes into a clip (a page's own preview, a metronome)
         Continue = 4, // an On that carries on a sound already heard (a voice handed over at a
                       // bar line, a latched layer re-asserted): recorded, but not an onset, so
@@ -300,12 +300,14 @@ public:
     virtual double timeAt(double beat) const = 0;
     virtual double now() const = 0; // the touch clock
 
-    // Clips. All of them are quantised by the studio: lengths to 1, 2, 4, 8,
-    // 16 or 32 beats, starts to the beat, onsets toward the sixteenth.
+    // Clips. Their lengths are 1, 2, 4, 8, 16 or 32 beats and they start on
+    // the beat; what is in them stays where it was heard, unless a page asks
+    // otherwise.
     // Turns what this part played between t0 and t1 into a loop in a slot
     // and plays it at once, in time with what was just played (the
-    // tap-then-hold gesture). quantize 0..1 pulls onsets to the 16th grid.
-    virtual void capture(int slot, double t0, double t1, float quantize = 0.85f) = 0;
+    // tap-then-hold gesture). quantize 0..1 pulls onsets to the straight
+    // 16th grid; every page passes 0, so the loop keeps what was heard.
+    virtual void capture(int slot, double t0, double t1, float quantize = 0.0f) = 0;
     // What this part played between beats b0 and b1 (bar lines, b1 now or
     // soon) becomes a loop at b1, exactly as Space makes one: held notes are
     // carried in, and a take that lands part way in sounds what is held.

@@ -277,6 +277,59 @@ double offGridMs(double t, double beats) {
     return (t / step - std::round(t / step)) * step * 1000.0;
 }
 
+// Plays a script as testkit::play does, with the studio's clock `late`
+// seconds ahead of the touches': each touch reaches the studio that long
+// after it happened, as live, where the next audio block may be most of a
+// quantum away and the trackpad's frame older still.
+testkit::Take playLate(const std::string &script, double late) {
+    testkit::Take take;
+    ScriptPlayer player;
+    if (!player.load(script, &take.error))
+        return take;
+    Studio studio(kRate);
+    studio.setTimeOrigin(late);
+    setScriptClock(0);
+    Session session(&studio);
+    session.setClock(&scriptClock);
+    const double end = player.end() + 0.01;
+    float buf[384 * 2];
+    for (int tick = 0;; ++tick) {
+        const double t = tick / 125.0;
+        if (t > end)
+            break;
+        session.refresh();
+        player.tick(t, session);
+        studio.render(buf, 384);
+        for (int i = 0; i < 384; ++i) {
+            take.left.push_back(buf[2 * i]);
+            take.right.push_back(buf[2 * i + 1]);
+        }
+    }
+    session.refresh();
+    take.view = session.view();
+    return take;
+}
+
+// The first onset between two times, or −1: looked for from 50 ms before,
+// so the envelope has settled by the window's start.
+double firstOnset(const testkit::Take &take, double from, double to) {
+    for (double t : onsets(take, from - 0.05, to, 0.005))
+        if (t >= from)
+            return t;
+    return -1;
+}
+
+// What one take has that another, the same but for it, hasn't.
+testkit::Take minus(const testkit::Take &a, const testkit::Take &b) {
+    testkit::Take d;
+    const size_t n = std::min(a.left.size(), b.left.size());
+    for (size_t i = 0; i < n; ++i) {
+        d.left.push_back(a.left[i] - b.left[i]);
+        d.right.push_back(a.right[i] - b.right[i]);
+    }
+    return d;
+}
+
 }
 
 class DrumsTests : public QObject {
@@ -446,6 +499,53 @@ private slots:
     }
 
     // --- timing --------------------------------------------------------------
+
+    // A clap played over the loop, off the grid on purpose, is kept where
+    // it was heard: Space keeps the hand's timing, laid back or pushed, and
+    // the loop plays each clap on its next pass a loop later to within a
+    // couple of milliseconds. Whether it came from a key, a firm tap or a
+    // light one (which waits a frame or two to read how hard it pressed),
+    // and whether the touch reached the studio at once or 15 ms on.
+    void aClapOverTheLoopIsKeptWhereItWasHeard() {
+        // A bar of kicks on 1 and 3 sets the tempo (120) and loops from 2.5 s,
+        // clear of where the claps go.
+        const std::string loop =
+            "page 0 1\ntap 0.5 " + at(drums::Kick) + "\ntap 1.5 " + at(drums::Kick) + "\nkey 2.5 Space\n";
+        // In the bar from 4.5 s: a clap 37 ms behind beat 2, one 19 ms after
+        // the second sixteenth, one 41 ms ahead of beat 4; Space keeps them.
+        const double claps[] = {5.037, 5.269, 5.959};
+        struct Way {
+            const char *what, *tap;
+        };
+        const Way ways[] = {{"key", ""}, {"firm tap", " p=0.6 len=0.06"}, {"light tap", " p=0.3 len=0.06"}};
+        double worst = 0;
+        for (const Way &w : ways) {
+            for (double late : {0.0, 0.015}) {
+                std::string s = loop;
+                for (double t : claps)
+                    s += *w.tap ? "tap " + std::to_string(t) + " " + at(drums::Clap) + w.tap + "\n"
+                                : "key " + std::to_string(t) + " C\n";
+                const auto with = playLate(s + "key 6.2 Space\nend 9.2\n", late);
+                const auto without = playLate(loop + "end 9.2\n", late);
+                QVERIFY(with.error.empty());
+                const double loopSecs = 4 * 60.0 / with.view.bpm;
+                QVERIFY(std::fabs(loopSecs - 2.0) < 1e-6);
+                const auto added = minus(with, without);
+                // Each clap where it first sounds live, and a loop later.
+                QString line = QStringLiteral("%1, %2 ms late:").arg(w.what).arg(late * 1000);
+                for (double t : claps) {
+                    const double live = firstOnset(added, t - 0.01, t + 0.04);
+                    const double kept = firstOnset(added, t + loopSecs - 0.07, t + loopSecs + 0.07);
+                    QVERIFY(live > 0 && kept > 0);
+                    const double off = (kept - loopSecs - live) * 1000.0;
+                    line += QStringLiteral(" %1").arg(off, 0, 'f', 1);
+                    worst = std::max(worst, std::fabs(off));
+                }
+                qInfo("%s ms (the loop against the live clap)", qPrintable(line));
+            }
+        }
+        QVERIFY2(worst < 2.0, qPrintable(QString::number(worst)));
+    }
 
     void aHeldPadRollsLockedToTheGrid() {
         // The techno kit is straight, so its sixteenths land on the grid to

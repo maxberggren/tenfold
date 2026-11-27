@@ -720,7 +720,8 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     // At Play the hero: what the window has left over, within reason.
                                     Layout.minimumHeight: win.lv === 0 && win.room >= 560 ? 64 : 44; Layout.maximumHeight: win.lv === 0 ? 260 : 120
-                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 430 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0))) : 64
+                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 430 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0)
+                                                                                                   - (newLoopButton.visible ? buttons.bh + 8 : 0))) : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
                                     // While the browser shows, Space keeps a sound there: LOOP steps back.
@@ -736,6 +737,21 @@ ApplicationWindow {
                                     // Ready to loop: lit. No glow, nothing moving.
                                     active: st === 4 || (st === 2 && !win.soundsVisible)
                                     onClicked: modifiers => backend.pressLoop((modifiers & Qt.ShiftModifier) !== 0)
+                                }
+                                // A new loop on this page: the one playing stops, kept in its
+                                // slot, and the next Space makes a loop of its own instead of a
+                                // layer on it (the "+" slot under the pad does the same).
+                                PanelButton {
+                                    id: newLoopButton
+                                    Layout.columnSpan: buttons.columns
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: !backend.tutorialActive && backend.page < backend.arrangePage && !win.soundsVisible
+                                             && (win.lv >= 2 || (backend.canNewLoop && win.room >= 560))
+                                    opacity: backend.canNewLoop ? 1 : 0.35
+                                    label: qsTr("New loop")
+                                    key: backend.canNewLoop ? qsTr("stop · keep · play anew") : "—"
+                                    color: win.pageColor
+                                    onClicked: if (backend.canNewLoop) backend.newLoop()
                                 }
                                 // The Song page's own big button: I, your loops written as a track.
                                 PanelButton {
@@ -789,7 +805,7 @@ ApplicationWindow {
                                     Layout.topMargin: 6
                                     readonly property int rowH: win.room < 560 ? 22 : 26
                                     // A short window lists two, and says how many more, so LOOP keeps its room.
-                                    readonly property int shown: win.room < 560 ? Math.min(2, parts.length) : parts.length
+                                    readonly property int shown: win.room < 560 ? Math.min(1, parts.length) : parts.length
                                     readonly property int hidden: parts.length - shown
                                     Layout.preferredHeight: 34 + shown * (rowH + 4) + (hidden > 0 ? 18 : 0)
                                     title: qsTr("Your loops")

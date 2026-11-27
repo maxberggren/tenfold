@@ -82,7 +82,10 @@ Item {
         wrapMode: button.roomy ? Text.Wrap : Text.NoWrap
     }
     Text {
-        visible: button.note !== "" && button.roomy && y + Math.min(implicitHeight, 34) < button.height - 4
+        // Room for a line of it under the label (13 px type, ~18 px a line);
+        // reckoned from the label, not from this text's own size, which
+        // made a binding loop that flickered.
+        visible: button.note !== "" && button.roomy && labelText.y + labelText.height + 4 + 18 < button.height - 4
         x: 10
         y: labelText.y + labelText.height + 4
         width: parent.width - 20

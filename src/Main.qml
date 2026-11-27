@@ -91,7 +91,9 @@ ApplicationWindow {
     // The transport and the readouts on fewer lines: where compact, and
     // also while the pad isn't taken and its big button and note need the
     // room, so the column doesn't scroll at a common size.
-    readonly property bool readoutsCompact: compact || (!playing && room < 800)
+    // (Below Studio the pad's button is small whatever its state: the
+    // readouts keep their size, so taking the pad moves nothing.)
+    readonly property bool readoutsCompact: compact || (!playing && room < 800 && lv >= 2)
     // A column too short for it all scrolls: the buttons first, then.
     readonly property bool buttonsFirst: arrangement === 0 && room < sideHeight && !backend.tutorialActive
 
@@ -670,10 +672,12 @@ ApplicationWindow {
                                     // Level 0: the mouse and the keys play too, so the
                                     // pad's button stands back for LOOP.
                                     readonly property bool modest: win.lv === 0 && !backend.tutorialActive
-                                    Layout.minimumHeight: win.playing ? 30 : modest ? 40 : backend.tutorialActive || win.compact ? 52 : 84
-                                    Layout.maximumHeight: win.playing ? 60 : modest ? 56 : 112
-                                    Layout.preferredHeight: win.playing ? buttons.bh : modest ? 48 : backend.tutorialActive || win.compact ? 60 : 96
-                                    label: win.playing ? qsTr("Release pad")
+                                    // At Play one size whatever its state, so taking the pad
+                                    // doesn't move the panel under the hand.
+                                    Layout.minimumHeight: modest ? 48 : win.playing ? 30 : backend.tutorialActive || win.compact ? 52 : 84
+                                    Layout.maximumHeight: modest ? 48 : win.playing ? 60 : 112
+                                    Layout.preferredHeight: modest ? 48 : win.playing ? buttons.bh : backend.tutorialActive || win.compact ? 60 : 96
+                                    label: win.playing ? (modest ? qsTr("Release the trackpad") : qsTr("Release pad"))
                                          : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Waiting for the trackpad…"))
                                          : failed ? qsTr("▶  Retry the trackpad")
                                          : modest ? qsTr("Play with the trackpad")

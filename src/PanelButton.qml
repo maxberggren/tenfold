@@ -19,7 +19,10 @@ Item {
     // With the keys held as it was clicked (Shift+click on Record: video).
     signal clicked(int modifiers)
 
-    readonly property bool lit: active || mouse.pressed || beckon
+    // Lit while held down, too (pressLights false: a button whose click
+    // lights it anyway, so the colour and the words change together).
+    property bool pressLights: true
+    readonly property bool lit: active || (mouse.pressed && pressLights) || beckon
 
     // The glow: two rings in the button's colour, breathing with the fill.
     Repeater {

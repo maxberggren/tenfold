@@ -1,8 +1,8 @@
 import QtQuick
 import QtQuick.Layouts
 
-// The first start: pick a style and every page gets its sound and the
-// tempo, or just start playing. Shown once.
+// The first start: a style clicked starts with it (every page gets its
+// sound and the tempo), or the tutorial walks through a track. Shown once.
 Rectangle {
     id: welcome
     color: "#000000"
@@ -11,26 +11,19 @@ Rectangle {
     readonly property color green: "#39FF88"
     readonly property var tints: ["#FF8A1F", "#FF4FD8", "#2EE6FF", "#FFB000", "#39FF88", "#A98BFF", "#FF4136", "#FFD23F"]
     signal tutorial()
-    // The style chosen (and heard): Start begins with it.
-    property int chosen: 0
-    property bool heard: false
-    readonly property int count: backend.styleNames.length
-    function choose(i) {
-        chosen = (i + count) % count
-        heard = true
-        backend.previewStyle(chosen)
+    function startTutorial() {
+        backend.endWelcome(-1)
+        welcome.tutorial()
     }
 
     onVisibleChanged: if (visible) forceActiveFocus()
+    // 1–8 start with that style, Enter the tutorial, Esc the studio's own sounds.
     Keys.onPressed: event => {
         event.accepted = true
-        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) backend.endWelcome(chosen)
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) startTutorial()
         else if (event.key === Qt.Key_Escape) backend.endWelcome(-1)
-        else if (event.key === Qt.Key_Left) choose(chosen - 1)
-        else if (event.key === Qt.Key_Right) choose(chosen + 1)
-        else if (event.key === Qt.Key_Up) choose(chosen - grid.columns)
-        else if (event.key === Qt.Key_Down) choose(chosen + grid.columns)
-        else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_8) choose(event.key - Qt.Key_1)
+        else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_8 && event.key - Qt.Key_1 < backend.styleNames.length)
+            backend.endWelcome(event.key - Qt.Key_1)
         else event.accepted = false
     }
 
@@ -52,7 +45,7 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
-            text: qsTr("Make a track with your fingers. Touch a style to hear it, then start:")
+            text: qsTr("Pick a style to start from:")
             color: welcome.amber
             font.family: "Noto Sans Mono"
             font.pixelSize: 18
@@ -72,14 +65,13 @@ Rectangle {
                     id: card
                     required property int index
                     readonly property color tint: welcome.tints[index % welcome.tints.length]
-                    readonly property bool lit: welcome.chosen === index
-                    readonly property bool hot: lit || cardMouse.containsMouse
+                    readonly property bool lit: cardMouse.containsMouse
                     readonly property var detail: backend.styleDetails[index]
                     Layout.fillWidth: true
                     Layout.preferredHeight: welcome.height < 700 ? 88 : 104
                     Rectangle {
                         anchors.fill: parent
-                        color: card.lit ? card.tint : cardMouse.containsMouse ? Qt.rgba(card.tint.r, card.tint.g, card.tint.b, 0.16) : "transparent"
+                        color: card.lit ? card.tint : "transparent"
                         border.color: card.tint
                         border.width: card.lit ? 3 : 2
                     }
@@ -119,44 +111,29 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        // Touched again once heard: start with it.
-                        onClicked: card.lit && welcome.heard ? backend.endWelcome(card.index) : welcome.choose(card.index)
+                        onClicked: backend.endWelcome(card.index)
                     }
                 }
             }
         }
 
-        RowLayout {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.topMargin: 10
-            spacing: 14
-            PanelButton {
-                Layout.preferredWidth: 300
-                Layout.preferredHeight: 48
-                label: qsTr("▶  Start with %1").arg(backend.styleNames[welcome.chosen] || "")
-                key: "Enter"
-                color: welcome.green
-                active: true
-                beckon: welcome.heard
-                onClicked: backend.endWelcome(welcome.chosen)
-            }
-            PanelButton {
-                Layout.preferredWidth: 300
-                Layout.preferredHeight: 48
-                label: qsTr("Show me how, step by step")
-                key: "Ctrl T"
-                color: welcome.green
-                onClicked: {
-                    backend.endWelcome(-1)
-                    welcome.tutorial()
-                }
-            }
+        // The tutorial, as wide as the styles, lit as the way in.
+        PanelButton {
+            Layout.fillWidth: true
+            Layout.topMargin: 4
+            Layout.preferredHeight: 52
+            label: qsTr("▶  Show me how, step by step")
+            key: "Enter"
+            color: welcome.green
+            active: true
+            labelSize: 18
+            onClicked: welcome.startTutorial()
         }
         Text {
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
-            text: qsTr("Every sound can be changed later with SOUND. Esc skips this and keeps the studio's own sounds.")
+            text: qsTr("Esc skips this and keeps the studio's own sounds.")
             color: welcome.amber
             opacity: 0.6
             font.family: "Noto Sans Mono"

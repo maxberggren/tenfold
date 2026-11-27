@@ -73,10 +73,10 @@ where a port goes.
 
 ## Playing
 
-**The first start** asks for a style (house, trap, lo-fi, synthwave,
-techno, trance, amapiano, gamelan): touch one and its drums, bass and
-chords play a bar; Start gives every page that style's sound and tempo.
-Esc keeps the studio's own sounds.
+**The first start** offers eight styles (house, trap, lo-fi, synthwave,
+techno, trance, amapiano, gamelan): a click starts with one, every page
+set to its sound and tempo. *Show me how, step by step* (Enter) starts
+the tutorial instead; Esc keeps the studio's own sounds.
 
 **Play, Shape, Studio.** Three chips in the Transport box set how much the
 window shows; every key works at every level.

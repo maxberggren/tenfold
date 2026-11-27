@@ -219,6 +219,8 @@ size_t onset(const Wav &w) {
 
 class ExportTests : public QObject {
     Q_OBJECT
+    // The quick checks: the chunks and key signatures, and a cancel.
+    Q_CLASSINFO("dev", "theChunksSayTheTempoAndTheBeats keySignaturesFollowTheMode aCancelledExportLeavesNothing")
 private slots:
     void theChunksSayTheTempoAndTheBeats() {
         const QByteArray a = acidChunk(123.5, 64, 69);

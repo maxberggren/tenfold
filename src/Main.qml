@@ -625,12 +625,19 @@ ApplicationWindow {
                                     onClicked: backend.startOver()
                                 }
                                 PanelButton {
-                                    // A row of its own in two columns, so Open and
-                                    // Save share the next (with the tutorial, beside Undo).
-                                    Layout.columnSpan: buttons.columns === 2 && !backend.tutorialActive ? 2 : 1
+                                    // Beside Export, so Open and Save share the next row
+                                    // (with the tutorial, Export hides and it sits beside Undo).
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
                                     onClicked: win.helpVisible = !win.helpVisible
+                                }
+                                // Stems, voices and MIDI for another studio (ExportDialog.qml).
+                                PanelButton {
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: !backend.tutorialActive
+                                    label: backend.exporting ? qsTr("Export %1%").arg(Math.round(backend.exportProgress * 100)) : qsTr("Export")
+                                    key: "Ctrl E"; color: win.cyan; active: win.exportVisible || backend.exporting
+                                    onClicked: win.exportVisible = true
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
@@ -644,14 +651,6 @@ ApplicationWindow {
                                     label: qsTr("Save song"); key: "Ctrl S"; color: win.cyan
                                     // Shift-click: save as, as Ctrl+Shift+S does.
                                     onClicked: modifiers => (modifiers & Qt.ShiftModifier) ? backend.saveSongAs() : backend.saveSong()
-                                }
-                                // Stems, voices and MIDI for another studio (ExportDialog.qml).
-                                PanelButton {
-                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive
-                                    label: backend.exporting ? qsTr("Export %1%").arg(Math.round(backend.exportProgress * 100)) : qsTr("Export")
-                                    key: "Ctrl E"; color: win.cyan; active: win.exportVisible || backend.exporting
-                                    onClicked: win.exportVisible = true
                                 }
                                 PanelButton {
                                     Layout.columnSpan: 2

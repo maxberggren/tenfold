@@ -3413,13 +3413,11 @@ private:
             ctx.notice(QStringLiteral("No loops yet: on pages 1–9, play, then Space loops it"));
             return;
         }
-        // Replacing a set that plays takes a second press.
-        if (anyPlays(v) && m_lastT - m_confirmI > 3.0) {
-            m_confirmI = m_lastT;
-            ctx.notice(QStringLiteral("I again writes a track over what plays (Shift+O undoes)"));
+        // One press writes the track, over what plays too (Shift+O takes it
+        // back); a second press hard on its heels is the same press.
+        if (m_lastT - m_confirmI < 0.5)
             return;
-        }
-        m_confirmI = -1e9;
+        m_confirmI = m_lastT;
         auto has = [&](Role r) { return role(r) >= 0 && hasClips(v, role(r)); };
         int calm[RoleCount], strong[RoleCount];
         for (int r = 0; r < RoleCount; ++r)

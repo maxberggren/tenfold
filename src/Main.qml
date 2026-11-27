@@ -548,8 +548,27 @@ ApplicationWindow {
                                 visible: win.lv < 2
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: nextText.implicitHeight + 34
+                                id: nextBox
                                 title: qsTr("Next")
                                 color: win.pageColor
+                                // A click does what it says: loop, open the part it names,
+                                // the Song page, make the track, or take the trackpad.
+                                readonly property bool acts: !win.soundsVisible && (backend.nextClickable || nextText.padTip)
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -6
+                                    visible: nextBox.acts && nextMouse.containsMouse
+                                    color: Qt.rgba(win.pageColor.r, win.pageColor.g, win.pageColor.b, 0.16)
+                                }
+                                MouseArea {
+                                    id: nextMouse
+                                    anchors.fill: parent
+                                    anchors.margins: -10
+                                    hoverEnabled: true
+                                    enabled: nextBox.acts
+                                    cursorShape: nextBox.acts ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: if (!backend.doNextStep() && nextText.padTip) backend.togglePlay()
+                                }
                                 Text {
                                     id: nextText
                                     width: parent.width

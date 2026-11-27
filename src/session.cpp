@@ -2860,3 +2860,59 @@ bool Session::clickableAt(QPointF at) const {
 }
 
 }
+
+namespace tf {
+
+Session::NextAction Session::nextAction() const {
+    std::lock_guard lock(m_lock);
+    const Page &p = *m_pages[size_t(m_page)];
+    NextAction a;
+    if (p.part < 0) {
+        if (m_page != arrangePage())
+            return a;
+        if (partsWithLoops() == 0) {
+            a.kind = NextAction::Page;
+            a.page = pageNamed(QStringLiteral("drums"));
+        } else if (songBars() == 0) {
+            a.kind = NextAction::MakeTrack;
+        }
+        return a;
+    }
+    switch (loopState()) {
+    case LoopState::Make: a.kind = NextAction::Loop; break;
+    case LoopState::Layer: {
+        // As nextStep() says it: the next instrument while the band is
+        // small, then the Song page.
+        const int next = suggestedPage();
+        a.kind = NextAction::Page;
+        a.page = next >= 0 && partsWithLoops() < 4 ? next : arrangePage();
+        break;
+    }
+    default: break;
+    }
+    return a;
+}
+
+bool Session::doNextStep() {
+    const NextAction a = nextAction();
+    switch (a.kind) {
+    case NextAction::Loop: pressLoop(); return true;
+    case NextAction::Page:
+        if (a.page < 0)
+            return false;
+        setPage(a.page);
+        return true;
+    case NextAction::MakeTrack: {
+        KeyEvent k;
+        k.key = Qt::Key_I;
+        k.text = QStringLiteral("i");
+        key(k);
+        k.down = false;
+        key(k);
+        return true;
+    }
+    default: return false;
+    }
+}
+
+}

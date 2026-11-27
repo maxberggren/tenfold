@@ -130,6 +130,8 @@ class Backend : public QObject {
     // The LOOP button (Session::LoopState) and the next step for a newcomer.
     Q_PROPERTY(int loopState READ loopState NOTIFY changed)
     Q_PROPERTY(QString nextStep READ nextStep NOTIFY changed)
+    // The NEXT card does what it says when clicked (Session::nextAction).
+    Q_PROPERTY(bool nextClickable READ nextClickable NOTIFY changed)
     Q_PROPERTY(QStringList styleNames READ styleNames CONSTANT)
     Q_PROPERTY(QStringList styleWhats READ styleWhats CONSTANT)
     // Each style's tempo and the sounds it sets, for its card.
@@ -305,6 +307,8 @@ public:
     int loopState() const { return int(m_session->loopState()); }
     QString nextStep() const { return tf::console::keyNames(m_session->nextStep()); }
     Q_INVOKABLE void pressLoop(bool fresh = false) { m_session->pressLoop(fresh); }
+    bool nextClickable() const { return m_session->nextAction().kind != tf::Session::NextAction::None; }
+    Q_INVOKABLE bool doNextStep() { return m_session->doNextStep(); }
     QStringList styleNames() const;
     QStringList styleWhats() const;
     QVariantList styleDetails() const;

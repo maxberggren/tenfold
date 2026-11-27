@@ -283,6 +283,14 @@ public:
 
     // One sentence for a newcomer: what to do next on the showing page.
     QString nextStep() const;
+    // What a click on that sentence does: loop, open a page, write the
+    // track, or nothing (it only says how to play).
+    struct NextAction {
+        enum Kind { None, Loop, Page, MakeTrack } kind = None;
+        int page = -1;
+    };
+    NextAction nextAction() const;
+    bool doNextStep(); // false: nothing to do
 
     // How much the window shows: 0 Play (the pad, LOOP and the sound; the
     // band's second row folded away, pages zoomed onto what plays), 2

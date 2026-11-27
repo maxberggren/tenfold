@@ -73,6 +73,40 @@ where a port goes.
 
 ## Playing
 
+**The first start** asks for a style (house, trap, lo-fi, synthwave,
+techno, trance, amapiano, gamelan): touch one and its drums, bass and
+chords play a bar; Start gives every page that style's sound and tempo.
+Esc keeps the studio's own sounds.
+
+**Play, Shape, Studio.** Three chips in the Transport box set how much the
+window shows; every key works at every level.
+
+- **Play**, where a newcomer starts: five tabs (Drums, Bass, Chords, Lead,
+  Song, and *+ more*), the pad, **LOOP IT**, Undo and Pause. Pages whose
+  pads hold fine-tuning (Bass's rail, Chords' rhythms, Arp's panels) zoom
+  onto the part that plays, with a line on the pad's edge saying what
+  waits in Studio. NEXT says what to do now, and the tab to try next
+  pulses. Chords name the plain chords and call the other rows by mood.
+- **Shape** adds each page's second row under the pad (swing, tone,
+  glide…), tempo, key, metronome, quantise and loop length.
+- **Studio** is everything: all eleven tabs, every control on the pad,
+  record, the guide, the tutorial, the meters, and the song's file (save,
+  open, export, start over) in one menu.
+
+A first start begins at Play; a player who already has a song kept from
+the last quit begins at Studio.
+
+**LOOP IT** is Space as a button, and says what Space would do now: play
+something first, loop it, add a layer, or wait for the bar line. The clip
+slots end in **+**, where the next loop goes; clicking it with a loop
+playing starts a new one beside it.
+
+**Sounds.** The row of sounds under the pad ends in **+N MORE** and **→**
+(the next sound, as → is). +N MORE opens the sound browser: every sound
+the page has, as tiles with a few words each; touching one plays a bar of
+it in the key, so it is heard before it is kept (Enter keeps, Esc goes
+back to the one before).
+
 Click **Take the trackpad**, the bright button at the top of the panel, to
 hand the trackpad to tenfold. Esc gives it back, and with the trackpad not
 taken Esc pauses and plays, as Ctrl+P. Then pick a page with its number:

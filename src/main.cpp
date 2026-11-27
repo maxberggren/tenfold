@@ -57,7 +57,7 @@ static void usage(FILE *out) {
                "                                          render a scripted performance\n"
                "  tenfold bench [--json]                  time a dense case\n"
                "  tenfold latency [--json]                measure the microphone's trip to the ears\n"
-               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page]\n"
+               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page] [--level 0-2] [--welcome] [--sounds N]\n"
                "                     [--tutorial STEP] [--gpu] [--window] [--pad standby|waiting|paused|fault]\n"
                "                     [--export]\n"
                "                                          draw the window mid-performance (page 1-8, 0 arrange, 9 visual, sampler),\n"
@@ -171,6 +171,17 @@ static int screenshot(int argc, char **argv) {
         const std::string p = pad;
         backend.simulatePad(p == "waiting" ? Backend::Starting : p == "paused" ? Backend::Ready
                             : p == "fault" ? Backend::Failed : p == "playing" ? Backend::Playing : Backend::Idle);
+    }
+    // --level 0|1|2: the window as a newcomer (0), shaping (1) or the whole
+    // studio (2, as before levels); --welcome: the first start's styles.
+    if (const char *level = option(argc, argv, "--level"))
+        backend.setUiLevel(std::atoi(level));
+    if (hasFlag(argc, argv, "--welcome"))
+        backend.simulateWelcome(true);
+    if (const char *sounds = option(argc, argv, "--sounds")) {
+        // The sound browser open, the n-th sound tried.
+        window->setProperty("soundsVisible", true);
+        backend.chooseSound(std::atoi(sounds), false);
     }
     if (hasFlag(argc, argv, "--help-page"))
         window->setProperty("helpVisible", true);

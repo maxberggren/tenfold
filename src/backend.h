@@ -118,6 +118,20 @@ class Backend : public QObject {
     // After an export: the folder it wrote (empty when it failed or was
     // cancelled), and what it says.
     Q_PROPERTY(QString exportedFolder READ exportedFolder NOTIFY exportChanged)
+    // How much the window shows (Session::level): 0 Play, 1 Shape, 2 Studio.
+    Q_PROPERTY(int uiLevel READ uiLevel WRITE setUiLevel NOTIFY changed)
+    // The first start: a style to begin from, before anything else.
+    Q_PROPERTY(bool welcome READ welcome NOTIFY changed)
+    // The sound browser: the showing page's sounds, what each is, the one chosen.
+    Q_PROPERTY(QStringList soundNames READ soundNames NOTIFY pageChanged)
+    Q_PROPERTY(QStringList soundWhats READ soundWhats NOTIFY pageChanged)
+    Q_PROPERTY(int soundIndex READ soundIndex NOTIFY changed)
+    Q_PROPERTY(bool auditioning READ auditioning NOTIFY changed)
+    // The LOOP button (Session::LoopState) and the next step for a newcomer.
+    Q_PROPERTY(int loopState READ loopState NOTIFY changed)
+    Q_PROPERTY(QString nextStep READ nextStep NOTIFY changed)
+    Q_PROPERTY(QStringList styleNames READ styleNames CONSTANT)
+    Q_PROPERTY(QStringList styleWhats READ styleWhats CONSTANT)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -270,6 +284,22 @@ public:
     // A key for the pages; returns true when one used it.
     Q_INVOKABLE bool sendKey(int key, int modifiers, bool down, bool repeat, const QString &text);
 
+    int uiLevel() const { return m_session->level(); }
+    void setUiLevel(int level);
+    bool welcome() const { return m_welcome; }
+    void simulateWelcome(bool on) { m_welcome = on; emit changed(); } // a screenshot's first start
+    Q_INVOKABLE void endWelcome(int style); // −1: no style, just play
+    QStringList soundNames() const;
+    QStringList soundWhats() const;
+    int soundIndex() const { return m_session->soundChoice(); }
+    bool auditioning() const { return m_session->auditioning(); }
+    Q_INVOKABLE void chooseSound(int index, bool hear = true) { m_session->chooseSound(index, hear); }
+    int loopState() const { return int(m_session->loopState()); }
+    QString nextStep() const { return tf::console::keyNames(m_session->nextStep()); }
+    Q_INVOKABLE void pressLoop(bool fresh = false) { m_session->pressLoop(fresh); }
+    QStringList styleNames() const;
+    QStringList styleWhats() const;
+
     void shutdown();
     // Plays a script into the session and studio up to a moment, as fast as
     // it renders, for screenshots.
@@ -307,6 +337,8 @@ private:
     uint32_t m_noticeSeq = 0;
     QString m_notice;
     int m_lastPage = -1;
+    bool m_welcome = false;
+    int m_savedLevel = -1; // the level last written to the settings
 
     bool m_recording = false;
     bool m_recordingVideo = false;

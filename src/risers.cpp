@@ -307,6 +307,24 @@ public:
     enum Spot { SpotStyle = 100, SpotShorter = 200, SpotLonger, SpotDrop, SpotFall, SpotMix, SpotSet = 300 };
     bool click(QPointF, ControlContext &ctx) override;
 
+    // The sound browser: the sets, and an impact to hear one.
+    std::vector<SoundChoice> soundChoices() const override {
+        std::vector<SoundChoice> out;
+        for (int s = 0; s < SetCount; ++s)
+            out.push_back({QString::fromUtf8(palette(s).name).toLower(), QString::fromUtf8(setBlurb(s))});
+        return out;
+    }
+    int soundChoice() const override { return m_set; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < SetCount && index != m_set)
+            setSet(index, ctx);
+    }
+    std::vector<AuditionStep> audition() const override {
+        std::vector<AuditionStep> out;
+        auditionNote(out, 0.0, Qt::Key_Z, 0.1);
+        return out;
+    }
+
     QString help() const override {
         return QStringLiteral(
             "Left / Right\tthe set, the sound of every riser and hit: EDM, analog, dub, lo-fi, trap, drum and bass, "

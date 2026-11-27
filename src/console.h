@@ -120,6 +120,8 @@ constexpr int kClipSpot = 1000;
 // The clip slots, clickable (kClipSpot + slot); clickClip() does what a
 // click on one should: launch it at the next bar, or stop it if it plays.
 bool clickClip(int id, const PartView &v, ControlContext &ctx);
+// The slot the next loop goes into (drawn as "+"), or −1 when all are full.
+int firstEmptySlot(const PartView &v);
 
 // A row of clickable chips under the pad (or anywhere): each a label in
 // the page colour, lit when on, brighter under the mouse. Returns the rect.

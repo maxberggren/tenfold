@@ -3695,6 +3695,28 @@ public:
 
     void paint(QPainter &p, const PaintContext &pc) override;
 
+    // The sound browser: the lead sounds, and a short melody to hear one.
+    std::vector<SoundChoice> soundChoices() const override {
+        std::vector<SoundChoice> out;
+        for (int s = 0; s < kSounds; ++s)
+            out.push_back({QString::fromUtf8(sound(s).name), QString::fromUtf8(sound(s).style)});
+        return out;
+    }
+    int soundChoice() const override { return m_sound; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < kSounds && index != m_sound)
+            setSound(index, ctx);
+    }
+    std::vector<AuditionStep> audition() const override {
+        std::vector<AuditionStep> out;
+        auditionNote(out, 0.0, Qt::Key_A, 0.45);
+        auditionNote(out, 0.5, Qt::Key_D, 0.45);
+        auditionNote(out, 1.0, Qt::Key_G, 0.9);
+        auditionNote(out, 2.0, Qt::Key_F, 0.45);
+        auditionNote(out, 2.5, Qt::Key_D, 1.3);
+        return out;
+    }
+
     QString help() const override {
         return QStringLiteral(
             "← →\tsound: Anthem, Pluck, Bell, Chip, Vox, Scream, Hoover, Big room, Mini (a vintage mono synth), "

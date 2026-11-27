@@ -387,6 +387,10 @@ public:
     virtual void copyClip(int part, int from, int to) = 0;
     virtual void mergeClips(int part, int into, int other, bool chain) = 0;
     virtual void stopPart(int part, bool now = false) = 0;
+    // The window's New loop, from the page (its "+" slot): this part's loop
+    // stops, kept in its slot, so the next Space makes a loop of its own.
+    // False when it has no loop playing.
+    virtual bool newLoop() { return false; }
     virtual void clearPart(int part, int slot) = 0;
     // A time t (the touch clock, as ctx.timeAt(beat) gives it) schedules the
     // change for that moment, to the sample block; 0 is now.
@@ -569,7 +573,34 @@ public:
     // bar of the studio's clock.
     virtual int songBars() const { return 0; }
     virtual void playSong(int bar, ControlContext &ctx) { (void)bar, (void)ctx; }
+
+    // The sound browser (the window's SOUND button): the page's sounds in
+    // the order ← → steps through them, each with a few words saying what
+    // it is for; the one chosen now (−1: none); and choosing one, as ← →
+    // would. A page without sounds to choose returns none.
+    struct SoundChoice {
+        QString name, what;
+    };
+    virtual std::vector<SoundChoice> soundChoices() const { return {}; }
+    virtual int soundChoice() const { return -1; }
+    virtual void chooseSound(int index, ControlContext &ctx) { (void)index, (void)ctx; }
+    // A sound tried in the browser is heard at once: a short phrase the
+    // page plays from its own keys, as a hand on the keyboard would. Each
+    // step is a key going down or up, `beat` beats after the sound was
+    // chosen. None: choosing it is heard by itself (a scene laid).
+    struct AuditionStep {
+        double beat;
+        int key;
+        bool down;
+    };
+    virtual std::vector<AuditionStep> audition() const { return {}; }
 };
+
+// A phrase for audition(): each key held for `len` beats from `at`.
+inline void auditionNote(std::vector<PartControl::AuditionStep> &out, double at, int key, double len) {
+    out.push_back({at, key, true});
+    out.push_back({at + len, key, false});
+}
 
 // One part, as the studio and the session know it.
 struct PartSpec {

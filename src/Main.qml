@@ -32,6 +32,23 @@ ApplicationWindow {
 
     property bool helpVisible: false
     property bool exportVisible: false
+    // The sound browser over the pad (SOUND, or S... the button only: S is a key on pages).
+    property bool soundsVisible: false
+    onSoundsVisibleChanged: if (!soundsVisible) screen.forceActiveFocus()
+    // How much shows: 0 Play, 1 Shape, 2 Studio (Session::level).
+    readonly property int lv: backend.uiLevel
+    // At level 0 the tabs show the first parts and the Song; MORE opens the rest.
+    property bool allPages: false
+    function pageShown(i) {
+        return lv > 0 || allPages || i < 4 || i === backend.arrangePage || i === backend.page
+    }
+    readonly property int shownPages: {
+        let n = 0
+        for (let i = 0; i < backend.pageCount; ++i)
+            n += pageShown(i) ? 1 : 0
+        return n
+    }
+    readonly property bool moreTab: lv === 0 && !allPages
     // The dialog has the keyboard while it shows (its prefix field may take
     // it), and the pages get it back when it goes.
     onExportVisibleChanged: exportVisible ? exportDialog.forceActiveFocus() : screen.forceActiveFocus()
@@ -47,7 +64,7 @@ ApplicationWindow {
     readonly property int sideWidth: backend.tutorialActive ? 360 : 300
     readonly property int wideWidth: 300 + 16 + sideWidth
     // The height the panel needs in each, its buttons at their smallest.
-    readonly property int sideHeight: backend.tutorialActive ? 400 : 540
+    readonly property int sideHeight: backend.tutorialActive ? 400 : lv === 0 ? 470 : 540
     readonly property int wideHeight: backend.tutorialActive ? 240 : 300
     readonly property int stackHeight: backend.tutorialActive ? 320 : 260
     // The pad's item and the panel get this much of the window's height.
@@ -105,7 +122,9 @@ ApplicationWindow {
     // taken), and with nothing of that to escape it pauses and plays, as
     // Ctrl+P (Session::escape).
     function back() {
-        if (win.exportVisible)
+        if (win.soundsVisible)
+            win.soundsVisible = false
+        else if (win.exportVisible)
             win.exportVisible = false // an export goes on: only its Cancel stops it
         else if (win.helpVisible)
             win.helpVisible = false
@@ -203,7 +222,7 @@ ApplicationWindow {
                 id: header
                 Layout.fillWidth: true
                 Layout.preferredHeight: rows * tabHeight + (rows - 1) * 6
-                readonly property int count: backend.pageCount
+                readonly property int count: win.shownPages + (win.moreTab ? 1 : 0)
                 readonly property int minTab: 88
                 readonly property int gap: 10
                 readonly property real markWidth: wordmark.implicitWidth + 18
@@ -248,6 +267,7 @@ ApplicationWindow {
                             // The tutorial's next page, while the player isn't on it.
                             readonly property bool called: backend.tutorialActive && backend.tutorialPage === index
                                                            && !current
+                            visible: win.pageShown(index)
                             Layout.fillWidth: true
                             Layout.preferredWidth: header.minTab
                             Layout.preferredHeight: header.tabHeight
@@ -320,6 +340,31 @@ ApplicationWindow {
                                 onClicked: backend.page = tab.index
                             }
                         }
+                    }
+                    // Level 0: the other parts, one click away.
+                    Item {
+                        visible: win.moreTab
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: header.minTab
+                        Layout.preferredHeight: header.tabHeight
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "transparent"
+                            border.color: win.amber
+                            border.width: 2
+                            opacity: 0.6
+                            Rectangle { anchors.fill: parent; anchors.margins: 4; color: "transparent"; border.color: win.amber; border.width: 1; opacity: 0.5 }
+                        }
+                        Text {
+                            anchors.centerIn: parent
+                            text: qsTr("+ %n more", "", backend.pageCount - win.shownPages)
+                            color: win.amber
+                            font.family: win.mono
+                            font.pixelSize: 15
+                            font.weight: Font.Bold
+                            font.capitalization: Font.AllUppercase
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: win.allPages = true }
                     }
                 }
             }
@@ -440,7 +485,27 @@ ApplicationWindow {
                             visible: !panel.tutorial
                             spacing: win.readoutsCompact ? 10 : 12
 
+                            // Below the Studio level: what to do next, in place of the readouts.
+                            PanelBox {
+                                visible: win.lv < 2
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: nextText.implicitHeight + 34
+                                title: qsTr("Next")
+                                color: win.pageColor
+                                Text {
+                                    id: nextText
+                                    width: parent.width
+                                    text: backend.nextStep
+                                    color: win.pageColor
+                                    font.family: win.mono
+                                    font.pixelSize: 15
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+
                             Column {
+                                visible: win.lv >= 2
                                 Layout.fillWidth: true
                                 spacing: win.readoutsCompact ? 4 : 6
                                 StatusLamp { label: qsTr("Trackpad grabbed"); on: win.playing; color: win.green }
@@ -452,6 +517,7 @@ ApplicationWindow {
                             // The readouts: a lit heading over them, or (compact)
                             // at the start of their line.
                             Item {
+                                visible: win.lv >= 2
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: win.readoutsCompact ? 32 : 60
                                 Rectangle {
@@ -540,29 +606,75 @@ ApplicationWindow {
                                     readonly property bool failed: backend.padState === Backend.Failed
                                     Layout.columnSpan: buttons.columns
                                     Layout.fillWidth: true; Layout.fillHeight: true
-                                    Layout.minimumHeight: win.playing ? 30 : backend.tutorialActive || win.compact ? 52 : 84
-                                    Layout.maximumHeight: win.playing ? 60 : 112
-                                    Layout.preferredHeight: win.playing ? buttons.bh : backend.tutorialActive || win.compact ? 60 : 96
+                                    // Level 0: the mouse and the keys play too, so the
+                                    // pad's button stands back for LOOP.
+                                    readonly property bool modest: win.lv === 0 && !backend.tutorialActive
+                                    Layout.minimumHeight: win.playing ? 30 : modest ? 44 : backend.tutorialActive || win.compact ? 52 : 84
+                                    Layout.maximumHeight: win.playing ? 60 : modest ? 64 : 112
+                                    Layout.preferredHeight: win.playing ? buttons.bh : modest ? 56 : backend.tutorialActive || win.compact ? 60 : 96
                                     label: win.playing ? qsTr("Release pad")
                                          : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Waiting for the trackpad…"))
                                          : failed ? qsTr("▶  Retry the trackpad")
                                          : qsTr("▶  Take the trackpad")
                                     // As big as fits on one line (a letter is about 0.65 of
                                     // the size across).
-                                    labelSize: win.playing ? 16 : Math.max(12, Math.min(backend.tutorialActive ? 19 : 22, Math.floor((width - 24) / (0.65 * label.length))))
+                                    labelSize: win.playing || modest ? 16 : Math.max(12, Math.min(backend.tutorialActive ? 19 : 22, Math.floor((width - 24) / (0.65 * label.length))))
                                     // Little glow where there's little room round it.
                                     glowSpread: win.compact ? 4 : 11
                                     note: win.playing ? ""
                                         : failed ? backend.error
                                         : waiting ? qsTr("Click to call it off.")
+                                        : modest ? qsTr("All ten fingers. The mouse and keys play too.")
                                         : qsTr("The pointer stops and every finger plays. Esc gives it back.")
                                           + (backend.padNeedsPassword ? " " + qsTr("Needs your password, once each time tenfold starts.") : "")
                                     key: win.playing || waiting ? "Esc" : ""
                                     color: failed ? win.red : waiting ? win.amber : win.green
                                     active: win.playing
-                                    beckon: !win.playing && !waiting
+                                    beckon: !win.playing && !waiting && !modest
                                     hint: backend.tutorialActive && backend.tutorialButton === "pad" && !win.playing
                                     onClicked: backend.togglePlay()
+                                }
+                                // LOOP: Space, as a button that says what it will do now
+                                // (Session::LoopState: 1 nothing played, 2 loop it,
+                                // 3 layer on the loop playing, 4 waiting for the bar).
+                                PanelButton {
+                                    id: loopButton
+                                    readonly property int st: backend.loopState
+                                    visible: st > 0 && !backend.tutorialActive
+                                    Layout.columnSpan: buttons.columns
+                                    Layout.fillWidth: true; Layout.fillHeight: true
+                                    Layout.minimumHeight: 52; Layout.maximumHeight: 96
+                                    Layout.preferredHeight: win.lv === 0 ? 80 : 60
+                                    color: st === 4 ? win.red : win.pageColor
+                                    labelSize: 20
+                                    opacity: st === 1 ? 0.55 : 1
+                                    label: st === 4 ? qsTr("Looping on the bar…")
+                                         : st === 3 ? qsTr("+  Add a layer")
+                                         : qsTr("Loop it")
+                                    note: st === 4 ? qsTr("Keep playing. Click to call it off.")
+                                        : st === 3 ? qsTr("Play over the loop, then press.")
+                                        : st === 2 ? qsTr("Keeps what you just played going round.")
+                                        : qsTr("Play something first, then press.")
+                                    key: "Space"
+                                    active: st === 4
+                                    beckon: st === 2
+                                    glowSpread: win.compact ? 4 : 8
+                                    onClicked: modifiers => backend.pressLoop((modifiers & Qt.ShiftModifier) !== 0)
+                                }
+                                PanelButton {
+                                    visible: backend.soundNames.length > 0 && !backend.tutorialActive
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    label: qsTr("Sound")
+                                    key: backend.soundIndex >= 0 ? (backend.soundNames[backend.soundIndex] || "") : ""
+                                    color: win.pageColor
+                                    active: win.soundsVisible
+                                    onClicked: win.soundsVisible = !win.soundsVisible
+                                }
+                                PanelButton {
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    label: qsTr("Undo"); key: "Ctrl Z"; color: win.amber
+                                    hint: backend.tutorialActive && backend.tutorialButton === "undo"
+                                    onClicked: backend.undoTake()
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
@@ -588,31 +700,31 @@ ApplicationWindow {
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Tempo −"); key: "Ctrl ↓"; color: win.amber
                                     onClicked: backend.shiftTempo(-1)
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Tempo +"); key: "Ctrl ↑"; color: win.amber
                                     onClicked: backend.shiftTempo(1)
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Key ◀"); key: "Ctrl ←"; color: win.cyan
                                     onClicked: backend.shiftRoot(-1)
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Key ▶"); key: "Ctrl →"; color: win.cyan
                                     onClicked: backend.shiftRoot(1)
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Click"); key: "Ctrl M"; color: win.amber; active: backend.metronome
                                     onClicked: backend.toggleMetronome()
                                 }
@@ -620,19 +732,13 @@ ApplicationWindow {
                                 // the grid; off, loops keep it as it was heard.
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the key still works; the tutorial needs the room
+                                    visible: win.lv >= 1 && !backend.tutorialActive // the key still works; the tutorial needs the room
                                     label: qsTr("Quantise"); key: "Ctrl G"; color: win.amber; active: backend.quantise
                                     onClicked: backend.toggleQuantise()
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    label: qsTr("Undo loop"); key: "Ctrl Z"; color: win.amber
-                                    hint: backend.tutorialActive && backend.tutorialButton === "undo"
-                                    onClicked: backend.undoTake()
-                                }
-                                PanelButton {
-                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // Ctrl+N twice still works; the tutorial needs the room
+                                    visible: win.lv >= 2 && !backend.tutorialActive // Ctrl+N twice still works; the tutorial needs the room
                                     label: qsTr("Start over"); key: "Ctrl N ×2"; color: win.red
                                     onClicked: backend.startOver()
                                 }
@@ -646,20 +752,20 @@ ApplicationWindow {
                                 // Stems, voices and MIDI for another studio (ExportDialog.qml).
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive
+                                    visible: win.lv >= 2 && !backend.tutorialActive
                                     label: backend.exporting ? qsTr("Export %1%").arg(Math.round(backend.exportProgress * 100)) : qsTr("Export")
                                     key: "Ctrl E"; color: win.cyan; active: win.exportVisible || backend.exporting
                                     onClicked: win.exportVisible = true
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 2 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Open song"); key: "Ctrl O"; color: win.cyan
                                     onClicked: backend.openSong()
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive // the keys still work; the tutorial needs the room
+                                    visible: win.lv >= 2 && !backend.tutorialActive // the keys still work; the tutorial needs the room
                                     label: qsTr("Save song"); key: "Ctrl S"; color: win.cyan
                                     // Shift-click: save as, as Ctrl+Shift+S does.
                                     onClicked: modifiers => (modifiers & Qt.ShiftModifier) ? backend.saveSongAs() : backend.saveSong()
@@ -679,7 +785,7 @@ ApplicationWindow {
                                 PanelButton {
                                     Layout.columnSpan: 2
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: !backend.tutorialActive && backend.page < backend.arrangePage
+                                    visible: win.lv >= 1 && !backend.tutorialActive && backend.page < backend.arrangePage
                                     opacity: backend.canNewLoop ? 1 : 0.35
                                     label: qsTr("New loop")
                                     key: backend.canNewLoop ? qsTr("stop · keep · play anew") : "—"
@@ -692,7 +798,7 @@ ApplicationWindow {
                                 // Drums, at any time).
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
                                     opacity: backend.loopShorterBeats > 0 ? 1 : 0.35
                                     label: qsTr("Loop shorter")
                                     key: backend.loopShorterBeats > 0 ? win.barsText(backend.loopShorterBeats) : "—"
@@ -701,12 +807,52 @@ ApplicationWindow {
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
+                                    visible: win.lv >= 1 && backend.loopBeats > 0 && !backend.tutorialActive // ↑ ↓ still work; the tutorial needs the room
                                     opacity: backend.loopLongerBeats > 0 ? 1 : 0.35
                                     label: qsTr("Loop longer")
                                     key: backend.loopLongerBeats > 0 ? win.barsText(backend.loopLongerBeats) : "—"
                                     color: win.pageColor
                                     onClicked: if (backend.loopLongerBeats > 0) backend.resizeLoop(1)
+                                }
+                                // How much shows: Play, Shape, Studio. The keys work at every level.
+                                Item {
+                                    visible: !backend.tutorialActive
+                                    Layout.columnSpan: buttons.columns
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 34
+                                    Layout.minimumHeight: 30
+                                    Row {
+                                        anchors.fill: parent
+                                        spacing: 6
+                                        Repeater {
+                                            model: [qsTr("Play"), qsTr("Shape"), qsTr("Studio")]
+                                            delegate: Rectangle {
+                                                required property int index
+                                                required property string modelData
+                                                width: (parent.width - 12) / 3
+                                                height: parent.height
+                                                color: win.lv === index ? win.amber : "transparent"
+                                                border.color: win.amber
+                                                border.width: win.lv === index ? 2 : 1
+                                                opacity: win.lv === index || levelMouse.containsMouse ? 1 : 0.6
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: (win.lv > index ? "▴ " : win.lv < index ? "▾ " : "") + modelData
+                                                    color: win.lv === index ? "#0a0806" : win.amber
+                                                    font.family: win.mono
+                                                    font.pixelSize: 13
+                                                    font.weight: Font.Bold
+                                                    font.capitalization: Font.AllUppercase
+                                                }
+                                                MouseArea {
+                                                    id: levelMouse
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    onClicked: backend.uiLevel = index
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                         }
                     }
@@ -730,6 +876,7 @@ ApplicationWindow {
                           : backend.padState === Backend.Failed ? qsTr("Fault — %1").arg(backend.error)
                           : backend.padState === Backend.Ready
                             ? (backend.padAway ? qsTr("Trackpad given back until tenfold is in front again") : qsTr("Trackpad given back, the sound plays on"))
+                          : win.lv === 0 ? qsTr("Ready: click the pad or press the keys to play")
                           : qsTr("Standby: take the trackpad to play"))
                           + ((backend.pagesSilenced[backend.page] || "") !== ""
                              ? "     " + qsTr("Silent: %1 on the Song page").arg(backend.pagesSilenced[backend.page]) : "")
@@ -811,6 +958,26 @@ ApplicationWindow {
             }
         }
 
+        // The sound browser, over the pad and its band.
+        SoundBrowser {
+            readonly property point padAt: (surface.x, surface.y, surface.width, surface.height, win.width, win.height,
+                                            surface.mapToItem(parent, 0, 0))
+            x: padAt.x + 22
+            y: padAt.y + 2
+            width: surface.width - 44
+            height: surface.height - 6
+            z: 40
+            visible: win.soundsVisible && backend.soundNames.length > 0
+            tint: win.pageColor
+            pageName: backend.pageNames[backend.page]
+            onClosed: win.soundsVisible = false
+        }
+        // A page without sounds closes the browser.
+        Connections {
+            target: backend
+            function onPageChanged() { if (backend.soundNames.length === 0) win.soundsVisible = false }
+        }
+
         HelpPage {
             anchors.fill: parent
             visible: win.helpVisible
@@ -818,6 +985,14 @@ ApplicationWindow {
             tint: win.pageColor
             pageHelp: backend.pageHelp
         }
+    }
+
+    // The first start: a style to begin from.
+    Welcome {
+        anchors.fill: parent
+        visible: backend.welcome
+        onTutorial: backend.toggleTutorial()
+        onVisibleChanged: if (!visible) screen.forceActiveFocus()
     }
 
     // Export, over everything but the glass's scanlines.

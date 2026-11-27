@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QSettings>
 #include <QStandardPaths>
 #include <chrono>
 #include <QPainter>
@@ -46,6 +47,18 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         // The song kept when tenfold last quit stays one Ctrl+Shift+O away
         // (listed in the help); a notice at start would sit over the
         // trackpad prompt.
+    }
+
+    if (live) {
+        // A first start begins at the simplest level, with a style to pick;
+        // a player who has used tenfold before (a song kept at quit) keeps
+        // the whole studio until they choose otherwise.
+        QSettings settings;
+        const bool known = !m_songs->autosavePath().isEmpty() && QFile::exists(m_songs->autosavePath());
+        const int level = settings.value(QStringLiteral("level"), known ? 2 : 0).toInt();
+        m_session->setLevel(level);
+        m_savedLevel = m_session->level();
+        m_welcome = !settings.value(QStringLiteral("welcomed"), known).toBool();
     }
 
     if (live) {
@@ -638,6 +651,12 @@ void Backend::tick() {
         m_lastPage = m_session->page();
         emit pageChanged();
     }
+    // The band's fold opens the level from the pad itself: kept, as the
+    // window's own choice is.
+    if (!m_simulated && m_session->level() != m_savedLevel) {
+        m_savedLevel = m_session->level();
+        QSettings().setValue(QStringLiteral("level"), m_savedLevel);
+    }
     emit frame();
     emit changed();
 }
@@ -711,5 +730,52 @@ QString Backend::rich(const QString &text, const QColor &color, int px) const {
             out += c;
         }
     }
+    return out;
+}
+
+void Backend::setUiLevel(int level) {
+    m_session->setLevel(level);
+    if (!m_simulated && m_session->level() != m_savedLevel) {
+        m_savedLevel = m_session->level();
+        QSettings().setValue(QStringLiteral("level"), m_savedLevel);
+    }
+    emit changed();
+}
+
+void Backend::endWelcome(int style) {
+    if (style >= 0)
+        m_session->applyStyle(style);
+    m_welcome = false;
+    if (!m_simulated)
+        QSettings().setValue(QStringLiteral("welcomed"), true);
+    emit changed();
+    emit pageChanged(); // the sounds chosen show in the browser
+}
+
+QStringList Backend::soundNames() const {
+    QStringList out;
+    for (const auto &c : m_session->soundChoices())
+        out << c.name;
+    return out;
+}
+
+QStringList Backend::soundWhats() const {
+    QStringList out;
+    for (const auto &c : m_session->soundChoices())
+        out << c.what;
+    return out;
+}
+
+QStringList Backend::styleNames() const {
+    QStringList out;
+    for (const auto &s : tf::Session::styles())
+        out << QString::fromUtf8(s.name);
+    return out;
+}
+
+QStringList Backend::styleWhats() const {
+    QStringList out;
+    for (const auto &s : tf::Session::styles())
+        out << QString::fromUtf8(s.what);
     return out;
 }

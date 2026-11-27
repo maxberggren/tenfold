@@ -394,9 +394,19 @@ void beats(QPainter &p, const PaintContext &pc, QColor color) {
     }
 }
 
+int firstEmptySlot(const PartView &v) {
+    for (int s = 0; s < kClipSlots; ++s)
+        if (v.clips[s].state == ClipView::Empty)
+            return s;
+    return -1;
+}
+
 void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double time, Hotspots *spots) {
     const qreal w = r.width() / kClipSlots;
     const bool blink = std::fmod(time, 0.5) < 0.25;
+    // The first empty slot is where the next loop goes: a "+" there, and a
+    // click on it starts one (clickClip).
+    const int next = firstEmptySlot(v);
     for (int s = 0; s < kClipSlots; ++s) {
         const ClipView &c = v.clips[s];
         const QRectF cell(r.left() + s * w + 2, r.top(), w - 4, r.height());
@@ -426,6 +436,13 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
             break;
         default:
             break;
+        }
+        if (s == next) {
+            p.setPen(QPen(alpha(col, 0.75f), 1.5, Qt::DashLine));
+            p.drawRect(cell);
+            text(p, cell, cell.width() >= 64 ? QStringLiteral("+ NEW") : QStringLiteral("+"), alpha(col, 0.9f),
+                 int(std::clamp(cell.height() * 0.45, 9.0, 13.0)), true, Qt::AlignCenter);
+            continue;
         }
         QString label = QString::number(s + 1);
         if (c.state != ClipView::Empty && c.lengthBeats > 0)
@@ -480,8 +497,15 @@ bool clickClip(int id, const PartView &v, ControlContext &ctx) {
     if (slot < 0 || slot >= kClipSlots)
         return false;
     const ClipView &c = v.clips[slot];
-    if (c.state == ClipView::Empty)
-        return true; // nothing there to launch
+    if (c.state == ClipView::Empty) {
+        // The "+": a new loop. With this part's loop playing, it stops (kept
+        // in its slot) and the next Space makes a loop of its own.
+        if (v.playing >= 0 || v.queued >= 0)
+            ctx.newLoop();
+        else
+            ctx.notice(QStringLiteral("Play something, then LOOP (Space) keeps it here"));
+        return true;
+    }
     if (c.state == ClipView::Playing)
         ctx.stop();
     else

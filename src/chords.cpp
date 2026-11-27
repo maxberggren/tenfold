@@ -499,6 +499,25 @@ public:
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
+    // The sound browser: the chord sounds, and two chords to hear one.
+    std::vector<SoundChoice> soundChoices() const override {
+        std::vector<SoundChoice> out;
+        for (int s = 0; s < StyleCount; ++s)
+            out.push_back({QString::fromUtf8(styleDef(s).name).toLower(), QString::fromUtf8(styleDef(s).blurb)});
+        return out;
+    }
+    int soundChoice() const override { return m_style; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < StyleCount && index != m_style)
+            setStyle(index, ctx);
+    }
+    std::vector<AuditionStep> audition() const override {
+        std::vector<AuditionStep> out;
+        auditionNote(out, 0.0, Qt::Key_A, 1.8); // i
+        auditionNote(out, 2.0, Qt::Key_F, 1.8); // iv
+        return out;
+    }
+
     QString help() const override;
     QString status() const override;
     // For the tutorial: chords ever played by hand, and which columns

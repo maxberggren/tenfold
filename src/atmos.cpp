@@ -4887,6 +4887,25 @@ public:
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
+    // The sound browser: the scenes. Laying one is heard by itself.
+    std::vector<SoundChoice> soundChoices() const override {
+        static const char *what[kSceneCount] = {
+            "soft light coming up", "slow waves and deep water", "stone, choir and a long echo",
+            "glittering glass far away", "a worn tape of a summer", "hands-in-the-air trance pad",
+            "rain on the window at 3 am", "a pad that pumps with the kick", "80s synthwave haze",
+            "dub techno stabs into echo", "Balinese bronze shimmer", "a tanpura's endless drone",
+            "a thumb piano in its gourd", "Japanese 80s city pop keys", "Tuvan throat singing"};
+        std::vector<SoundChoice> out;
+        for (int s = 0; s < kSceneCount; ++s)
+            out.push_back({QString::fromUtf8(kScenes[s].name).toLower(), QString::fromUtf8(what[s])});
+        return out;
+    }
+    int soundChoice() const override { return m_scene >= 0 ? m_scene : m_lastScene; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < kSceneCount && index != m_scene)
+            toggleScene(index, ctx);
+    }
+
     QString help() const override;
     QString status() const override;
     // For the tutorial: layers latched now (by click, hold or a scene), the

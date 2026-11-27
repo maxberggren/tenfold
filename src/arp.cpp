@@ -3715,6 +3715,31 @@ public:
         paintStrip(p, pc);
     }
 
+    // The sound browser: the arp sounds, and a held chord to hear one run.
+    std::vector<SoundChoice> soundChoices() const override {
+        static const char *what[SoundCount] = {
+            "short and bouncy, the classic", "bright crystal bells", "big trance supersaw", "hollow retro pulse",
+            "squelchy 303 acid", "warm wooden mallets", "plucked concert harp", "soft electric piano",
+            "the Juno's lush chorus", "a church-and-funk organ", "Caribbean steel pan", "buzzing Indian sitar",
+            "amapiano's bouncing log drum", "8-bit Game Boy blips", "shimmering Balinese gangsa"};
+        std::vector<SoundChoice> out;
+        for (int s = 0; s < SoundCount; ++s)
+            out.push_back({QString::fromUtf8(soundName(s)), QString::fromUtf8(what[s])});
+        return out;
+    }
+    int soundChoice() const override { return m_s.sound; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < SoundCount && index != m_s.sound)
+            setSound(index, ctx);
+    }
+    std::vector<AuditionStep> audition() const override {
+        std::vector<AuditionStep> out;
+        auditionNote(out, 0.0, Qt::Key_A, 3.5);
+        auditionNote(out, 0.0, Qt::Key_D, 3.5);
+        auditionNote(out, 0.0, Qt::Key_G, 3.5);
+        return out;
+    }
+
     QString help() const override {
         return QStringLiteral(
             "← →\tthe sound: pluck, glass, supersaw, pulse, acid, marimba, harp, rhodes, juno, organ, steel pan, "

@@ -25,7 +25,7 @@ PARTS = ../src/drums.cpp ../src/bass.cpp ../src/chords.cpp ../src/lead.cpp ../sr
 
 SOURCES += main.cpp framework_tests.cpp \
     drums_tests.cpp hang_tests.cpp tabla_tests.cpp udu_tests.cpp khishba_tests.cpp slitdrum_tests.cpp pipedrum_tests.cpp cuica_tests.cpp scream_tests.cpp gong_tests.cpp trombamarina_tests.cpp daxophone_tests.cpp guitar_tests.cpp saxophone_tests.cpp bass_tests.cpp marimbula_tests.cpp chords_tests.cpp lead_tests.cpp arp_tests.cpp \
-    atmos_tests.cpp risers_tests.cpp vocal_tests.cpp sampler_tests.cpp arrange_tests.cpp tutorial_tests.cpp song_tests.cpp export_tests.cpp visual_tests.cpp \
+    atmos_tests.cpp risers_tests.cpp vocal_tests.cpp sampler_tests.cpp arrange_tests.cpp tutorial_tests.cpp song_tests.cpp export_tests.cpp visual_tests.cpp newcomer_tests.cpp \
     ../src/console.cpp ../src/contacts.cpp ../src/export.cpp ../src/offline.cpp ../src/parts.cpp ../src/session.cpp ../src/songfile.cpp ../src/studio.cpp \
     ../src/tuning.cpp ../src/tutorial.cpp ../src/visual.cpp ../src/recorder.cpp \
     $$PARTS

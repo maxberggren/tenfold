@@ -705,6 +705,30 @@ public:
     // in it, a filter swept or grit turned up as the hand did it.
     bool layersKeepKnobMoves() const override { return true; }
 
+    // The sound browser: the bass sounds, and a bar of a bassline to hear one.
+    std::vector<SoundChoice> soundChoices() const override {
+        std::vector<SoundChoice> out;
+        for (int s = 0; s < SoundCount; ++s)
+            out.push_back({QString::fromUtf8(recipe(s).name), QString::fromUtf8(recipe(s).what)});
+        return out;
+    }
+    int soundChoice() const override { return m_sound; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < SoundCount && index != m_sound)
+            setSound(index, ctx);
+    }
+    std::vector<AuditionStep> audition() const override {
+        std::vector<AuditionStep> out;
+        auditionNote(out, 0.0, Qt::Key_Z, 0.4);
+        auditionNote(out, 0.75, Qt::Key_Z, 0.2);
+        auditionNote(out, 1.5, Qt::Key_C, 0.4);
+        auditionNote(out, 2.0, Qt::Key_Z, 0.35);
+        auditionNote(out, 2.5, Qt::Key_V, 0.35);
+        auditionNote(out, 3.0, Qt::Key_C, 0.35);
+        auditionNote(out, 3.5, Qt::Key_X, 0.4);
+        return out;
+    }
+
     QString help() const override {
         return QStringLiteral(
             "← →\tthe sound: sub, pluck, reese, acid, wobble, growl, 808, bounce, moog, upright (or Q W E R T Y U I O P), "

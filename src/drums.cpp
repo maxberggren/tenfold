@@ -655,6 +655,38 @@ public:
     void paint(QPainter &p, const PaintContext &pc) override;
     void paintKits(QPainter &p, const PaintContext &pc, const QRectF &row, int first, int last);
 
+    // The sound browser: the kits, and a beat on the bottom row to hear one.
+    std::vector<SoundChoice> soundChoices() const override {
+        static const char *what[KitCount] = {
+            "four on the floor, warm and round", "dark, tight, made for the warehouse", "808 booms and rolling hats",
+            "chopped funk breakbeats", "shuffled UK two-step", "dusty hip-hop with lazy swing",
+            "fast breaks and deep subs", "the 80s drum machine", "a gentle vintage rhythm box",
+            "jazz brushes on a soft kit", "South African log drum house", "Indian tabla, bols and all",
+            "Balinese bronze, gongs and kotekan", "a Game Boy beat", "West African djembe ensemble",
+            "the hang: steel, round and airy", "hollow wooden slit drum", "struck pipes, bright and tuned",
+            "Middle Eastern frame drum", "the udu: a clay pot that whoops", "a tabla pair in conversation",
+            "the cuíca: a drum that squeaks and sings"};
+        std::vector<SoundChoice> out;
+        for (int k = 0; k < KitCount; ++k)
+            out.push_back({QString::fromUtf8(kitName(k)), QString::fromUtf8(what[k])});
+        return out;
+    }
+    int soundChoice() const override { return m_kit; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < KitCount && index != m_kit)
+            setKit(index, ctx);
+    }
+    std::vector<AuditionStep> audition() const override {
+        // Kick, hat, snare, hat: a bar of the bottom row, each a quick tap
+        // (held, a pad would roll).
+        std::vector<AuditionStep> out;
+        const int keys[8] = {Qt::Key_Z, Qt::Key_V, Qt::Key_X, Qt::Key_V, Qt::Key_Z, Qt::Key_V, Qt::Key_X, Qt::Key_V};
+        for (int i = 0; i < 8; ++i)
+            auditionNote(out, 0.5 * i, keys[i], 0.08);
+        auditionNote(out, 1.75, Qt::Key_Z, 0.08);
+        return out;
+    }
+
     QString help() const override {
         return QStringLiteral(
             "tap a pad\ta hit, as hard as you press; where on the pad colours it (the ride's far edge is its bell)\n"

@@ -45,6 +45,7 @@
 #include <QRectF>
 #include <QSizeF>
 #include <QString>
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <memory>
@@ -228,6 +229,44 @@ public:
     void setClock(double (*clock)()) { m_clock = clock; }
     double clock() const { return now(); }
 
+    // The sound browser: the showing page's sounds, the one chosen, and
+    // choosing one; hear: a short phrase plays at once, from the page's
+    // own keys, so the sound is heard before it is kept.
+    std::vector<PartControl::SoundChoice> soundChoices() const;
+    int soundChoice() const;
+    void chooseSound(int index, bool hear = true);
+    bool auditioning() const;
+
+    // The LOOP button: what Space would do on the showing page now.
+    //   None     a page that makes no loops (the Song page, the picture)
+    //   Empty    nothing played lately: play first
+    //   Make     something was played: Space loops it
+    //   Layer    this part's loop plays: Space layers on it (Shift: new loop)
+    //   Waiting  a loop waits for the bar line: Space calls it off
+    enum class LoopState { None, Empty, Make, Layer, Waiting };
+    LoopState loopState() const;
+    void pressLoop(bool fresh = false); // as Space (fresh: Shift+Space)
+
+    // Styles: a sound on every page and a tempo, chosen at once.
+    struct Style {
+        const char *name, *what;
+        int bpm;
+        const char *sounds[7]; // drums, bass, chords, lead, arp, atmos, fx
+    };
+    static const std::vector<Style> &styles();
+    bool applyStyle(int index);
+
+    // One sentence for a newcomer: what to do next on the showing page.
+    QString nextStep() const;
+
+    // How much the window shows: 0 Play (the pad, LOOP and the sound; the
+    // band's second row folded away), 1 Shape (that row too), 2 Studio
+    // (everything). The keys work at every level.
+    int level() const { return m_level; }
+    void setLevel(int level) { m_level = std::clamp(level, 0, 2); }
+    // The band's second row, where level 0 folds it (empty: not folded here).
+    QRectF foldedRow(const QRectF &pad) const;
+
     struct Page;
     class Context;
 
@@ -327,6 +366,18 @@ private:
     bool m_songPaused = false;
     double m_pausedAt = -1e9; // when the last pause came, for its notice
     QString m_startOverBackup;
+    // The sound browser's phrase: keys going down and up, by the clock.
+    struct Audition {
+        double t;
+        int page, key;
+        bool down;
+    };
+    std::vector<Audition> m_audition;
+    int m_level = 2;
+    QRectF m_padRect; // where the pad was last painted, for foldedRow()
+    void playAudition(double t);
+    void stopAudition();
+    void forgetPlaying(int page);
     // Writes the song about to be cleared to m_startOverBackup; true if
     // there was something and it was kept.
     bool keepBeforeClearing();

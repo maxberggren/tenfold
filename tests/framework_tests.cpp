@@ -44,7 +44,7 @@ class FrameworkTests : public QObject {
                 "aMelodyThatStartsMidBarLoopsWithoutAGap clipsCanBeCopiedLayeredAndChained "
                 "spaceLayersOntoThePlayingLoop aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn "
                 "aLayerLandsWithoutCuttingTheLoop shiftSpaceMakesANewLoopInstead "
-                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay aLoopMadeWhilePausedKeepsThePausedLoops aSongSavedPausedOpensReadyToPlay numberKeysChangePages ctrlKeysMoveTempoAndKey "
+                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay aLoopMadeWhilePausedKeepsThePausedLoops aSongSavedPausedOpensReadyToPlay aNewLoopTakesOnlyThePlayingSinceTheLoop numberKeysChangePages ctrlKeysMoveTempoAndKey "
                 "leavingAPageLetsGoOfHeldNotes stoppingWaitsForTheBar muteSilencesAChannel "
                 "armedRecordingMakesABarLongClip everyPageDrawsWithoutTouches "
                 "anUnreadablePadWithoutPkexecSaysWhatIsMissing keysAreNamedAsTheSystemNamesThem "
@@ -886,6 +886,36 @@ private slots:
         testkit::play(std::string(kBeat) + "key 3 Ctrl+P\nkey 3.5 Ctrl+P\nkey 5 Backspace\nkey 7 Ctrl+P\nkey 7.2 Ctrl+P\nend 8\n", [](Session &s) {
             QVERIFY2(!s.notice(nullptr).startsWith(QStringLiteral("Nothing to play yet")), qPrintable(s.notice(nullptr)));
         });
+    }
+
+    // Shift+Space just after a loop takes only what was played since it
+    // landed (the hits before are in that loop), and a loop is 1, 2, 4, 8
+    // or 16 bars, never three.
+    void aNewLoopTakesOnlyThePlayingSinceTheLoop() {
+        const char *s = "page 0 1\ntap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\nkey 2.52 Space\n"
+                        "tap 3.1 0.55 0.5\ntap 3.6 0.75 0.5\ntap 4.1 0.55 0.5\ntap 4.6 0.75 0.5\nkey 5.12 Shift+Space\nend 8\n";
+        const auto take = testkit::play(s);
+        QCOMPARE(take.view.parts[0].playing, 1);
+        QCOMPARE(take.view.parts[0].clips[1].events, 4);
+        QCOMPARE(int(take.view.parts[0].clips[1].lengthBeats), 4);
+        // Ten loops in a row, each Shift+Space over the last: every one a
+        // power of two bars.
+        std::string ten = "page 0 1\n";
+        double t = 0.5;
+        for (int i = 0; i < 8; ++i) {
+            for (int k = 0; k < 4; ++k)
+                ten += "tap " + std::to_string(t + 0.5 * k) + " " + std::to_string(0.05 + 0.2 * (k % 2)) + " 0.5\n";
+            t += 2.0;
+            ten += "key " + std::to_string(t + 0.02) + (i == 0 ? " Space\n" : " Shift+Space\n");
+            t += 0.6;
+        }
+        const auto all = testkit::play(ten + "end " + std::to_string(t + 2) + "\n");
+        for (const ClipView &c : all.view.parts[0].clips) {
+            if (c.state == ClipView::Empty)
+                continue;
+            const int bars = int(std::lround(c.lengthBeats / 4));
+            QVERIFY2(bars == 1 || bars == 2 || bars == 4 || bars == 8 || bars == 16, qPrintable(QString::number(c.lengthBeats)));
+        }
     }
 
     void numberKeysChangePages() {

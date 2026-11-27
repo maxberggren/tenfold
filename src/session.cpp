@@ -1196,13 +1196,16 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
     // pauses and mark where it ends.
     // Layering onto this part's own loop: only what was played since the
     // loop last changed. What came before is in it already.
+    // A new loop in place of it (Shift+Space) takes only that too: what
+    // was played before the playing loop last changed is in that loop.
     const bool layering = layer && m_view.parts[part].playing >= 0;
-    const double since = layering ? m_loopSince[part] : -1e18;
+    const bool sinceLoop = m_view.parts[part].playing >= 0;
+    const double since = sinceLoop ? m_loopSince[part] : -1e18;
     std::vector<Context::Onset> times;
     const size_t n = std::min(ctx.onsetHead, ctx.onsets.size());
     for (size_t i = 0; i < n; ++i) {
         const auto &o = ctx.onsets[(ctx.onsetHead - 1 - i) % ctx.onsets.size()];
-        if (!layering || ctx.beatAt(o.t) >= since - 0.02)
+        if (!sinceLoop || ctx.beatAt(o.t) >= since - 0.02)
             times.push_back(o);
     }
     dlog("  layering=%d since=%.4f onsets kept=%d", int(layering), since, int(times.size()));
@@ -1464,8 +1467,13 @@ bars:
         // playing that never repeated is a performance, not a loop; a loop
         // already playing that is longer still sets the length below. Sound
         // that carries itself (a build into its drop) stays whole.
+        // Bars go 1, 2, 4, 8, 16, as ↑↓ step them: three bars played loop
+        // as four (the first bar quiet until the playing starts).
         const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
-        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 4.0);
+        double bars = 1;
+        while (bars < played && bars < (carried ? 16.0 : 4.0))
+            bars *= 2;
+        length = kBeatsPerBar * bars;
     }
     // Over loops already playing, a take long enough to cover the longest
     // of them takes its length: a bass line over a four-bar progression

@@ -110,7 +110,7 @@ class Backend : public QObject {
     Q_PROPERTY(QString exportFolder READ exportFolder NOTIFY exportChanged)
     Q_PROPERTY(int sampleRate READ sampleRate CONSTANT)
     Q_PROPERTY(QStringList exportParts READ exportParts NOTIFY exportChanged)
-    Q_PROPERTY(int songBars READ songBars NOTIFY exportChanged)
+    Q_PROPERTY(int songBars READ songBars NOTIFY changed)
     Q_PROPERTY(int loopBars READ loopBars NOTIFY exportChanged)
     Q_PROPERTY(bool exporting READ exporting NOTIFY exportChanged)
     Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportChanged)

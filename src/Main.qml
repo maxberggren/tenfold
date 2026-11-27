@@ -43,6 +43,7 @@ ApplicationWindow {
     property bool allPages: false
     function pageShown(i) {
         return lv >= 2 || allPages || i < 4 || i === backend.arrangePage || i === backend.page
+               || i === backend.suggestedPage
     }
     readonly property int shownPages: {
         let n = 0
@@ -95,7 +96,7 @@ ApplicationWindow {
     // room, so the column doesn't scroll at a common size.
     // (Below Studio the pad's button is small whatever its state: the
     // readouts keep their size, so taking the pad moves nothing.)
-    readonly property bool readoutsCompact: compact || (!playing && room < 800 && lv >= 2)
+    readonly property bool readoutsCompact: compact
     // A column too short for it all scrolls: the buttons first, then.
     readonly property bool buttonsFirst: arrangement === 0 && room < sideHeight && !backend.tutorialActive
 
@@ -548,7 +549,11 @@ ApplicationWindow {
                                 Text {
                                     id: nextText
                                     width: parent.width
-                                    text: win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.") : backend.nextStep
+                                    // Once a couple of loops go round: the trackpad, if not taken yet.
+                                    readonly property bool padTip: !win.playing && backend.partLoops.length >= 2
+                                                                   && backend.padState !== Backend.Starting
+                                    text: win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.")
+                                          : backend.nextStep + (padTip ? "\n" + qsTr("Try PLAY WITH THE TRACKPAD: every finger plays.") : "")
                                     color: win.pageColor
                                     font.family: win.mono
                                     font.pixelSize: 15
@@ -672,13 +677,14 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     // Level 0: the mouse and the keys play too, so the
                                     // pad's button stands back for LOOP.
-                                    readonly property bool modest: win.lv === 0 && !backend.tutorialActive
+                                    // One modest size at both levels, whatever its state.
+                                    readonly property bool modest: !backend.tutorialActive
                                     // At Play one size whatever its state, so taking the pad
                                     // doesn't move the panel under the hand.
                                     Layout.minimumHeight: modest ? 48 : win.playing ? 30 : backend.tutorialActive || win.compact ? 52 : 84
                                     Layout.maximumHeight: modest ? 48 : win.playing ? 60 : 112
                                     Layout.preferredHeight: modest ? 48 : win.playing ? buttons.bh : backend.tutorialActive || win.compact ? 60 : 96
-                                    label: win.playing ? (modest ? qsTr("Release the trackpad") : qsTr("Release pad"))
+                                    label: win.playing ? qsTr("Release the trackpad")
                                          : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Taking the trackpad…"))
                                          : failed ? qsTr("▶  Retry the trackpad")
                                          : modest ? qsTr("Play with the trackpad")
@@ -727,10 +733,31 @@ ApplicationWindow {
                                         : st === 2 ? qsTr("Keeps what you just played going round.")
                                         : qsTr("Play something first, then press.")
                                     key: win.soundsVisible ? "" : "Space"
-                                    active: st === 4
-                                    beckon: st === 2 && !win.soundsVisible
-                                    glowSpread: win.compact ? 4 : 8
+                                    // Ready to loop: lit. No glow, nothing moving.
+                                    active: st === 4 || (st === 2 && !win.soundsVisible)
                                     onClicked: modifiers => backend.pressLoop((modifiers & Qt.ShiftModifier) !== 0)
+                                }
+                                // The Song page's own big button: I, your loops written as a track.
+                                PanelButton {
+                                    readonly property bool hasLoops: backend.partLoops.length > 0
+                                    visible: backend.page === backend.arrangePage && !backend.tutorialActive
+                                    Layout.columnSpan: buttons.columns
+                                    Layout.fillWidth: true; Layout.fillHeight: true
+                                    Layout.minimumHeight: 52; Layout.maximumHeight: 140
+                                    Layout.preferredHeight: win.lv === 0 ? 110 : 64
+                                    color: win.pageColor
+                                    labelSize: win.lv === 0 ? 24 : 20
+                                    opacity: hasLoops ? 1 : 0.55
+                                    active: hasLoops && backend.songBars === 0
+                                    label: backend.songBars > 0 ? qsTr("Make it again") : qsTr("Make a track")
+                                    note: !hasLoops ? qsTr("Make some loops first, then press.")
+                                        : backend.songBars > 0 ? qsTr("Another track from the same loops.")
+                                        : qsTr("Your loops become a whole song: intro, build, drop, outro.")
+                                    key: "I"
+                                    onClicked: {
+                                        backend.sendKey(Qt.Key_I, 0, true, false, "i")
+                                        backend.sendKey(Qt.Key_I, 0, false, false, "i")
+                                    }
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh

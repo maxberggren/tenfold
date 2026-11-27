@@ -2675,10 +2675,11 @@ int Session::partsWithLoops() const {
 
 int Session::suggestedPage() const {
     std::lock_guard lock(m_lock);
-    // Once a part loops, the next of the first four without a loop.
-    if (loopState() != LoopState::Layer || partsWithLoops() >= 4)
+    // Once a part loops, the next instrument without a loop, in the order
+    // a track is built.
+    if (loopState() != LoopState::Layer)
         return -1;
-    static const char *order[] = {"drums", "bass", "chords", "lead"};
+    static const char *order[] = {"drums", "bass", "chords", "lead", "arp", "atmos", "fx"};
     for (const char *name : order) {
         const int page = pageNamed(QString::fromLatin1(name));
         if (page < 0 || page == m_page)
@@ -2696,19 +2697,28 @@ int Session::suggestedPage() const {
 QString Session::nextStep() const {
     std::lock_guard lock(m_lock);
     const Page &p = *m_pages[size_t(m_page)];
-    if (p.part < 0)
-        return m_page == arrangePage() ? QStringLiteral("Press I and your loops become a whole track") : QString();
+    if (p.part < 0) {
+        if (m_page != arrangePage())
+            return {};
+        if (partsWithLoops() == 0)
+            return QStringLiteral("Make a few loops first: start on 1 DRUMS");
+        if (songBars() == 0)
+            return QStringLiteral("Press MAKE A TRACK: your loops become a whole song");
+        return QStringLiteral("Your track! Make it again for another, or save it under STUDIO");
+    }
     switch (loopState()) {
     case LoopState::Waiting: return QStringLiteral("Keep playing: the loop starts on the bar line");
     case LoopState::Make: return QStringLiteral("Like it? Press LOOP IT to keep it going round");
     case LoopState::Layer: {
         const int next = suggestedPage();
-        if (next >= 0)
+        const int parts = partsWithLoops();
+        if (next >= 0 && parts < 4)
             return QStringLiteral("It loops! Now add %1: press %2 or click its tab")
                 .arg(pageName(next).toUpper(), pageKey(next));
-        if (m_level == 0)
-            return QStringLiteral("A band! Tempo, key, swing and every control are under STUDIO, top right");
-        return QStringLiteral("Open 0 SONG and press I: your loops become a track");
+        if (next >= 0)
+            return QStringLiteral("A band! Make it a track on 0 SONG, or add %1 next: press %2")
+                .arg(pageName(next).toUpper(), pageKey(next));
+        return QStringLiteral("Every part loops! Open 0 SONG and make it a track");
     }
     default: break;
     }

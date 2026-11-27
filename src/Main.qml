@@ -39,11 +39,12 @@ ApplicationWindow {
     property bool exportVisible: false
     // The sound browser over the pad (SOUND, or S... the button only: S is a key on pages).
     property bool soundsVisible: false
-    onSoundsVisibleChanged: if (!soundsVisible) screen.forceActiveFocus()
+    onSoundsVisibleChanged: soundsVisible ? backend.markBrowsed() : screen.forceActiveFocus()
     // How much shows: 0 Play, 1 Shape, 2 Studio (Session::level).
     readonly property int lv: backend.uiLevel
     // At level 0 the tabs show the first parts and the Song; MORE opens the rest.
     property bool allPages: false
+    onAllPagesChanged: if (allPages) backend.markAllParts()
     function pageShown(i) {
         return lv >= 2 || allPages || i < 4 || i === backend.arrangePage || i === backend.page
                || i === backend.suggestedPage
@@ -359,12 +360,14 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.preferredWidth: header.minTab
                         Layout.preferredHeight: header.tabHeight
+                        // NEXT points here (every instrument not yet seen): lit.
+                        readonly property bool pointed: backend.nextKind === 5
                         Rectangle {
                             anchors.fill: parent
-                            color: "transparent"
+                            color: parent.pointed ? Qt.rgba(1, 0.69, 0, 0.3) : "transparent"
                             border.color: win.amber
                             border.width: 2
-                            opacity: 0.6
+                            opacity: parent.pointed ? 1 : 0.6
                             Rectangle { anchors.fill: parent; anchors.margins: 4; color: "transparent"; border.color: win.amber; border.width: 1; opacity: 0.5 }
                         }
                         Text {
@@ -1164,6 +1167,7 @@ ApplicationWindow {
             target: backend
             function onPageChanged() { if (backend.soundNames.length === 0) win.soundsVisible = false }
             function onSoundsAsked() { if (backend.soundNames.length > 0) win.soundsVisible = true }
+            function onAllPartsAsked() { win.allPages = true }
         }
 
         HelpPage {

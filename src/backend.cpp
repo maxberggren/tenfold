@@ -60,6 +60,12 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         m_session->setLevel(level);
         m_savedLevel = m_session->level();
         m_welcome = !settings.value(QStringLiteral("welcomed"), known).toBool();
+        // What NEXT has already shown (a page's sounds, every instrument):
+        // once, not each run.
+        m_savedBrowsed = settings.value(QStringLiteral("browsedSounds"), known).toBool();
+        m_savedAllParts = settings.value(QStringLiteral("sawAllParts"), known).toBool();
+        m_session->setBrowsedSounds(m_savedBrowsed);
+        m_session->setSawAllParts(m_savedAllParts);
     }
 
     if (live) {
@@ -654,6 +660,15 @@ void Backend::tick() {
     }
     if (m_session->takeSoundsAsked())
         emit soundsAsked();
+    if (m_session->takeAllPartsAsked())
+        emit allPartsAsked();
+    if (!m_simulated && (m_session->browsedSounds() != m_savedBrowsed || m_session->sawAllParts() != m_savedAllParts)) {
+        m_savedBrowsed = m_session->browsedSounds();
+        m_savedAllParts = m_session->sawAllParts();
+        QSettings settings;
+        settings.setValue(QStringLiteral("browsedSounds"), m_savedBrowsed);
+        settings.setValue(QStringLiteral("sawAllParts"), m_savedAllParts);
+    }
     // The band's fold opens the level from the pad itself: kept, as the
     // window's own choice is.
     if (!m_simulated && m_session->level() != m_savedLevel) {

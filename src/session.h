@@ -286,11 +286,20 @@ public:
     // What a click on that sentence does: loop, open a page, write the
     // track, or nothing (it only says how to play).
     struct NextAction {
-        enum Kind { None, Loop, Page, MakeTrack } kind = None;
+        enum Kind { None, Loop, Page, MakeTrack, Browse, AllParts } kind = None;
         int page = -1;
     };
     NextAction nextAction() const;
     bool doNextStep(); // false: nothing to do
+    // What a newcomer has found, so NEXT shows each once: a page's sounds
+    // (the browser opened, or a sound chosen there) and every instrument
+    // (the tabs past the first shown). The window keeps them between runs.
+    bool browsedSounds() const { return m_browsedSounds; }
+    void setBrowsedSounds(bool on) { m_browsedSounds = on; }
+    bool sawAllParts() const { return m_sawAllParts; }
+    void setSawAllParts(bool on) { m_sawAllParts = on; }
+    // NEXT asked for every tab to show (AllParts): true once per click.
+    bool takeAllPartsAsked();
 
     // How much the window shows: 0 Play (the pad, LOOP and the sound; the
     // band's second row folded away, pages zoomed onto what plays), 2
@@ -416,6 +425,9 @@ private:
     }();
     QRectF m_soundChip;   // level 0: the SOUND chip under the pad, where last painted
     bool m_soundsAsked = false;
+    bool m_browsedSounds = false, m_sawAllParts = false, m_allPartsAsked = false;
+    enum class Discovery { None, Sounds, Parts };
+    Discovery discovery() const;
     QRectF m_soundNext;   // level 0: the → beside it
     QRectF m_studioTag;   // below Studio, a zoomed page: "▸ IN STUDIO: …" on the pad's edge
     uint32_t m_studioNudge = 0;

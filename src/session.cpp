@@ -159,7 +159,10 @@ public:
     }
     void stopPart(int part, bool now) override { simple(StudioMsg::Stop, part, 0, now); }
     bool newLoop() override { return m_s->newLoop(); }
-    void browseSounds() override { m_s->m_soundsAsked = true; }
+    void browseSounds() override {
+        m_s->m_soundsAsked = true;
+        m_s->m_browsedSounds = true;
+    }
     void clearPart(int part, int slot) override { simple(StudioMsg::Clear, part, slot, 0); }
     void setChannel(int part, int channel, float value, double t) override {
         StudioMsg m;
@@ -547,6 +550,7 @@ bool Session::clickAt(QPointF at) {
         return true;
     }
     if (console::nextChipAt(at) || (!m_soundNext.isEmpty() && m_soundNext.contains(at))) {
+        m_browsedSounds = true;
         KeyEvent k;
         k.key = Qt::Key_Right;
         keyForPage(k);
@@ -556,6 +560,7 @@ bool Session::clickAt(QPointF at) {
     }
     if ((!m_soundChip.isEmpty() && m_soundChip.contains(at)) || console::browseChipAt(at)) {
         m_soundsAsked = true;
+        m_browsedSounds = true;
         return true;
     }
     if (const QRectF fold = foldedRow(m_padRect); !fold.isEmpty() && fold.contains(at)) {
@@ -993,7 +998,9 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
         const QString name = chosen >= 0 && chosen < int(choices.size()) ? choices[size_t(chosen)].name.toUpper()
                                                                           : QStringLiteral("—");
         const bool over = m_mouseOver && m_soundChip.contains(m_mousePx);
-        painter.fillRect(m_soundChip, console::alpha(pc.color, over ? 0.3f : 0.14f));
+        // NEXT points at it (a page's sounds not yet found): lit in its colour.
+        const bool pointed = loopState() == LoopState::Layer && discovery() == Discovery::Sounds;
+        painter.fillRect(m_soundChip, console::alpha(pc.color, over ? 0.3f : pointed ? 0.32f : 0.14f));
         painter.setPen(QPen(pc.color, 1.5));
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(m_soundChip);
@@ -2491,6 +2498,7 @@ void Session::chooseSound(int index, bool hear) {
     if (index < 0 || index >= count)
         return;
     stopAudition();
+    m_browsedSounds = true;
     p.spec.control->chooseSound(index, *p.ctx);
     if (!hear)
         return;
@@ -2686,8 +2694,8 @@ int Session::suggestedPage() const {
     std::lock_guard lock(m_lock);
     // Once a part loops, the next instrument without a loop, in the order
     // a track is built.
-    if (loopState() != LoopState::Layer)
-        return -1;
+    if (loopState() != LoopState::Layer || discovery() != Discovery::None)
+        return -1; // (a page's sounds, or every instrument, come first)
     static const char *order[] = {"drums", "bass", "chords", "lead", "arp", "atmos", "fx"};
     for (const char *name : order) {
         const int page = pageNamed(QString::fromLatin1(name));
@@ -2721,6 +2729,22 @@ QString Session::nextStep() const {
     case LoopState::Layer: {
         const int next = suggestedPage();
         const int parts = partsWithLoops();
+        // Once each: that every part has many sounds, and that there are
+        // more instruments than the first tabs show.
+        switch (discovery()) {
+        case Discovery::Sounds: {
+            const int count = int(p.spec.control->soundChoices().size());
+            return m_level == 0
+                       ? QStringLiteral("It loops! %1 has %2 sounds: click SOUND under the pad to hear them all")
+                             .arg(pageName(m_page).toUpper()).arg(count)
+                       : QStringLiteral("It loops! %1 has %2 sounds: click +MORE under the pad to hear them all")
+                             .arg(pageName(m_page).toUpper()).arg(count);
+        }
+        case Discovery::Parts:
+            return QStringLiteral("A band forming! There are %1 instruments: click + MORE at the top to see them all")
+                .arg(m_partCount);
+        default: break;
+        }
         if (next >= 0 && parts < 4)
             return QStringLiteral("It loops! Now add %1: press %2 or click its tab")
                 .arg(pageName(next).toUpper(), pageKey(next));
@@ -2889,6 +2913,15 @@ Session::NextAction Session::nextAction() const {
     case LoopState::Layer: {
         // As nextStep() says it: the next instrument while the band is
         // small, then the Song page.
+        const Discovery d = discovery();
+        if (d == Discovery::Sounds) {
+            a.kind = NextAction::Browse;
+            break;
+        }
+        if (d == Discovery::Parts) {
+            a.kind = NextAction::AllParts;
+            break;
+        }
         const int next = suggestedPage();
         a.kind = NextAction::Page;
         a.page = next >= 0 && partsWithLoops() < 4 ? next : arrangePage();
@@ -2903,6 +2936,18 @@ bool Session::doNextStep() {
     const NextAction a = nextAction();
     switch (a.kind) {
     case NextAction::Loop: pressLoop(); return true;
+    case NextAction::Browse: {
+        std::lock_guard lock(m_lock);
+        m_soundsAsked = true; // the window opens the browser
+        m_browsedSounds = true;
+        return true;
+    }
+    case NextAction::AllParts: {
+        std::lock_guard lock(m_lock);
+        m_allPartsAsked = true; // the window shows every tab
+        m_sawAllParts = true;
+        return true;
+    }
     case NextAction::Page:
         if (a.page < 0)
             return false;
@@ -2919,6 +2964,26 @@ bool Session::doNextStep() {
     }
     default: return false;
     }
+}
+
+}
+
+namespace tf {
+
+Session::Discovery Session::discovery() const {
+    const Page &p = *m_pages[size_t(m_page)];
+    if (!m_browsedSounds && p.part >= 0 && !p.spec.control->soundChoices().empty())
+        return Discovery::Sounds;
+    if (!m_sawAllParts && m_level == 0 && partsWithLoops() >= 3)
+        return Discovery::Parts;
+    return Discovery::None;
+}
+
+bool Session::takeAllPartsAsked() {
+    std::lock_guard lock(m_lock);
+    const bool asked = m_allPartsAsked;
+    m_allPartsAsked = false;
+    return asked;
 }
 
 }

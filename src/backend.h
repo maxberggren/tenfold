@@ -132,6 +132,8 @@ class Backend : public QObject {
     Q_PROPERTY(QString nextStep READ nextStep NOTIFY changed)
     // The NEXT card does what it says when clicked (Session::nextAction).
     Q_PROPERTY(bool nextClickable READ nextClickable NOTIFY changed)
+    // What a NEXT click would do (Session::NextAction::Kind), for what it points at.
+    Q_PROPERTY(int nextKind READ nextKind NOTIFY changed)
     Q_PROPERTY(QStringList styleNames READ styleNames CONSTANT)
     Q_PROPERTY(QStringList styleWhats READ styleWhats CONSTANT)
     // Each style's tempo and the sounds it sets, for its card.
@@ -308,7 +310,11 @@ public:
     QString nextStep() const { return tf::console::keyNames(m_session->nextStep()); }
     Q_INVOKABLE void pressLoop(bool fresh = false) { m_session->pressLoop(fresh); }
     bool nextClickable() const { return m_session->nextAction().kind != tf::Session::NextAction::None; }
+    int nextKind() const { return int(m_session->nextAction().kind); }
     Q_INVOKABLE bool doNextStep() { return m_session->doNextStep(); }
+    // The window found them by itself: the browser opened, every tab shown.
+    Q_INVOKABLE void markBrowsed() { m_session->setBrowsedSounds(true); }
+    Q_INVOKABLE void markAllParts() { m_session->setSawAllParts(true); }
     QStringList styleNames() const;
     QStringList styleWhats() const;
     QVariantList styleDetails() const;
@@ -331,6 +337,8 @@ signals:
     void exportChanged();
     // A "+N MORE" or SOUND chip under the pad was clicked: open the browser.
     void soundsAsked();
+    // NEXT asked for every instrument's tab.
+    void allPartsAsked();
 
 private:
     void tick();
@@ -359,6 +367,7 @@ private:
     int m_lastPage = -1;
     bool m_welcome = false;
     int m_savedLevel = -1; // the level last written to the settings
+    bool m_savedBrowsed = false, m_savedAllParts = false; // what NEXT has shown, as last written
 
     bool m_recording = false;
     bool m_recordingVideo = false;

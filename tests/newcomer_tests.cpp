@@ -1,6 +1,7 @@
 // The newcomer's tenfold: the sound browser, the LOOP button, the styles a
 // first start offers, and the levels the window unfolds through.
 
+#include <QFile>
 #include <QtTest>
 
 #include "console.h"
@@ -22,7 +23,8 @@ class NewcomerTests : public QObject {
                 "theLoopButtonSaysWhatSpaceWouldDo pressingLoopIsSpace everyStyleNamesRealSounds "
                 "aStyleSetsTheSoundsAndTheTempo theNextLoopGoesInTheFirstEmptySlot "
                 "levelZeroFoldsTheSecondRowOnInstrumentPagesOnly theNextStepFollowsThePlayer "
-                "coveredControlsIgnoreFingersAndTheMouseOpensStudio clickingNextDoesWhatItSays oneMakeATrackIsEnough")
+                "coveredControlsIgnoreFingersAndTheMouseOpensStudio clickingNextDoesWhatItSays oneMakeATrackIsEnough "
+                "nextShowsEveryInstrumentOnce")
 private slots:
     // Each instrument page lists its sounds, says which is chosen, and
     // chooses one as ← → would.
@@ -216,7 +218,8 @@ private slots:
                        });
         QVERIFY(before.contains(QLatin1String("Z X C V")) && before.startsWith(QLatin1String("Your turn")));
         QVERIFY(playing.contains(QLatin1String("LOOP")));
-        QVERIFY(looped.contains(QLatin1String("BASS")));
+        // First: the page's sounds (not yet found), then the next part.
+        QVERIFY2(looped.contains(QLatin1String("sounds")), qPrintable(looped));
     }
 
     // Below Studio a page with fine-tuning on its pad (the bass's rail) is
@@ -259,7 +262,7 @@ private slots:
     void clickingNextDoesWhatItSays() {
         Session::NextAction::Kind before = Session::NextAction::Loop, played = Session::NextAction::None;
         int pageAfter = -1, slotAfterClick = -2;
-        bool clicked = false, opened = false;
+        bool clicked = false, opened = false, browse = false;
         testkit::watch("page 0 1\n"
                        "tap 1.0 0.05 0.5\ntap 1.5 0.25 0.5\ntap 2.0 0.05 0.5\ntap 2.5 0.25 0.5\n"
                        "end 8\n",
@@ -272,7 +275,11 @@ private slots:
                            }
                            if (t >= 6.5 && slotAfterClick < -1)
                                slotAfterClick = s.view().parts[0].playing;
-                           if (!opened && t >= 7.0) {
+                           if (!browse && t >= 7.0) {
+                               browse = s.nextAction().kind == Session::NextAction::Browse && s.doNextStep() &&
+                                        s.takeSoundsAsked();
+                           }
+                           if (browse && !opened && t >= 7.2) {
                                opened = s.doNextStep();
                                pageAfter = s.page();
                            }
@@ -281,8 +288,9 @@ private slots:
         QVERIFY(played == Session::NextAction::Loop);
         QVERIFY(clicked);
         QCOMPARE(slotAfterClick, 0);
+        QVERIFY(browse); // the sounds first, once
         QVERIFY(opened);
-        QCOMPARE(pageAfter, 1); // the Bass page
+        QCOMPARE(pageAfter, 1); // then the Bass page
     }
 
     // MAKE A TRACK (I) writes the track at one press, over loops playing.
@@ -293,6 +301,30 @@ private slots:
                       "key 2.5 Space\npage 4.0 0\nkey 4.2 I\nend 5\n",
                       [&](Session &s) { bars = s.songBars(); });
         QVERIFY2(bars > 0, qPrintable(QString::number(bars)));
+    }
+
+    // With three parts looping at Play, NEXT points at the other instruments
+    // once: its click asks for every tab, and then it moves on.
+    void nextShowsEveryInstrumentOnce() {
+        QFile f(QStringLiteral(TENFOLD_SRC "/../docs/parts/arrange/a-track-from-loops.tf"));
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const std::string script = f.readAll().toStdString();
+        bool ran = false;
+        testkit::watch(script + "\n", [&](double t, Session &s) {
+            if (t < 30 || ran)
+                return;
+            ran = true;
+            s.setLevel(0);
+            s.setBrowsedSounds(true);
+            s.setPage(s.pageNamed(QStringLiteral("bass")));
+            QVERIFY2(s.nextAction().kind == Session::NextAction::AllParts, qPrintable(s.nextStep()));
+            QVERIFY(s.nextStep().contains(QLatin1String("instruments")));
+            QVERIFY(s.doNextStep());
+            QVERIFY(s.takeAllPartsAsked());
+            QVERIFY(s.sawAllParts());
+            QVERIFY(s.nextAction().kind != Session::NextAction::AllParts);
+        });
+        QVERIFY(ran);
     }
 };
 

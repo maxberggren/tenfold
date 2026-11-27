@@ -1,0 +1,16 @@
+The restorer (src/restore.cpp) computes Apollo, the band-sequence audio
+restoration network by Kai Li and Yi Luo (Tsinghua University and Tencent
+AI Lab; "Apollo: Band-sequence Modeling for High-Quality Audio
+Restoration", arXiv:2409.08514), from its published weights:
+
+    huggingface.co/JusperLee/Apollo, pytorch_model.bin
+    at commit c68bd80fdd9c0d93d2f4a833cb154624f660a561
+    (apollo.bin in the packages)
+
+The weights are distributed here unmodified, under the licence they are
+released with: the Creative Commons Attribution-ShareAlike 4.0
+International License, https://creativecommons.org/licenses/by-sa/4.0/
+(the full legal code: https://creativecommons.org/licenses/by-sa/4.0/legalcode).
+
+tenfold's own code, the C++ that reads and runs them, is written from the
+paper and the shapes of the weights, and is under tenfold's licence (LICENSE).

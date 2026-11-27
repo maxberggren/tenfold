@@ -1,45 +1,58 @@
 #!/bin/sh
-# Puts the stem separator's weights at build/htdemucs.safetensors, where
-# the packages take them from: htdemucs, Demucs's Hybrid Transformer model
-# (Meta, MIT licence, extras/LICENSE-htdemucs), 84 MB, as Hugging Face
-# keeps it at a fixed commit. Taken from Hugging Face's own cache when it is
-# there, fetched otherwise, and checked against its SHA-256 either way.
+# Puts the Sampler's two networks' weights in build/, where the packages
+# take them from, each as Hugging Face keeps it at a fixed commit:
 #
-#   bin/model          fetch it if build/ doesn't have it yet
+#   build/htdemucs.safetensors  the stem separator: htdemucs, Demucs's Hybrid
+#                               Transformer model (Meta, MIT licence,
+#                               extras/LICENSE-htdemucs), 84 MB
+#   build/apollo.bin            the restorer: Apollo (Kai Li and Yi Luo,
+#                               CC BY-SA 4.0, extras/LICENSE-apollo), 66 MB
+#
+# Taken from Hugging Face's own cache when it is there, fetched otherwise,
+# and checked against its SHA-256 either way.
+#
+#   bin/model          fetch whichever build/ doesn't have yet
 #
 # bin/build runs this. Without a network the build still finishes, and the
-# Sampler says the model isn't there when S is pressed.
+# Sampler says which model isn't there when it is wanted.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-revision=cbc8a9b1a87023b7fd74e7b3412e6321c0eab003
-file=955717e8.safetensors
-sum=d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd
-url="https://huggingface.co/adefossez/HTDemucs/resolve/$revision/$file"
-dest="$ROOT/build/htdemucs.safetensors"
 
 sha256() {
     if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
-good() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$sum" ]; }
 
-good "$dest" && exit 0
-mkdir -p "$ROOT/build"
-cached="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--adefossez--HTDemucs/snapshots/$revision/$file"
-if good "$cached"; then
-    cp "$cached" "$dest.part"
-else
-    echo "Fetching the stem model (84 MB) from Hugging Face"
-    if ! curl -fL --retry 3 --silent --show-error -o "$dest.part" "$url"; then
-        rm -f "$dest.part"
-        echo "bin/model: couldn't fetch $url; the Sampler will have no stems" >&2
-        exit 1
+# fetch <what> <repo> <revision> <file> <sha256> <size> <dest>
+fetch() {
+    what=$1 repo=$2 revision=$3 file=$4 sum=$5 size=$6 dest="$ROOT/build/$7"
+    good() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$sum" ]; }
+    good "$dest" && return 0
+    mkdir -p "$ROOT/build"
+    cached="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--$(printf '%s' "$repo" | sed 's|/|--|')/snapshots/$revision/$file"
+    if good "$cached"; then
+        cp "$cached" "$dest.part"
+    else
+        url="https://huggingface.co/$repo/resolve/$revision/$file"
+        echo "Fetching the $what ($size) from Hugging Face"
+        if ! curl -fL --retry 3 --silent --show-error -o "$dest.part" "$url"; then
+            rm -f "$dest.part"
+            echo "bin/model: couldn't fetch $url; the Sampler will have no $what" >&2
+            return 1
+        fi
     fi
-fi
-if ! good "$dest.part"; then
-    rm -f "$dest.part"
-    echo "bin/model: the stem model isn't the one expected (SHA-256 $sum)" >&2
-    exit 1
-fi
-mv "$dest.part" "$dest"
-echo "Stem model at $dest"
+    if ! good "$dest.part"; then
+        rm -f "$dest.part"
+        echo "bin/model: the $what isn't the one expected (SHA-256 $sum)" >&2
+        return 1
+    fi
+    mv "$dest.part" "$dest"
+    echo "The $what at $dest"
+}
+
+failed=0
+fetch "stem model" adefossez/HTDemucs cbc8a9b1a87023b7fd74e7b3412e6321c0eab003 955717e8.safetensors \
+    d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd "84 MB" htdemucs.safetensors || failed=1
+fetch "restore model" JusperLee/Apollo c68bd80fdd9c0d93d2f4a833cb154624f660a561 pytorch_model.bin \
+    99d9af7f1ff20e63c393035513a655392818d66b4d7fc23d658175c1f15e8d76 "66 MB" apollo.bin || failed=1
+exit $failed

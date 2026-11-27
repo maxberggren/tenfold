@@ -28,6 +28,11 @@
           url = "https://huggingface.co/adefossez/HTDemucs/resolve/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/955717e8.safetensors";
           hash = "sha256-2foUEzz8wDSmdYkjuzqMqfjf0LWCE0ZDu/g/csF1dt0=";
         };
+        # The restorer's weights, likewise.
+        restoreModel = pkgs.fetchurl {
+          url = "https://huggingface.co/JusperLee/Apollo/resolve/c68bd80fdd9c0d93d2f4a833cb154624f660a561/pytorch_model.bin";
+          hash = "sha256-mdmvfx/yDmPDkwNVE6ZVOSgY1mtNf8I9ZYF1wfFejXY=";
+        };
       in {
         default = pkgs.stdenv.mkDerivation {
           pname = "tenfold";
@@ -49,6 +54,8 @@
             install -Dm644 LICENSE $out/share/licenses/tenfold/LICENSE
             install -Dm644 ${model} $out/share/tenfold/htdemucs.safetensors
             install -Dm644 extras/LICENSE-htdemucs $out/share/licenses/tenfold/LICENSE-htdemucs
+            install -Dm644 ${restoreModel} $out/share/tenfold/apollo.bin
+            install -Dm644 extras/LICENSE-apollo $out/share/licenses/tenfold/LICENSE-apollo
             runHook postInstall
           '';
 

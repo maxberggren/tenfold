@@ -57,6 +57,7 @@
 #include "dsp.h"
 #include "parts.h"
 #include "recorder.h"
+#include "restore.h"
 #include "sampleanalysis.h"
 #include "stems.h"
 #include "wav.h"
@@ -527,7 +528,7 @@ struct Restore {
 
 // A job's result, handed back to the page.
 struct Loaded {
-    enum Kind { Song, Stems, Failed } kind = Failed;
+    enum Kind { Song, Stems, Restored, Failed } kind = Failed;
     QString error;
     // A song:
     std::unique_ptr<Sound> sound;
@@ -535,9 +536,10 @@ struct Loaded {
     QString name, source, file, cache;
     bool truncated = false;
     Restore restore;
-    // Stems, for the song with this serial:
+    // Stems, or the song restored, for the song with this serial:
     int serial = 0;
     std::unique_ptr<Pcm> stems[kStems];
+    std::unique_ptr<Pcm> restored;
 };
 
 QString findTool(const char *env, const QString &name) {
@@ -580,6 +582,28 @@ QString stemModel() {
           app + QLatin1Char('/') + file, app + QStringLiteral("/../../../") + file,
           hub + QStringLiteral("/hub/models--adefossez--HTDemucs/snapshots/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/"
                                "955717e8.safetensors")})
+        if (QFileInfo::exists(path))
+            return QFileInfo(path).canonicalFilePath();
+    return {};
+}
+
+// The restore model's weights, looked for as the stem model's are:
+// TENFOLD_RESTORE_MODEL, the packages' places, build/ (bin/model), else
+// Hugging Face's cache. "" if none of these has it.
+QString restoreModel() {
+    const QString env = qEnvironmentVariable("TENFOLD_RESTORE_MODEL");
+    if (!env.isEmpty())
+        return QFileInfo::exists(env) ? env : QString();
+    const QString file = QStringLiteral("apollo.bin");
+    const QString app = QCoreApplication::applicationDirPath();
+    QString hub = qEnvironmentVariable("HF_HOME");
+    if (hub.isEmpty())
+        hub = QDir::homePath() + QStringLiteral("/.cache/huggingface");
+    for (const QString &path :
+         {app + QStringLiteral("/../share/tenfold/") + file, app + QStringLiteral("/../Resources/") + file,
+          app + QLatin1Char('/') + file, app + QStringLiteral("/../../../") + file,
+          hub + QStringLiteral("/hub/models--JusperLee--Apollo/snapshots/c68bd80fdd9c0d93d2f4a833cb154624f660a561/"
+                               "pytorch_model.bin")})
         if (QFileInfo::exists(path))
             return QFileInfo(path).canonicalFilePath();
     return {};
@@ -633,6 +657,14 @@ public:
         auto job = [this, serial, cache, data, rate] { push(stems(serial, cache, *data, rate)); };
         run(job, wait);
     }
+    // The song restored (src/restore.h): taken from its cache if it is
+    // there, else made from `mix` (which may be empty: then only the cache
+    // is tried). For a song that went through a lossy codec.
+    void restore(int serial, const QString &cache, std::vector<int16_t> mix, int rate, bool wait) {
+        auto data = std::make_shared<std::vector<int16_t>>(std::move(mix));
+        auto job = [this, serial, cache, data, rate] { push(restored(serial, cache, *data, rate)); };
+        run(job, wait);
+    }
     bool take(Loaded &out) {
         std::lock_guard lock(m_mutex);
         if (m_done.empty())
@@ -652,6 +684,7 @@ public:
     }
     float progress() const { return m_progress.load(); }
     bool separating() const { return m_separating.load(); }
+    bool restoring() const { return m_restoring.load(); }
     void cancel() { m_cancel = true; }
 
 private:
@@ -686,6 +719,7 @@ private:
             m_stage.clear();
             m_progress = 0;
             m_separating = false;
+            m_restoring = false;
         }
     }
     void push(Loaded &&l) {
@@ -991,6 +1025,53 @@ private:
         return out;
     }
 
+    Loaded restored(int serial, const QString &cache, const std::vector<int16_t> &mix, int rate) {
+        Loaded out;
+        out.serial = serial;
+        const QString file = cache + QStringLiteral("/restored.wav");
+        if (!QFile::exists(file)) {
+            if (mix.empty())
+                return failed(QStringLiteral("The song isn't restored yet"));
+            const QString modelPath = restoreModel();
+            if (modelPath.isEmpty())
+                return failed(QStringLiteral("The restore model isn't installed with this tenfold "
+                                             "(apollo.bin; TENFOLD_RESTORE_MODEL names one)"));
+            m_restoring = true;
+            say(QStringLiteral("RESTORING: LOADING THE MODEL"));
+            std::string why;
+            const auto model = tf::restore::load(QFile::encodeName(modelPath).toStdString(), &why);
+            if (!model)
+                return failed(QString::fromStdString(why));
+            say(QStringLiteral("RESTORING"));
+            std::vector<int16_t> pcm;
+            tf::restore::Options options;
+            options.cancel = &m_cancel;
+            options.background = true; // the studio plays on meanwhile
+            options.progress = [this](float p) { say(QStringLiteral("RESTORING"), p); };
+            if (!tf::restore::restore(*model, mix.data(), mix.size() / 2, rate, pcm, options, &why))
+                return failed(m_cancel ? QStringLiteral("Restoring called off: O starts it again")
+                                       : QString::fromStdString(why));
+            say(QStringLiteral("RESTORING: WRITING"), 1.0f);
+            // Under another name until it is whole, so that half a song is
+            // never taken for the restored one.
+            QDir().mkpath(cache);
+            const QString part = cache + QStringLiteral("/.restored.part");
+            if (!writeWavStereo(QFile::encodeName(part).toStdString(), pcm.data(), pcm.size() / 2, rate))
+                return failed(QStringLiteral("No room to write the restored song in %1").arg(cache));
+            QFile::remove(file);
+            if (!QFile::rename(part, file))
+                return failed(QStringLiteral("No room to write the restored song in %1").arg(cache));
+        }
+        auto pcm = std::make_unique<Pcm>();
+        int r = 0;
+        if (!readWavStereo(QFile::encodeName(file).toStdString(), pcm->data, r, kMaxSeconds + 1) || r != rate)
+            return failed(QStringLiteral("The restored song can't be read"));
+        pcm->prepare();
+        out.restored = std::move(pcm);
+        out.kind = Loaded::Restored;
+        return out;
+    }
+
     mutable std::mutex m_mutex;
     std::condition_variable m_wake;
     std::thread m_thread;
@@ -999,7 +1080,7 @@ private:
     bool m_quit = false, m_working = false;
     QString m_stage;
     std::atomic<float> m_progress{0};
-    std::atomic<bool> m_cancel{false}, m_separating{false};
+    std::atomic<bool> m_cancel{false}, m_separating{false}, m_restoring{false};
 };
 
 // --- the page -------------------------------------------------------------------
@@ -1097,6 +1178,10 @@ public:
         Loaded done;
         while (m_importer.take(done))
             arrived(std::move(done), ctx);
+        while (m_restorer.take(done))
+            if (song(m_restoringSerial))
+                arrived(std::move(done), ctx); // a song taken away meanwhile hears nothing of it
+        pumpRestores(ctx);
         // Songs taken away are freed once the engine has let go of them:
         // no voice plays one, and it has rendered since (or isn't running).
         const uint32_t epoch = m_bank->epoch.load(std::memory_order_acquire);
@@ -1228,6 +1313,7 @@ public:
                 reset(ctx);
             return true;
         case Qt::Key_S: separate(ctx); return true;
+        case Qt::Key_O: restoreKey(ctx); return true;
         case Qt::Key_T: giveTempo(ctx, true); return true;
         case Qt::Key_H: regrid(0.5, ctx); return true;
         case Qt::Key_D: regrid(2.0, ctx); return true;
@@ -1252,6 +1338,8 @@ public:
 
     void startOver(ControlContext &ctx) override {
         m_importer.cancel();
+        m_restorer.cancel();
+        m_restoreWaiting.clear();
         for (Holder &h : m_holders)
             if (h.used)
                 off(h.id, true, ctx.now(), ctx);
@@ -1409,6 +1497,10 @@ public:
             return current() && current()->stems ? 1.0f : 0.0f;
         if (name == QLatin1String("busy"))
             return m_importer.busy() ? 1.0f : 0.0f;
+        if (name == QLatin1String("restoring"))
+            return m_restorer.busy() || !m_restoreWaiting.empty() ? 1.0f : 0.0f;
+        if (name == QLatin1String("restored"))
+            return current() && current()->restored ? (current()->hearRestored ? 1.0f : 0.5f) : 0.0f;
         if (name == QLatin1String("bpm"))
             return current() && current()->sound ? float(current()->sound->bpm) : 0.0f;
         if (name == QLatin1String("chops"))
@@ -1467,6 +1559,11 @@ public:
             "vocals or the rest\n"
             "S\tseparate the stems: the song goes through a model on this computer, about a tenth of the song's "
             "length on eight cores. S again calls it off\n"
+            "O\tRESTORE: a song that went through a lossy codec (an MP3, a stream) has the top end the codec threw "
+            "away drawn back, and its smeared artefacts cleaned up, by a model on this computer. It starts by itself "
+            "for such a song and runs in the background, about the song's own length again, while the song plays as "
+            "it came; then O goes between the song restored and the original. O while it runs calls it off; for any "
+            "other song O starts it\n"
             "Up / Down\tthe page of the song: five rows before, five rows on\n"
             "Shift+Left / Shift+Right\thow the song is cut: AUTO (where sounds land), half a beat, a beat, two, a "
             "bar, two bars\n"
@@ -1517,6 +1614,12 @@ private:
         int size = Auto, page = 0, barShift = 0, stem = Mix;
         float tune = 0;
         bool stems = false;
+        // The mix as it came and as restored (src/restore.h), both kept so
+        // that O can go back and forth while the engine plays either.
+        std::shared_ptr<const Pcm> original, restored;
+        bool hearRestored = true;
+        bool lossy = false;       // it went through a lossy codec: restored by itself
+        bool stemsAfter = false;  // S was pressed while it was being restored
         std::map<int64_t, Trim> trims;
         Restore missing; // what a song file said of it, until it is read
     };
@@ -2099,6 +2202,14 @@ private:
             ctx.notice(QStringLiteral("The stems are here: ← → choose one"));
             return;
         }
+        // Stems are made from the song restored, so a song on its way there
+        // has them made once it is.
+        if (restoringNow(s) || restoreWaiting(s)) {
+            s.stemsAfter = !s.stemsAfter;
+            ctx.notice(s.stemsAfter ? QStringLiteral("The stems come once the song is restored (S calls them off)")
+                                    : QStringLiteral("Stems called off"));
+            return;
+        }
         if (m_importer.busy()) {
             ctx.notice(QStringLiteral("One thing at a time: the song is still being read"));
             return;
@@ -2118,6 +2229,10 @@ private:
 
     void unload(int handle, ControlContext &ctx) {
         Song &s = m_songs[handle];
+        if (s.sound && restoringNow(s))
+            m_restorer.cancel();
+        m_restoreWaiting.erase(std::remove(m_restoreWaiting.begin(), m_restoreWaiting.end(), s.serial),
+                               m_restoreWaiting.end());
         if (s.sound) {
             m_bank->sounds[handle].store(nullptr, std::memory_order_release);
             m_retired.push_back({std::move(s.sound), m_bank->epoch.load(std::memory_order_acquire), ctx.now()});
@@ -2150,6 +2265,29 @@ private:
     void arrived(Loaded &&l, ControlContext &ctx) {
         if (l.kind == Loaded::Failed) {
             ctx.notice(l.error);
+            return;
+        }
+        if (l.kind == Loaded::Restored) {
+            for (int h = 1; h <= kSounds; ++h) {
+                Song &s = m_songs[h];
+                if (!s.sound || s.serial != l.serial)
+                    continue;
+                if (!l.restored || l.restored->frames != s.sound->frames) {
+                    ctx.notice(QStringLiteral("The restored song doesn't match the song"));
+                    continue;
+                }
+                if (!s.original)
+                    s.original = s.sound->own[Mix];
+                s.restored = std::shared_ptr<const Pcm>(std::move(l.restored));
+                hear(s, s.hearRestored);
+                ctx.notice(s.hearRestored ? QStringLiteral("RESTORED: what the codec took away is drawn back · O: the original")
+                                          : QStringLiteral("RESTORED · O switches to it"));
+                if (s.stemsAfter && h == m_current) {
+                    s.stemsAfter = false;
+                    separate(ctx);
+                }
+                s.stemsAfter = false;
+            }
             return;
         }
         if (l.kind == Loaded::Stems) {
@@ -2233,6 +2371,99 @@ private:
         // Stems made for it before are a moment's reading away.
         if (QFile::exists(s.cache + QStringLiteral("/stems/other.wav")))
             m_importer.separate(s.serial, s.cache, {}, int(snd.rate), ctx.scripted());
+        // So is the song restored before. One that went through a lossy
+        // codec (an MP3, a stream) is restored now, in the background, while
+        // it already plays as it came.
+        s.lossy = tf::restore::lossyName(QFileInfo(l.file).fileName().toStdString());
+        if (QFile::exists(s.cache + QStringLiteral("/restored.wav"))) {
+            m_importer.restore(s.serial, s.cache, {}, int(snd.rate), ctx.scripted());
+        } else if (s.lossy && (!ctx.scripted() || qEnvironmentVariableIsSet("TENFOLD_RESTORE_IN_SCRIPTS"))) {
+            if (!restoreModel().isEmpty()) {
+                m_restoreWaiting.push_back(s.serial);
+                pumpRestores(ctx);
+            } else if (!m_restoreMissingSaid) {
+                m_restoreMissingSaid = true;
+                ctx.notice(QStringLiteral("This song went through a lossy codec; restoring it needs the restore model "
+                                          "(apollo.bin), which this tenfold wasn't installed with"));
+            }
+        }
+    }
+
+    // --- restoring -----------------------------------------------------------
+
+    Song *song(int serial) {
+        for (int h = 1; h <= kSounds; ++h)
+            if (m_songs[h].sound && m_songs[h].serial == serial)
+                return &m_songs[h];
+        return nullptr;
+    }
+    bool restoringNow(const Song &s) const { return m_restorer.busy() && m_restoringSerial == s.serial; }
+    bool restoreWaiting(const Song &s) const {
+        return std::find(m_restoreWaiting.begin(), m_restoreWaiting.end(), s.serial) != m_restoreWaiting.end();
+    }
+
+    // The next song waiting to be restored, if the restorer is free: one at
+    // a time, so a song waiting can still be called off.
+    void pumpRestores(ControlContext &ctx) {
+        while (!m_restorer.busy() && !m_restoreWaiting.empty()) {
+            const int serial = m_restoreWaiting.front();
+            m_restoreWaiting.pop_front();
+            Song *s = song(serial);
+            if (!s || s->restored)
+                continue;
+            const std::shared_ptr<const Pcm> mix = s->original ? s->original : s->sound->own[Mix];
+            if (!mix)
+                continue;
+            m_restoringSerial = serial;
+            m_restorer.restore(serial, s->cache, mix->data, int(s->sound->rate), ctx.scripted());
+        }
+    }
+
+    // The mix the engine plays: the song restored, or as it came. Both stay
+    // alive with the song, so a voice still reading the other is safe.
+    static void hear(Song &s, bool restored) {
+        s.hearRestored = restored;
+        if (!s.sound || !s.restored || !s.original)
+            return;
+        const std::shared_ptr<const Pcm> &pick = restored ? s.restored : s.original;
+        s.sound->own[Mix] = pick;
+        s.sound->pcm[Mix].store(pick.get(), std::memory_order_release);
+    }
+
+    // O: restore the song, call its restoring off, or go between it
+    // restored and as it came.
+    void restoreKey(ControlContext &ctx) {
+        if (!need(ctx))
+            return;
+        Song &s = *current();
+        if (restoringNow(s)) {
+            m_restorer.cancel(); // its result says so
+            s.stemsAfter = false;
+            return;
+        }
+        if (restoreWaiting(s)) {
+            m_restoreWaiting.erase(std::find(m_restoreWaiting.begin(), m_restoreWaiting.end(), s.serial));
+            s.stemsAfter = false;
+            ctx.notice(QStringLiteral("Restoring called off: O starts it again"));
+            return;
+        }
+        if (s.restored) {
+            hear(s, !s.hearRestored);
+            ctx.notice(s.hearRestored ? QStringLiteral("RESTORED · O: the original")
+                                      : QStringLiteral("THE ORIGINAL, AS IT CAME · O: restored"));
+            return;
+        }
+        if (restoreModel().isEmpty()) {
+            ctx.notice(QStringLiteral("The restore model isn't installed with this tenfold "
+                                      "(apollo.bin; TENFOLD_RESTORE_MODEL names one)"));
+            return;
+        }
+        const bool first = !m_restorer.busy();
+        m_restoreWaiting.push_back(s.serial);
+        pumpRestores(ctx);
+        ctx.notice(first ? QStringLiteral("Restoring the song in the background, about its own length again; it "
+                                          "plays as it came meanwhile (O calls it off)")
+                         : QStringLiteral("The song is restored once the one before it is (O calls it off)"));
     }
 
     // A song read again for a song file: the grid its loops were made on,
@@ -2282,6 +2513,7 @@ private:
         SpotStem = 100, // + stem
         SpotSong = 120, // + handle
         SpotStems = 140,
+        SpotRestore,
         SpotPageUp,
         SpotPageDown,
         SpotSmaller,
@@ -2401,6 +2633,12 @@ private:
 
     std::shared_ptr<Bank> m_bank;
     Importer m_importer;
+    // Restoring takes minutes, so it has a thread of its own: songs are
+    // read and stems made meanwhile.
+    Importer m_restorer;
+    int m_restoringSerial = 0;      // the song m_restorer is working on
+    std::deque<int> m_restoreWaiting; // songs to restore after it, by serial
+    bool m_restoreMissingSaid = false;
     Song m_songs[kSounds + 1];
     int m_stemWanted[kSounds + 1] = {};
     int m_current = 0, m_wanted = 0;
@@ -2435,6 +2673,7 @@ bool Page::click(QPointF at, ControlContext &ctx) {
     }
     switch (id) {
     case SpotStems: separate(ctx); return true;
+    case SpotRestore: restoreKey(ctx); return true;
     case SpotPageUp: turn(-1, ctx); return true;
     case SpotPageDown: turn(1, ctx); return true;
     case SpotSmaller: resize(-1, ctx); return true;
@@ -2650,10 +2889,11 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         }
         if (s->stem != Mix)
             x = c::tag(p, QPointF(x, c::tabY(pc)), QString::fromLatin1(stemName(s->stem)), col, 11).right() + 6;
-        if (m_importer.busy()) {
-            const QString stage = m_importer.stage();
+        const Importer *working = m_importer.busy() ? &m_importer : m_restorer.busy() ? &m_restorer : nullptr;
+        if (working) {
+            const QString stage = working->stage();
             c::tag(p, QPointF(pc.pad.center().x(), pc.pad.bottom() - 16),
-                   QStringLiteral("%1 %2%").arg(stage.isEmpty() ? QStringLiteral("WORKING") : stage).arg(int(m_importer.progress() * 100)),
+                   QStringLiteral("%1 %2%").arg(stage.isEmpty() ? QStringLiteral("WORKING") : stage).arg(int(working->progress() * 100)),
                    std::fmod(pc.time, 0.6) < 0.3 ? col : c::alpha(col, 0.7f), 13, true);
         }
     }
@@ -2701,10 +2941,10 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     }
     {
         // The tempo as heard, halved or doubled.
-        const QRectF fix = c::bandRow(pc, 0, 0.54, 0.64);
+        const QRectF fix = c::bandRow(pc, 0, 0.54, 0.615);
         c::chip(p, pc, QRectF(fix.left(), fix.top(), fix.width() / 2 - 2, fix.height()), QStringLiteral("÷2 H"), false, &m_spots, SpotHalf);
         c::chip(p, pc, QRectF(fix.center().x() + 1, fix.top(), fix.width() / 2 - 2, fix.height()), QStringLiteral("×2 D"), false, &m_spots, SpotDouble);
-        const QRectF stems = c::bandRow(pc, 0, 0.65, 0.88);
+        const QRectF stems = c::bandRow(pc, 0, 0.622, 0.8);
         const qreal w = stems.width() / int(kStems);
         for (int st = 0; st < kStems; ++st) {
             const QRectF r(stems.left() + st * w, stems.top(), w - 3, stems.height());
@@ -2720,9 +2960,19 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
             }
         }
         const bool separating = m_importer.separating();
-        c::chip(p, pc, c::bandRow(pc, 0, 0.885, 1),
+        c::chip(p, pc, c::bandRow(pc, 0, 0.805, 0.895),
                 separating ? QStringLiteral("%1%").arg(int(m_importer.progress() * 100)) : QStringLiteral("STEMS S"),
                 separating && std::fmod(pc.time, 0.6) < 0.3, &m_spots, SpotStems);
+        // Restoring: its progress while it runs; lit while the song is heard restored.
+        const bool restoring = s && s->sound && restoringNow(*s);
+        const bool waiting = s && s->sound && restoreWaiting(*s);
+        const bool restored = s && s->restored;
+        c::chip(p, pc, c::bandRow(pc, 0, 0.9, 1),
+                restoring ? QStringLiteral("%1%").arg(int(m_restorer.progress() * 100))
+                : waiting ? QStringLiteral("WAITS O")
+                : restored ? QStringLiteral("RESTORED O")
+                           : QStringLiteral("RESTORE O"),
+                restoring ? std::fmod(pc.time, 0.6) < 0.3 : restored && s->hearRestored, &m_spots, SpotRestore);
     }
     // Row 1: the page of the song, the cut, the tuning, and the rest.
     const QRectF row = c::bandRow(pc, 1, 0, 1);

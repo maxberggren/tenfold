@@ -372,7 +372,16 @@ double memoryGigabytes() {
     return 8.0;
 }
 
+const Cores &theFastCores() {
+    static const Cores c = fastCores();
+    return c;
+}
+
 } // namespace
+
+int fastCoreCount() { return theFastCores().count; }
+void keepToFastCores() { keepOn(theFastCores()); }
+double physicalMemoryGigabytes() { return memoryGigabytes(); }
 
 // ---------------------------------------------------------------------------
 // The matrix product. Nearly all of the network's time is spent here: in

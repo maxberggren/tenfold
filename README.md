@@ -252,6 +252,7 @@ stretched at all. So:
 |---|---|
 | ← → | the stem played: mix, drums, bass, vocals, other (after S) |
 | S | separate the stems (S again calls it off) |
+| O | restore the song · back and forth between it restored and the original |
 | ↑ ↓ | the page of the song |
 | Shift ← → | how it is cut |
 | , . · the key left of 1 | tune a semitone · match the studio's key |
@@ -268,14 +269,27 @@ on an M2 Pro's eight fast cores, and comes out as PyTorch's Demucs would
 have it, to within rounding. The stems are kept beside the download, so a
 song separated once has them at once the next time.
 
+**Restoring.** A song that went through a lossy codec (an MP3, a
+stream's AAC or Opus) is restored by itself when it comes in: Apollo
+(Kai Li and Yi Luo, 2024; weights CC BY-SA 4.0), computed by tenfold on
+the CPU like the stems (`src/restore.cpp`), draws back the top octave the
+encoder threw away and cleans up its smeared, swirling artefacts. It runs
+in the background at the lowest priority while the song already plays as
+it came, and takes about as long as the song on an M2 Pro's eight fast
+cores; then O goes back and forth between the song restored and the
+original, and S makes the stems from the restored one. O starts it for any
+other song, and calls it off while it runs. Its weights (66 MB) come with
+the packages and `bin/model`, and the restored song is kept beside the
+download like the stems.
+
 **Songs.** A song file names the sampled song (its path or link), the grid
 its loops were made on and every chop you moved, not its sound: opened on
 a computer without the sound it says so, and dropping the song in again
 puts it back in its place with its loops.
 
 `TENFOLD_FFMPEG` and `TENFOLD_YTDLP` name the tools when they aren't on the
-PATH, `TENFOLD_STEMS_MODEL` the model's weights; `TENFOLD_SAMPLER_CACHE`
-moves the cache.
+PATH, `TENFOLD_STEMS_MODEL` and `TENFOLD_RESTORE_MODEL` the models'
+weights; `TENFOLD_SAMPLER_CACHE` moves the cache.
 
 ## The visualizer
 
@@ -382,7 +396,8 @@ bin/test -h                                             # more
 
 Needs Qt 6.8 or newer (base, declarative, wayland), PipeWire and polkit.
 Noto Sans Mono is compiled in (`src/fonts`, under the OFL), and the stem
-model's weights are installed beside the program (`extras/LICENSE-htdemucs`).
+and restore models' weights are installed beside the program
+(`extras/LICENSE-htdemucs`, `extras/LICENSE-apollo`).
 Two tools are used when they are there and missed politely when not:
 `ffmpeg` (video recording; the Sampler reading more than WAV) and `yt-dlp`
 (links pasted into the Sampler).

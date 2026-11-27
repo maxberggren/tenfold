@@ -73,6 +73,13 @@ void segment(const Model &model, const float *in, float *out, const Probe &probe
 // nothing is delayed. Returns ceil(n · to / from) samples.
 std::vector<float> resample(const float *in, size_t n, int from, int to);
 
+// For the other networks tenfold runs the same way (src/restore.h): how
+// many cores a long computation is best spread over (one per fast core),
+// a worker thread keeping to those cores, and the computer's memory.
+int fastCoreCount();
+void keepToFastCores();
+double physicalMemoryGigabytes();
+
 // Matrix product for the network, exposed for its tests: C (M×N, row
 // stride ldc) = A·B, plus C itself if `accumulate`. A is M×K (element (m,k)
 // at A[m·lda + k], or A[k·lda + m] when transA), B is K×N likewise.

@@ -156,7 +156,8 @@ std::string num(double v) {
 
 class SamplerTests : public QObject {
     Q_OBJECT
-    Q_CLASSINFO("alone", "tenFingersHeldStayCheap sPutsTheSongThroughTheModelAndKeepsItsStems")
+    Q_CLASSINFO("alone", "tenFingersHeldStayCheap sPutsTheSongThroughTheModelAndKeepsItsStems "
+                         "aLossySongIsRestoredByItselfAndKept")
     // The tests bin/test runs while developing; the rest run with --full.
     Q_CLASSINFO("dev",
                 "atItsOwnTempoTheSongPlaysSampleForSample aDroppedSongIsReadAndTheStudioTakesItsTempo "
@@ -1075,6 +1076,63 @@ private slots:
             QCOMPARE(pcm.size(), song(120, 4).size());
         }
         QVERIFY(QDir(dir).entryList({QStringLiteral(".*.part")}, QDir::Files | QDir::Hidden).isEmpty());
+    }
+
+    void aRestoredSongIsReadAndOGoesBackAndForth() {
+        // The song restored as the restorer leaves it, here silence, so the
+        // two are told by ear: it is read with the song and played, and O
+        // goes to the original and back.
+        const QString path = write(QStringLiteral("restoredbefore.wav"), song(100, 8));
+        const QString cache = QString::fromStdString(cacheFolder(path.toStdString()));
+        QVERIFY(QDir().mkpath(cache));
+        const std::vector<int16_t> none(song(100, 8).size(), 0);
+        QVERIFY(writeWavStereo(QFile::encodeName(cache + QStringLiteral("/restored.wav")).toStdString(), none.data(),
+                               none.size() / 2, kRate));
+        const Lay l = layOf(path);
+        const std::string at = l.at(std::round(l.beatOf(0)) + 4);
+        float first = 0, between = 0, last = 0;
+        const auto take = testkit::watch(drop(path) + "tap 1.0 " + at + "\nkey 2.0 O\ntap 2.5 " + at + "\nkey 3.5 O\ntap 4.0 " + at +
+                                             "\nend 5\n",
+                                         [&](double t, Session &s) {
+                                             const float r = s.probe(kSampler, QStringLiteral("restored"));
+                                             (t < 2.0 ? first : t < 3.5 ? between : last) = r;
+                                         });
+        QCOMPARE(first, 1.0f);   // restored
+        QCOMPARE(between, 0.5f); // O: the original
+        QCOMPARE(last, 1.0f);    // O: restored again
+        QVERIFY2(take.rms(1.02, 1.4) < 0.001, qPrintable(QString::number(take.rms(1.02, 1.4)))); // restored: silence
+        QVERIFY(take.rms(2.52, 2.9) > 0.02);                                                    // the original
+        QVERIFY2(take.rms(4.02, 4.4) < 0.001, qPrintable(QString::number(take.rms(4.02, 4.4)))); // restored again
+    }
+
+    void aLossySongIsRestoredByItselfAndKept() {
+        // The real restorer, when its weights are on this machine: a song
+        // whose file says it went through a lossy codec (WAV inside, which
+        // the page reads without ffmpeg) is restored as it comes in, and the
+        // restored song is kept in its cache folder.
+        QString model = qEnvironmentVariable("TENFOLD_RESTORE_MODEL");
+        if (model.isEmpty())
+            model = QStringLiteral(TENFOLD_SRC "/../build/apollo.bin");
+        if (!QFile::exists(model))
+            QSKIP("no apollo.bin here (bin/model fetches it)");
+        qputenv("TENFOLD_RESTORE_MODEL", QFile::encodeName(model));
+        qputenv("TENFOLD_RESTORE_IN_SCRIPTS", "1");
+        const QString path = write(QStringLiteral("lossy.mp3"), song(120, 1));
+        const QString cache = QString::fromStdString(cacheFolder(path.toStdString()));
+        float restored = 0, afterO = 0;
+        testkit::watch(drop(path) + "key 1.0 O\nend 1.2\n", [&](double t, Session &s) {
+            (t < 1.0 ? restored : afterO) = s.probe(kSampler, QStringLiteral("restored"));
+        });
+        qunsetenv("TENFOLD_RESTORE_MODEL");
+        qunsetenv("TENFOLD_RESTORE_IN_SCRIPTS");
+        QCOMPARE(restored, 1.0f);
+        QCOMPARE(afterO, 0.5f); // O: the original
+        std::vector<int16_t> pcm;
+        int rate = 0;
+        QVERIFY(readWavStereo(QFile::encodeName(cache + QStringLiteral("/restored.wav")).toStdString(), pcm, rate));
+        QCOMPARE(rate, kRate);
+        QCOMPARE(pcm.size(), song(120, 1).size());
+        QVERIFY(QDir(cache).entryList({QStringLiteral(".*.part")}, QDir::Files | QDir::Hidden).isEmpty());
     }
 
     void withoutStemsTheArrowsSayHowToGetThem() {

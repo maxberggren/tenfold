@@ -63,6 +63,9 @@ install -Dm644 "$ROOT/LICENSE" "$appdir/LICENSE"
 # The stem separator's weights, where the program looks (../share/tenfold).
 install -Dm644 "$ROOT/build/htdemucs.safetensors" "$appdir/usr/share/tenfold/htdemucs.safetensors"
 install -Dm644 "$ROOT/extras/LICENSE-htdemucs" "$appdir/LICENSE-htdemucs"
+# The restorer's, likewise.
+install -Dm644 "$ROOT/build/apollo.bin" "$appdir/usr/share/tenfold/apollo.bin"
+install -Dm644 "$ROOT/extras/LICENSE-apollo" "$appdir/LICENSE-apollo"
 install -Dm644 "$ROOT/extras/70-tenfold.rules" "$appdir/extras/70-tenfold.rules"
 printf '%s\n' "$version" >"$appdir/VERSION"
 

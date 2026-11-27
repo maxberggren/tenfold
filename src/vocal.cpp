@@ -3261,6 +3261,20 @@ public:
         }
     }
 
+    // The sound browser: the voice's styles. Your own voice is the sound, so
+    // choosing one is heard as you sing (no phrase of its own).
+    std::vector<SoundChoice> soundChoices() const override {
+        std::vector<SoundChoice> out;
+        for (int k = 0; k < PresetCount; ++k)
+            out.push_back({QString::fromLatin1(presetName(k)).toLower(), QString::fromLatin1(presetLine(k))});
+        return out;
+    }
+    int soundChoice() const override { return m_preset; }
+    void chooseSound(int index, ControlContext &ctx) override {
+        if (index >= 0 && index < PresetCount && index != m_preset)
+            setPreset(index, ctx);
+    }
+
     QString help() const override {
         return QStringLiteral(
             "sing\tyou hear yourself at once, through everything below; the page shows the note you sing and the "
@@ -5449,7 +5463,9 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         names << QString::fromLatin1(presetName(k));
     // A style with an option of its own has its chip at the row's end.
     const bool opt = hasOption(m_preset);
-    c::chips(p, pc, c::bandRow(pc, 0, 0.44, opt ? 0.885 : 1), names, m_preset, &m_spots, SpotPreset);
+    // More than fit: "+N MORE" (all of them in the browser) and → at the end.
+    c::chips(p, pc, c::bandRow(pc, 0, 0.44, opt ? 0.885 : 1), names, m_preset, &m_spots, SpotPreset, 4, nullptr,
+             c::kBrowseRowNext);
     if (opt)
         c::chip(p, pc, c::bandRow(pc, 0, 0.89, 1).adjusted(0, 0, -4, 0), optionLabel(), true, &m_spots, SpotStyleOpt);
     const QRectF row = c::bandRow(pc, 1, 0, 1);

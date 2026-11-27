@@ -961,14 +961,14 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     m_padRect = pad;
     m_soundChip = {};
     m_soundNext = {};
-    if (m_level == 0 && p.part >= 0 && p.part < 7 && !p.spec.control->soundChoices().empty() &&
+    if (m_level == 0 && p.part >= 0 && p.part < 8 && !p.spec.control->soundChoices().empty() &&
         p.spec.control->soundsOnPad()) {
         // Its sounds are on the pad: the row under it is the clip slots alone.
         const QRectF row = console::bandRow(pc, 0);
         const QRectF clips = console::lastClipStrip();
         const qreal left = !clips.isEmpty() && std::abs(clips.top() - row.top()) < 2 ? clips.right() + 8 : row.left();
         painter.fillRect(QRectF(left, row.top() - 4, row.right() - left + 4, row.height() + 8), Qt::black);
-    } else if (m_level == 0 && p.part >= 0 && p.part < 7 && !p.spec.control->soundChoices().empty()) {
+    } else if (m_level == 0 && p.part >= 0 && p.part < 8 && !p.spec.control->soundChoices().empty()) {
         // A newcomer's first row: the clip slots once there is a loop, and in
         // place of the row of sounds one chip that opens them all, heard.
         const QRectF row = console::bandRow(pc, 0);

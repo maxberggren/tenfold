@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QImage>
 #include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QPainter>
 
 #include "console.h"
@@ -44,7 +45,7 @@ class FrameworkTests : public QObject {
                 "aMelodyThatStartsMidBarLoopsWithoutAGap clipsCanBeCopiedLayeredAndChained "
                 "spaceLayersOntoThePlayingLoop aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn "
                 "aLayerLandsWithoutCuttingTheLoop shiftSpaceMakesANewLoopInstead "
-                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay aLoopMadeWhilePausedKeepsThePausedLoops aSongSavedPausedOpensReadyToPlay aNewLoopTakesOnlyThePlayingSinceTheLoop numberKeysChangePages ctrlKeysMoveTempoAndKey "
+                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay aLoopMadeWhilePausedKeepsThePausedLoops aSongSavedPausedOpensReadyToPlay aNewLoopTakesOnlyThePlayingSinceTheLoop startingOverKeepsTheOldSong numberKeysChangePages ctrlKeysMoveTempoAndKey "
                 "leavingAPageLetsGoOfHeldNotes stoppingWaitsForTheBar muteSilencesAChannel "
                 "armedRecordingMakesABarLongClip everyPageDrawsWithoutTouches "
                 "anUnreadablePadWithoutPkexecSaysWhatIsMissing keysAreNamedAsTheSystemNamesThem "
@@ -916,6 +917,49 @@ private slots:
             const int bars = int(std::lround(c.lengthBeats / 4));
             QVERIFY2(bars == 1 || bars == 2 || bars == 4 || bars == 8 || bars == 16, qPrintable(QString::number(c.lengthBeats)));
         }
+    }
+
+    // Starting over (Ctrl+N twice, or the tutorial over loops) keeps the
+    // song it clears where Ctrl+Shift+O finds it, and says so.
+    void startingOverKeepsTheOldSong() {
+        QTemporaryDir dir;
+        const QString backup = dir.filePath(QStringLiteral("before-start-over.tenfold"));
+        for (const char *keys : {"key 3 Ctrl+N\nkey 3.2 Ctrl+N\n", "key 3 Ctrl+T\nkey 3.2 Ctrl+T\n"}) {
+            QFile::remove(backup);
+            tf::ScriptPlayer player;
+            std::string error;
+            QVERIFY(player.load(std::string(kBeat) + keys + "end 4\n", &error));
+            Studio studio(48000.0f);
+            studio.setTimeOrigin(0);
+            setScriptClock(0);
+            Session session(&studio);
+            session.setClock(&scriptClock);
+            session.setStartOverBackup(backup);
+            float buf[384 * 2];
+            for (int tick = 0; tick / 125.0 <= player.end() + 0.01; ++tick) {
+                session.refresh();
+                player.tick(tick / 125.0, session);
+                studio.render(buf, 384);
+            }
+            session.refresh();
+            QVERIFY(!session.anythingMade());
+            QVERIFY2(session.notice(nullptr).contains(QStringLiteral("Ctrl+Shift+O")), qPrintable(session.notice(nullptr)));
+            QJsonObject doc;
+            QString why;
+            QVERIFY2(readSongFile(backup, &doc, &why), qPrintable(why));
+            QVERIFY(session.openSong(doc, &why));
+            session.refresh();
+            QVERIFY(session.anythingMade());
+            session.toggleTutorial(); // the tutorial, if it ran, ends
+        }
+        // With nothing made, nothing is kept.
+        QFile::remove(backup);
+        Studio studio(48000.0f);
+        Session empty(&studio);
+        empty.setStartOverBackup(backup);
+        empty.key(KeyEvent{Qt::Key_N, Qt::ControlModifier, true});
+        empty.key(KeyEvent{Qt::Key_N, Qt::ControlModifier, true});
+        QVERIFY(!QFile::exists(backup));
     }
 
     void numberKeysChangePages() {

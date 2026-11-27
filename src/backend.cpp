@@ -34,6 +34,7 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         m_session->setClock(&scriptClock);
         // A screenshot neither keeps nor offers a song of its own.
         m_songs->setAutosavePath({});
+        m_session->setStartOverBackup({});
     }
 
     if (live) {

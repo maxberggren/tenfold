@@ -392,8 +392,10 @@ QString songSummary(const QJsonObject &doc) {
 
 SongFiles::SongFiles(Session *session, FilePicker *picker) : m_session(session), m_picker(picker) {
     const QString state = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
-    if (!state.isEmpty())
+    if (!state.isEmpty()) {
         m_autosave = state + QStringLiteral("/tenfold/last.tenfold");
+        m_session->setStartOverBackup(state + QStringLiteral("/tenfold/before-start-over.tenfold"));
+    }
 }
 
 // A new song since the file was saved or opened: that file is the old
@@ -467,7 +469,7 @@ bool SongFiles::openFrom(const QString &path) {
         return false;
     }
     // The song kept on quit is opened as a copy: Ctrl+S asks where to put it.
-    const bool kept = path == m_autosave;
+    const bool kept = path == m_autosave || path == m_session->startOverBackup();
     m_path = kept ? QString() : path;
     m_pathStarts = m_session->freshStarts();
     // A song that opened with something left out says so after its name.
@@ -478,11 +480,18 @@ bool SongFiles::openFrom(const QString &path) {
 }
 
 void SongFiles::reopenLast() {
-    if (!hasAutosave()) {
+    // The newer of the two kept songs: the one kept on quit, and the one a
+    // start over (Ctrl+N twice, the tutorial) cleared.
+    const QString backup = m_session->startOverBackup();
+    const bool hasBackup = !backup.isEmpty() && QFileInfo::exists(backup);
+    if (!hasAutosave() && !hasBackup) {
         m_session->say(QStringLiteral("No song kept from last time"));
         return;
     }
-    openFrom(m_autosave);
+    if (hasBackup && (!hasAutosave() || QFileInfo(backup).lastModified() > QFileInfo(m_autosave).lastModified()))
+        openFrom(backup);
+    else
+        openFrom(m_autosave);
 }
 
 bool SongFiles::autosave() {

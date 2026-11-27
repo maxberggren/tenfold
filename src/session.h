@@ -178,6 +178,10 @@ public:
     bool newLoop();
     bool canNewLoop() const;
     void startOver();
+    // Where starting over (Ctrl+N twice, the tutorial) keeps the song it
+    // clears, so Ctrl+Shift+O brings it back; empty: nowhere.
+    void setStartOverBackup(const QString &path) { m_startOverBackup = path; }
+    QString startOverBackup() const { return m_startOverBackup; }
     // Counts the times the player started a new song (Ctrl+N twice, the
     // tutorial): a song saved before one is not where the next save goes.
     uint32_t freshStarts() const { return m_freshStarts; }
@@ -321,6 +325,10 @@ private:
     int m_pausedSlots[kMaxParts];
     bool m_songPaused = false;
     double m_pausedAt = -1e9; // when the last pause came, for its notice
+    QString m_startOverBackup;
+    // Writes the song about to be cleared to m_startOverBackup; true if
+    // there was something and it was kept.
+    bool keepBeforeClearing();
     // The metronome, left on across a pause, is silent until play: the
     // studio keeps its count, so it comes back on the one.
     bool m_metronomeHeld = false;

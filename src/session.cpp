@@ -3,6 +3,8 @@
 
 #include "platform.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QPainter>
 #include <Qt>
@@ -444,11 +446,14 @@ void Session::toggleTutorial() {
     }
     m_tutorialAsked = -1;
     m_startOverAsked = -1;
+    const bool kept = keepBeforeClearing();
     clearEverything();
     ++m_freshStarts;
     context(m_page).setKey(9, 0, 4);
     context(m_page).setTempo(124);
     m_tutorial.start(*this);
+    if (kept)
+        say(QStringLiteral("The tutorial starts from silence · Ctrl+Shift+O brings your song back"));
 }
 void Session::tutorialNext() {
     std::lock_guard lock(m_lock);
@@ -1795,9 +1800,22 @@ void Session::startOver() {
         return;
     }
     m_startOverAsked = -1;
+    const bool kept = keepBeforeClearing();
     clearEverything();
     ++m_freshStarts;
-    context(m_page).notice(QStringLiteral("Starting over: the next loop sets the tempo"));
+    context(m_page).notice(kept ? QStringLiteral("Starting over: the next loop sets the tempo · Ctrl+Shift+O brings the old song back")
+                                : QStringLiteral("Starting over: the next loop sets the tempo"));
+}
+
+bool Session::keepBeforeClearing() {
+    if (m_startOverBackup.isEmpty() || !anythingMade())
+        return false;
+    QString error;
+    const QJsonObject doc = saveSong(&error);
+    if (doc.isEmpty())
+        return false;
+    QDir().mkpath(QFileInfo(m_startOverBackup).absolutePath());
+    return writeSongFile(m_startOverBackup, doc, &error);
 }
 
 void Session::clearEverything(bool studio) {

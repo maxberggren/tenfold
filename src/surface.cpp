@@ -1,5 +1,6 @@
 #include "surface.h"
 
+#include <QCursor>
 #include <QHoverEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -101,8 +102,15 @@ void Surface::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void Surface::hoverMoveEvent(QHoverEvent *e) {
-    if (m_backend)
+    if (m_backend) {
         m_backend->session()->mouseAt(e->position(), true);
+        // A hand over what a click does something to.
+        const bool hand = m_backend->session()->clickableAt(e->position());
+        if (hand != m_hand) {
+            m_hand = hand;
+            setCursor(QCursor(hand ? Qt::PointingHandCursor : Qt::ArrowCursor));
+        }
+    }
     if (!m_mouseHeld)
         sendPointer(e->position(), false);
     update();

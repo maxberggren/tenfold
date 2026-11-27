@@ -2834,3 +2834,15 @@ void Session::toggleLoop(int page) {
 }
 
 }
+
+namespace tf {
+
+bool Session::clickableAt(QPointF at) const {
+    std::lock_guard lock(m_lock);
+    for (const QRectF &r : {m_soundChip, m_soundNext, m_studioTag, foldedRow(m_padRect)})
+        if (!r.isEmpty() && r.contains(at))
+            return true;
+    return console::clickableAt(at);
+}
+
+}

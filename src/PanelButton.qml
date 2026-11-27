@@ -116,6 +116,7 @@ Item {
     MouseArea {
         id: mouse
         anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
         onClicked: mouse => button.clicked(mouse.modifiers)
     }
 }

@@ -263,6 +263,9 @@ public:
     // The SOUND chip under the pad was clicked (level 0): the window opens
     // the browser. True once per click.
     bool takeSoundsAsked();
+    // Something drawn there answers a click (a chip, a slot, a button under
+    // the pad): the mouse turns into a hand over it.
+    bool clickableAt(QPointF at) const;
     // The play area the showing page is zoomed onto (below Studio), or the
     // whole pad.
     PartControl::PlayArea zoomArea() const;

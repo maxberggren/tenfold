@@ -525,10 +525,21 @@ std::vector<QRectF> g_browseChips;
 }
 
 std::vector<QRectF> g_nextChips;
+std::vector<QRectF> g_clickable;
+
+void noteClickable(const QRectF &r) { g_clickable.push_back(r); }
+
+bool clickableAt(QPointF at) {
+    for (const QRectF &r : g_clickable)
+        if (r.contains(at))
+            return true;
+    return browseChipAt(at) || nextChipAt(at);
+}
 
 void resetBrowseChips() {
     g_browseChips.clear();
     g_nextChips.clear();
+    g_clickable.clear();
 }
 
 bool nextChipAt(QPointF at) {

@@ -342,6 +342,7 @@ ApplicationWindow {
                             }
                             MouseArea {
                                 anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
                                 onClicked: backend.page = tab.index
                             }
                         }
@@ -369,7 +370,7 @@ ApplicationWindow {
                             font.weight: Font.Bold
                             font.capitalization: Font.AllUppercase
                         }
-                        MouseArea { anchors.fill: parent; onClicked: win.allPages = true }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: win.allPages = true }
                     }
                 }
             }
@@ -485,6 +486,7 @@ ApplicationWindow {
                                             id: levelMouse
                                             anchors.fill: parent
                                             hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
                                             onClicked: backend.uiLevel = levelChip.index
                                         }
                                         ToolTip.visible: levelMouse.containsMouse
@@ -997,8 +999,8 @@ ApplicationWindow {
         }
 
         // A notice from a page or a key, big for a moment over the pad (not
-        // the buttons beside it), on a black plate so it reads over whatever
-        // the pad is lighting up. It wraps to a readable width, up to three
+        // the buttons beside it), each letter edged thickly in black so it
+        // reads over whatever the pad is lighting up. It wraps to a readable width, up to three
         // lines, its size chosen by how much it says. The pad sits inside
         // layouts, so its place is mapped here; naming its size and the
         // window's makes the binding follow them.
@@ -1009,25 +1011,38 @@ ApplicationWindow {
             readonly property int chars: backend.notice.length
             readonly property int px: Math.round(Math.min(surface.height / 9, chars <= 28 ? 46 : chars <= 56 ? 38 : 30))
             // About 26 letters a line at most: easy to read at a glance.
-            width: Math.min(surface.width - 100, px * 0.62 * 26 + 48)
-            height: plate.height
+            width: Math.min(surface.width - 100, px * 0.62 * 26)
+            height: noticeLabel.contentHeight
             x: padAt.x + (surface.width - width) / 2
             y: padAt.y + (surface.height - height) / 2
             opacity: win.pinNotice ? 1 : 0
             visible: opacity > 0
-            Rectangle {
-                id: plate
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Math.min(parent.width, noticeLabel.contentWidth + 48)
-                height: noticeLabel.contentHeight + 28
-                color: Qt.rgba(0, 0, 0, 0.86)
-                border.color: win.pageColor
-                border.width: 1
+            // A thick black edge round every letter (the words drawn in
+            // black a few pixels out all round, under them), so they read
+            // over whatever the pad is lighting up, with the pad still seen.
+            Repeater {
+                model: 16
+                delegate: Text {
+                    required property int index
+                    readonly property real angle: index * Math.PI / 8
+                    readonly property real reach: Math.max(3, noticeBox.px / 9)
+                    x: noticeLabel.x + Math.cos(angle) * reach
+                    y: noticeLabel.y + Math.sin(angle) * reach
+                    width: noticeLabel.width
+                    horizontalAlignment: noticeLabel.horizontalAlignment
+                    wrapMode: noticeLabel.wrapMode
+                    maximumLineCount: noticeLabel.maximumLineCount
+                    elide: noticeLabel.elide
+                    lineHeight: noticeLabel.lineHeight
+                    textFormat: Text.StyledText
+                    text: backend.rich(backend.notice, "#000000", noticeBox.px)
+                    font: noticeLabel.font
+                    color: "#000000"
+                }
             }
             Text {
                 id: noticeLabel
-                anchors.centerIn: plate
-                width: noticeBox.width - 48
+                width: noticeBox.width
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 maximumLineCount: 3

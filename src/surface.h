@@ -46,4 +46,5 @@ private:
 
     QPointer<Backend> m_backend;
     bool m_mouseHeld = false;
+    bool m_hand = false; // the pointer is a hand (over something clickable)
 };

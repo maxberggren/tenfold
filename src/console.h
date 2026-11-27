@@ -87,10 +87,19 @@ void gauge(QPainter &p, const QRectF &r, float value, QColor color, int segments
 // A console button: an outlined box with a header; lit when on.
 // What a page drew to be clicked: added while painting, asked by click().
 // The ids are the page's own.
+// Everything clickable a paint drew (every Hotspots::add, the browse and
+// → chips), for the mouse pointer to turn into a hand over it; cleared
+// with resetBrowseChips() as a paint starts.
+void noteClickable(const QRectF &r);
+bool clickableAt(QPointF at);
+
 struct Hotspots {
     std::vector<std::pair<QRectF, int>> spots;
     void clear() { spots.clear(); }
-    void add(const QRectF &r, int id) { spots.push_back({r, id}); }
+    void add(const QRectF &r, int id) {
+        spots.push_back({r, id});
+        noteClickable(r);
+    }
     int at(QPointF p) const {
         for (auto it = spots.rbegin(); it != spots.rend(); ++it)
             if (it->first.contains(p))

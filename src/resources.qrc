@@ -10,6 +10,7 @@
         <file alias="SoundBrowser.qml">SoundBrowser.qml</file>
         <file alias="Welcome.qml">Welcome.qml</file>
         <file alias="ConsoleMenu.qml">ConsoleMenu.qml</file>
+        <file alias="ConfirmDialog.qml">ConfirmDialog.qml</file>
         <file alias="i18n/en.json">i18n/en.json</file>
         <file alias="Visualizer.qml">Visualizer.qml</file>
         <file alias="VisualWindow.qml">VisualWindow.qml</file>

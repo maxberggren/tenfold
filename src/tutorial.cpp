@@ -282,7 +282,7 @@ void Tutorial::build() {
     add({QStringLiteral("Bass"), Bass, QStringLiteral("Changed your mind? Ctrl+Z"),
          QStringLiteral("Ctrl+Z takes back the newest loop, on any page, and what played before plays again. Press it: "
                         "the first bassline is back. Nothing you try can spoil the song."),
-         QStringLiteral("Ctrl+N twice clears every loop, for when you want a fresh start."),
+         QStringLiteral("Ctrl+N clears every loop (it asks first), for when you want a fresh start."),
          QStringLiteral("Taken back. Experiment freely."),
          {QStringLiteral("Ctrl Z")},
          QStringLiteral("undo"),
@@ -578,7 +578,7 @@ void Tutorial::build() {
 
     add({QStringLiteral("Song"), Arrange, QStringLiteral("You made a track"),
          QStringLiteral("Drums, bass, chords, lead, arp, atmosphere, risers and drops: played, arranged and recorded, all "
-                        "with your fingers. Keep going: ? shows everything a page can do, and Ctrl+N twice clears the "
+                        "with your fingers. Keep going: ? shows everything a page can do, and Ctrl+N clears the "
                         "loops for the next track."),
          QStringLiteral("Esc or Ctrl+T leaves the tutorial."),
          {},

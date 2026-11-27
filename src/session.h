@@ -180,7 +180,17 @@ public:
     // no loop playing (or is no part's).
     bool newLoop();
     bool canNewLoop() const;
-    void startOver();
+    // Every loop cleared (asks first: Ctrl+N twice, or the window's dialog
+    // where there is one; confirmed: at once).
+    void startOver(bool confirmed = false);
+    // The window confirms in a dialog: startOver() asks it (takeStartOverWanted).
+    void setAskStartOver(bool on) { m_askStartOver = on; }
+    bool takeStartOverWanted() {
+        std::lock_guard lock(m_lock);
+        const bool w = m_startOverWanted;
+        m_startOverWanted = false;
+        return w;
+    }
     // Where starting over (Ctrl+N twice, the tutorial) keeps the song it
     // clears, so Ctrl+Shift+O brings it back; empty: nowhere.
     void setStartOverBackup(const QString &path) { m_startOverBackup = path; }
@@ -426,6 +436,7 @@ private:
     }();
     QRectF m_soundChip;   // level 0: the SOUND chip under the pad, where last painted
     bool m_soundsAsked = false;
+    bool m_askStartOver = false, m_startOverWanted = false;
     bool m_browsedSounds = false, m_sawAllParts = false, m_allPartsAsked = false;
     enum class Discovery { None, Sounds, Parts };
     Discovery discovery() const;

@@ -276,7 +276,8 @@ public:
     int loopLongerBeats() const { return m_session->loopBeats(1); }
     bool canNewLoop() const { return m_session->canNewLoop(); }
     Q_INVOKABLE void newLoop() { m_session->newLoop(); }
-    Q_INVOKABLE void startOver() { m_session->startOver(); }
+    Q_INVOKABLE void startOver() { m_session->startOver(); }    // asks first (the dialog)
+    Q_INVOKABLE void startOverNow() { m_session->startOver(true); }
     // Song files: Ctrl+S, Ctrl+Shift+S, Ctrl+O, and Ctrl+Shift+O for the
     // song kept when tenfold last quit.
     Q_INVOKABLE void saveSong() { m_songs->save(); }
@@ -339,6 +340,8 @@ signals:
     void soundsAsked();
     // NEXT asked for every instrument's tab.
     void allPartsAsked();
+    // Start over (Ctrl+N, FILE) wants confirming in the window's dialog.
+    void startOverAsked();
 
 private:
     void tick();

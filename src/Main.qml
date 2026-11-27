@@ -35,6 +35,9 @@ ApplicationWindow {
     property bool pinNotice: false
     // A screenshot's: the FILE menu open (tenfold screenshot --file-menu).
     property bool showFileMenu: false
+    // Start over asks here first (Ctrl+N, FILE): one click answers.
+    property bool askStartOver: false
+    onAskStartOverChanged: if (!askStartOver) screen.forceActiveFocus()
     onShowFileMenuChanged: if (showFileMenu) fileMenu.open()
     property bool exportVisible: false
     // The sound browser over the pad (SOUND, or S... the button only: S is a key on pages).
@@ -133,7 +136,9 @@ ApplicationWindow {
     // taken), and with nothing of that to escape it pauses and plays, as
     // Ctrl+P (Session::escape).
     function back() {
-        if (win.soundsVisible)
+        if (win.askStartOver)
+            win.askStartOver = false
+        else if (win.soundsVisible)
             win.soundsVisible = false
         else if (win.exportVisible)
             win.exportVisible = false // an export goes on: only its Cancel stops it
@@ -951,7 +956,7 @@ ApplicationWindow {
                                             { label: "" },
                                             { label: qsTr("Export…"), key: "Ctrl E", action: () => { win.exportVisible = true } },
                                             { label: "" },
-                                            { label: qsTr("Start over"), key: "Ctrl N ×2", danger: true, action: () => backend.startOver() }
+                                            { label: qsTr("Start over…"), key: "Ctrl N", danger: true, action: () => { win.askStartOver = true } }
                                         ]
                                     }
                                 }
@@ -1126,6 +1131,7 @@ ApplicationWindow {
             function onPageChanged() { if (backend.soundNames.length === 0) win.soundsVisible = false }
             function onSoundsAsked() { if (backend.soundNames.length > 0) win.soundsVisible = true }
             function onAllPartsAsked() { win.allPages = true }
+            function onStartOverAsked() { win.askStartOver = true }
         }
 
         HelpPage {
@@ -1143,6 +1149,22 @@ ApplicationWindow {
         visible: backend.welcome
         onTutorial: backend.toggleTutorial()
         onVisibleChanged: if (!visible) screen.forceActiveFocus()
+    }
+
+    ConfirmDialog {
+        anchors.fill: parent
+        z: 60
+        visible: win.askStartOver
+        title: qsTr("Start over?")
+        text: qsTr("Every loop is cleared, the mix set back and nothing left muted; the next loop sets the tempo.")
+              + "\n\n" + qsTr("The song as it is now is kept: Ctrl+Shift+O, or FILE › Open the last one, brings it back.")
+        confirmLabel: qsTr("Start over")
+        keepLabel: qsTr("Keep playing")
+        onConfirmed: {
+            win.askStartOver = false
+            backend.startOverNow()
+        }
+        onKept: win.askStartOver = false
     }
 
     // Export, over everything but the glass's scanlines.

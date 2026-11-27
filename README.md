@@ -239,7 +239,7 @@ slots under the pad launch or stop with a click.
 **Changed your mind?** Ctrl+Z takes back the newest change to the page's
 loops (a loop, a layer, a pass played into one), up to 16 back, and what
 was playing before comes back. On the Song page it takes back the newest
-change anywhere. Ctrl+Shift+Z brings back what Ctrl+Z took back. Ctrl+N twice starts over: every loop
+change anywhere. Ctrl+Shift+Z brings back what Ctrl+Z took back. Ctrl+N starts over (it asks first, in a dialog): every loop
 cleared, the mix set back, nothing left muted.
 
 **Everywhere:** Ctrl+↑/↓ tempo, Ctrl+←/→ key, Ctrl+[ ] mode, Ctrl+M
@@ -258,7 +258,7 @@ page's recorded singing), which ones play, the mix, each page's sounds and setti
 scenes. Ctrl+Shift+S saves it under a new name, Ctrl+O opens one (the
 buttons beside the pad do the same). Quitting keeps the song in
 `~/.local/state/tenfold/last.tenfold`, and the next start offers it back:
-Ctrl+Shift+O. Starting over (Ctrl+N twice, or the tutorial over loops)
+Ctrl+Shift+O. Starting over (Ctrl+N, FILE › Start over, or the tutorial over loops)
 keeps the song it clears in `before-start-over.tenfold` beside it, and
 Ctrl+Shift+O opens whichever of the two is newer. A song saved while paused
 opens paused: Ctrl+P plays it. A song file is JSON you can read; `tenfold check song.tenfold`

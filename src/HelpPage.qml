@@ -31,7 +31,7 @@ Rectangle {
         "Shift Space\t" + qsTr("a new loop of what you just played, in place of this part's playing loop"),
         "Ctrl Shift Z\t" + qsTr("bring back what Ctrl Z took back, on the same page"),
         "Ctrl Z\t" + qsTr("take back this page's newest loop change (a loop, a layer, a pass played into it), up to 16 back; on the Song page, the newest anywhere"),
-        "Ctrl N, Ctrl N\t" + qsTr("start over: every loop cleared, every part unmuted and the mix set back, the next loop sets the tempo (Ctrl Shift O brings the cleared song back)"),
+        "Ctrl N\t" + qsTr("start over (it asks first): every loop cleared, every part unmuted and the mix set back, the next loop sets the tempo (Ctrl Shift O brings the cleared song back)"),
         "Ctrl S\t" + qsTr("save the song: every loop, the mix, each page's sounds and the Song page, to pick up where you left off (Shift: save as)"),
         "Ctrl O\t" + qsTr("open a saved song in place of what plays now"),
         "Ctrl Shift O\t" + qsTr("pick up the song as it was when tenfold last quit, or before the last start over, whichever came later"),

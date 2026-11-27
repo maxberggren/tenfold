@@ -188,6 +188,8 @@ static int screenshot(int argc, char **argv) {
         backend.session()->say(QString::fromUtf8(notice));
         window->setProperty("pinNotice", true);
     }
+    if (hasFlag(argc, argv, "--start-over"))
+        window->setProperty("askStartOver", true);
     if (hasFlag(argc, argv, "--file-menu"))
         window->setProperty("showFileMenu", true);
     if (hasFlag(argc, argv, "--help-page"))

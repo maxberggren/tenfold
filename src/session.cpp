@@ -1951,10 +1951,16 @@ void Session::redoTake() {
     context(m_page).notice(QStringLiteral("Brought back the %1 loop · Ctrl+Z takes it again").arg(pageName(part)));
 }
 
-void Session::startOver() {
+void Session::startOver(bool confirmed) {
     std::lock_guard lock(m_lock);
     const double t = now();
-    if (m_startOverAsked < 0 || t - m_startOverAsked > 3.0) {
+    // A window asks in a dialog of its own (one click there confirms);
+    // without one (a script), Ctrl+N twice.
+    if (!confirmed && m_askStartOver) {
+        m_startOverWanted = true;
+        return;
+    }
+    if (!confirmed && (m_startOverAsked < 0 || t - m_startOverAsked > 3.0)) {
         m_startOverAsked = t;
         context(m_page).notice(QStringLiteral("Ctrl+N again to clear every loop and set the mix back"));
         return;

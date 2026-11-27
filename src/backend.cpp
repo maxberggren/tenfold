@@ -50,16 +50,17 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
     }
 
     if (live) {
-        // Play or Studio as the player left it (saved the moment it
-        // changes). A first start begins at Play, with a style to pick; a
-        // player who has used tenfold before (a song kept at quit) begins at
-        // Studio until they choose otherwise.
+        m_session->setAskStartOver(true); // the window's dialog confirms it
+        // The newcomer's window or everything, as the player left it (it
+        // only ever opens). A first start is a newcomer's, with a style to
+        // pick; a player who has used tenfold before (a song kept at quit)
+        // starts with everything out, and is never asked for a style.
         QSettings settings;
         const bool known = !m_songs->autosavePath().isEmpty() && QFile::exists(m_songs->autosavePath());
         const int level = settings.value(QStringLiteral("level"), known ? 2 : 0).toInt();
         m_session->setLevel(level);
         m_savedLevel = m_session->level();
-        m_welcome = !settings.value(QStringLiteral("welcomed"), known).toBool();
+        m_welcome = m_session->level() == 0 && !settings.value(QStringLiteral("welcomed"), known).toBool();
         // What NEXT has already shown (a page's sounds, every instrument):
         // once, not each run.
         m_savedBrowsed = settings.value(QStringLiteral("browsedSounds"), known).toBool();
@@ -662,6 +663,8 @@ void Backend::tick() {
         emit soundsAsked();
     if (m_session->takeAllPartsAsked())
         emit allPartsAsked();
+    if (m_session->takeStartOverWanted())
+        emit startOverAsked();
     if (!m_simulated && (m_session->browsedSounds() != m_savedBrowsed || m_session->sawAllParts() != m_savedAllParts)) {
         m_savedBrowsed = m_session->browsedSounds();
         m_savedAllParts = m_session->sawAllParts();

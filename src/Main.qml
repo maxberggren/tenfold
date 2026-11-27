@@ -539,33 +539,35 @@ ApplicationWindow {
                                     cursorShape: nextBox.acts ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     onClicked: if (!backend.doNextStep() && nextText.padTip) backend.togglePlay()
                                 }
-                                // ✕: no more steps, every control out now (for good, as an
-                                // unfolded control does).
+                                // ✕ cut into the box's top line at the right, as NEXT is at the
+                                // left: no more steps, every control out now (for good, as an
+                                // unfolded control does). Drawn in the console's lines.
                                 Rectangle {
                                     id: nextClose
                                     z: 2
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    anchors.rightMargin: -4
-                                    anchors.topMargin: -2
-                                    width: 22
-                                    height: 22
-                                    color: closeMouse.containsMouse ? win.pageColor : "transparent"
-                                    border.color: win.pageColor
-                                    border.width: 1
-                                    opacity: closeMouse.containsMouse ? 1 : 0.7
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: "✕"
-                                        color: closeMouse.containsMouse ? "#0a0806" : win.pageColor
-                                        font.family: win.mono
-                                        font.pixelSize: 13
-                                        font.weight: Font.Bold
+                                    // On the line: the box's frame runs through the middle of
+                                    // its title's height, here above the content's top.
+                                    x: parent.width + 10 - 14 - width
+                                    y: -parent.y
+                                    width: 27
+                                    height: 17
+                                    color: closeMouse.containsMouse ? win.pageColor : "#000000"
+                                    Repeater {
+                                        model: [45, -45]
+                                        delegate: Rectangle {
+                                            required property int modelData
+                                            anchors.centerIn: parent
+                                            width: 12
+                                            height: 2
+                                            rotation: modelData
+                                            antialiasing: true
+                                            color: closeMouse.containsMouse ? "#0a0806" : win.pageColor
+                                        }
                                     }
                                     MouseArea {
                                         id: closeMouse
                                         anchors.fill: parent
-                                        anchors.margins: -4
+                                        anchors.margins: -5
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: backend.uiLevel = 2
@@ -573,7 +575,7 @@ ApplicationWindow {
                                 }
                                 Text {
                                     id: nextText
-                                    width: parent.width - nextClose.width - 6
+                                    width: parent.width
                                     // Once a couple of loops go round: the trackpad, if not taken yet.
                                     // Only on an instrument's page, where fingers would play it.
                                     readonly property bool padTip: !win.playing && backend.partLoops.length >= 2

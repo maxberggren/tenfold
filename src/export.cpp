@@ -488,10 +488,14 @@ ExportResult exportSong(const QJsonObject &songIn, const ExportOptions &o, const
     doc[QStringLiteral("parts")] = partsJson;
 
     const float rate = o.rate > 8000 ? o.rate : 48000.0f;
-    Studio studio(rate);
+    // On the heap: a Studio is about a megabyte, and an export runs on a
+    // thread of its own, whose stack on macOS is half that.
+    const auto studioBox = std::make_unique<Studio>(rate);
+    Studio &studio = *studioBox;
     studio.setTimeOrigin(0);
     t_exportClock = 0;
-    Session session(&studio);
+    const auto sessionBox = std::make_unique<Session>(&studio);
+    Session &session = *sessionBox;
     session.setClock(&exportClock);
     session.setAspect(1.6f);
 

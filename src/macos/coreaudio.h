@@ -49,6 +49,7 @@ private:
     std::atomic<int> m_quantum{0};
     bool m_clockSet = false, m_flushed = false;
     std::mutex m_watchLock;
+    std::atomic<bool> m_stopping{false}; // stop() is taking the listeners off
     unsigned m_watched = 0; // the output device listened to (kAudioObjectUnknown: none)
 
     // The microphone.

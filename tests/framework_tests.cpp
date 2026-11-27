@@ -970,11 +970,14 @@ private slots:
         });
     }
 
-#ifdef __linux__
     // A pad this user can't read is read through pkexec, which asks for the
     // password. Without pkexec, taking the pad says what's missing instead of
-    // failing with a bare "not allowed".
+    // failing with a bare "not allowed". (A test everywhere, so the dev list
+    // names a test on macOS too; there it has nothing to check.)
     void anUnreadablePadWithoutPkexecSaysWhatIsMissing() {
+#ifndef __linux__
+        QSKIP("the Linux trackpad's");
+#else
         const QByteArray path = qgetenv("PATH");
         qputenv("PATH", "/nonexistent");
         NoFrames sink;
@@ -985,8 +988,8 @@ private slots:
         QCOMPARE(int(source.status()), int(Pad::Failed));
         QVERIFY(source.viaPassword());
         QVERIFY2(source.error().find("pkexec") != std::string::npos, source.error().c_str());
-    }
 #endif
+    }
 
     // Ctrl shortcuts are the Command key on macOS, and every label says so.
     void keysAreNamedAsTheSystemNamesThem() {

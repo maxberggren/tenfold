@@ -214,6 +214,7 @@ bool CoreAudioOut::start() {
 
     // Speakers or headphones, now and whenever the default output or its
     // data source (the jack) changes.
+    m_stopping = false;
     AudioObjectAddPropertyListener(kAudioObjectSystemObject, &kDefaultOutput, onOutputChanged, this);
     watchOutput();
 
@@ -288,10 +289,15 @@ bool CoreAudioOut::startInput() {
 }
 
 void CoreAudioOut::watchOutput() {
+    // (A change told while stop() takes the listeners off adds none back.)
+    if (m_stopping.load())
+        return;
     const AudioObjectID device = defaultDevice(false);
     AudioObjectID old;
     {
         std::lock_guard lock(m_watchLock);
+        if (m_stopping.load())
+            return;
         old = m_watched;
         m_watched = device;
     }
@@ -307,6 +313,7 @@ void CoreAudioOut::watchOutput() {
 
 void CoreAudioOut::stop() {
     if (m_output) {
+        m_stopping = true;
         // (Not under the lock: removing a listener waits for its callback,
         // which may be waiting for the lock.)
         AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &kDefaultOutput, onOutputChanged, this);

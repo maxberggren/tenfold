@@ -32,6 +32,9 @@ ApplicationWindow {
 
     property bool helpVisible: false
     property bool exportVisible: false
+    // The dialog has the keyboard while it shows (its prefix field may take
+    // it), and the pages get it back when it goes.
+    onExportVisibleChanged: exportVisible ? exportDialog.forceActiveFocus() : screen.forceActiveFocus()
     readonly property bool playing: backend.padState === Backend.Playing
     readonly property color pageColor: backend.pageColors[backend.page]
 
@@ -99,7 +102,7 @@ ApplicationWindow {
     // Ctrl+P (Session::escape).
     function back() {
         if (win.exportVisible)
-            backend.exporting ? backend.cancelExport() : win.exportVisible = false
+            win.exportVisible = false // an export goes on: only its Cancel stops it
         else if (win.helpVisible)
             win.helpVisible = false
         else
@@ -814,6 +817,7 @@ ApplicationWindow {
 
     // Export, over everything but the glass's scanlines.
     ExportDialog {
+        id: exportDialog
         anchors.fill: parent
         visible: win.exportVisible
         onClosed: win.exportVisible = false

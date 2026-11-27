@@ -209,6 +209,8 @@ public:
     Q_INVOKABLE bool startExport(const QVariantMap &options);
     Q_INVOKABLE void cancelExport() { m_exportCancel = true; }
     Q_INVOKABLE void pickExportFolder();
+    // The folder the last export wrote, in the system's file manager.
+    Q_INVOKABLE void openExportFolder();
     Q_INVOKABLE void setExportFolder(const QString &folder);
     // The dialog opened: the parts and bars it offers are looked at again.
     Q_INVOKABLE void refreshExport() { emit exportChanged(); }

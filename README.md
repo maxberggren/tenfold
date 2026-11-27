@@ -197,11 +197,26 @@ buttons beside the pad do the same). Quitting keeps the song in
 Ctrl+Shift+O. A song file is JSON you can read; `tenfold check song.tenfold`
 says whether one opens and what is in it.
 
+**Export.** EXPORT beside the pad (Ctrl+E) writes the song, or the loops
+playing, to a folder for Live or any other studio:
+- a 24-bit WAV for each part, and optionally for each drum pad, Sampler stem
+  or layer;
+- the full mix;
+- a MIDI file of the drums, bass, chords, lead and arp.
+
+Every file starts on bar 1 and all are the same length, so they line up when
+dropped in at 1.1.1. With the master's glue on, the part stems add up to the
+mix. The export renders on its own while you play on. Closing the dialog
+(or Esc) leaves it running; only Cancel stops it.
+[docs/export.md](docs/export.md) says what the files hold and how to bring
+them into Live.
+
 | Key | Does |
 |---|---|
 | Ctrl S · Ctrl Shift S | save the song · save it as |
 | Ctrl O | open a song |
 | Ctrl Shift O | the song as it was when tenfold last quit |
+| Ctrl E | export: stems, voices, the mix and MIDI to a folder |
 
 ## The Sampler
 

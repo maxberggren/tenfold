@@ -390,13 +390,11 @@ private slots:
         QTemporaryDir dir;
         ExportOptions o;
         o.folder = dir.path();
-        o.parts = QStringList{QStringLiteral("Drums")};
-        o.midi = false;
         o.tails = true;
         const ExportResult r = exportSong(doc, o);
         QVERIFY2(r.ok, qPrintable(r.error));
         QVERIFY2(r.bars >= 8, qPrintable(QString::number(r.bars)));
-        QCOMPARE(r.files.size(), 2);
+        QCOMPARE(r.files.size(), 6); // the mix, drums, bass, chords, atmos, MIDI
         // Whole bars, the song's and the tail's: past the song, not far past.
         const int64_t bar = 4 * 24000;
         QCOMPARE(r.frames % bar, int64_t(0));
@@ -409,6 +407,68 @@ private slots:
         // The tail dies away to nothing.
         const std::vector<float> last(mix.l.end() - 4800, mix.l.end());
         QVERIFY(rms(last) < 1e-3);
+
+        // The stems add up to the mix in every bar: the builds too, where
+        // the echo rings at full feedback, the drive is turned up and the
+        // master sweeps.
+        std::vector<Wav> stems(4);
+        const char *names[4] = {"Drums", "Bass", "Chords", "Atmos"};
+        for (int k = 0; k < 4; ++k)
+            QVERIFY(readWav(dir.filePath(find(r.files, QLatin1String(names[k]))), &stems[size_t(k)]));
+        double worst = -200;
+        int worstBar = -1;
+        QStringList bars;
+        for (int64_t b0 = 0; b0 + bar <= r.frames; b0 += bar) {
+            double m = 0, d = 0;
+            for (int64_t i = b0; i < b0 + bar; ++i)
+                for (int c = 0; c < 2; ++c) {
+                    const float x = c ? mix.r[size_t(i)] : mix.l[size_t(i)];
+                    float sum = 0;
+                    for (const Wav &w : stems)
+                        sum += c ? w.r[size_t(i)] : w.l[size_t(i)];
+                    m += double(x) * x;
+                    d += double(sum - x) * (sum - x);
+                }
+            if (m < 1e-8 * double(bar)) // silent: nothing to compare
+                continue;
+            const double db = 10 * std::log10(d / m + 1e-30);
+            bars << QString::number(db, 'f', 0);
+            if (db > worst) {
+                worst = db;
+                worstBar = int(b0 / bar) + 1;
+            }
+        }
+        qInfo().noquote() << "stems - mix by bar (dB):" << bars.join(QLatin1Char(' '));
+        QVERIFY2(worst < -50, qPrintable(QStringLiteral("bar %1: stems - mix at %2 dB").arg(worstBar).arg(worst)));
+
+        // The MIDI has what the mix plays: no bass note in a bar where the
+        // Song page has the bass muted (its stem there is only the room's
+        // tail, far under its usual level), and notes where it plays.
+        QString midiName;
+        for (const QString &f : r.files)
+            if (f.endsWith(QStringLiteral(".mid")))
+                midiName = f;
+        Smf m;
+        QVERIFY(readMidi(dir.filePath(midiName), &m));
+        const Wav &bass = stems[1];
+        std::vector<double> barLevel;
+        for (int64_t b0 = 0; b0 + bar <= int64_t(bass.l.size()); b0 += bar)
+            barLevel.push_back(rms(std::vector<float>(bass.l.begin() + b0, bass.l.begin() + b0 + bar)));
+        std::vector<double> sorted = barLevel;
+        std::sort(sorted.begin(), sorted.end());
+        const double usual = sorted[sorted.size() * 3 / 4];
+        int heard = 0;
+        for (const auto &t : m.tracks) {
+            if (t.name != QLatin1String("Bass"))
+                continue;
+            for (const auto &n : t.notes) {
+                const size_t b = size_t(n.tick / (4 * m.ppq));
+                QVERIFY2(b < barLevel.size() && barLevel[b] > 0.1 * usual,
+                         qPrintable(QStringLiteral("a bass note in bar %1, where the mix has the bass muted").arg(b + 1)));
+                ++heard;
+            }
+        }
+        QVERIFY(heard > 8);
     }
 
     void aCancelledExportLeavesNothing() {

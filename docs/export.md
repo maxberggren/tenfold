@@ -39,14 +39,30 @@ tools that read names. The key uses plain `#` and `b`, as song files do.
   so running each stem through its own copy would compress each one
   differently. With the setting on (the default), tenfold works out their
   gain at every sample from the whole mix and applies that same gain to every
-  stem. The stems then add up to the mix file: the test measures the
-  difference at about −90 dB. Off gives clean stems: the master's level and
+  stem. The stems then add up to the mix file: the tests measure the
+  difference bar by bar, through a whole written song with its builds and
+  drops, at −85 to −115 dB. Off gives clean stems: the master's level and
   filter sweeps, no dynamics, and the headroom that leaves, for when you will
   glue them yourself.
 
-The master's tape drive is the one piece that can't be shared this way: it
-is a curve, not a gain. Songs leave it at 0. With it turned up, the stems add
-up to the mix before the drive.
+Three more pieces of the chain are not linear, and each stem gets its share
+of them so the sum still holds:
+
+- **The master's tape drive.** The Song page turns it up through a build
+  (and the drop's first bar). It is a curve, not a gain, so no gain can be
+  shared. Instead, what the drive added to the mix (the mix after the drive
+  minus the mix before it) is shared out among the part stems by how loud
+  each is at that moment, over about 10 ms. Each stem keeps its own clean
+  sound plus its share of the grit. This was what made the first version's
+  stems fail to add up in builds: −26 to −4 dB against the mix in the build
+  bars, with the sum louder than the mix, because the stems lacked the
+  drive's squash.
+- **The echo's feedback.** It is held from running away by a soft clip,
+  which matters when a build or an echo-out pushes it to full feedback.
+- **The reverb's shimmer.** It also has a soft clip.
+
+For the echo and the shimmer, each stem's own room takes the gain the
+mix's room had at that sample, so the stems' rooms add up to the mix's.
 
 ## Alignment
 
@@ -71,7 +87,12 @@ up to the mix before the drive.
 ### In Ableton Live
 
 1. Set Live's tempo to the one in the file names.
-2. Drop the WAVs (all at once, onto new tracks) at 1.1.1 in the Arrangement.
+2. Turn *Auto-Warp Long Samples* off (Preferences → Record/Warp/Launch).
+3. Drop the WAVs (all at once, onto new tracks) at 1.1.1 in the Arrangement.
+
+If they came in warped, select them all and choose Reset Warp Markers. A
+stem that is silent for its first bars (a vocal that comes in late, a
+breakdown pad) gives Live's tempo guess nothing to go on.
 
 They line up because each one starts on the downbeat and they are all the
 same length. With *Auto-Warp Long Samples* on (Live's default), Live warps
@@ -123,7 +144,9 @@ The MIDI file is a type 1 Standard MIDI File at 480 PPQ:
 
 Each engine reports the notes it actually sounds (`AudioContext::note`), so
 the MIDI follows the chord changes, the key moves and the voicings that
-tenfold heard:
+tenfold heard. A note the mix doesn't hear, because the Song page has its
+part muted (a breakdown, a build) or another part soloed, is left out of the
+MIDI too. A note already sounding when the mute comes plays to its end.
 
 - **Drums** go on channel 10, as General MIDI drums by pad: kick 36, snare
   38, clap 39, closed hat 42, 808 35, rim 37, shaker 70, open hat 46, toms

@@ -1,6 +1,7 @@
 #include "backend.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QUrl>
@@ -99,6 +100,11 @@ QString Backend::exportStatus() const {
 
 QString Backend::defaultExportPrefix() const {
     return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH.mm "));
+}
+
+void Backend::openExportFolder() {
+    if (!m_exportedFolder.isEmpty())
+        QDesktopServices::openUrl(QUrl::fromLocalFile(m_exportedFolder));
 }
 
 void Backend::setExportFolder(const QString &folder) {

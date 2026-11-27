@@ -93,6 +93,8 @@ struct Studio::Stems {
         float delayL[Limiter::W] = {}, delayR[Limiter::W] = {};
         int delayPos = 0;
         float outL[kBlock] = {}, outR[kBlock] = {};
+        float preL[kBlock] = {}, preR[kBlock] = {}; // the block up to the master's drive
+        float env = 0, envAt[kBlock] = {};          // how loud it is there, for its share of the drive
     };
     std::vector<std::unique_ptr<Tap>> taps;
     std::vector<const float *> tapL, tapR;
@@ -103,6 +105,9 @@ struct Studio::Stems {
     float gain[kMaxParts][kBlock] = {};
     float panL[kMaxParts] = {}, panR[kMaxParts] = {}, filt[kMaxParts] = {}, rs[kMaxParts] = {}, es[kMaxParts] = {};
     float lowK[kBlock] = {}, glue[kBlock] = {}, lim[kBlock] = {}, roomDuck[kBlock] = {};
+    float echoGain[kBlock][2] = {}, shimGain[kBlock] = {};
+    float driveL[kBlock] = {}, driveR[kBlock] = {}; // what the drive added to the mix
+    bool audible[kMaxParts] = {true, true, true, true, true, true, true, true, true};
     float wet = 1, mgain = 1, master[MasterCount] = {};
     float echoSeconds = 0.5f;
 };
@@ -275,6 +280,7 @@ public:
         AudioContext *s = nullptr;
         StemSink *sink = nullptr;
         int part = 0;
+        const bool *audible = nullptr; // whether the mix hears the part (no mute, no solo elsewhere)
         const Transport &transport() const override { return s->transport(); }
         const Harmony &harmony() const override { return s->harmony(); }
         double now() const override { return s->now(); }
@@ -285,6 +291,13 @@ public:
         const float *input() const override { return s->input(); }
         float *monitor(int channel) override { return s->monitor(channel); }
         void note(int key, float midi, float velocity, int offset, int length) override {
+            // A note the mix doesn't hear (the Song page has the part
+            // muted) isn't in the MIDI either: it only ends what its key held.
+            if (audible && !*audible) {
+                if (length > 0)
+                    return;
+                midi = -1;
+            }
             const int64_t at = int64_t(s->transport().sample) + offset;
             sink->note(part, uint64_t(std::max<int64_t>(0, at)), key, midi, velocity, length);
         }
@@ -309,8 +322,9 @@ public:
         float bufL[kBlock] = {}, bufR[kBlock] = {};
     };
 
-    FanOut(std::unique_ptr<PartEngine> inner, AudioContext *studio, StemSink *sink, int part)
+    FanOut(std::unique_ptr<PartEngine> inner, AudioContext *studio, StemSink *sink, int part, const bool *audible)
         : m_inner(std::move(inner)) {
+        m_ctx.audible = audible;
         m_ctx.s = studio;
         m_ctx.sink = sink;
         m_ctx.part = part;
@@ -1822,6 +1836,7 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         p.rms += (std::sqrt(sq / float(2 * n)) - p.rms) * 0.1f;
         anyDirect |= p.direct;
         if (st) {
+            st->audible[pi] = audible;
             st->panL[pi] = panL;
             st->panR[pi] = panR;
             st->filt[pi] = filt;
@@ -1852,8 +1867,15 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
     const double spbSamples = tr.samplesPerBeat();
     for (int i = 0; i < n; ++i) {
         float eL, eR, rL, rR;
-        s.echo.process(sendEL[i], sendER[i], eL, eR);
-        s.reverb.process(sendRL[i] + 0.5f * eL, sendRR[i] + 0.5f * eR, rL, rR);
+        if (st) {
+            // An export: the room's soft clips are kept, for each stem's
+            // room to take the same gains (renderStems).
+            s.echo.process(sendEL[i], sendER[i], eL, eR, LinkMode::Lead, st->echoGain[i]);
+            s.reverb.process(sendRL[i] + 0.5f * eL, sendRR[i] + 0.5f * eR, rL, rR, LinkMode::Lead, &st->shimGain[i]);
+        } else {
+            s.echo.process(sendEL[i], sendER[i], eL, eR);
+            s.reverb.process(sendRL[i] + 0.5f * eL, sendRR[i] + 0.5f * eR, rL, rR);
+        }
         const float roomDuck = 1.0f - 0.35f * s.duckEnv[i];
         float L = mixL[i] + (eL + rL * wet) * roomDuck, R = mixR[i] + (eR + rR * wet) * roomDuck;
 
@@ -1865,8 +1887,15 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             R = s.masterR.step(R).high;
         }
         if (drive > 0.01f) {
+            const float dryL = L, dryR = R;
             L = lerpf(L, s.satL.process(L, pre, 0.0f) * satComp, std::min(1.0f, drive * 3.0f));
             R = lerpf(R, s.satR.process(R, pre, 0.0f) * satComp, std::min(1.0f, drive * 3.0f));
+            if (st) {
+                st->driveL[i] = L - dryL;
+                st->driveR[i] = R - dryR;
+            }
+        } else if (st) {
+            st->driveL[i] = st->driveR[i] = 0;
         }
         // Low end: mono under 120 Hz, held in check under 150 Hz.
         {
@@ -2109,7 +2138,7 @@ void Studio::exportStems(StemSink *sink, const StemOptions &options) {
     st.opt = options;
     for (int i = 0; i < int(m_parts.size()); ++i) {
         PartState &p = *m_parts[size_t(i)];
-        p.engine = std::make_unique<FanOut>(std::move(p.engine), d.get(), sink, i);
+        p.engine = std::make_unique<FanOut>(std::move(p.engine), d.get(), sink, i, &st.audible[i]);
         st.taps.push_back(makeTap(i, false, p.bufL, p.bufR, m_rate));
         st.tapL.push_back(st.taps.back()->outL);
         st.tapR.push_back(st.taps.back()->outR);
@@ -2133,18 +2162,25 @@ int Studio::addVoice(int part, std::function<bool(Command &)> keep) {
 }
 
 // Each stem as the mixer and the master made the mix (see renderBlock),
-// on its own: everything there is linear but the master's dynamics, whose
-// gains are the whole mix's, so the part stems add up to the mix.
+// on its own. Everything there is linear but the room's soft clips, the
+// master's drive and its dynamics: the soft clips and the dynamics are
+// gains, which each stem takes as the whole mix had them; the drive is a
+// curve, and what it added to the mix (its harmonics, its squash) is shared
+// out among the part stems by how loud each is at that moment. So the part
+// stems add up to the mix, builds and drops included.
 void Studio::renderStems(const float *mixL, const float *mixR, int n) {
     Stems &st = *d->stems;
     const float *M = st.master;
     const float mf = M[MasterFilter];
     const bool mlp = mf < 0.49f, mhp = mf > 0.51f;
     const bool linked = st.opt.master;
+    const float envFall = std::exp(-1.0f / (0.01f * m_rate));
+    // 1. Each stem up to where the drive acts (its channel, its room, the
+    // master's filter), and how loud it is there.
     for (auto &tp : st.taps) {
         Stems::Tap &t = *tp;
         const int p = t.part;
-        float L[kBlock], R[kBlock];
+        float *L = t.preL, *R = t.preR;
         if (st.opt.preFader) {
             std::copy(t.dryL, t.dryL + n, L);
             std::copy(t.dryR, t.dryR + n, R);
@@ -2177,8 +2213,13 @@ void Studio::renderStems(const float *mixL, const float *mixR, int n) {
                 setChannelFilter(t.masterL, t.masterR, mf, t.masterFiltSet, m_rate);
             for (int i = 0; i < n; ++i) {
                 float eL, eR, rL, rR;
-                t.echo.process(L[i] * st.es[p], R[i] * st.es[p], eL, eR);
-                t.reverb.process(L[i] * st.rs[p] + 0.5f * eL, R[i] * st.rs[p] + 0.5f * eR, rL, rR);
+                // The room's soft clips (the echo's feedback held from
+                // running away, the shimmer's) at the gains the mix's room
+                // had: the stems' rooms add up to the mix's even when a
+                // build pushes the echo to ring at full feedback.
+                t.echo.process(L[i] * st.es[p], R[i] * st.es[p], eL, eR, LinkMode::Follow, st.echoGain[i]);
+                t.reverb.process(L[i] * st.rs[p] + 0.5f * eL, R[i] * st.rs[p] + 0.5f * eR, rL, rR, LinkMode::Follow,
+                                 &st.shimGain[i]);
                 float l = L[i] + (eL + rL * st.wet) * st.roomDuck[i], r = R[i] + (eR + rR * st.wet) * st.roomDuck[i];
                 if (mlp) {
                     l = t.masterL.step(l).low;
@@ -2186,6 +2227,32 @@ void Studio::renderStems(const float *mixL, const float *mixR, int n) {
                 } else if (mhp) {
                     l = t.masterL.step(l).high;
                     r = t.masterR.step(r).high;
+                }
+                L[i] = l;
+                R[i] = r;
+                const float a = std::max(std::fabs(l), std::fabs(r));
+                t.env = a > t.env ? a : t.env * envFall + a * (1.0f - envFall);
+                t.envAt[i] = t.env;
+            }
+        }
+    }
+    // 2. How loud the parts are together, for their shares of the drive.
+    float total[kBlock] = {};
+    for (auto &tp : st.taps)
+        if (!tp->voice)
+            for (int i = 0; i < n; ++i)
+                total[i] += tp->envAt[i];
+    // 3. The drive's share, the master's gains, and its look-ahead.
+    for (auto &tp : st.taps) {
+        Stems::Tap &t = *tp;
+        float *L = t.preL, *R = t.preR;
+        if (!st.opt.preFader) {
+            for (int i = 0; i < n; ++i) {
+                float l = L[i], r = R[i];
+                if (linked && total[i] > 1e-12f) {
+                    const float share = t.envAt[i] / total[i];
+                    l += st.driveL[i] * share;
+                    r += st.driveR[i] * share;
                 }
                 const float mid = 0.5f * (l + r);
                 float side = 0.5f * (l - r);

@@ -7,6 +7,16 @@
 
 namespace tf {
 
+// The gain a soft clip gave a sample (out over in), so that copies of an
+// effect playing parts of the same signal (an export's stems) can take the
+// very gain the whole took, and add up to it (see Reverb and TapeEcho's
+// Link). At rest, 1.
+inline float softGain(float u, float clipped) { return std::fabs(u) > 1e-9f ? clipped / u : 1.0f; }
+
+// What a Link does: nothing; records the gains of each soft clip (the
+// whole mix's effect); or takes them in place of its own (a stem's).
+enum class LinkMode { None, Lead, Follow };
+
 // Sixteen delay lines mixed through a Hadamard matrix, each line chorused by
 // its own slow LFO and darkened by its own damping filter. With shimmer on,
 // the tail is pitched up an octave and fed back in, so held chords bloom into
@@ -59,7 +69,8 @@ public:
         }
     }
 
-    inline void process(float inL, float inR, float &outL, float &outR) {
+    inline void process(float inL, float inR, float &outL, float &outR, LinkMode link = LinkMode::None,
+                        float *gain = nullptr) {
         // Nothing below 30 Hz goes in: with a tail this long, rumble would
         // only pile up where no speaker can play it.
         inL = m_inHpL.step(inL).high;
@@ -81,7 +92,15 @@ public:
             // Only what sits well above the bass climbs: a pitch shifter keeps
             // DC and rumble where they are, and in a near-endless tail that
             // would feed on itself.
-            const float sh = fastTanh(m_shimLp.step(m_shimHp.step(up).high) * m_shimmer * 1.25f);
+            const float u = m_shimLp.step(m_shimHp.step(up).high) * m_shimmer * 1.25f;
+            float sh;
+            if (link == LinkMode::Follow) {
+                sh = u * *gain;
+            } else {
+                sh = fastTanh(u);
+                if (link == LinkMode::Lead)
+                    *gain = softGain(u, sh);
+            }
             l += sh;
             r += sh;
         }
@@ -163,7 +182,9 @@ public:
         m_target = clampf(seconds, 0.02f, 4.0f) * m_rate;
         m_fb = 0.18f + 0.74f * amount;
     }
-    inline void process(float inL, float inR, float &outL, float &outR) {
+    // gains: two, the feedback's soft clip each way (see LinkMode).
+    inline void process(float inL, float inR, float &outL, float &outR, LinkMode link = LinkMode::None,
+                        float *gains = nullptr) {
         if (m_amount < 0.001f && m_idle > m_rate * 6) {
             outL = outR = 0;
             return;
@@ -182,8 +203,20 @@ public:
         const float in = 0.5f * (inL + inR) * send;
         // Tape: highs and lows lost on every pass, and saturation instead of
         // runaway when the feedback is pushed past one.
-        const float fl = fastTanh(1.2f * m_lpL.step(m_hp.step(dr).high) * m_fb);
-        const float fr = fastTanh(1.2f * m_lpR.step(m_hp2.step(dl).high) * m_fb);
+        const float ul = 1.2f * m_lpL.step(m_hp.step(dr).high) * m_fb;
+        const float ur = 1.2f * m_lpR.step(m_hp2.step(dl).high) * m_fb;
+        float fl, fr;
+        if (link == LinkMode::Follow) {
+            fl = ul * gains[0];
+            fr = ur * gains[1];
+        } else {
+            fl = fastTanh(ul);
+            fr = fastTanh(ur);
+            if (link == LinkMode::Lead) {
+                gains[0] = softGain(ul, fl);
+                gains[1] = softGain(ur, fr);
+            }
+        }
         m_l.push(in + fl * 0.95f);
         m_r.push(fr * 0.95f);
         outL = dl * 0.8f;

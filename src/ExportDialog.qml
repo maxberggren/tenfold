@@ -1,13 +1,23 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 // Export: the song (or the loops playing) as files for another studio: a
 // WAV per part, finer voices where a part has them, the mix, and MIDI, all
 // from bar 1 and the same length (export.h). Settings first; Export renders
-// on a thread of its own, with its progress here and Cancel.
+// on a thread of its own, with its progress here and Cancel. Close (or Esc)
+// only hides the dialog: an export goes on, its progress on the panel's
+// Export button, and only Cancel throws it away.
 Rectangle {
     id: dialog
     color: "#000000"
+    // While it shows, the keys are the dialog's: nothing plays behind it
+    // (its Shortcuts, Esc and Ctrl's, still work).
+    focus: visible
+    Keys.onPressed: event => event.accepted = true
+    Keys.onReleased: event => event.accepted = true
+    // A short window: everything closer together, so it all fits.
+    readonly property bool compact: height < 760
     property color tint: "#2EE6FF"
     readonly property color amber: "#FFB000"
     readonly property color green: "#39FF88"
@@ -66,7 +76,7 @@ Rectangle {
     }
     component Toggle: PanelButton {
         Layout.fillWidth: true
-        Layout.preferredHeight: 44
+        Layout.preferredHeight: dialog.compact ? 36 : 44
         labelSize: 14
     }
 
@@ -75,22 +85,29 @@ Rectangle {
         anchors.centerIn: parent
         anchors.verticalCenterOffset: -37
         width: Math.min(parent.width - 32, 860)
-        height: Math.min(parent.height - 32 - 74, column.implicitHeight + 72)
+        height: Math.min(parent.height - 32 - 74, column.implicitHeight + 80) // the frame, its title and the margins
         title: qsTr("Export")
         color: dialog.tint
 
         Flickable {
+            id: flick
             anchors.fill: parent
             anchors.margins: 18
             anchors.topMargin: 24
             contentHeight: column.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            // Still too short: it scrolls, and says so.
+            readonly property bool overflows: contentHeight > height + 1
+            ScrollBar.vertical: ScrollBar {
+                policy: flick.overflows ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                contentItem: Rectangle { implicitWidth: 6; color: dialog.tint }
+            }
 
             ColumnLayout {
                 id: column
-                width: parent.width
-                spacing: 12
+                width: flick.width - (flick.overflows ? 16 : 0)
+                spacing: dialog.compact ? 6 : 12
                 enabled: !backend.exporting
                 opacity: backend.exporting ? 0.55 : 1
 
@@ -152,6 +169,7 @@ Rectangle {
                 }
                 Text {
                     Layout.fillWidth: true
+                    visible: !dialog.compact
                     text: qsTr("e.g. %1").arg(dialog.prefix + "01 Drums - " + Math.round(backend.bpm) + " bpm "
                                                 + backend.key + " " + backend.mode.toLowerCase() + ".wav")
                     color: Qt.darker(dialog.amber, 1.4)
@@ -265,7 +283,8 @@ Rectangle {
                     lineHeight: 1.2
                     text: qsTr("Every file from beat 1 of bar 1, %1 Hz 24-bit, all one length; tempo and beats inside (ACID).")
                           .arg(backend.sampleRate) + "\n"
-                          + qsTr("In Live: set the tempo to %1 and drop them all at 1.1.1.").arg(Math.round(backend.bpm))
+                          + qsTr("In Live: tempo %1, Auto-Warp Long Samples off, drop them all at 1.1.1").arg(Math.round(backend.bpm))
+                          + "\n" + qsTr("(warped: select them all and Reset Warp Markers; a stem that starts silent fools the guess)")
                     color: Qt.darker(dialog.tint, 1.3)
                     font.family: dialog.mono
                     font.pixelSize: 12
@@ -314,15 +333,25 @@ Rectangle {
                 Layout.fillHeight: true
                 visible: !backend.exporting && backend.exportedFolder !== ""
                 label: qsTr("Open folder"); color: dialog.tint
-                onClicked: Qt.openUrlExternally("file://" + backend.exportedFolder)
+                onClicked: backend.openExportFolder()
+            }
+            // Only Cancel throws an export away; Close hides the dialog and
+            // the export goes on (the panel's Export button counts it up).
+            PanelButton {
+                Layout.preferredWidth: 120
+                Layout.fillHeight: true
+                visible: backend.exporting
+                label: qsTr("Cancel")
+                color: dialog.red
+                onClicked: backend.cancelExport()
             }
             PanelButton {
                 Layout.preferredWidth: 120
                 Layout.fillHeight: true
-                label: backend.exporting ? qsTr("Cancel") : qsTr("Close")
+                label: qsTr("Close")
                 key: "Esc"
-                color: dialog.red
-                onClicked: backend.exporting ? backend.cancelExport() : dialog.closed()
+                color: dialog.tint
+                onClicked: dialog.closed()
             }
             PanelButton {
                 Layout.preferredWidth: 150

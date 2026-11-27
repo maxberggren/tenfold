@@ -3711,10 +3711,10 @@ public:
         paintStrip(p, pc);
     }
 
-    std::vector<Area> advancedAreas() const override {
-        return {{0.0f, kChipsTop, kSplit, 1.0f, QStringLiteral("patterns: up, down, random…")},
-                {kSplit, 0.0f, 1.0f, 1.0f, QStringLiteral("rate, rhythm, range, tone, groove and echo")}};
+    PlayArea playArea() const override {
+        return {0.0f, 0.0f, kSplit, kChipsTop, QStringLiteral("pattern, rate, rhythm, range, tone, echo")};
     }
+    bool soundsOnPad() const override { return true; }
 
     // The sound browser: the arp sounds, and a held chord to hear one run.
     std::vector<SoundChoice> soundChoices() const override {

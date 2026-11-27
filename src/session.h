@@ -262,6 +262,11 @@ public:
     // The SOUND chip under the pad was clicked (level 0): the window opens
     // the browser. True once per click.
     bool takeSoundsAsked();
+    // The play area the showing page is zoomed onto (below Studio), or the
+    // whole pad.
+    PartControl::PlayArea zoomArea() const;
+    // Counts the clicks on "▸ IN STUDIO: …": the window pulses its STUDIO chip.
+    uint32_t studioNudge() const { return m_studioNudge; }
 
     // One sentence for a newcomer: what to do next on the showing page.
     QString nextStep() const;
@@ -384,7 +389,8 @@ private:
     QRectF m_soundChip;   // level 0: the SOUND chip under the pad, where last painted
     bool m_soundsAsked = false;
     QRectF m_soundNext;   // level 0: the → beside it
-    std::vector<int> m_liveIds; // touches in the last frame delivered, to tell a landing
+    QRectF m_studioTag;   // below Studio, a zoomed page: "▸ IN STUDIO: …" on the pad's edge
+    uint32_t m_studioNudge = 0;
     int partsWithLoops() const;
     QString howToPlay(int page) const; // a sentence on how the page is played
     QRectF m_padRect; // where the pad was last painted, for foldedRow()

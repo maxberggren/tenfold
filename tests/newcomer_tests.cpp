@@ -219,31 +219,37 @@ private slots:
         QVERIFY(looped.contains(QLatin1String("BASS")));
     }
 
-    // Below Studio the fine-tuning parts of a pad (the bass's rail) are
-    // covered: a finger landing there plays nothing, and the mouse pressed
-    // there opens Studio.
+    // Below Studio a page with fine-tuning on its pad (the bass's rail) is
+    // zoomed onto its play area: a finger near the top plays a note there,
+    // where at Studio it would land on the rail.
     void coveredControlsIgnoreFingersAndTheMouseOpensStudio() {
         testkit::play("end 0.1\n", [](Session &s) {
             for (const char *name : {"bass", "chords", "arp"}) {
                 s.setPage(s.pageNamed(QString::fromLatin1(name)));
-                QVERIFY2(!s.soundChoices().empty(), name);
+                s.setLevel(0);
+                QVERIFY2(s.zoomArea().zooms(), name);
+                s.setLevel(1);
+                QVERIFY2(s.zoomArea().zooms(), name);
+                s.setLevel(2);
+                QVERIFY2(!s.zoomArea().zooms(), name);
             }
+            s.setPage(s.pageNamed(QStringLiteral("drums")));
+            s.setLevel(0);
+            QVERIFY(!s.zoomArea().zooms());
         });
-        int levelAfterMouse = -1;
-        int voicesOnRail = -1;
-        testkit::watch("page 0 bass\n"
-                       "down 0.5 1 0.5 0.9\nup 1.0 1\n"
-                       "mouse 1.5 0.5 0.9 down\nmouse 1.6 0.5 0.9 up\nend 2\n",
-                       [&](double t, Session &s) {
-                           if (t < 0.2)
-                               s.setLevel(0);
-                           if (t >= 0.8 && voicesOnRail < 0)
-                               voicesOnRail = s.view().parts[1].voices;
-                           if (t >= 1.9 && levelAfterMouse < 0)
-                               levelAfterMouse = s.level();
-                       });
-        QVERIFY2(voicesOnRail == 0, qPrintable(QString::number(voicesOnRail)));
-        QCOMPARE(levelAfterMouse, 2);
+        for (int level : {0, 2}) {
+            int voices = -1;
+            testkit::watch("page 0 bass\ndown 0.5 1 0.5 0.93\nup 1.2 1\nend 1.5\n", [&](double t, Session &s) {
+                if (t < 0.2)
+                    s.setLevel(level);
+                if (t >= 0.9 && voices < 0)
+                    voices = s.view().parts[1].voices;
+            });
+            if (level == 0)
+                QVERIFY2(voices > 0, "zoomed: the top of the pad plays");
+            else
+                QVERIFY2(voices == 0, "Studio: the top of the pad is the rail");
+        }
     }
 };
 

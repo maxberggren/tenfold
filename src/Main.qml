@@ -468,6 +468,15 @@ ApplicationWindow {
                                         id: levelChip
                                         required property int index
                                         required property string modelData
+                                        // "▸ IN STUDIO: …" on a pad was clicked: STUDIO says here I am.
+                                        property int nudges: backend.studioNudge
+                                        onNudgesChanged: if (index === 2 && nudges > 0) nudge.restart()
+                                        SequentialAnimation {
+                                            id: nudge
+                                            loops: 4
+                                            ColorAnimation { target: levelChip; property: "color"; to: win.amber; duration: 220 }
+                                            ColorAnimation { target: levelChip; property: "color"; to: "transparent"; duration: 220 }
+                                        }
                                         width: parent.width
                                         height: win.readoutsCompact ? 22 : 26
                                         color: win.lv === index ? win.amber : levelMouse.containsMouse ? Qt.rgba(1, 0.69, 0, 0.18) : "transparent"
@@ -712,8 +721,9 @@ ApplicationWindow {
                                     visible: st > 0 && !backend.tutorialActive
                                     Layout.columnSpan: buttons.columns
                                     Layout.fillWidth: true; Layout.fillHeight: true
-                                    Layout.minimumHeight: 52; Layout.maximumHeight: win.lv === 0 ? 220 : 120
-                                    Layout.preferredHeight: win.lv === 0 ? 170 : 64
+                                    // At Play the hero: what the window has left over, within reason.
+                                    Layout.minimumHeight: win.lv === 0 ? 72 : 52; Layout.maximumHeight: win.lv === 0 ? 220 : 120
+                                    Layout.preferredHeight: win.lv === 0 ? Math.max(72, Math.min(180, win.room - 400)) : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
                                     // While the browser shows, Space keeps a sound there: LOOP steps back.

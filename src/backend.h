@@ -136,6 +136,8 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList styleDetails READ styleDetails CONSTANT)
     // The tab a newcomer is pointed to next (it pulses), or −1.
     Q_PROPERTY(int suggestedPage READ suggestedPage NOTIFY changed)
+    // Changes when the player asks where a page's fine-tuning went: STUDIO pulses.
+    Q_PROPERTY(int studioNudge READ studioNudge NOTIFY changed)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -305,6 +307,7 @@ public:
     QStringList styleWhats() const;
     QVariantList styleDetails() const;
     int suggestedPage() const { return m_session->suggestedPage(); }
+    int studioNudge() const { return int(m_session->studioNudge()); }
     Q_INVOKABLE void previewStyle(int index) { m_session->previewStyle(index); }
 
     void shutdown();

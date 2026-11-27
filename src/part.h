@@ -436,6 +436,10 @@ struct PaintContext {
     // How much the window shows (Session::level): 0 for a newcomer, who
     // sees the pad plainly (no note letters, no strips until used); 2 all.
     int level = 2;
+    // Where the pad is seen when the session zooms onto a page's play area
+    // (pad is then larger, partly off it); empty: all of pad. The band under
+    // the pad follows this (console::bandRow).
+    QRectF visible;
     // Pad coordinates (0..1, y up) to item pixels and back.
     QPointF at(float x, float y) const {
         return {pad.left() + double(x) * pad.width(), pad.bottom() - double(y) * pad.height()};
@@ -600,16 +604,20 @@ public:
         bool down;
     };
     virtual std::vector<AuditionStep> audition() const { return {}; }
-    // The parts of the pad that fine-tune rather than play (a rail of
-    // rhythms, a bank of shapers), in pad units (x0, y0, x1, y1, y up), with
-    // a few words on what is there. Below the Studio level the session
-    // covers them with that line, a click there opens Studio, and a finger
-    // landing there is ignored.
-    struct Area {
-        float x0, y0, x1, y1;
+    // The part of the pad that plays, where the rest fine-tunes (a rail of
+    // rhythms, a bank of shapers), in pad units (y up), with a few words on
+    // what the rest holds. Below the Studio level the session zooms the pad
+    // onto it: it fills the pad, touches land in it, and the fine-tuning is
+    // one line on the pad's edge. The whole pad (the default): no zoom.
+    struct PlayArea {
+        float x0 = 0, y0 = 0, x1 = 1, y1 = 1;
         QString what;
+        bool zooms() const { return x0 > 0 || y0 > 0 || x1 < 1 || y1 < 1; }
     };
-    virtual std::vector<Area> advancedAreas() const { return {}; }
+    virtual PlayArea playArea() const { return {}; }
+    // The page draws its own sound chips on the pad (the Arp): the session's
+    // level-0 SOUND chip under the pad would show them twice.
+    virtual bool soundsOnPad() const { return false; }
 };
 
 // A phrase for audition(): each key held for `len` beats from `at`.

@@ -104,8 +104,8 @@ struct Hotspots {
 // settings the keys reach (swing, follow, latch, overdub…), so the mouse can
 // reach everything. x0, x1 are fractions of the pad's width.
 inline QRectF bandRow(const PaintContext &pc, int row, double x0 = 0, double x1 = 1) {
-    return QRectF(pc.pad.left() + pc.pad.width() * x0, pc.pad.bottom() + 12 + row * 40,
-                  pc.pad.width() * (x1 - x0), 30);
+    const QRectF &pad = pc.visible.isEmpty() ? pc.pad : pc.visible;
+    return QRectF(pad.left() + pad.width() * x0, pad.bottom() + 12 + row * 40, pad.width() * (x1 - x0), 30);
 }
 
 // Lays `labels` out as equal chips across `r`, the `lit` one filled; each

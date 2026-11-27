@@ -499,8 +499,8 @@ public:
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
-    std::vector<Area> advancedAreas() const override {
-        return {{0.0f, kRail, 1.0f, 1.0f, QStringLiteral("the rhythm the chords are played in")}};
+    PlayArea playArea() const override {
+        return {0.0f, 0.0f, 1.0f, kRail, QStringLiteral("the rhythm the chords play in")};
     }
 
     // The sound browser: the chord sounds, and two chords to hear one.
@@ -1155,12 +1155,16 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
             if (k == showColumn && r == showColour) {
                 p.fillRect(cell.adjusted(3, 3, -3, -3), c::alpha(col, 0.4f + 0.5f * level));
                 chordText(p, cell, name, QColor::fromRgb(c::kInk), int(std::clamp(cellH * 0.21, 12.0, 19.0)));
-            } else {
+            } else if (pc.level > 0 || r == Triad) {
+                // A newcomer reads the plain chords' names only; the colours
+                // above and below are named by their mood at the left.
                 chordText(p, cell, name, c::alpha(col, r == Triad ? 0.85f : 0.55f),
                           int(std::clamp(cellH * 0.17, 11.0, 16.0)), r == Triad);
             }
         }
-        // The numeral heads its column.
+        // The numeral heads its column (from Shape on).
+        if (pc.level == 0)
+            continue;
         const QRectF head = pc.rect(float(k) / cols, kRail - kRowHeight * 0.34f, float(k + 1) / cols, kRail);
         c::text(p, head, roman(t, k), c::alpha(col, k == showColumn ? 1.0f : 0.75f),
                 int(std::clamp(cellH * 0.19, 11.0, 17.0)), true, Qt::AlignCenter);
@@ -1168,8 +1172,13 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     // The rows' names, down the left edge.
     for (int r = 0; r < ColourCount; ++r) {
         const QPointF at = pc.at(0, r * kRowHeight);
-        c::text(p, QRectF(at.x() + 6, at.y() - 16, 60, 13), QString::fromUtf8(colourName(r)), c::alpha(col, 0.45f), 9,
-                true);
+        // A newcomer's rows by how they feel.
+        QString label = QString::fromUtf8(colourName(r));
+        if (pc.level == 0)
+            label = r == Power ? QStringLiteral("PUNCHY") : r == Sus ? QStringLiteral("OPEN")
+                  : r == Triad ? QStringLiteral("PLAIN") : r == Add9 ? QStringLiteral("DREAMY") : QStringLiteral("SMOOTH");
+        c::text(p, QRectF(at.x() + 6, at.y() - (pc.level == 0 ? 20 : 16), 90, pc.level == 0 ? 16 : 13), label,
+                c::alpha(col, pc.level == 0 ? 0.7f : 0.45f), pc.level == 0 ? 12 : 9, true);
     }
     c::grid(p, pc, cols, 1, col, 0.22f);
     p.setPen(QPen(c::alpha(col, 0.12f), 1));

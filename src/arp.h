@@ -61,7 +61,7 @@ inline const char *soundName(int s) {
     return n[std::clamp(s, 0, SoundCount - 1)];
 }
 inline const char *soundShort(int s) {
-    static const char *n[] = {"PLUCK", "GLASS", "SAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN",
+    static const char *n[] = {"PLUCK", "GLASS", "SUPERSAW", "PULSE", "ACID", "MARIMBA", "HARP", "RHODES", "JUNO", "ORGAN",
                               "STEELPAN", "SITAR", "LOGDRUM", "CHIP", "GAMELAN"};
     return n[std::clamp(s, 0, SoundCount - 1)];
 }

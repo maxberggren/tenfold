@@ -536,6 +536,12 @@ bool Session::clickAt(QPointF at) {
     m_mousePx = at;
     m_mouseOver = true;
     Page &p = *m_pages[size_t(m_page)];
+    if (!m_studioTag.isEmpty() && m_studioTag.contains(at)) {
+        // Said, not done: the player chooses to go there.
+        context(m_page).notice(QStringLiteral("%1: in STUDIO, top right").arg(zoomArea().what));
+        ++m_studioNudge;
+        return true;
+    }
     if (console::nextChipAt(at) || (!m_soundNext.isEmpty() && m_soundNext.contains(at))) {
         KeyEvent k;
         k.key = Qt::Key_Right;
@@ -577,44 +583,36 @@ void Session::deliver(const Frame &f) {
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
-    // Below Studio a finger landing on a covered part of the pad is ignored
-    // until it lifts; the mouse pressed there opens Studio instead.
-    if (m_level < 2) {
-        const auto areas = p.spec.control->advancedAreas();
-        for (int i = 0; i < f.count && !areas.empty(); ++i) {
-            const Touch &t = f.touches[i];
-            if (std::find(m_liveIds.begin(), m_liveIds.end(), t.id) != m_liveIds.end())
-                continue;
-            for (const auto &a : areas)
-                if (t.x >= a.x0 && t.x <= a.x1 && t.y >= a.y0 && t.y <= a.y1) {
-                    m_ignored.push_back(t.id);
-                    if (t.id == kMouseId) {
-                        m_level = 2;
-                        context(m_page).notice(QStringLiteral("Studio: every control, %1 too").arg(a.what));
-                    }
-                    break;
-                }
+    // Below Studio a page that zooms onto its play area hears the fingers
+    // there: the visible pad is that area.
+    Frame zoomed;
+    const Frame *in = &f;
+    if (const PartControl::PlayArea a = zoomArea(); a.zooms()) {
+        zoomed = f;
+        for (int i = 0; i < zoomed.count; ++i) {
+            Touch &t = zoomed.touches[i];
+            t.x = a.x0 + t.x * (a.x1 - a.x0);
+            t.y = a.y0 + t.y * (a.y1 - a.y0);
         }
+        in = &zoomed;
     }
-    m_liveIds.clear();
-    for (int i = 0; i < f.count; ++i)
-        m_liveIds.push_back(f.touches[i].id);
+    const Frame &fr = *in;
     const bool quiet = f.t < m_quietUntil && p.spec.control->quietAfterSpace();
     if (m_ignored.empty() && !quiet) {
-        p.spec.control->frame(f, *p.ctx);
+        p.spec.control->frame(fr, *p.ctx);
         return;
     }
-    Frame g = f;
+    Frame g = fr;
     g.count = 0;
     std::vector<int> still;
-    for (int i = 0; i < f.count; ++i) {
-        const int id = f.touches[i].id;
+    for (int i = 0; i < fr.count; ++i) {
+        const int id = fr.touches[i].id;
         // A finger landing in the quiet moment after Space is ignored too,
         // until it lifts: it was the hand still going, not new playing.
         if (quiet || std::find(m_ignored.begin(), m_ignored.end(), id) != m_ignored.end())
             still.push_back(id);
         else
-            g.touches[g.count++] = f.touches[i];
+            g.touches[g.count++] = fr.touches[i];
     }
     m_ignored = still;
     p.spec.control->frame(g, *p.ctx);
@@ -904,13 +902,67 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     pc.level = m_level;
     console::resetBrowseChips();
     console::setPaintLevel(p.part >= 0 ? m_level : 2);
+    m_studioTag = {};
+    const PartControl::PlayArea zoom = zoomArea();
     painter.save();
+    if (zoom.zooms()) {
+        // The page paints on a larger pad whose play area is the pad seen;
+        // what lies outside it (the fine-tuning) is cut away, the band
+        // under the pad kept.
+        const qreal w = pad.width() / (zoom.x1 - zoom.x0), h = pad.height() / (zoom.y1 - zoom.y0);
+        const qreal left = pad.left() - zoom.x0 * w, bottom = pad.bottom() + zoom.y0 * h;
+        pc.pad = QRectF(left, bottom - h, w, h);
+        pc.visible = pad;
+        pc.hoverX = zoom.x0 + m_mouseX * (zoom.x1 - zoom.x0);
+        pc.hoverY = zoom.y0 + m_mouseY * (zoom.y1 - zoom.y0);
+        QRegion clip(pad.adjusted(-1, -1, 1, 1).toAlignedRect());
+        clip += QRectF(pad.left() - 40, pad.bottom() + 3, pad.width() + 80, Session::kBandHeight + 40).toAlignedRect();
+        painter.setClipRegion(clip);
+    }
     p.spec.control->paint(painter, pc);
     painter.restore();
+    if (zoom.zooms()) {
+        // The pad's own frame and legend, and on its top edge the one line
+        // that says where the rest went.
+        PaintContext edge = pc;
+        edge.pad = pad;
+        // The frame as console::pad draws it, over the edges cut away; its
+        // inside is the page's.
+        painter.setPen(QPen(pc.color, 2.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(pad.adjusted(0, -console::kHead, 0, 0));
+        painter.fillRect(QRectF(pad.left() + 1, pad.top() - console::kHead + 1, pad.width() - 2, console::kHead - 1),
+                         Qt::black);
+        const QFont lf = console::font(13, true);
+        const QString legend = pageName(m_page).toUpper();
+        const QRectF lr(pad.left() + 16, console::tabY(edge) - 9, console::textWidth(lf, legend) + 16, 18);
+        painter.fillRect(lr, Qt::black);
+        console::text(painter, lr, legend, pc.color, 13, true, Qt::AlignCenter);
+        const auto choices = p.spec.control->soundChoices();
+        const int chosen = p.spec.control->soundChoice();
+        if (chosen >= 0 && chosen < int(choices.size()))
+            console::variation(painter, edge, choices[size_t(chosen)].name);
+        const QString line = QStringLiteral("▸ IN STUDIO: %1").arg(zoom.what.toUpper());
+        const QFont f = console::font(11, true);
+        const qreal tw = console::textWidth(f, line) + 16;
+        m_studioTag = QRectF(pad.right() - tw - 80, console::tabY(edge) - 10, tw, 20);
+        const bool over = m_mouseOver && m_studioTag.contains(m_mousePx);
+        painter.fillRect(m_studioTag, Qt::black);
+        painter.setPen(QPen(console::alpha(pc.color, over ? 1.0f : 0.5f), 1, Qt::DashLine));
+        painter.drawRect(m_studioTag);
+        console::text(painter, m_studioTag, line, console::alpha(pc.color, over ? 1.0f : 0.7f), 11, true, Qt::AlignCenter);
+    }
     m_padRect = pad;
     m_soundChip = {};
     m_soundNext = {};
-    if (m_level == 0 && p.part >= 0 && p.part < 7 && !p.spec.control->soundChoices().empty()) {
+    if (m_level == 0 && p.part >= 0 && p.part < 7 && !p.spec.control->soundChoices().empty() &&
+        p.spec.control->soundsOnPad()) {
+        // Its sounds are on the pad: the row under it is the clip slots alone.
+        const QRectF row = console::bandRow(pc, 0);
+        const QRectF clips = console::lastClipStrip();
+        const qreal left = !clips.isEmpty() && std::abs(clips.top() - row.top()) < 2 ? clips.right() + 8 : row.left();
+        painter.fillRect(QRectF(left, row.top() - 4, row.right() - left + 4, row.height() + 8), Qt::black);
+    } else if (m_level == 0 && p.part >= 0 && p.part < 7 && !p.spec.control->soundChoices().empty()) {
         // A newcomer's first row: the clip slots once there is a loop, and in
         // place of the row of sounds one chip that opens them all, heard.
         const QRectF row = console::bandRow(pc, 0);
@@ -938,20 +990,6 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
         console::text(painter, m_soundChip.adjusted(10, 0, -10, 0),
                       QStringLiteral("%1 MORE  ▸").arg(int(choices.size()) - 1), console::alpha(pc.color, 0.75f), 12,
                       true, Qt::AlignRight | Qt::AlignVCenter);
-    }
-    if (m_level < 2 && p.part >= 0) {
-        // The fine-tuning parts of the pad, covered with what they hold.
-        for (const auto &a : p.spec.control->advancedAreas()) {
-            const QRectF r = pc.rect(a.x0, a.y0, a.x1, a.y1).adjusted(1, 1, -1, -1);
-            painter.fillRect(r, Qt::black);
-            painter.setPen(QPen(console::alpha(pc.color, 0.3f), 1, Qt::DashLine));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawRect(r.adjusted(4, 4, -4, -4));
-            const bool over = m_mouseIn && m_mouseX >= a.x0 && m_mouseX <= a.x1 && m_mouseY >= a.y0 && m_mouseY <= a.y1;
-            console::text(painter, r.adjusted(12, 0, -12, 0),
-                          QStringLiteral("▸  STUDIO  ·  %1").arg(a.what.toUpper()),
-                          console::alpha(pc.color, over ? 0.95f : 0.5f), 12, true, Qt::AlignCenter);
-        }
     }
     if (const QRectF fold = foldedRow(pad); !fold.isEmpty()) {
         // Level 0: the band's second row folds away under one line that
@@ -2611,7 +2649,7 @@ QString Session::howToPlay(int page) const {
     if (is("chords"))
         return QStringLiteral("Your turn: hold a column, or press A S D F G for chords");
     if (is("lead"))
-        return QStringLiteral("Your turn: slide a finger, or press A S D F G H for notes");
+        return QStringLiteral("Your turn: slide a finger, or press A S D F G H. A thumb on the left adds a harmony");
     if (is("arp"))
         return QStringLiteral("Your turn: hold notes on the left, or hold A D G");
     if (is("atmos"))
@@ -2715,6 +2753,17 @@ bool Session::takeSoundsAsked() {
     const bool asked = m_soundsAsked;
     m_soundsAsked = false;
     return asked;
+}
+
+}
+
+namespace tf {
+
+PartControl::PlayArea Session::zoomArea() const {
+    const Page &p = *m_pages[size_t(m_page)];
+    if (m_level >= 2 || p.part < 0 || m_tutorial.active())
+        return {};
+    return p.spec.control->playArea();
 }
 
 }

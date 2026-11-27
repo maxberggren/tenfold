@@ -471,7 +471,7 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
         // wherever the hand is.
         int px = int(std::clamp(cell.height() * 0.45, 9.0, 13.0));
         // Smaller rather than cut off, in a narrow slot.
-        while (px > 8 && textWidth(font(px, true), label) > cell.width() - 6)
+        while (px > 7 && textWidth(font(px, true), label) > cell.width() - 4)
             --px;
         if (c.state != ClipView::Empty) {
             const qreal tw = std::min(cell.width() - 4, textWidth(font(px, true), label) + 8);

@@ -44,6 +44,7 @@
 #include "fx.h"
 #include "howl.h"
 #include "parts.h"
+#include "beautify.h"
 #include "kargyraa.h"
 #include "scream.h"
 
@@ -61,11 +62,13 @@ namespace {
 // chopped tape. Songs keep a style by name, so the order may grow but
 // never change.
 enum Preset {
-    Natural, Tune, Prism, Choir, Vocoder, Robot, Talk, Throat, Sitar, Gamelan, Screwed, Riot, Growl, PresetCount
+    Natural, Tune, Prism, Choir, Vocoder, Robot, Talk, Throat, Sitar, Gamelan, Screwed, Riot, Growl, Beautify,
+    PresetCount
 };
 const char *presetName(int p) {
     static const char *names[] = {"NATURAL", "HARD TUNE", "PRISM", "CHOIR", "VOCODER", "ROBOT",
-                                  "TALK BOX", "THROAT", "SITAR", "GAMELAN", "SCREWED", "RIOT", "KARGYRAA"};
+                                  "TALK BOX", "THROAT", "SITAR", "GAMELAN", "SCREWED", "RIOT", "KARGYRAA",
+                                  "BEAUTIFY"};
     return names[std::clamp(p, 0, PresetCount - 1)];
 }
 const char *presetLine(int p) {
@@ -85,6 +88,7 @@ const char *presetLine(int p) {
         "you, slowed on tape; fingers chop and spin it",
         "you, screamed from across a field; fingers join in",
         "you growl an octave under; your vowel sings over it",
+        "you, in tune and steady, doubled, in a plate",
     };
     return lines[std::clamp(p, 0, PresetCount - 1)];
 }
@@ -111,7 +115,8 @@ enum ParamId {
                // i[3]: the talk box played from the lanes (1) or by the note sung (0),
                // f[0]: the screwed tape's speed (ScrewSpeed), f[1]: throat singing's style (ThroatStyle),
                // f[2]: where the riot's screamer is (scream::Place),
-               // f[3]: the kargyraa's false folds' ratio (kargyraa::Ratio)
+               // f[3]: the kargyraa's false folds' ratio (kargyraa::Ratio),
+               // f[4]: what sings with the beautified voice (beautify::Layers)
     PHowl,    // i[1]: 1 the player heard the feedback warning (the monitor comes back);
               // f[0]: the round trip, speakers to microphone, in ms
 };
@@ -252,10 +257,13 @@ bool harmonyKeys(int preset) { return preset != Prism && preset != Vocoder; }
 // styles after robot a finger plays the style's own part instead (a
 // carrier, a synth note, the overtone, a second string, the interlocking
 // figure, a repeated word).
-bool fingerCopies(int preset) { return preset != Vocoder && preset < Talk; }
+// (BEAUTIFY is the voice itself, made beautiful: its fingers add copies too.)
+bool fingerCopies(int preset) { return preset != Vocoder && (preset < Talk || preset == Beautify); }
 // Whether the voice heard is moved to a note of its own, which the page
 // rings on the pitch trail.
-bool retuned(int preset) { return preset == Tune || preset == Robot || preset == Talk || preset == Screwed; }
+bool retuned(int preset) {
+    return preset == Tune || preset == Robot || preset == Talk || preset == Screwed || preset == Beautify;
+}
 
 // The stutter's slices, in beats.
 const double kStutterBeats[] = {0.5, 1.0 / 3, 0.25, 1.0 / 6, 0.125};
@@ -608,6 +616,7 @@ public:
             m_throatStyle = std::clamp(int(std::lround(c.f[1])), 0, ThroatStyleCount - 1);
             m_scream.setPlace(int(std::lround(c.f[2])));
             m_growl.setRatio(int(std::lround(c.f[3])));
+            m_beauty.setLayers(int(std::lround(c.f[4])));
             break;
         default: break;
         }
@@ -788,7 +797,7 @@ public:
         // the tune.
         const float wantDry = (m_preset == Prism && anyFinger) || m_preset == Vocoder || m_preset == Talk ||
                                       m_preset == Throat || m_preset == Screwed || m_preset == Riot ||
-                                      m_preset == Growl
+                                      m_preset == Growl || m_preset == Beautify
                                   ? 0.0f
                               : m_preset == Sitar   ? 0.0f
                               : m_preset == Gamelan ? 0.45f
@@ -1257,6 +1266,9 @@ public:
         d[pub::GrowlUnder] = m_preset == Growl ? m_growl.under() : 0.0f;
         d[pub::GrowlHarmonic] = m_preset == Growl ? float(m_growl.harmonic()) : 0.0f;
         d[pub::GrowlFocus] = m_growl.focusHz();
+        d[pub::BeautyNote] = m_preset == Beautify ? m_beauty.note() : -1.0f;
+        d[pub::BeautySung] = m_preset == Beautify ? m_beauty.sung() : -1.0f;
+        d[pub::BeautyHeard] = m_preset == Beautify ? m_beauty.heard() : -1.0f;
         // The lag of a shifted copy: about half a period, plus what the
         // formant asks.
         d[pub::Lag] = m_pitch.period() > 0 ? m_pitch.period() * 0.5f / m_rate * 1000.0f : 3.0f;
@@ -1312,6 +1324,8 @@ private:
         m_scream.init(rate);
         m_growlMix.setTime(0.03f, rate);
         m_growl.init(rate);
+        m_beautyMix.setTime(0.03f, rate);
+        m_beauty.init(rate);
         m_whOn.setTime(0.06f, rate);
         m_underLvl.setTime(0.03f, rate);
         m_throatTone.set(3400.0f, 0.6f, rate);
@@ -2422,6 +2436,33 @@ private:
             if (on && m_growl.under() > 0 && voiced)
                 m_leadMidi = midiOfHz(m_growl.under());
         }
+
+        // Beautify (beautify.h): you, as a record would have you. The voice
+        // moved onto the key's notes (the chord's, with follow) without
+        // losing its own vowels or life, steadied, a held note given a
+        // singer's vibrato; breaths brought down, the tone polished, the
+        // esses tamed; doubled (or with a harmony, or alone: B), in a plate.
+        if (m_preset == Beautify || m_beautyMix.y > 0.001f) {
+            const bool on = m_preset == Beautify;
+            if (m_beautyMix.y < 0.001f)
+                m_beauty.reset();
+            struct Key {
+                const Harmony &h;
+                bool chord;
+                double snap(double m) const { return snapMidi(h, m, chord); }
+                double above(double m) const { return noteMidi(h, 2, HarmonyNote, m, chord); }
+            } key{h, m_follow};
+            const float m0 = m_beautyMix.y;
+            for (int i = 0; i < n; ++i)
+                m_beautyMix.step(on ? 1.0f : 0.0f);
+            const float formant = std::exp2(float(m_formant) / 12.0f * 0.75f);
+            m_beauty.process(m_src, dry, n, voicedNow ? m_pitch.hz() : 0.0f, voicedNow ? m_pitch.period() : 0.0f,
+                             voicedNow, formant, key, leadL, leadR, m0, m_beautyMix.y);
+            // (The instruments, and the fingers' harmonies, follow the note
+            // it sings onto.)
+            if (on && m_beauty.note() > 0)
+                m_leadMidi = m_beauty.note();
+        }
     }
 
     // The kotekan: two parts, polos (left) and sangsih (right), that
@@ -2711,6 +2752,9 @@ private:
     // Kargyraa: the growl and how far in it is.
     kargyraa::Kargyraa m_growl;
     Smooth m_growlMix;
+    // Beautify: the voice made beautiful, and how far in it is.
+    beautify::Beautifier m_beauty;
+    Smooth m_beautyMix;
     int m_whHold = 0, m_throatStyle = Sygyt;
     float m_droneSlow = 0, m_droneFast = 0, m_whLevel = 0, m_kgPhase = 0, m_kgJitter = 0, m_kgJit = 0;
     float m_whPhA = 0, m_zr[2] = {}, m_zi[2] = {}, m_zsr = 0, m_zsi = 0, m_ur = 1, m_ui = 0;
@@ -3290,20 +3334,26 @@ public:
             "undertone growls an octave under), your vowel kept and each of its resonances tuned onto a harmonic "
             "of the undertone: move the vowel (oo, oh, aw, ah) and it steps from harmonic to harmonic, the "
             "melody; a finger steers it to the harmonic nearest its note; B: the false folds at half the pitch "
-            "(2:1) or a third (3:1). The row of styles under the pad scrolls with the lit one; click any to "
+            "(2:1) or a third (3:1). BEAUTIFY: you, as a record would have you, for a voice that can't hold a note: "
+            "each note moved onto the nearest note of the key (the chord's, with follow), your vowels and some of "
+            "your life kept, the wobble and the drift taken out, a held note given a gentle vibrato, a step to the "
+            "next note made smoothly; breaths brought down, the tone polished (the mud cut, presence and air "
+            "lifted, the esses tamed), and a vocal plate round it, all within a few milliseconds; B: DOUBLED (two "
+            "more of you, a few cents apart, left and right), HARMONY (and a third over your note), or SOLO; "
+            "fingers add harmonies, as in hard tune. The row of styles under the pad scrolls with the lit one; click any to "
             "pick it\n"
             "B\tthe style's own option, also the chip at the end of the row of styles, and named straight after "
             "the style in the status line: the TALK BOX sung or played from the lanes (KEYS), THROAT's style "
             "(sygyt, kargyraa, khoomei), the GAMELAN's tuning (pelog, slendro, the song's key), the SCREWED "
             "tape's speed (a fourth down, a fifth, 0.8), where the RIOT screams (field, room, close), the "
-            "KARGYRAA's undertone (2:1, 3:1)\n"
+            "KARGYRAA's undertone (2:1, 3:1), what sings with BEAUTIFY (doubled, harmony, solo)\n"
             "Shift+B\tthe TALK BOX's sub octave (on, off)\n"
             "Shift+Left / Right (or [ ])\tthe stutter's rate: 1/8, 1/8T, 1/16, 1/16T, 1/32\n"
             "Up / Down\tthe keys an octave up or down\n"
             "- and +\tthe voice's own throat: darker (giant), brighter (elf)\n"
             "Shift+Return\tlatch: notes stay when you lift (sing over a held chord)\n"
             "the key left of 1 (§)\tfollow the Chords page: the keys are the chord's notes, hard tune snaps to "
-            "them\n"
+            "them (and BEAUTIFY sings onto them)\n"
             "Delete\tlet go: latched notes, freeze, every strip\n"
             "A S D F G H J (K L)\tthe harmony lanes (in PRISM, VOCODER and KEYS, notes) from the keyboard, held\n"
             "V\ta demo singer in place of the microphone, to learn the page and loop it with no mic\n"
@@ -3376,7 +3426,7 @@ public:
     // The styles by the names a file gives them (the page's are for show).
     static constexpr const char *kStyleNames[PresetCount] = {"natural", "tune", "prism", "choir", "vocoder", "robot",
                                                                  "talkbox", "throat", "sitar", "gamelan", "screwed", "riot",
-                                                                 "kargyraa"};
+                                                                 "kargyraa", "beautify"};
     void save(QJsonObject &out) const override {
         out[QStringLiteral("style")] = QLatin1String(kStyleNames[std::clamp(m_preset, 0, PresetCount - 1)]);
         out[QStringLiteral("formant")] = m_formant;
@@ -3390,6 +3440,7 @@ public:
         out[QStringLiteral("throatStyle")] = QString::fromLatin1(throatStyleName(m_throatStyle)).toLower();
         out[QStringLiteral("riotPlace")] = QLatin1String(scream::placeKey(m_riotPlace));
         out[QStringLiteral("kargyraaRatio")] = QLatin1String(kargyraa::ratioKey(m_growlRatio));
+        out[QStringLiteral("beautifyLayers")] = QLatin1String(beautify::layersKey(m_beautyLayers));
     }
     void load(const QJsonObject &in, ControlContext &ctx) override {
         m_preset = Natural;
@@ -3416,6 +3467,11 @@ public:
         for (int k = 0; k < kargyraa::RatioCount; ++k)
             if (ratio == QLatin1String(kargyraa::ratioKey(k)))
                 m_growlRatio = k;
+        m_beautyLayers = beautify::Doubled;
+        const QString layers = in.value(QStringLiteral("beautifyLayers")).toString();
+        for (int k = 0; k < beautify::LayersCount; ++k)
+            if (layers == QLatin1String(beautify::layersKey(k)))
+                m_beautyLayers = k;
         m_talkSub = in.value(QStringLiteral("talkboxSub")).toBool(true);
         m_talkKeys = in.value(QStringLiteral("talkboxKeys")).toBool(false);
         m_screwSpeed = ScrewFourth;
@@ -4032,7 +4088,7 @@ private:
     // screwed tape's speed.
     bool hasOption(int preset) const {
         return preset == Gamelan || preset == Talk || preset == Screwed || preset == Throat || preset == Riot ||
-               preset == Growl;
+               preset == Growl || preset == Beautify;
     }
     QString optionLabel() const {
         if (m_preset == Throat)
@@ -4045,6 +4101,8 @@ private:
             return QStringLiteral("%1  B").arg(QString::fromLatin1(scream::placeName(m_riotPlace)));
         if (m_preset == Growl)
             return QStringLiteral("%1  B").arg(QString::fromLatin1(kargyraa::ratioName(m_growlRatio)));
+        if (m_preset == Beautify)
+            return QStringLiteral("%1  B").arg(QString::fromLatin1(beautify::layersName(m_beautyLayers)));
         // (The sub, on by default, is named only when it is off.)
         return QStringLiteral("%1%2  B")
             .arg(m_talkKeys ? QStringLiteral("KEYS") : QStringLiteral("SUNG"))
@@ -4062,6 +4120,8 @@ private:
             return QString::fromLatin1(scream::placeKey(m_riotPlace));
         if (m_preset == Growl)
             return QStringLiteral("undertone %1").arg(QString::fromLatin1(kargyraa::ratioName(m_growlRatio)));
+        if (m_preset == Beautify)
+            return QString::fromLatin1(beautify::layersKey(m_beautyLayers));
         return m_talkKeys ? QStringLiteral("keys") : QStringLiteral("sung");
     }
     void styleOption(ControlContext &ctx, bool shift) {
@@ -4106,10 +4166,16 @@ private:
             static const char *why[] = {"the false folds at half your pitch: the undertone an octave under",
                                         "the false folds at a third of your pitch: an octave and a fifth under"};
             ctx.notice(QStringLiteral("Kargyraa: %1").arg(QString::fromLatin1(why[m_growlRatio])));
+        } else if (m_preset == Beautify) {
+            m_beautyLayers = (m_beautyLayers + 1) % beautify::LayersCount;
+            static const char *why[] = {"doubled: two more of you, a few cents apart, left and right",
+                                        "harmony: doubled, and a third over your note in the key",
+                                        "solo: your voice alone, in tune and polished"};
+            ctx.notice(QStringLiteral("Beautify: %1").arg(QString::fromLatin1(why[m_beautyLayers])));
         } else {
             ctx.notice(QStringLiteral("%1 has no option of its own (B: the TALK BOX's keys, THROAT's style, the "
                                       "GAMELAN's tuning, the SCREWED tape's speed, where the RIOT screams, the "
-                                      "KARGYRAA's undertone)")
+                                      "KARGYRAA's undertone, what sings with BEAUTIFY)")
                            .arg(QString::fromLatin1(presetName(m_preset))));
             return;
         }
@@ -4127,6 +4193,7 @@ private:
         c.f[1] = float(m_throatStyle);
         c.f[2] = float(m_riotPlace);
         c.f[3] = float(m_growlRatio);
+        c.f[4] = float(m_beautyLayers);
         ctx.send(c);
     }
     void setStutter(int s, ControlContext &ctx) {
@@ -4567,6 +4634,7 @@ private:
     // throat singing's style, the talk box's sub and keys.
     int m_gamTuning = Pelog, m_screwSpeed = ScrewFourth, m_throatStyle = Sygyt, m_riotPlace = scream::Field;
     int m_growlRatio = kargyraa::Half;
+    int m_beautyLayers = beautify::Doubled;
     bool m_talkSub = true, m_talkKeys = false;
     double m_loopSince = -1e18;
     uint32_t m_takesSeen = 0;
@@ -4822,6 +4890,24 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
                           .arg(k)
                           .arg(int(std::lround(d[pub::GrowlFocus])))
                     : QStringLiteral("SING LOW: AN UNDERTONE AN OCTAVE UNDER YOU · MOVE THE VOWEL TO SING ITS HARMONICS");
+            c::text(p, pc.rect(kLeft, kTapeTop + 0.05f, kRight, kTapeTop + 0.09f), line, c::alpha(col, 0.6f),
+                    labelPx - 1, true, Qt::AlignCenter);
+        }
+        if (m_preset == Beautify) {
+            // The note it sings onto, and how far off the voice was.
+            const float note = d[pub::BeautyNote], sung = d[pub::BeautySung];
+            QString line = QStringLiteral("SING: EACH NOTE LANDS ON THE KEY, STEADY · %1 · HOLD A LANE: A HARMONY")
+                               .arg(QString::fromLatin1(beautify::layersName(m_beautyLayers)));
+            if (note > 0 && sung > 0) {
+                const int m = int(std::lround(note)), cents = int(std::lround((sung - note) * 100.0f));
+                line = QStringLiteral("ON %1%2 · YOU SANG IT %3%4 CENTS %5 · %6")
+                           .arg(QString::fromUtf8(Tuning::noteName(((m % 12) + 12) % 12)))
+                           .arg(m / 12 - 1)
+                           .arg(cents > 0 ? QStringLiteral("+") : QString())
+                           .arg(cents)
+                           .arg(std::abs(cents) < 10 ? QStringLiteral("(SPOT ON)") : cents > 0 ? QStringLiteral("SHARP") : QStringLiteral("FLAT"))
+                           .arg(QString::fromLatin1(beautify::layersName(m_beautyLayers)));
+            }
             c::text(p, pc.rect(kLeft, kTapeTop + 0.05f, kRight, kTapeTop + 0.09f), line, c::alpha(col, 0.6f),
                     labelPx - 1, true, Qt::AlignCenter);
         }

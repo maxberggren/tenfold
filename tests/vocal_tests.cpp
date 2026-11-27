@@ -8,6 +8,7 @@
 #include <QTemporaryDir>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <numeric>
 #include <set>
 
@@ -16,6 +17,7 @@
 #include "outputkind.h"
 #include "songfile.h"
 #include "testkit.h"
+#include "beautify.h"
 #include "vocal.h"
 #include "wav.h"
 
@@ -119,6 +121,305 @@ Reopened reopenVocal(const std::string &script, double secs, const std::function
     return out;
 }
 
+
+// --- a singer who can't sing ----------------------------------------------------------
+
+// A note as meant (its MIDI note) and as sung: so many cents off, starting
+// from the note before (legato) or scooped up into, its vowel, a consonant
+// before it ('s' or 't', or 0), and, for a breath in between, midi 0.
+struct BadNote {
+    double t, dur, midi, cents;
+    char vowel = 'a', cons = 0;
+    bool legato = false;
+};
+struct BadTake {
+    std::vector<float> x; // mono, 48 kHz
+    std::vector<BadNote> notes;
+};
+// A voice synthesised the way a voice is made (harmonics of a glottal pulse
+// falling 12 dB an octave, lifted 6 by the lips' radiation, through four vowel formants that glide between
+// notes, breath pulsed with the glottis, consonants of noise) and sung
+// badly: each note off by its cents, scooped into from 60 cents under (or
+// slid into from the last over 90 ms, legato), drifting 20 cents across
+// the note, wobbling at 2.7 and 4.1 Hz (22 and 14 cents: no singer's
+// vibrato, a voice that can't hold still), with a random walk of jitter;
+// breaths between phrases, and a room's hiss under it all.
+BadTake badSinger(const std::vector<BadNote> &notes, uint32_t seed, float wobble = 1.0f, float breathy = 0.08f) {
+    BadTake out;
+    out.notes = notes;
+    const float rate = 48000.0f;
+    double end = 0;
+    for (const auto &n : notes)
+        end = std::max(end, n.t + n.dur);
+    out.x.assign(size_t((end + 0.5) * rate), 0.0f);
+    Rng rng(seed);
+    struct Formants {
+        float f[4];
+    };
+    auto vowel = [](char v) -> Formants {
+        switch (v) {
+        case 'e': return {{530, 1840, 2480, 3500}};
+        case 'i': return {{290, 2250, 2950, 3600}};
+        case 'o': return {{550, 850, 2400, 3300}};
+        case 'u': return {{320, 870, 2250, 3200}};
+        default: return {{730, 1100, 2450, 3400}};
+        }
+    };
+    static const float gains[4] = {1.0f, 0.7f, 0.45f, 0.3f}, bws[4] = {140, 160, 210, 260};
+    Svf form[4], aspHp, sHiss, breathLp;
+    aspHp.set(1500, 0.7f, rate);
+    sHiss.set(6500, 2.0f, rate);
+    breathLp.set(1800, 0.6f, rate);
+    float fNow[4] = {730, 1100, 2450, 3400};
+    double phase = 0;
+    float walk = 0;
+    const double ph1 = rng.unit() * 6.28, ph2 = rng.unit() * 6.28;
+    for (size_t i = 0; i < out.x.size(); ++i) {
+        const double t = double(i) / rate;
+        float y = 1e-3f * rng.bipolar(); // the room
+        // The note sounding (the last one started), and the one before.
+        int k = -1;
+        for (int j = 0; j < int(notes.size()); ++j)
+            if (t >= notes[size_t(j)].t && t < notes[size_t(j)].t + notes[size_t(j)].dur)
+                k = j;
+        // A consonant just before a note.
+        for (const auto &n : notes) {
+            if (n.cons == 's' && t >= n.t - 0.09 && t < n.t)
+                y += 0.12f * sHiss.step(rng.bipolar()).band * float(std::sin(kPi * (t - n.t + 0.09) / 0.09));
+            if (n.cons == 't' && t >= n.t - 0.014 && t < n.t - 0.002)
+                y += 0.25f * rng.bipolar() * float(std::exp(-(t - n.t + 0.014) / 0.004));
+        }
+        if (k >= 0 && notes[size_t(k)].midi <= 0) {
+            // A breath in.
+            const auto &n = notes[size_t(k)];
+            const float env = float(std::sin(kPi * (t - n.t) / n.dur));
+            y += 0.012f * env * breathLp.step(rng.bipolar()).band;
+            out.x[i] = y;
+            continue;
+        }
+        if (k < 0) {
+            out.x[i] = y;
+            continue;
+        }
+        const BadNote &n = notes[size_t(k)];
+        const double u = t - n.t, frac = u / n.dur;
+        double m = n.midi + n.cents / 100.0;
+        m += (k % 2 ? 0.2 : -0.2) * (frac - 0.5); // the drift
+        if (n.legato && k > 0) {
+            const BadNote &b = notes[size_t(k - 1)];
+            const double from = b.midi + b.cents / 100.0 + (k % 2 ? 0.1 : -0.1);
+            if (u < 0.09) {
+                const double s = 0.5 - 0.5 * std::cos(kPi * u / 0.09);
+                m = from + (m - from) * s;
+            }
+        } else {
+            m -= 0.6 * std::exp(-u / 0.06); // the scoop
+        }
+        m += wobble * (0.22 * std::sin(kTwoPi * 2.7 * t + ph1) + 0.14 * std::sin(kTwoPi * 4.1 * t + ph2));
+        walk = walk * 0.9995f + 0.0004f * rng.bipolar();
+        m += walk;
+        const double hz = 440.0 * std::exp2((m - 69.0) / 12.0);
+        phase += hz / rate;
+        phase -= std::floor(phase);
+        // The glottal pulse's harmonics, to 7 kHz.
+        const int K = std::max(1, int(7000.0 / hz));
+        const double th = kTwoPi * phase, c2 = 2 * std::cos(th);
+        double s1 = std::sin(th), s0 = 0, sum = s1, sm1 = 0;
+        for (int h = 2; h <= K; ++h) {
+            s0 = c2 * s1 - sm1;
+            sm1 = s1;
+            s1 = s0;
+            sum += s0 / double(h);
+        }
+        const float shimmer = 1.0f + 0.05f * rng.bipolar();
+        const float pulse = float(sum) * shimmer;
+        const float asp = aspHp.step(rng.bipolar()).high * float(0.5 + 0.5 * std::cos(th)) * breathy * 3.0f;
+        const Formants want = vowel(n.vowel);
+        float v = 0;
+        for (int f = 0; f < 4; ++f) {
+            fNow[f] += (want.f[f] - fNow[f]) * 0.0004f;
+            if ((i & 31) == 0)
+                form[f].set(fNow[f], fNow[f] / bws[f], rate);
+            v += gains[f] * form[f].k * form[f].step(pulse + asp).band;
+        }
+        // Rise over 30 ms (none, legato), fall over the last 50.
+        const double rise = n.legato ? 1.0 : std::min(1.0, u / 0.03);
+        const bool joined = k + 1 < int(notes.size()) && notes[size_t(k + 1)].legato;
+        const double fall = joined ? 1.0 : std::min(1.0, (n.dur - u) / 0.05);
+        y += float(0.05 * v * rise * fall);
+        out.x[i] = y;
+    }
+    return out;
+}
+
+// The pitch of x (mono, 48 kHz) every 5 ms between a and b seconds, near
+// an expected MIDI note: the normalised cross-correlation of 20 ms against
+// itself a period later, the period looked for within a fourth either way,
+// its peak found between the lags. NAN where nothing is clearly pitched.
+std::vector<double> pitchNear(const std::vector<float> &x, double a, double b, double midi) {
+    std::vector<double> out;
+    const double P = 48000.0 / (440.0 * std::exp2((midi - 69.0) / 12.0));
+    const int lo = int(P / 1.35), hi = int(P * 1.35) + 1, W = 960;
+    for (double t = a; t < b; t += 0.005) {
+        const int64_t i0 = int64_t(t * 48000) - W / 2;
+        if (i0 < 0 || size_t(i0 + W + hi + 1) >= x.size()) {
+            out.push_back(NAN);
+            continue;
+        }
+        std::vector<double> r(size_t(hi + 2), 0.0);
+        double best = -1;
+        int at = -1;
+        for (int L = lo - 1; L <= hi + 1; ++L) {
+            double xy = 0, xx = 0, yy = 0;
+            for (int j = 0; j < W; ++j) {
+                const double p = x[size_t(i0 + j)], q = x[size_t(i0 + j + L)];
+                xy += p * q;
+                xx += p * p;
+                yy += q * q;
+            }
+            r[size_t(L)] = xy / std::sqrt(xx * yy + 1e-20);
+            if (L >= lo && L <= hi && r[size_t(L)] > best) {
+                best = r[size_t(L)];
+                at = L;
+            }
+        }
+        if (best < 0.7 || at <= lo || at >= hi) {
+            out.push_back(NAN);
+            continue;
+        }
+        const double y0 = r[size_t(at - 1)], y1 = r[size_t(at)], y2 = r[size_t(at + 1)];
+        const double den = y0 - 2 * y1 + y2;
+        const double lag = at + (std::fabs(den) > 1e-12 ? 0.5 * (y0 - y2) / den : 0.0);
+        out.push_back(69.0 + 12.0 * std::log2(48000.0 / lag / 440.0));
+    }
+    return out;
+}
+
+// The pitch of x every 5 ms between a and b, anywhere from 80 to 600 Hz:
+// the first lag whose normalised cross-correlation is within 8 % of the
+// best (so not an octave low), between the lags. NAN where unpitched.
+std::vector<double> pitchAnywhere(const std::vector<float> &x, double a, double b) {
+    std::vector<double> out;
+    const int lo = 48000 / 600, hi = 48000 / 80, W = 960;
+    std::vector<double> r(size_t(hi + 2));
+    for (double t = a; t < b; t += 0.005) {
+        const int64_t i0 = int64_t(t * 48000) - W / 2;
+        if (i0 < 0 || size_t(i0 + W + hi + 1) >= x.size()) {
+            out.push_back(NAN);
+            continue;
+        }
+        double best = 0;
+        for (int L = lo - 1; L <= hi + 1; ++L) {
+            double xy = 0, xx = 0, yy = 0;
+            for (int j = 0; j < W; j += 2) {
+                const double p = x[size_t(i0 + j)], q = x[size_t(i0 + j + L)];
+                xy += p * q;
+                xx += p * p;
+                yy += q * q;
+            }
+            r[size_t(L)] = xy / std::sqrt(xx * yy + 1e-20);
+            if (L >= lo && L <= hi)
+                best = std::max(best, r[size_t(L)]);
+        }
+        double m = NAN;
+        if (best > 0.8)
+            for (int L = lo + 1; L < hi; ++L)
+                if (r[size_t(L)] >= 0.92 * best && r[size_t(L)] >= r[size_t(L - 1)] && r[size_t(L)] >= r[size_t(L + 1)]) {
+                    const double y0 = r[size_t(L - 1)], y1 = r[size_t(L)], y2 = r[size_t(L + 1)], den = y0 - 2 * y1 + y2;
+                    const double lag = L + (std::fabs(den) > 1e-12 ? 0.5 * (y0 - y2) / den : 0.0);
+                    m = 69.0 + 12.0 * std::log2(48000.0 / lag / 440.0);
+                    break;
+                }
+        out.push_back(m);
+    }
+    return out;
+}
+
+// Of the pitched frames, the share within `cents` of a note of A minor.
+double inKeyShare(const std::vector<double> &p, double cents, int *pitched = nullptr) {
+    static const bool key[12] = {true, false, true, false, true, true, false, true, false, true, false, true};
+    int n = 0, in = 0;
+    for (double m : p) {
+        if (std::isnan(m))
+            continue;
+        ++n;
+        const int note = int(std::lround(m));
+        in += key[((note % 12) + 12) % 12] && std::fabs(m - note) * 100 < cents;
+    }
+    if (pitched)
+        *pitched = n;
+    return n ? double(in) / n : 0;
+}
+
+// The middle of a stereo take, from `at` seconds on, as a mono line.
+std::vector<float> midOf(const testkit::Take &t) {
+    std::vector<float> m(t.left.size());
+    for (size_t i = 0; i < m.size(); ++i)
+        m[i] = 0.5f * (t.left[i] + t.right[i]);
+    return m;
+}
+
+// How far from the notes meant a line is, in cents: every 5 ms of each
+// note's held part (from `from` seconds in to 40 ms before its end), and
+// the note's average pitch (its intonation). `shift`: where the take puts the line's
+// first sample, in seconds.
+struct Intonation {
+    double rms = 0, held = 0, worst = 0; // cents: every frame; each note's average; the worst note's
+    int frames = 0, missing = 0;
+};
+Intonation intonation(const std::vector<float> &x, const std::vector<BadNote> &notes, double shift, double from = 0.08) {
+    Intonation r;
+    double sq = 0, heldSq = 0;
+    int nNotes = 0;
+    for (const auto &n : notes) {
+        if (n.midi <= 0)
+            continue;
+        const auto p = pitchNear(x, shift + n.t + from, shift + n.t + n.dur - 0.04, n.midi);
+        double sum = 0;
+        int k = 0;
+        for (double m : p) {
+            if (std::isnan(m)) {
+                ++r.missing;
+                continue;
+            }
+            const double c = (m - n.midi) * 100.0;
+            sq += c * c;
+            sum += c;
+            ++k;
+        }
+        r.frames += k;
+        if (k && qEnvironmentVariableIsSet("TENFOLD_BEAUTIFY_DEBUG"))
+            qInfo("  note %.0f at %.2f: mean %+.1f cents over %d frames", n.midi, n.t, sum / k, k);
+        if (k) {
+            const double mean = sum / k;
+            heldSq += mean * mean;
+            r.worst = std::max(r.worst, std::fabs(mean));
+            ++nNotes;
+        }
+    }
+    r.rms = r.frames ? std::sqrt(sq / r.frames) : 1e9;
+    r.held = nNotes ? std::sqrt(heldSq / nNotes) : 1e9;
+    return r;
+}
+
+// Writes a WAV (mono or the take's two channels) where TENFOLD_BEAUTIFY_WAVS
+// says, to listen to and analyse.
+void dumpWav(const char *name, const std::vector<float> &l, const std::vector<float> *r = nullptr) {
+    const QByteArray dir = qgetenv("TENFOLD_BEAUTIFY_WAVS");
+    if (dir.isEmpty())
+        return;
+    QDir().mkpath(QString::fromLocal8Bit(dir));
+    WavWriter w;
+    if (!w.open((QString::fromLocal8Bit(dir) + "/" + name + ".wav").toStdString(), 48000))
+        return;
+    std::vector<float> st(l.size() * 2);
+    for (size_t i = 0; i < l.size(); ++i) {
+        st[2 * i] = l[i];
+        st[2 * i + 1] = r ? (*r)[i] : l[i];
+    }
+    w.write(st.data(), l.size());
+}
+
 }
 
 class VocalTests : public QObject {
@@ -133,8 +434,10 @@ class VocalTests : public QObject {
                 "withNoMicrophoneTheDemoSingerSingsAndLoops spaceMakesANewLoopAndShiftSpaceLayers "
                 "ctrlZTakesTheVocalLoopBack everyStripAndTheClickPlayWithoutTrouble "
                 "aSongKeepsTheVocalLoopsAndTheirAudio theGongSinksAndThrobs bronzeNeverStepsWhenAStrikeIsStolen "
-                "aHowlThroughTheRoomIsCaughtAndMuted speakersOrHeadphonesIsReadFromTheGraph")
-    Q_CLASSINFO("alone", "theHowlGuardStaysInsideBudget")
+                "aHowlThroughTheRoomIsCaughtAndMuted speakersOrHeadphonesIsReadFromTheGraph "
+                "beautifyPutsABadSingerInTune beautifyHoldsALongNoteSteadyWithAVibratoOfItsOwn "
+                "beautifyStepsBetweenNotesWithoutAGlitch beautifyFollowsTheKeyAndTheChord beautifyGetsASongsNotesRight")
+    Q_CLASSINFO("alone", "theHowlGuardStaysInsideBudget beautifyStaysInsideBudget")
 private slots:
     // --- the microphone, heard -----------------------------------------------------
 
@@ -1010,14 +1313,14 @@ private slots:
     }
 
     void theNewStylesComeBackByName() {
-        const char *names[] = {"talkbox", "throat", "sitar", "gamelan", "screwed", "riot", "kargyraa"};
-        for (int k = 0; k < 7; ++k) {
+        const char *names[] = {"talkbox", "throat", "sitar", "gamelan", "screwed", "riot", "kargyraa", "beautify"};
+        for (int k = 0; k < 8; ++k) {
             const auto song = reopenVocal(std::string(kPage) + rights(Talk + k) + "voice 0.5 0.6 hz=220\nend 1.4\n", 0.5);
             QCOMPARE(song.settings[QStringLiteral("style")].toString(), QString::fromLatin1(names[k]));
         }
         // And Left from NATURAL wraps round to the last of them.
         const auto wrapped = reopenVocal(std::string(kPage) + "key 0.1 Left\nend 0.6\n", 0.5);
-        QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("kargyraa"));
+        QCOMPARE(wrapped.settings[QStringLiteral("style")].toString(), QStringLiteral("beautify"));
         // The styles' own options too: slendro; the talk box on the keys,
         // and (Shift+B) with no sub; the tape a fifth down.
         const auto gam = reopenVocal(std::string(kPage) + rights(Gamelan) + "key 0.5 B\nend 0.8\n", 0.5);
@@ -1035,6 +1338,8 @@ private slots:
         QCOMPARE(close.settings[QStringLiteral("riotPlace")].toString(), QStringLiteral("close"));
         const auto growl = reopenVocal(std::string(kPage) + rights(Growl) + "key 0.5 B\nend 0.8\n", 0.5);
         QCOMPARE(growl.settings[QStringLiteral("kargyraaRatio")].toString(), QStringLiteral("third"));
+        const auto beauty = reopenVocal(std::string(kPage) + rights(Beautify) + "key 0.5 B\nkey 0.6 B\nend 0.8\n", 0.5);
+        QCOMPARE(beauty.settings[QStringLiteral("beautifyLayers")].toString(), QStringLiteral("solo"));
     }
 
     // --- riot ------------------------------------------------------------------------
@@ -1809,9 +2114,617 @@ private slots:
         QVERIFY2(share < 0.01, qPrintable(QString::number(share)));
     }
 
+    // --- beautify ----------------------------------------------------------------------
+
+    void beautifyPutsABadSingerInTune() {
+        // A phrase in A minor sung badly (each note 28 to 44 cents off,
+        // scooped, drifting, wobbling, breathy; one of them 44 cents sharp
+        // of E, nearly F, and one 40 flat of B, nearly B♭), into the
+        // microphone, doubled (as it comes): what comes out is on the notes
+        // meant. Each note's average within a few cents, none taken for its
+        // neighbour; and once the singer has arrived on a note (150 ms in:
+        // the arrival itself is the singer's, corrected as it lands),
+        // every 5 ms of it within a few cents but for the vibrato given to
+        // the long notes.
+        const auto bad = badSinger(badPhrase(), 11);
+        const auto out = playBeautify(bad, "");
+        const auto before = intonation(bad.x, bad.notes, 0.0), after = intonation(midOf(out), bad.notes, kMicAt);
+        const auto settledBefore = intonation(bad.x, bad.notes, 0.0, 0.15),
+                   settled = intonation(midOf(out), bad.notes, kMicAt, 0.15);
+        qInfo("beautify: every 5 ms from 80 ms into each note %.1f cents rms before, %.1f after; from 150 ms %.1f "
+              "before, %.1f after; notes' averages %.1f before, %.1f after (worst %.1f, %.1f); %d of %d frames "
+              "unpitched after; from 150 ms, notes' averages %.1f after (worst %.1f)",
+              before.rms, after.rms, settledBefore.rms, settled.rms, before.held, after.held, before.worst, after.worst,
+              after.missing, after.frames + after.missing, settled.held, settled.worst);
+        // (A steady voice is no howl: the feedback guard looks at it no
+        // more often than at the natural voice.)
+        const auto nat = playBeautify(bad, "", 0, 0);
+        const float probes = out.view.parts[kVocal].data[vocal::pub::FeedbackProbes],
+                    natProbes = nat.view.parts[kVocal].data[vocal::pub::FeedbackProbes];
+        qInfo("beautify: the feedback guard probed %.0f times (natural: %.0f)", probes, natProbes);
+        QVERIFY(probes <= natProbes);
+        dumpWav("phrase_natural", nat.left, &nat.right);
+        dumpWav("phrase_in", bad.x);
+        dumpWav("phrase_out", out.left, &out.right);
+        QVERIFY2(before.rms > 35, "the singer wasn't bad");
+        QVERIFY2(settled.held < 5, qPrintable(QString::number(settled.held)));
+        QVERIFY2(settled.worst < 8, qPrintable(QString::number(settled.worst)));
+        QVERIFY2(settled.rms < 12, qPrintable(QString::number(settled.rms)));
+        QVERIFY2(after.rms < 0.5 * before.rms, qPrintable(QString::number(after.rms)));
+        QVERIFY2(after.missing < after.frames / 20, "the voice lost its pitch");
+    }
+
+    void beautifyHoldsALongNoteSteadyWithAVibratoOfItsOwn() {
+        // F4 held for 2.5 s, 40 cents flat and wobbling (a voice that
+        // can't hold still), scooped into from E, solo (B twice): once the
+        // note is found (by 0.6 s: it scooped in from E, and starts on E)
+        // it comes out on F the whole way, never once on its neighbour E,
+        // moving smoothly (no 5 ms step over a few cents: no warble), and
+        // with a singer's vibrato: 5 to 6 Hz, ±8 to 25 cents.
+        const auto bad = badSinger({{0.2, 2.5, 65, -40, 'a'}}, 5);
+        const auto out = playBeautify(bad, "", 2);
+        const auto p = pitchNear(midOf(out), kMicAt + 0.8, kMicAt + 2.6, 65);
+        const auto was = pitchNear(bad.x, 0.3, 2.6, 65);
+        double sum = 0, worst = 0, steps = 0, stepWorst = 0, sumWas = 0;
+        int n = 0, flips = 0, nw = 0;
+        std::vector<double> late;
+        for (size_t i = 0; i < p.size(); ++i) {
+            if (std::isnan(p[i]))
+                continue;
+            const double c = (p[i] - 65) * 100;
+            sum += c;
+            ++n;
+            worst = std::max(worst, std::fabs(c));
+            flips += std::fabs(c) > 50;
+            if (i > 0 && !std::isnan(p[i - 1])) {
+                const double d = std::fabs(p[i] - p[i - 1]) * 100;
+                steps += d * d;
+                stepWorst = std::max(stepWorst, d);
+            }
+            if (i >= 80) // from 1.2 s into the note
+                late.push_back(c);
+        }
+        for (double m : was)
+            if (!std::isnan(m))
+                sumWas += (m - 65) * 100, ++nw;
+        QVERIFY(n > int(p.size()) * 9 / 10);
+        // The vibrato: the strongest movement between 3 and 9 Hz over the
+        // last 1.2 s, its rate and its extent (the sine's amplitude).
+        double ext = 0, rate = 0;
+        for (double f = 3; f <= 9; f += 0.05) {
+            double re = 0, im = 0;
+            for (size_t i = 0; i < late.size(); ++i) {
+                const double w = 0.5 - 0.5 * std::cos(kTwoPi * double(i) / double(late.size()));
+                re += late[i] * w * std::cos(kTwoPi * f * double(i) * 0.005);
+                im += late[i] * w * std::sin(kTwoPi * f * double(i) * 0.005);
+            }
+            const double a = 4 * std::sqrt(re * re + im * im) / double(late.size()); // (Hann: half the gain)
+            if (a > ext)
+                ext = a, rate = f;
+        }
+        qInfo("beautify, a held note: sung %+.1f cents on average, out %+.1f; furthest %.1f; 5 ms steps %.2f cents rms, "
+              "%.2f at most; vibrato ±%.1f cents at %.1f Hz",
+              sumWas / nw, sum / n, worst, std::sqrt(steps / n), stepWorst, ext, rate);
+        dumpWav("held_in", bad.x);
+        dumpWav("held_out", out.left, &out.right);
+        QCOMPARE(flips, 0);
+        QVERIFY2(std::fabs(sum / n) < 5, qPrintable(QString::number(sum / n)));
+        QVERIFY2(stepWorst < 6, qPrintable(QString::number(stepWorst)));
+        QVERIFY2(ext > 8 && ext < 25, qPrintable(QString::number(ext)));
+        QVERIFY2(rate > 4.5 && rate < 6.5, qPrintable(QString::number(rate)));
+    }
+
+    void beautifyStepsBetweenNotesWithoutAGlitch() {
+        // A legato line, steps of a tone to a fifth, each note off by its
+        // own cents: at every change the pitch goes from one note to the
+        // next without turning back on the way, overshoots no further than
+        // the singer did (the step itself is the singer's: corrected only
+        // as it arrives), is on the new note within 150 ms of the singer's
+        // arrival, and the voice's level neither dips nor jumps (5 ms by
+        // 5 ms, against what was sung).
+        const std::vector<BadNote> line = {
+            {0.2, 0.5, 57, +30, 'a'},          {0.7, 0.45, 59, -38, 'a', 0, true},
+            {1.15, 0.45, 64, +35, 'o', 0, true}, {1.6, 0.45, 62, -30, 'o', 0, true},
+            {2.05, 0.45, 60, +40, 'a', 0, true}, {2.5, 0.6, 55, -35, 'a', 0, true},
+        };
+        const auto bad = badSinger(line, 23, 0.6f);
+        const auto out = playBeautify(bad, "", 2);
+        const auto mid = midOf(out);
+        dumpWav("steps_in", bad.x);
+        dumpWav("steps_out", out.left, &out.right);
+        double worstBack = 0, worstOver = 0, worstLand = 0, worstDip = 0, worstJump = 0;
+        for (size_t k = 1; k < line.size(); ++k) {
+            const double from = line[k - 1].midi, to = line[k].midi, t0 = line[k].t;
+            const double dir = to > from ? 1 : -1;
+            // On the way, the pitch heads one way (until it passes its
+            // furthest: then it may only settle back onto the note). Past
+            // the note it goes no further than the singer did, and it is
+            // on the note (within 15 cents) soon after the singer arrives.
+            const auto p = pitchAnywhere(mid, kMicAt + t0 - 0.03, kMicAt + t0 + 0.25);
+            const auto q = pitchAnywhere(bad.x, t0 - 0.03, t0 + 0.25);
+            double furthest = -1e9, back = 0, over = 0, sung = 0, land = 1;
+            size_t peak = 0;
+            for (size_t i = 0; i < p.size(); ++i)
+                if (!std::isnan(p[i]) && (p[i] - from) * dir > furthest)
+                    furthest = (p[i] - from) * dir, peak = i;
+            double most = -1e9;
+            for (size_t i = 0; i < p.size(); ++i) {
+                if (!std::isnan(q[i]))
+                    sung = std::max(sung, (q[i] - from) * dir - std::fabs(to - from));
+                if (std::isnan(p[i]))
+                    continue;
+                const double along = (p[i] - from) * dir;
+                most = std::max(most, along);
+                if (i <= peak)
+                    back = std::max(back, most - along);
+                over = std::max(over, along - std::fabs(to - from));
+                if (land >= 1 && i > peak && std::fabs(p[i] - to) < 0.15)
+                    land = double(i) * 0.005 - 0.03;
+            }
+            worstBack = std::max(worstBack, back * 100);
+            worstOver = std::max(worstOver, (over - std::max(0.0, sung)) * 100);
+            // (The singer arrives 90 ms in.)
+            worstLand = std::max(worstLand, land - 0.09);
+            // The level, against the voice sung, round the change.
+            std::vector<double> ratio;
+            for (double t = t0 - 0.05; t < t0 + 0.2; t += 0.005) {
+                double a = 0, b = 0;
+                for (int j = 0; j < 240; ++j) {
+                    const double x = bad.x[size_t(t * 48000) + size_t(j)], y = mid[size_t((t + kMicAt) * 48000) + size_t(j)];
+                    a += x * x;
+                    b += y * y;
+                }
+                ratio.push_back(10 * std::log10((b + 1e-20) / (a + 1e-20)));
+            }
+            std::vector<double> sorted = ratio;
+            std::sort(sorted.begin(), sorted.end());
+            const double median = sorted[sorted.size() / 2];
+            for (double r : ratio) {
+                worstDip = std::max(worstDip, median - r);
+                worstJump = std::max(worstJump, r - median);
+            }
+        }
+        qInfo("beautify, note changes: turned back %.1f cents at most on the way, overshot %.1f cents more than the "
+              "singer, on the note %.0f ms after the singer arrived at worst; level %.1f dB under, %.1f dB over its "
+              "median at worst",
+              worstBack, worstOver, worstLand * 1000, worstDip, worstJump);
+        QVERIFY2(worstBack < 25, qPrintable(QString::number(worstBack)));
+        QVERIFY2(worstOver < 10, qPrintable(QString::number(worstOver)));
+        QVERIFY2(worstLand < 0.15, qPrintable(QString::number(worstLand)));
+        QVERIFY2(worstDip < 4 && worstJump < 4, qPrintable(QString("%1 %2").arg(worstDip).arg(worstJump)));
+    }
+
+    void beautifyIsHeardWithinAFewMilliseconds() {
+        // The voice is moved by grains a period long, each laid out as late
+        // as it can be read: from a few samples to a period behind the
+        // voice, half a period on average. Sung 40 cents flat (so the
+        // voice is being moved), at 110 Hz (a man's low A) and at 220,
+        // its loudness wavering at random: the wavering comes out about
+        // half a period late, under 10 ms however low the voice. A
+        // consonant, which has no pitch to move, goes through at once.
+        double worst = 0;
+        for (double hz : {110.0, 220.0}) {
+            const double midi = 69 + 12 * std::log2(hz / 440.0);
+            auto sung = badSinger({{0.2, 1.6, midi, -40, 'a'}}, 31, 0.3f, 0.02f);
+            // (The wavering: three slow swells that never line up.)
+            for (size_t i = 0; i < sung.x.size(); ++i) {
+                const double t = double(i) / 48000.0;
+                sung.x[i] *= float(1.0 + 0.3 * std::sin(kTwoPi * 7.3 * t) + 0.25 * std::sin(kTwoPi * 11.1 * t + 1) +
+                                   0.2 * std::sin(kTwoPi * 17.9 * t + 2));
+            }
+            const auto out = playBeautify(sung, "", 2);
+            const auto mid = midOf(out);
+            dumpWav(hz < 150 ? "late110_in" : "late220_in", sung.x);
+            dumpWav(hz < 150 ? "late110_out" : "late220_out", out.left, &out.right);
+            // The two loudnesses, 1 ms by 1 ms, from 0.5 s to 1.6 s, each
+            // over 12 ms (more than a period, so not the waveform's own
+            // shape).
+            auto env = [](const std::vector<float> &x, double from) {
+                std::vector<double> e;
+                for (double t = 0; t < 1.1; t += 0.001) {
+                    double s = 0;
+                    for (int j = 0; j < 576; ++j) {
+                        const double v = x[size_t((from + t) * 48000) + size_t(j)];
+                        s += v * v;
+                    }
+                    e.push_back(std::sqrt(s));
+                }
+                return e;
+            };
+            const auto a = env(sung.x, 0.5);
+            double best = -1;
+            double ms = 0;
+            for (double L = 0; L <= 15.0; L += 0.25) {
+                const auto b = env(mid, 0.5 + kMicAt + L / 1000.0);
+                double ma = 0, mb = 0;
+                for (size_t i = 0; i < a.size(); ++i)
+                    ma += a[i], mb += b[i];
+                ma /= double(a.size());
+                mb /= double(b.size());
+                double c = 0, va = 0, vb = 0;
+                for (size_t i = 0; i < a.size(); ++i) {
+                    c += (a[i] - ma) * (b[i] - mb);
+                    va += (a[i] - ma) * (a[i] - ma);
+                    vb += (b[i] - mb) * (b[i] - mb);
+                }
+                c /= std::sqrt(va * vb);
+                if (c > best)
+                    best = c, ms = L;
+            }
+            qInfo("beautify at %.0f Hz: the voice comes out %.2f ms late (a period is %.2f ms; correlation %.2f)", hz, ms,
+                  1000 / hz, best);
+            worst = std::max(worst, ms);
+            QVERIFY(best > 0.5);
+            QVERIFY2(ms <= 1000 / hz * 0.75 + 0.5, qPrintable(QString::number(ms)));
+        }
+        QVERIFY2(worst <= 10, qPrintable(QString::number(worst)));
+        // And the shifter's own account, grain by grain, of a bad singer's
+        // phrase (a low voice and a high one): half a period on average,
+        // never more than a period.
+        for (double shift : {-12.0, 0.0}) {
+            auto notes = badPhrase();
+            for (auto &n : notes)
+                if (n.midi > 0)
+                    n.midi += shift;
+            const auto bad = badSinger(notes, 41);
+            vocal::Source src;
+            vocal::PitchTracker pt;
+            pt.init(48000);
+            beautify::Beautifier b;
+            b.init(48000);
+            b.setLayers(beautify::Solo);
+            struct Key {
+                double snap(double m) const { return std::round(m); }
+                double above(double m) const { return m + 4; }
+            } key;
+            float l[32], r[32];
+            double sum = 0, most = 0, rel = 0;
+            int n = 0;
+            for (size_t i = 0; i + 32 <= bad.x.size(); i += 32) {
+                for (int j = 0; j < 32; ++j) {
+                    src.push(bad.x[i + size_t(j)]);
+                    pt.push(bad.x[i + size_t(j)]);
+                }
+                const bool v = pt.hz() > 0;
+                b.process(src, &bad.x[i], 32, v ? pt.hz() : 0.0f, v ? pt.period() : 0.0f, v, 1.0f, key, l, r, 1, 1);
+                if (b.delay() > 0 && v) {
+                    sum += b.delay();
+                    most = std::max(most, double(b.delay()));
+                    rel = std::max(rel, double(b.delay() * pt.hz()));
+                    ++n;
+                }
+            }
+            qInfo("beautify, the shifter's own delay round MIDI %.0f: %.2f ms on average, %.2f ms at most (%.2f of a period)",
+                  57 + shift, 1000 * sum / n, 1000 * most, rel);
+            QVERIFY(n > 1000);
+            QVERIFY2(most <= 0.0101, qPrintable(QString::number(most)));
+            QVERIFY2(rel <= 1.1, qPrintable(QString::number(rel)));
+        }
+        // A hiss: no pitch, no grains, no delay.
+        QTemporaryDir dir;
+        const std::string path = QDir(dir.path()).filePath("hiss.wav").toStdString();
+        std::vector<float> noise(size_t(48000 * 1.2) * 2, 0.0f);
+        Rng rng(9);
+        for (size_t i = size_t(48000 * 0.3); i < size_t(48000 * 1.1); ++i)
+            noise[2 * i] = noise[2 * i + 1] = 0.1f * rng.bipolar();
+        {
+            WavWriter w;
+            QVERIFY(w.open(path, 48000));
+            w.write(noise.data(), noise.size() / 2);
+        }
+        const auto take = testkit::play(std::string(kPage) + rights(Beautify) + "key 0.5 B\nkey 0.52 B\nmic 0.6 " + path + "\nend 1.8\n");
+        double best = -1e9;
+        int lag = -1;
+        for (int L = 0; L < 200; ++L) {
+            double c = 0;
+            for (size_t i = size_t(48000 * 0.5); i < size_t(48000 * 0.9); ++i)
+                c += double(noise[2 * i]) * take.left[i + size_t(kMicAt * 48000) + size_t(L)];
+            if (c > best)
+                best = c, lag = L;
+        }
+        qInfo("beautify: a hiss comes out %d samples late", lag);
+        QVERIFY2(lag <= 2, qPrintable(QString::number(lag)));
+    }
+
+    void beautifyFollowsTheKeyAndTheChord() {
+        // F4 sung 20 cents sharp, held: in A minor it is an F; with the key
+        // a fifth up (Ctrl+Right: E minor, where there is no F) an F♯; and
+        // following the Chords page (§), the chord's nearest tone, the E of
+        // A minor's triad. The page says which note it is on.
+        const auto bad = badSinger({{0.2, 1.4, 65, +20, 'a'}}, 7, 0.4f);
+        auto noteOf = [&](const testkit::Take &t) {
+            const auto p = pitchAnywhere(midOf(t), kMicAt + 0.8, kMicAt + 1.5);
+            double sum = 0;
+            int n = 0;
+            for (double m : p)
+                if (!std::isnan(m))
+                    sum += m, ++n;
+            return n ? sum / n : 0.0;
+        };
+        const double inA = noteOf(playBeautify(bad, "", 2));
+        const double inE = noteOf(playBeautify(bad, "key 0.56 Ctrl+Right\n", 2));
+        const double onChord = noteOf(playBeautify(bad, "key 0.56 `\n", 2));
+        qInfo("beautify: F4 +20 cents sung comes out at %.2f in A minor, %.2f in E minor, %.2f on the chord", inA, inE, onChord);
+        QVERIFY2(std::fabs(inA - 65) < 0.08, qPrintable(QString::number(inA)));
+        QVERIFY2(std::fabs(inE - 66) < 0.08, qPrintable(QString::number(inE)));
+        QVERIFY2(std::fabs(onChord - 64) < 0.08, qPrintable(QString::number(onChord)));
+        // And the page names the note and how far off it was sung.
+        StyleTake t;
+        QTemporaryDir dir;
+        const std::string path = QDir(dir.path()).filePath("f.wav").toStdString();
+        writeMono(path, bad.x);
+        static_cast<testkit::Take &>(t) = testkit::play(
+            std::string(kPage) + rights(Beautify) + "mic 0.6 " + path + "\nend 1.6\n", [&](Session &s) {
+                t.status = s.pageStatus();
+                t.help = s.pageHelp(s.page());
+            });
+        checkStyle(t, "BEAUTIFY");
+        QVERIFY2(t.status.contains(QLatin1String("doubled, B")), qPrintable(t.status));
+    }
+
+    void aBeautifiedLoopReplaysInTune() {
+        // Space loops what was heard: the phrase in tune. Of the loop's
+        // pitched moments, nearly all are within 15 cents of a note of the
+        // key, where the same singing looped naturally is mostly not.
+        const auto bad = badSinger(badPhrase(), 11);
+        auto loopOf = [&](int style) {
+            QTemporaryDir dir;
+            const std::string path = QDir(dir.path()).filePath("bad.wav").toStdString();
+            writeMono(path, bad.x);
+            const auto t = testkit::play(std::string(kPage) + rights(style) + "mic 0.6 " + path +
+                                         "\nkey 6.1 Space\nend 16\n");
+            return t;
+        };
+        const auto beautiful = loopOf(Beautify), natural = loopOf(0);
+        QCOMPARE(beautiful.view.parts[kVocal].playing, 0);
+        int nb = 0, nn = 0;
+        const double sb = inKeyShare(pitchAnywhere(midOf(beautiful), 7.0, 15.5), 15, &nb);
+        const double sn = inKeyShare(pitchAnywhere(midOf(natural), 7.0, 15.5), 15, &nn);
+        qInfo("beautify: the loop's pitched moments within 15 cents of the key: %.0f %% of %d (natural: %.0f %% of %d)",
+              sb * 100, nb, sn * 100, nn);
+        QVERIFY(nb > 200);
+        QVERIFY2(sb > 0.7, qPrintable(QString::number(sb)));
+        QVERIFY2(sn < 0.5, qPrintable(QString::number(sn)));
+    }
+
+    void beautifyBringsBreathsDownAndTamesTheEsses() {
+        // A breath between phrases comes out at least 6 dB further under
+        // the singing than it does in the natural voice; an "s" is no
+        // brighter against the vowel than it was, for all the air lifted
+        // over 10 kHz; and the whole is about as loud as the natural voice.
+        const std::vector<BadNote> notes = {{0.2, 0.6, 60, +30, 'a'}, {0.95, 0.4, 0, 0}, {1.5, 0.6, 62, -30, 'e', 's'},
+                                            {2.2, 0.6, 64, +25, 'a', 's'}};
+        const auto bad = badSinger(notes, 3);
+        const auto b = playBeautify(bad, "", 2), n = playBeautify(bad, "", 0, 0);
+        auto db = [](const testkit::Take &t, double a, double c) { return 20 * std::log10(t.rms(kMicAt + a, kMicAt + c) + 1e-9); };
+        const double breathB = db(b, 1.05, 1.25) - db(b, 0.35, 0.75), breathN = db(n, 1.05, 1.25) - db(n, 0.35, 0.75);
+        const double essB = bandDb(b, 5000, 12000, kMicAt + 1.42, kMicAt + 1.49, true) - db(b, 1.6, 2.0);
+        const double essN = bandDb(n, 5000, 12000, kMicAt + 1.42, kMicAt + 1.49, true) - db(n, 1.6, 2.0);
+        const double level = db(b, 0.3, 2.7) - db(n, 0.3, 2.7);
+        qInfo("beautify: the breath %.1f dB under the singing (natural %.1f); the s %.1f dB against the vowel "
+              "(natural %.1f); %.1f dB from the natural voice",
+              -breathB, -breathN, essB, essN, level);
+        dumpWav("breath_in", bad.x);
+        dumpWav("breath_out", b.left, &b.right);
+        QVERIFY2(breathB < breathN - 6, qPrintable(QString("%1 %2").arg(breathB).arg(breathN)));
+        QVERIFY2(essB < essN + 0.5, qPrintable(QString("%1 %2").arg(essB).arg(essN)));
+        QVERIFY2(std::fabs(level) < 3, qPrintable(QString::number(level)));
+    }
+
+    void beautifyDoublesWideOrSingsAHarmony() {
+        // DOUBLED (the default): two more of the singer, left and right, so
+        // the two sides differ; SOLO, they are one but for the plate; HARMONY: a third over
+        // the note in the key (C4 sung: E4) stands out of the mix.
+        const auto bad = badSinger({{0.2, 1.4, 60, -25, 'a'}}, 13, 0.5f);
+        auto width = [](const testkit::Take &t) {
+            double ll = 0, rr = 0, lr = 0;
+            for (size_t i = size_t((kMicAt + 0.5) * 48000); i < size_t((kMicAt + 1.4) * 48000); ++i) {
+                ll += double(t.left[i]) * t.left[i];
+                rr += double(t.right[i]) * t.right[i];
+                lr += double(t.left[i]) * t.right[i];
+            }
+            return lr / std::sqrt(ll * rr + 1e-20);
+        };
+        const auto doubled = playBeautify(bad, ""), harmony = playBeautify(bad, "", 1), solo = playBeautify(bad, "", 2);
+        const double third = peakPower(harmony, midiToHz(64), kMicAt + 0.5, kMicAt + 1.4) /
+                             peakPower(solo, midiToHz(64), kMicAt + 0.5, kMicAt + 1.4);
+        qInfo("beautify: left against right %.3f doubled, %.3f solo; the harmony lifts E4 %.1f dB", width(doubled),
+              width(solo), 10 * std::log10(third));
+        dumpWav("harmony_out", harmony.left, &harmony.right);
+        QVERIFY2(width(doubled) < 0.93, qPrintable(QString::number(width(doubled))));
+        QVERIFY2(width(solo) > 0.96, qPrintable(QString::number(width(solo))));
+        QVERIFY2(third > 10, qPrintable(QString::number(third)));
+    }
+
+    void beautifyStaysInsideBudget() {
+        // The beautifier alone, at its dearest (doubled, with a harmony, a
+        // plate), ten seconds of a sung line against the clock, with the
+        // pitch tracker it is fed by: a few percent of real time at most.
+        TENFOLD_TIMED();
+        const auto bad = badSinger(badPhrase(), 17);
+        vocal::Source src;
+        vocal::PitchTracker pt;
+        pt.init(48000);
+        beautify::Beautifier b;
+        b.init(48000);
+        b.setLayers(beautify::Harmony);
+        struct Key {
+            double snap(double m) const { return std::round(m); }
+            double above(double m) const { return m + 4; }
+        } key;
+        float l[32], r[32];
+        double sink = 0;
+        // (The thread's own time, not the clock's: other work on a busy
+        // machine isn't counted against it.)
+        auto cpu = [] {
+            timespec ts{};
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+            return double(ts.tv_sec) + 1e-9 * double(ts.tv_nsec);
+        };
+        const double t0 = cpu();
+        for (int pass = 0; pass < 2; ++pass)
+            for (size_t i = 0; i + 32 <= bad.x.size(); i += 32) {
+                for (int j = 0; j < 32; ++j) {
+                    src.push(bad.x[i + size_t(j)]);
+                    pt.push(bad.x[i + size_t(j)]);
+                }
+                std::fill(l, l + 32, 0.0f);
+                std::fill(r, r + 32, 0.0f);
+                const bool v = pt.hz() > 0;
+                b.process(src, &bad.x[i], 32, v ? pt.hz() : 0.0f, v ? pt.period() : 0.0f, v, 1.0f, key, l, r, 1, 1);
+                sink += l[0];
+            }
+        const double secs = 2.0 * double(bad.x.size()) / 48000.0;
+        const double share = (cpu() - t0) / secs;
+        qInfo("beautify: %.2f %% of real time", share * 100);
+        QVERIFY(std::isfinite(sink));
+        QVERIFY2(share < 0.03, qPrintable(QString::number(share)));
+    }
+
+    void beautifyGetsASongsNotesRight() {
+        // A tune of 22 notes in A minor, low and an octave up, sung badly,
+        // many of them between two semitone neighbours (B and C, E and F),
+        // drifting so far that a few of them are sung nearer the neighbour:
+        // each held note (its median, from 150 ms in) comes out on the note
+        // nearest what was sung, but for two at most; as many on the note
+        // meant as were sung nearest it, but for one; and hardly a moment
+        // of any held note off its note (no flips).
+        for (int up : {0, 12}) {
+            auto notes = badSong();
+            for (auto &n : notes)
+                if (n.midi > 0)
+                    n.midi += up;
+            const auto bad = badSinger(notes, up ? 202 : 101);
+            const auto out = playBeautify(bad, "");
+            const auto mid = midOf(out);
+            int right = 0, total = 0, frames = 0, wrong = 0, rightBefore = 0, asSung = 0;
+            for (const auto &n : notes) {
+                if (n.midi <= 0)
+                    continue;
+                ++total;
+                auto median = [&](const std::vector<double> &p) {
+                    std::vector<double> v;
+                    for (double m : p)
+                        if (!std::isnan(m))
+                            v.push_back(m);
+                    std::sort(v.begin(), v.end());
+                    return v.empty() ? 0.0 : v[v.size() / 2];
+                };
+                // (What the singer sang, by its median: the note nearest it
+                // in A minor is what a tuner that heard the whole note
+                // first would choose.)
+                static const bool key[12] = {true, false, true, false, true, true, false, true, false, true, false, true};
+                const double sung = median(pitchNear(bad.x, n.t + 0.15, n.t + n.dur - 0.04, n.midi));
+                int heard = int(std::lround(sung));
+                if (!key[((heard % 12) + 12) % 12])
+                    heard += sung > heard ? 1 : -1;
+                const auto p = pitchNear(mid, kMicAt + n.t + 0.15, kMicAt + n.t + n.dur - 0.04, n.midi);
+                const double out = median(p);
+                right += std::fabs(out - n.midi) < 0.5;
+                rightBefore += std::fabs(sung - n.midi) < 0.5;
+                asSung += std::fabs(out - heard) < 0.5;
+                if (qEnvironmentVariableIsSet("TENFOLD_BEAUTIFY_DEBUG"))
+                    qInfo("  %.2f meant %.0f, sung %.2f, out %.2f", n.t, n.midi, sung, out);
+                for (double m : p)
+                    if (!std::isnan(m))
+                        ++frames, wrong += std::fabs(m - out) > 0.5;
+            }
+            qInfo("beautify, a song %s: %d of %d notes on the note meant (sung: %d nearest it), %d on the note nearest "
+                  "what was sung; %.1f %% of held moments off their note",
+                  up ? "an octave up" : "low", right, total, rightBefore, asSung, 100.0 * wrong / std::max(1, frames));
+            dumpWav(up ? "song_high_out" : "song_low_out", out.left, &out.right);
+            QVERIFY2(asSung >= total - 2, qPrintable(QString::number(asSung)));
+            QVERIFY2(right >= rightBefore - 1, qPrintable(QString::number(right)));
+            QVERIFY2(wrong < frames * 4 / 100, qPrintable(QString::number(wrong)));
+        }
+    }
+
+    void beautifyNeverClicksWhenTheTrackerJumps() {
+        // A voice whose pitch the tracker loses and finds again an octave
+        // away, or which leaps two octaves at once (a real voice's onset,
+        // a yodel's break): what comes out has nothing over 12 kHz that
+        // the natural voice doesn't, no step of a grain started part way.
+        std::vector<BadNote> notes = {{0.2, 0.3, 45, 0, 'o'}, {0.5, 0.3, 69, 0, 'o', 0, true},
+                                      {0.8, 0.3, 57, 0, 'a', 0, true}, {1.1, 0.3, 81, 0, 'a', 0, true},
+                                      {1.4, 0.4, 45, 0, 'o', 0, true}};
+        auto bad = badSinger(notes, 61, 0.3f);
+        // (Abrupt: each leap made within a period, no slide.)
+        const auto b = playBeautify(bad, "", 2), n = playBeautify(bad, "", 0, 0);
+        const double hb = bandDb(b, 12000, 23000, kMicAt + 0.2, kMicAt + 1.8, true),
+                     hn = bandDb(n, 12000, 23000, kMicAt + 0.2, kMicAt + 1.8, true);
+        // And no single-sample tick: the largest jump between samples
+        // against the signal's own largest slope.
+        auto tick = [](const testkit::Take &t) {
+            double worst = 0, typical = 0;
+            for (size_t i = size_t((kMicAt + 0.2) * 48000) + 2; i < size_t((kMicAt + 1.8) * 48000); ++i) {
+                const double d2 = std::fabs(t.left[i] - 2 * t.left[i - 1] + t.left[i - 2]);
+                worst = std::max(worst, d2);
+                typical += d2;
+            }
+            return worst / (typical / (1.6 * 48000));
+        };
+        qInfo("beautify, leaps: over 12 kHz %.1f dB (natural %.1f); the sharpest corner %.0f times the typical "
+              "(natural %.0f)",
+              hb, hn, tick(b), tick(n));
+        QVERIFY2(hb < hn + 6, qPrintable(QString("%1 %2").arg(hb).arg(hn)));
+        QVERIFY2(tick(b) < 3 * tick(n) + 10, qPrintable(QString("%1 %2").arg(tick(b)).arg(tick(n))));
+    }
+
 private:
+    static constexpr double kMicAt = 0.6;
+    static void writeMono(const std::string &path, const std::vector<float> &x) {
+        WavWriter w;
+        w.open(path, 48000);
+        std::vector<float> st(x.size() * 2);
+        for (size_t i = 0; i < x.size(); ++i)
+            st[2 * i] = st[2 * i + 1] = x[i];
+        w.write(st.data(), x.size());
+    }
+    // An original tune in A minor, sung badly: a vowel to a word, some
+    // after an s or a t, legato runs, breaths.
+    static std::vector<BadNote> badSong() {
+        return {
+            {0.20, 0.40, 57, +38, 'a'},       {0.60, 0.30, 60, -42, 'e', 0, true}, {0.90, 0.30, 64, +30, 'i', 0, true},
+            {1.20, 0.70, 62, +44, 'o', 0, true}, {1.95, 0.35, 0, 0},               {2.35, 0.30, 60, -35, 'a', 's'},
+            {2.65, 0.30, 59, +28, 'e', 0, true}, {2.95, 0.30, 57, -40, 'u', 0, true}, {3.25, 1.10, 59, +33, 'a', 0, true},
+            {4.40, 0.40, 0, 0},               {4.85, 0.30, 64, -30, 'o', 't'},     {5.15, 0.30, 65, +42, 'a', 0, true},
+            {5.45, 0.30, 64, -38, 'e', 0, true}, {5.75, 0.30, 62, +25, 'i', 0, true}, {6.05, 0.30, 60, -45, 'a', 0, true},
+            {6.35, 0.30, 62, +35, 'o', 0, true}, {6.65, 1.40, 64, -30, 'a', 0, true}, {8.10, 0.40, 0, 0},
+            {8.55, 0.30, 69, +40, 'a', 's'},  {8.85, 0.30, 67, -35, 'e', 0, true}, {9.15, 0.30, 65, +30, 'o', 0, true},
+            {9.45, 0.30, 64, -42, 'a', 0, true}, {9.75, 0.30, 62, +38, 'i', 0, true}, {10.05, 0.30, 59, -30, 'e', 0, true},
+            {10.35, 1.60, 57, +30, 'a', 0, true},
+        };
+    }
+    static std::vector<BadNote> badPhrase() {
+        return {
+            {0.20, 0.45, 57, +38, 'a'},
+            {0.65, 0.40, 60, -42, 'e', 0, true},
+            {1.05, 0.40, 62, +30, 'i', 0, true},
+            {1.45, 0.70, 64, +44, 'o', 0, true},
+            {2.15, 0.30, 0, 0},
+            {2.50, 0.40, 62, -35, 'a', 's'},
+            {2.90, 0.40, 60, +28, 'e', 0, true},
+            {3.30, 0.40, 59, -40, 'u', 0, true},
+            {3.70, 1.60, 57, +33, 'a', 0, true},
+        };
+    }
+    // The take through BEAUTIFY (B pressed `bs` times first), the bad
+    // singer into the microphone from kMicAt.
+    static testkit::Take playBeautify(const BadTake &bad, const std::string &extra, int bs = 0, int style = Beautify) {
+        QTemporaryDir dir;
+        const std::string path = QDir(dir.path()).filePath("bad.wav").toStdString();
+        writeMono(path, bad.x);
+        std::string script = std::string(kPage) + rights(style);
+        for (int k = 0; k < bs; ++k)
+            script += "key " + std::to_string(0.5 + 0.02 * k) + " B\n";
+        script += extra + "mic " + std::to_string(kMicAt) + " " + path + "\nend " +
+                  std::to_string(kMicAt + double(bad.x.size()) / 48000.0) + "\n";
+        auto t = testkit::play(script);
+        return t;
+    }
+
     // The styles by their place on Left / Right (after the page's own six).
-    enum { Talk = 6, Throat, Sitar, Gamelan, Screwed, Riot, Growl };
+    enum { Talk = 6, Throat, Sitar, Gamelan, Screwed, Riot, Growl, Beautify };
     // A script followed for feedback: when the page first dipped the
     // monitor to listen and when it muted it, how often, and what it said.
     struct Howl {

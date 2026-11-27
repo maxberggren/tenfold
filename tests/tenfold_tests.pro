@@ -30,7 +30,7 @@ SOURCES += main.cpp framework_tests.cpp \
     ../src/tuning.cpp ../src/tutorial.cpp ../src/visual.cpp ../src/recorder.cpp \
     $$PARTS
 # Kargyraa, the vocal page's Tuvan growl.
-HEADERS += ../src/kargyraa.h ../src/howl.h ../src/outputkind.h
+HEADERS += ../src/kargyraa.h ../src/howl.h ../src/outputkind.h ../src/beautify.h
 SOURCES += kargyraa_tests.cpp
 # The stem separator (the network itself is checked when its weights are there).
 HEADERS += ../src/stems.h

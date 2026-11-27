@@ -63,6 +63,7 @@ HEADERS += \
     src/recorder.h \
     src/scream.h \
     src/kargyraa.h \
+    src/beautify.h \
     src/howl.h \
     src/outputkind.h \
     src/translator.h \

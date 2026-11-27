@@ -69,6 +69,9 @@ enum {
     GrowlUnder,     // the kargyraa's undertone (Hz; 0: silent)
     GrowlHarmonic,  // the harmonic of it the vowel's resonance is on (0: none)
     GrowlFocus,     // and where that resonance is (Hz)
+    BeautyNote,     // beautify: the note sung onto (MIDI; −1: none),
+    BeautySung,     // the voice's own pitch (MIDI; −1: none),
+    BeautyHeard,    // and the pitch it comes out at (−1: none)
     FeedbackHz,     // the howl's frequency while probed or muted (0: none)
     FeedbackCatches, // howls caught, ever
     FeedbackProbes, // suspects ducked to listen, ever
@@ -293,6 +296,12 @@ public:
         m_next = -1;
         m_mark = -1e18;
     }
+    // A copy read this many samples further back than it need be: a second
+    // singer a little behind the first (a double), never the lead.
+    void setDelay(float samples) { m_delay = std::max(0.0f, samples); }
+    // How far behind the voice the newest grain reads (samples): what a
+    // listener hears as the shifter's delay.
+    float lag() const { return m_lag; }
     // Adds n samples into out (×gain), the source's newest sample being
     // src.w − n + i at output sample i. period: the source's (0: unvoiced,
     // a fixed 6 ms grain); ratio: the new pitch over the old; formant: how
@@ -303,7 +312,7 @@ public:
         formant = clampf(formant, 0.5f, 2.0f);
         const float half = P / formant;               // the grain's half length, in output samples
         const float hop = P / ratio;                  // output samples between grain centres
-        const float lag = P * std::fabs(1.0f - 1.0f / formant) + 2.0f; // the least a grain may trail
+        const float lag = P * std::fabs(1.0f - 1.0f / formant) + 2.0f + m_delay; // the least a grain may trail
         const float norm = 1.0f / std::max(1.0f, ratio / formant);
         const int64_t now0 = src.w - n;
         for (int i = 0; i < n; ++i) {
@@ -312,6 +321,11 @@ public:
                 m_next = now + half;
             // A grain whose window opens now: its centre is half a window on.
             while (now >= m_next - half) {
+                // (A grain whose window would have opened in the past, the
+                // period having grown since the last was laid out, opens
+                // now instead: never part way through, a step.)
+                if (m_next - half < now - 1.0)
+                    m_next = now + half;
                 const double centre = m_next;
                 // The latest grid point this grain can be read from without
                 // reading ahead of what has been heard.
@@ -324,6 +338,7 @@ public:
                     mark = m_mark + std::max(0.0, k) * P;
                 }
                 m_mark = mark;
+                m_lag = float(centre - mark);
                 spawn(centre, mark, half, formant, P);
                 m_next += hop;
             }
@@ -369,6 +384,7 @@ private:
 
     Grain m_grains[16];
     double m_next = -1, m_mark = -1e18;
+    float m_delay = 0, m_lag = 0;
 };
 
 // --- a ceiling ------------------------------------------------------------------

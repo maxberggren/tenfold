@@ -4192,6 +4192,7 @@ private:
     // the Nordic ones (this is often played on a Swedish Mac keyboard) play
     // the same notes.
     static int pianoIndex(int key) {
+        key = console::unshifted(key);
         static const int rows[3][12] = {
             {Qt::Key_Z, Qt::Key_X, Qt::Key_C, Qt::Key_V, Qt::Key_B, Qt::Key_N, Qt::Key_M, Qt::Key_Comma,
              Qt::Key_Period, Qt::Key_Slash, 0, 0},

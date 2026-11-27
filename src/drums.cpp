@@ -417,7 +417,7 @@ public:
             return true;
         }
         for (int i = 0; i < kKeyPadCount; ++i) {
-            if (kKeyPads[i].key != k.key)
+            if (kKeyPads[i].key != console::unshifted(k.key))
                 continue;
             if (k.repeat)
                 return true;

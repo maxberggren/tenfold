@@ -42,6 +42,12 @@ void loadFonts();
 // Every label, help line, tutorial step and notice goes through this.
 QString keyNames(const QString &text);
 
+// A punctuation key as it is unshifted on a US keyboard: Shift+, arrives
+// as <, Shift+; as :, and so on. Pages that play notes from those keys and
+// take Shift as an accent look them up by this, on press and on release,
+// so an accent plays and a key let go after Shift doesn't leave a note on.
+int unshifted(int key);
+
 QFont font(int px, bool bold = false);
 
 // Arrows and key symbols (← → ↑ ↓ ⇧ ↵ ⏎ ◀ ▶ ▲ ▼ ↕ ↔) are drawn by the

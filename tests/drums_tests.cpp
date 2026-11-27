@@ -368,10 +368,49 @@ class DrumsTests : public QObject {
     Q_OBJECT
     // The tests bin/test runs while developing; the rest run with --full.
     Q_CLASSINFO("dev",
-                "fingersPlayAndStayFinite velocityMatters theKickIsTunedToTheKey keysArePads spaceLoopsTheDrums "
+                "fingersPlayAndStayFinite velocityMatters theKickIsTunedToTheKey keysArePads shiftedPunctuationPlaysAndLetsGo spaceLoopsTheDrums "
                 "clipsDontDoubleWhatWasJustPlayedLive patternsAreWhatTheKitsPromise aSongKeepsTheDrumsSettings "
                 "aSongFileOfNonsenseLeavesTheDrumsSane anyDegreeAClipSaysIsSafe")
 private slots:
+    // Shift+, arrives as <, Shift+. as >: an accent still plays the pad,
+    // and a key let go after Shift (or before it) lets the pad go. On the
+    // Lead page the same for its piano rows.
+    void shiftedPunctuationPlaysAndLetsGo() {
+        for (int page : {0, 3}) {
+            Studio studio(48000.0f);
+            studio.setTimeOrigin(0);
+            setScriptClock(0);
+            Session s(&studio);
+            s.setClock(&scriptClock);
+            s.setPage(page);
+            float buf[384 * 2];
+            int tick = 0;
+            auto run = [&](int ticks) {
+                for (int i = 0; i < ticks; ++i) {
+                    setScriptClock(++tick / 125.0);
+                    s.refresh();
+                    studio.render(buf, 384);
+                }
+                s.refresh();
+            };
+            auto voices = [&] { return s.view().parts[page].voices; };
+            run(5);
+            // Down with Shift (as <), up without it (as ,): plays, then goes.
+            QVERIFY(s.key(KeyEvent{Qt::Key_Less, Qt::ShiftModifier, true, false, QStringLiteral("<")}));
+            run(40);
+            QVERIFY2(voices() > 0, qPrintable(QString::number(page)));
+            s.key(KeyEvent{Qt::Key_Comma, 0, false, false, QStringLiteral(",")});
+            run(400);
+            QVERIFY2(voices() == 0, qPrintable(QString("page %1 voices %2").arg(page).arg(voices())));
+            // Down as ., up as > (Shift came while it was held).
+            s.key(KeyEvent{Qt::Key_Period, 0, true, false, QStringLiteral(".")});
+            run(40);
+            QVERIFY(voices() > 0);
+            s.key(KeyEvent{Qt::Key_Greater, Qt::ShiftModifier, false, false, QStringLiteral(">")});
+            run(400);
+            QVERIFY2(voices() == 0, qPrintable(QString("page %1 voices %2").arg(page).arg(voices())));
+        }
+    }
     void kicksPlayedAlongArentLayeredTwice() {
         // Four kicks looped; then the kick played along with the loop and a
         // snare between, layered with Space: the layer brings the snare, and

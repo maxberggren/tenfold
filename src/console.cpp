@@ -30,6 +30,19 @@ void loadFonts() {
         QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/NotoSansMono-%1.ttf").arg(QLatin1String(weight)));
 }
 
+int unshifted(int key) {
+    switch (key) {
+    case Qt::Key_Less: return Qt::Key_Comma;
+    case Qt::Key_Greater: return Qt::Key_Period;
+    case Qt::Key_Question: return Qt::Key_Slash;
+    case Qt::Key_Colon: return Qt::Key_Semicolon;
+    case Qt::Key_QuoteDbl: return Qt::Key_Apostrophe;
+    case Qt::Key_BraceLeft: return Qt::Key_BracketLeft;
+    case Qt::Key_BraceRight: return Qt::Key_BracketRight;
+    default: return key;
+    }
+}
+
 QFont font(int px, bool bold) {
     QFont f("Noto Sans Mono");
     f.setPixelSize(std::max(8, px));

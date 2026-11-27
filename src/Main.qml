@@ -539,9 +539,41 @@ ApplicationWindow {
                                     cursorShape: nextBox.acts ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     onClicked: if (!backend.doNextStep() && nextText.padTip) backend.togglePlay()
                                 }
+                                // ✕: no more steps, every control out now (for good, as an
+                                // unfolded control does).
+                                Rectangle {
+                                    id: nextClose
+                                    z: 2
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.rightMargin: -4
+                                    anchors.topMargin: -2
+                                    width: 22
+                                    height: 22
+                                    color: closeMouse.containsMouse ? win.pageColor : "transparent"
+                                    border.color: win.pageColor
+                                    border.width: 1
+                                    opacity: closeMouse.containsMouse ? 1 : 0.7
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "✕"
+                                        color: closeMouse.containsMouse ? "#0a0806" : win.pageColor
+                                        font.family: win.mono
+                                        font.pixelSize: 13
+                                        font.weight: Font.Bold
+                                    }
+                                    MouseArea {
+                                        id: closeMouse
+                                        anchors.fill: parent
+                                        anchors.margins: -4
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: backend.uiLevel = 2
+                                    }
+                                }
                                 Text {
                                     id: nextText
-                                    width: parent.width
+                                    width: parent.width - nextClose.width - 6
                                     // Once a couple of loops go round: the trackpad, if not taken yet.
                                     // Only on an instrument's page, where fingers would play it.
                                     readonly property bool padTip: !win.playing && backend.partLoops.length >= 2

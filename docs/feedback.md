@@ -50,8 +50,8 @@ Singing can look like that (a pure "oo", a straight note), so a suspect is
 tested by taking the loop apart: the monitor dips 30 dB for a moment. A
 howl, with nothing left to feed it, falls 10 dB; given the monitor back, it
 returns. Both, and the monitor is muted, faded out in 6 ms, and stays muted:
-"FEEDBACK: MIC MUTED" on the page, the monitor chip red, and the notice
-"Feedback: tenfold muted the mic — use headphones". Plugging in headphones
+"FEEDBACK: MONITOR MUTED" on the page, the monitor chip red, and the notice
+"Feedback: tenfold muted your monitor — use headphones". Plugging in headphones
 brings the monitor back, or Shift+M. A voice doesn't fall when the monitor
 dips, so a wrong suspect costs one short dip, and that note is left alone
 while it lasts.

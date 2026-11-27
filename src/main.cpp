@@ -359,7 +359,7 @@ int main(int argc, char *argv[]) {
     // Settings (Play or Studio, the first start seen) in
     // ~/.config/tenfold/tenfold.conf, not under "Unknown Organization".
     app.setOrganizationName("tenfold");
-    app.setApplicationVersion("0.5.0");
+    app.setApplicationVersion("0.6.0");
     app.setDesktopFileName("tenfold");
     app.setWindowIcon(QIcon::fromTheme("tenfold"));
     QQuickStyle::setStyle("Material");

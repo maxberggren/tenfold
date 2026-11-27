@@ -40,6 +40,9 @@ namespace tf {
 
 namespace {
 
+// "1 bar", "40 bars".
+QString barsText(int n) { return n == 1 ? QStringLiteral("1 bar") : QStringLiteral("%1 bars").arg(n); }
+
 constexpr int P = kMaxParts;
 // A breakdown's param: the parts it mutes, a bit each, and above them how
 // many bars it lasts.
@@ -430,6 +433,13 @@ public:
         case Qt::Key_V: variation(ctx); return true;
         case Qt::Key_I: autoArrange(shift, ctx); return true;
         case Qt::Key_Space: // on the part pages Space records a loop; here, the song
+            // Shift+Space is a new loop on the part pages; here there is no
+            // loop to make, and it never takes the song back (Shift+O does).
+            if (shift)
+                ctx.notice(QStringLiteral("Space records the song as you play; Shift+O takes a song edit back"));
+            else
+                toggleRecord(ctx);
+            return true;
         case Qt::Key_O:
             if (shift)
                 undoSong(ctx);
@@ -2136,7 +2146,7 @@ private:
         if (end - start < phrase / 2)
             end += phrase;
         startBuild(start, end - start, false, ctx);
-        ctx.notice(QStringLiteral("BUILD: %1 bars to the drop").arg(end - start));
+        ctx.notice(QStringLiteral("BUILD: %1 to the drop").arg(barsText(end - start)));
     }
     void startBuild(int bar, int bars, bool song, ControlContext &ctx) {
         Move b;
@@ -2535,8 +2545,8 @@ private:
                     }
                     sections();
                 }
-                ctx.notice(m_playing ? QStringLiteral("Song: %1 bars, punched in").arg(m_song.length())
-                                     : QStringLiteral("Song: %1 bars · P plays it").arg(m_song.length()));
+                ctx.notice(m_playing ? QStringLiteral("Song: %1, punched in").arg(barsText(m_song.length()))
+                                     : QStringLiteral("Song: %1 · P plays it").arg(barsText(m_song.length())));
             }
             if (m_recording && b - m_origin >= kMaxSongBars)
                 m_recStopBar = b + 1;
@@ -3097,6 +3107,16 @@ private:
         if (m_recording) {
             m_recStopBar = nextBar();
             ctx.notice(QStringLiteral("Recording ends on the bar"));
+            return;
+        }
+        // A song is made of loops: with none in any slot there is nothing
+        // to record (it would be a song of empty bars).
+        bool any = m_playing;
+        for (int p = 0; p < m_parts && !any; ++p)
+            for (const ClipView &c : ctx.studio().parts[p].clips)
+                any = any || c.state != ClipView::Empty;
+        if (!any) {
+            ctx.notice(QStringLiteral("Nothing to record yet: make a loop on a part's page, then Space here records the song"));
             return;
         }
         m_recArmBar = nextBar();

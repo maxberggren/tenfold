@@ -176,8 +176,28 @@ class ArrangeTests : public QObject {
     Q_CLASSINFO("dev",
                 "fingersPlayAndStayFinite aSceneLaunchesOnTheBar aMouseClickStopsAClipAndAnotherStartsIt "
                 "aRecordedSongReplaysBarByBarFromAnyPage deleteClearsAClipAndCtrlZBringsItBack "
-                "aSongFileOfNonsenseOpensSane withoutPadsTheBreakdownIsTheVocalAlone")
+                "aSongFileOfNonsenseOpensSane withoutPadsTheBreakdownIsTheVocalAlone shiftSpaceLeavesTheSongAndSpaceNeedsALoop")
 private slots:
+    // Shift+Space is a new loop on the part pages; here it must not take
+    // the song back (it once fell through to Shift+O). And Space with no
+    // loop anywhere records no song of empty bars.
+    void shiftSpaceLeavesTheSongAndSpaceNeedsALoop() {
+        testkit::play(loops("key 15.2 I\nkey 15.4 I\nkey 16 I\nkey 16.2 I\nkey 18 Shift+Space\nend 19\n"), [](Session &s) {
+            QVERIFY(s.songBars() > 0);
+            QVERIFY2(!s.notice(nullptr).contains(QStringLiteral("earlier song")), qPrintable(s.notice(nullptr)));
+        });
+        // Two tracks written; Shift+Space keeps the second (Shift+O would
+        // bring back the first), so the song still plays as written.
+        const auto kept = testkit::play(loops("key 15.2 I\nkey 15.4 I\nkey 16 I\nkey 16.2 I\nkey 18 Shift+Space\nend 22\n"));
+        bool anyPlaying = false;
+        for (int p = 0; p < 4; ++p)
+            anyPlaying |= kept.view.parts[p].playing >= 0;
+        QVERIFY(anyPlaying);
+        testkit::play("page 0 0\nkey 0.5 Space\nkey 3 Space\nend 4\n", [](Session &s) {
+            QCOMPARE(s.songBars(), 0);
+            QVERIFY2(s.notice(nullptr).startsWith(QStringLiteral("Nothing to record")), qPrintable(s.notice(nullptr)));
+        });
+    }
     // Shift held, a tap on another loop of a part that plays: the two play
     // together from the next bar, layered into a free slot; both originals
     // stay as they were.

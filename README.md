@@ -103,9 +103,9 @@ playing starts a new one beside it.
 
 **Sounds.** The row of sounds under the pad ends in **+N MORE** and **→**
 (the next sound, as → is). +N MORE opens the sound browser: every sound
-the page has, as tiles with a few words each; touching one plays a bar of
-it in the key, so it is heard before it is kept (Enter keeps, Esc goes
-back to the one before).
+the page has, as tiles with a few words each. A click chooses one and a
+bar of it plays in the key; ← → step through them, each heard (Enter
+keeps it, Esc goes back to the one before).
 
 Click **Take the trackpad**, the bright button at the top of the panel, to
 hand the trackpad to tenfold. Esc gives it back, and with the trackpad not

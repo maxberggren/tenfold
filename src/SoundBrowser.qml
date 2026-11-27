@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Layouts
 
 // The sound browser: every sound the page has, as tiles over the pad. A tile
-// touched is chosen and heard at once (a bar of the page's own playing);
-// KEEP closes the browser with it, BACK puts the sound it opened with back.
-// The arrows step through the tiles too, Return keeps and Esc goes back.
+// clicked is chosen at once: the browser closes and a bar of the page's own
+// playing is heard in it. The arrows step through the tiles, hearing each,
+// Return keeps the one lit and Esc goes back to the sound it opened with.
 Rectangle {
     id: browser
     property color tint: "#FFB000"
@@ -81,7 +81,7 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
-            text: qsTr("Touch a sound to hear it. Touch it again, or Keep, to play with it.")
+            text: qsTr("Click a sound to play with it. Esc keeps the one you had.")
             color: browser.tint
             opacity: 0.8
             font.family: "Noto Sans Mono"
@@ -165,7 +165,10 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: tile.lit && !backend.auditioning ? browser.keep() : backend.chooseSound(tile.index, true)
+                        onClicked: {
+                            backend.chooseSound(tile.index, true)
+                            browser.keep()
+                        }
                     }
                 }
             }
@@ -174,26 +177,9 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            PanelButton {
-                Layout.preferredWidth: 220
-                Layout.preferredHeight: 40
-                label: browser.current >= 0 ? qsTr("Keep %1").arg(browser.names[browser.current] || "") : qsTr("Keep")
-                key: "Enter"
-                color: browser.tint
-                active: true
-                onClicked: browser.keep()
-            }
-            PanelButton {
-                Layout.preferredWidth: 160
-                Layout.preferredHeight: 40
-                label: qsTr("Back")
-                key: "Esc"
-                color: browser.tint
-                onClicked: browser.back()
-            }
             Item { Layout.fillWidth: true }
             Text {
-                text: qsTr("← → to step through")
+                text: qsTr("← → hear the next · Enter keeps it")
                 textFormat: Text.StyledText
                 color: browser.tint
                 opacity: 0.6

@@ -278,13 +278,12 @@ ApplicationWindow {
                                 border.color: tab.tint
                                 border.width: 2
                             }
+                            // The tab to go to next: filled softly in its own colour.
                             Rectangle {
                                 visible: tab.called
                                 anchors.fill: parent
-                                anchors.margins: -5
-                                color: "transparent"
-                                border.color: "#FFFFFF"
-                                border.width: 3
+                                anchors.margins: 2
+                                color: Qt.rgba(tab.tint.r, tab.tint.g, tab.tint.b, 0.3)
                             }
                             Text {
                                 x: 8
@@ -546,7 +545,7 @@ ApplicationWindow {
                                 Text {
                                     id: nextText
                                     width: parent.width
-                                    text: win.soundsVisible ? qsTr("Touch a tile to hear it. Enter keeps it, Esc goes back.") : backend.nextStep
+                                    text: win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.") : backend.nextStep
                                     color: win.pageColor
                                     font.family: win.mono
                                     font.pixelSize: 15

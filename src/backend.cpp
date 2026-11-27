@@ -50,9 +50,10 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
     }
 
     if (live) {
-        // A first start begins at the simplest level, with a style to pick;
-        // a player who has used tenfold before (a song kept at quit) keeps
-        // the whole studio until they choose otherwise.
+        // Play or Studio as the player left it (saved the moment it
+        // changes). A first start begins at Play, with a style to pick; a
+        // player who has used tenfold before (a song kept at quit) begins at
+        // Studio until they choose otherwise.
         QSettings settings;
         const bool known = !m_songs->autosavePath().isEmpty() && QFile::exists(m_songs->autosavePath());
         const int level = settings.value(QStringLiteral("level"), known ? 2 : 0).toInt();

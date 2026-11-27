@@ -309,6 +309,9 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     tf::console::loadFonts();
     app.setApplicationName("tenfold");
+    // Settings (Play or Studio, the first start seen) in
+    // ~/.config/tenfold/tenfold.conf, not under "Unknown Organization".
+    app.setOrganizationName("tenfold");
     app.setApplicationVersion("0.5.0");
     app.setDesktopFileName("tenfold");
     app.setWindowIcon(QIcon::fromTheme("tenfold"));

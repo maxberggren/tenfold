@@ -137,8 +137,8 @@ class Backend : public QObject {
     // The sound browser: the showing page's sounds, what each is, the one chosen.
     Q_PROPERTY(QStringList soundNames READ soundNames NOTIFY pageChanged)
     Q_PROPERTY(QStringList soundWhats READ soundWhats NOTIFY pageChanged)
-    // The showing page draws a picture of each sound for its tile.
-    Q_PROPERTY(bool soundPictures READ soundPictures NOTIFY pageChanged)
+    // Per sound of the showing page: whether its tile has a picture.
+    Q_PROPERTY(QVariantList soundPictures READ soundPictures NOTIFY pageChanged)
     Q_PROPERTY(int soundIndex READ soundIndex NOTIFY changed)
     Q_PROPERTY(bool auditioning READ auditioning NOTIFY changed)
     // The LOOP button (Session::LoopState) and the next step for a newcomer.
@@ -319,7 +319,12 @@ public:
     QStringList soundNames() const;
     QStringList soundWhats() const;
     int soundIndex() const { return m_session->soundChoice(); }
-    bool soundPictures() const { return m_session->hasSoundPictures(); }
+    QVariantList soundPictures() const {
+        QVariantList out;
+        for (bool b : m_session->soundPictures())
+            out << b;
+        return out;
+    }
     bool auditioning() const { return m_session->auditioning(); }
     Q_INVOKABLE void chooseSound(int index, bool hear = true) { m_session->chooseSound(index, hear); }
     int loopState() const { return int(m_session->loopState()); }

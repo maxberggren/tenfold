@@ -655,9 +655,15 @@ public:
     void paint(QPainter &p, const PaintContext &pc) override;
     // The browser's picture of a kit: the page as it draws that kit (its
     // pads, or the one instrument it is), the kit put back after.
-    bool paintsSounds() const override { return true; }
+    // Only the kits that are one instrument (the hang, the udu…): a drum
+    // kit's sixteen pads look alike from one kit to the next.
+    static bool wholeKit(int kit) {
+        return kit == Hang || kit == SlitDrum || kit == Pipes || kit == Khishba || kit == Udu || kit == TablaPair ||
+               kit == Cuica;
+    }
+    bool paintsSound(int index) const override { return index >= 0 && index < KitCount && wholeKit(index); }
     bool paintSound(QPainter &p, const PaintContext &pc, int index) override {
-        if (index < 0 || index >= KitCount)
+        if (!paintsSound(index))
             return false;
         const int kit = m_kit;
         const console::Hotspots spots = m_spots;
@@ -965,8 +971,7 @@ private:
     void paintTabla(QPainter &p, const PaintContext &pc, const Harmony &harm, const Gen *const *genOn);
 
     // The kits that are one instrument over the whole pad, not a grid.
-    bool whole() const { return m_kit == Hang || m_kit == SlitDrum || m_kit == Pipes || m_kit == Khishba || m_kit == Udu ||
-                                 m_kit == TablaPair || m_kit == Cuica; }
+    bool whole() const { return wholeKit(m_kit); }
 
     // --- where on the pad ------------------------------------------------------
 

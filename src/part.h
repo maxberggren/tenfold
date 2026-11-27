@@ -607,7 +607,8 @@ public:
     // A picture of the page with that sound chosen, for its tile in the
     // browser, painted into pc.pad (a small one) without changing what is
     // chosen. False: the page has no picture of its sounds.
-    virtual bool paintsSounds() const { return false; }
+    // Which of its sounds have a picture (paintSound draws them).
+    virtual bool paintsSound(int index) const { (void)index; return false; }
     virtual bool paintSound(QPainter &p, const PaintContext &pc, int index) {
         (void)p, (void)pc, (void)index;
         return false;

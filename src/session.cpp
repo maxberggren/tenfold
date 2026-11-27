@@ -3041,10 +3041,16 @@ QImage Session::soundPicture(int index, QSize size) {
     return drawn ? image : QImage();
 }
 
-bool Session::hasSoundPictures() const {
+std::vector<bool> Session::soundPictures() const {
     std::lock_guard lock(m_lock);
     const Page &p = *m_pages[size_t(m_page)];
-    return p.part >= 0 && p.spec.control->paintsSounds();
+    std::vector<bool> out;
+    if (p.part < 0)
+        return out;
+    const int n = int(p.spec.control->soundChoices().size());
+    for (int i = 0; i < n; ++i)
+        out.push_back(p.spec.control->paintsSound(i));
+    return out;
 }
 
 }

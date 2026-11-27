@@ -96,7 +96,8 @@ Rectangle {
             // As many across as keep a tile about 180 px wide, the rows
             // sharing the height.
             // Tiles with a picture want more room across.
-            readonly property int tileWidth: backend.soundPictures ? 230 : 180
+            readonly property bool anyPicture: backend.soundPictures.indexOf(true) >= 0
+            readonly property int tileWidth: anyPicture ? 230 : 180
             columns: Math.max(2, Math.min(6, Math.floor((width + columnSpacing) / (tileWidth + columnSpacing))))
             readonly property int rows: Math.ceil(browser.count / columns)
             columnSpacing: 8
@@ -112,7 +113,7 @@ Rectangle {
                     Layout.fillHeight: true
                     Layout.preferredWidth: 180
                     Layout.minimumHeight: 34
-                    Layout.maximumHeight: backend.soundPictures ? 140 : 96
+                    Layout.maximumHeight: grid.anyPicture ? 140 : 96
 
                     Rectangle {
                         anchors.fill: parent
@@ -138,7 +139,7 @@ Rectangle {
                     // or the one instrument it is), at the tile's right.
                     Rectangle {
                         id: picture
-                        visible: backend.soundPictures
+                        visible: backend.soundPictures[tile.index] === true
                         anchors.right: parent.right
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom

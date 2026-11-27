@@ -251,7 +251,7 @@ public:
     // The browser's pictures: the showing page drawn with that sound, at
     // that size (empty where the page has none), and whether it has them.
     QImage soundPicture(int index, QSize size);
-    bool hasSoundPictures() const;
+    std::vector<bool> soundPictures() const; // per sound: has it a picture
 
     // The LOOP button: what Space would do on the showing page now.
     //   None     a page that makes no loops (the Song page, the picture)

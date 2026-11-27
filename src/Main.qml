@@ -84,7 +84,9 @@ ApplicationWindow {
             return Math.abs(Math.log(Math.max(20, padW) / padH / 1.6)) + (fits ? 0 : 1) + (padW < 480 ? 2 : 0)
         }
         const costs = [cost(w - margin - sideWidth, h, h >= sideHeight),
-                       cost(w - margin - wideWidth, h, h >= wideHeight) + 0.15,
+                       // (Two columns beside the pad read badly in a wide window:
+                       // never chosen; a short column scrolls instead.)
+                       99,
                        cost(w, h - 10 - stackHeight, h - 10 - stackHeight - 115 >= 200) + 0.1]
         return costs.indexOf(Math.min(costs[0], costs[1], costs[2]))
     }

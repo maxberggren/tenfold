@@ -1472,13 +1472,8 @@ bars:
         // playing that never repeated is a performance, not a loop; a loop
         // already playing that is longer still sets the length below. Sound
         // that carries itself (a build into its drop) stays whole.
-        // Bars go 1, 2, 4, 8, 16, as ↑↓ step them: three bars played loop
-        // as four (the first bar quiet until the playing starts).
         const double played = std::ceil((end - beatFirst - 0.25) / kBeatsPerBar);
-        double bars = 1;
-        while (bars < played && bars < (carried ? 16.0 : 4.0))
-            bars *= 2;
-        length = kBeatsPerBar * bars;
+        length = kBeatsPerBar * std::clamp(played, 1.0, carried ? 16.0 : 4.0);
     }
     // Over loops already playing, a take long enough to cover the longest
     // of them takes its length: a bass line over a four-bar progression

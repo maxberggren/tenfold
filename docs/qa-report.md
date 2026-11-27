@@ -12,7 +12,7 @@ Each bug below is fixed on this branch, with a regression test, unless noted oth
 | 2 Song page Shift+Space | Shift+Space no longer undoes the song | `ArrangeTests::shiftSpaceLeavesTheSongAndSpaceNeedsALoop` |
 | 3 pause forgets loops | A pause keeps what it remembered of parts that aren't playing | `FrameworkTests::aLoopMadeWhilePausedKeepsThePausedLoops` |
 | 4 paused song opens silent | The song file keeps each part's `paused` slot and opens paused; Ctrl+P plays it | `FrameworkTests::aSongSavedPausedOpensReadyToPlay` |
-| 5 3-bar Shift+Space loop | A new loop takes only what was played since `m_loopSince`; loops are 1, 2, 4, 8 or 16 bars | `FrameworkTests::aNewLoopTakesOnlyThePlayingSinceTheLoop` |
+| 5 3-bar Shift+Space loop | A new loop takes only what was played since `m_loopSince`, so the repro now gives a 1-bar loop. I did **not** round lengths to 1/2/4/8/16 bars: a phrase played once keeps its own whole bars (3 stays 3), and an FX build with its drop is 3 bars by design. Rounding broke `LeadTests::theLandedTakeSaysWhatItBecame`, `ArrangeTests::aBuildBringsInTheFxLead` and `RisersTests::spaceRecordsABuildAndItsDrop`. | `FrameworkTests::aNewLoopTakesOnlyThePlayingSinceTheLoop` |
 | 6 FX help | Space and Shift+Space described the right way round | `RisersTests::spaceLayersAndShiftSpaceMakesANewLoop` |
 | 7 Sampler slot keys | F1–F8, Shift+F1–F8 and Backspace now work | `SamplerTests::theSlotKeysStopLaunchAndClear` |
 | 8 Lead F11 | Removed from the help (the window takes F11 for full screen) | text only |

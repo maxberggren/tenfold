@@ -890,8 +890,8 @@ private slots:
     }
 
     // Shift+Space just after a loop takes only what was played since it
-    // landed (the hits before are in that loop), and a loop is 1, 2, 4, 8
-    // or 16 bars, never three.
+    // landed (the hits before are in that loop): a bar played twice is a
+    // one-bar loop, not three bars reaching back into the first loop.
     void aNewLoopTakesOnlyThePlayingSinceTheLoop() {
         const char *s = "page 0 1\ntap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\nkey 2.52 Space\n"
                         "tap 3.1 0.55 0.5\ntap 3.6 0.75 0.5\ntap 4.1 0.55 0.5\ntap 4.6 0.75 0.5\nkey 5.12 Shift+Space\nend 8\n";
@@ -899,8 +899,8 @@ private slots:
         QCOMPARE(take.view.parts[0].playing, 1);
         QCOMPARE(take.view.parts[0].clips[1].events, 4);
         QCOMPARE(int(take.view.parts[0].clips[1].lengthBeats), 4);
-        // Ten loops in a row, each Shift+Space over the last: every one a
-        // power of two bars.
+        // Eight loops in a row, each Shift+Space over the last, the same
+        // bar each time: each is that one bar, never the bars before it.
         std::string ten = "page 0 1\n";
         double t = 0.5;
         for (int i = 0; i < 8; ++i) {
@@ -914,8 +914,8 @@ private slots:
         for (const ClipView &c : all.view.parts[0].clips) {
             if (c.state == ClipView::Empty)
                 continue;
-            const int bars = int(std::lround(c.lengthBeats / 4));
-            QVERIFY2(bars == 1 || bars == 2 || bars == 4 || bars == 8 || bars == 16, qPrintable(QString::number(c.lengthBeats)));
+            QVERIFY2(int(c.lengthBeats) == 4 && c.events == 4,
+                     qPrintable(QString("%1 beats, %2 events").arg(c.lengthBeats).arg(c.events)));
         }
     }
 

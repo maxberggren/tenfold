@@ -3,9 +3,11 @@
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/CoreAudio.h>
 
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 #include "dsp.h"
 #include "microphone.h"
@@ -71,6 +73,72 @@ float deviceMs(AudioObjectID device, bool input) {
                           deviceNumber(device, kAudioDevicePropertySafetyOffset, input) +
                           deviceNumber(device, kAudioDevicePropertyBufferFrameSize, input);
     return float(1000.0 * frames / rate);
+}
+
+constexpr UInt32 fourcc(const char (&c)[5]) {
+    return UInt32(uint8_t(c[0])) << 24 | UInt32(uint8_t(c[1])) << 16 | UInt32(uint8_t(c[2])) << 8 | UInt32(uint8_t(c[3]));
+}
+
+bool contains(const std::string &name, const char *word) {
+    std::string a = name, b = word;
+    for (auto *s : {&a, &b})
+        for (char &c : *s)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+    return a.find(b) != std::string::npos;
+}
+
+// What the default output is, speakers or headphones, as well as CoreAudio
+// says (StudioView::Output). The built-in output names its data source:
+// the internal speakers ('ispk') or the headphone jack ('hdpn'); on Apple
+// silicon the jack is a device of its own ("External Headphones"), so the
+// name decides where the data source says nothing. Bluetooth goes by its
+// name (AirPods, "Headphones", a "Speaker"); anything else (USB, HDMI,
+// AirPlay, a virtual device) is Unknown.
+int outputKind(AudioObjectID device) {
+    if (device == kAudioObjectUnknown)
+        return StudioView::OutputUnknown;
+    AudioObjectPropertyAddress where{kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal,
+                                     kAudioObjectPropertyElementMain};
+    UInt32 transport = 0, size = sizeof(transport);
+    AudioObjectGetPropertyData(device, &where, 0, nullptr, &size, &transport);
+    const std::string name = deviceName(device);
+    auto byName = [&]() {
+        if (contains(name, "headphone") || contains(name, "airpods") || contains(name, "headset") ||
+            contains(name, "earbud") || contains(name, "buds"))
+            return int(StudioView::OutputHeadphones);
+        if (contains(name, "speaker"))
+            return int(StudioView::OutputSpeakers);
+        return int(StudioView::OutputUnknown);
+    };
+    if (transport == kAudioDeviceTransportTypeBuiltIn) {
+        AudioObjectPropertyAddress src{kAudioDevicePropertyDataSource, kAudioDevicePropertyScopeOutput,
+                                       kAudioObjectPropertyElementMain};
+        UInt32 source = 0;
+        size = sizeof(source);
+        if (AudioObjectGetPropertyData(device, &src, 0, nullptr, &size, &source) == noErr) {
+            if (source == fourcc("ispk"))
+                return StudioView::OutputSpeakers;
+            if (source == fourcc("hdpn"))
+                return StudioView::OutputHeadphones;
+            return StudioView::OutputUnknown; // a line out, a digital out
+        }
+        // No data source (Apple silicon): "MacBook Pro Speakers" or
+        // "External Headphones".
+        return byName();
+    }
+    if (transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE)
+        return byName();
+    return StudioView::OutputUnknown;
+}
+
+const AudioObjectPropertyAddress kDefaultOutput{kAudioHardwarePropertyDefaultOutputDevice,
+                                                kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+const AudioObjectPropertyAddress kDataSource{kAudioDevicePropertyDataSource, kAudioDevicePropertyScopeOutput,
+                                             kAudioObjectPropertyElementMain};
+
+OSStatus onOutputChanged(AudioObjectID, UInt32, const AudioObjectPropertyAddress *, void *self) {
+    static_cast<CoreAudioOut *>(self)->watchOutput();
+    return noErr;
 }
 
 OSStatus onRender(void *self, AudioUnitRenderActionFlags *, const AudioTimeStamp *, UInt32, UInt32 frames,
@@ -144,6 +212,11 @@ bool CoreAudioOut::start() {
     if (const AudioObjectID out = defaultDevice(false); out != kAudioObjectUnknown)
         m_outMs = deviceMs(out, false);
 
+    // Speakers or headphones, now and whenever the default output or its
+    // data source (the jack) changes.
+    AudioObjectAddPropertyListener(kAudioObjectSystemObject, &kDefaultOutput, onOutputChanged, this);
+    watchOutput();
+
     if (!std::getenv("TENFOLD_NO_MIC") && !startInput()) {
         m_inputFailed = true;
         m_studio->setInput(StudioView::InputFailed);
@@ -214,7 +287,38 @@ bool CoreAudioOut::startInput() {
     return true;
 }
 
+void CoreAudioOut::watchOutput() {
+    const AudioObjectID device = defaultDevice(false);
+    AudioObjectID old;
+    {
+        std::lock_guard lock(m_watchLock);
+        old = m_watched;
+        m_watched = device;
+    }
+    // (Outside the lock, as in stop().)
+    if (old != device) {
+        if (old != kAudioObjectUnknown)
+            AudioObjectRemovePropertyListener(old, &kDataSource, onOutputChanged, this);
+        if (device != kAudioObjectUnknown)
+            AudioObjectAddPropertyListener(device, &kDataSource, onOutputChanged, this);
+    }
+    m_studio->setOutput(outputKind(device));
+}
+
 void CoreAudioOut::stop() {
+    if (m_output) {
+        // (Not under the lock: removing a listener waits for its callback,
+        // which may be waiting for the lock.)
+        AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &kDefaultOutput, onOutputChanged, this);
+        AudioObjectID watched;
+        {
+            std::lock_guard lock(m_watchLock);
+            watched = m_watched;
+            m_watched = kAudioObjectUnknown;
+        }
+        if (watched != kAudioObjectUnknown)
+            AudioObjectRemovePropertyListener(watched, &kDataSource, onOutputChanged, this);
+    }
     if (m_input) {
         auto unit = static_cast<AudioUnit>(m_input);
         AudioOutputUnitStop(unit);

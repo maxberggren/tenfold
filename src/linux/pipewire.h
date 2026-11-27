@@ -48,4 +48,8 @@ private:
 // both.
 int measurePipeWireLatency(bool json);
 
+// `tenfold output`: what the default sink plays through, speakers or
+// headphones, as the Vocal page's monitor sees it, and every sink's.
+int describePipeWireOutput();
+
 }

@@ -32,6 +32,8 @@ int runSystemCommand(int argc, char **argv) {
     // no Qt, no environment.
     if (argc == 3 && std::strcmp(argv[1], "helper") == 0)
         return runHelper(argv[2]);
+    if (argc == 2 && std::strcmp(argv[1], "output") == 0)
+        return describePipeWireOutput();
     return -1;
 }
 

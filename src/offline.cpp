@@ -44,7 +44,7 @@ QKeySequence keysOf(const std::string &name) {
 
 struct Event {
     double t = 0, t2 = 0;
-    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, Mic, Voice, Drop, End } kind = End;
+    enum Kind { Down, Move, Glide, Up, Click, Key, Page, Tempo, Mouse, Button, Mic, Voice, Drop, Output, Room, End } kind = End;
     int keyMode = 0; // 0 press, 1 down, 2 up
     int id = 0;
     float x = 0, y = 0;
@@ -53,6 +53,7 @@ struct Event {
     // A sung word (voice): pitch from hz to `to`, its level and vowel; a
     // WAV (mic): its gain.
     float hz = 220, to = NAN, level = 0.3f;
+    float vibrato = 0.25f; // semitones either way
     char vowel = 'a';
 };
 
@@ -62,7 +63,7 @@ struct Event {
 // vibrato. What it lacks in charm it has in what a voice detector and a
 // pitch tracker need: voiced, with clean silence either side.
 void singWord(std::vector<float> &out, double at, double dur, float hz, float to, float level, char vowel,
-              uint32_t seed) {
+              uint32_t seed, float vibrato) {
     const float rate = kRate;
     struct Formant {
         float f1, f2, f3;
@@ -92,7 +93,7 @@ void singWord(std::vector<float> &out, double at, double dur, float hz, float to
         // Glide from hz to `to` over the word, with vibrato after 150 ms.
         float f = hz * std::pow(target / hz, u);
         if (secs > 0.15f)
-            f *= std::exp2(0.25f / 12.0f * std::sin(kTwoPi * 5.5f * (secs - 0.15f)) * std::min(1.0f, (secs - 0.15f) * 4));
+            f *= std::exp2(vibrato / 12.0f * std::sin(kTwoPi * 5.5f * (secs - 0.15f)) * std::min(1.0f, (secs - 0.15f) * 4));
         phase += double(f) / rate;
         phase -= std::floor(phase);
         const float saw = float(2.0 * phase - 1.0);
@@ -255,6 +256,8 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                         e.level = std::stof(v);
                     else if (k == "vowel" && !v.empty())
                         e.vowel = v[0];
+                    else if (k == "vib")
+                        e.vibrato = std::stof(v);
                     else
                         return fail("bad option");
                 }
@@ -271,6 +274,49 @@ bool parseScript(const std::string &text, std::vector<Event> &events, std::strin
                     e.level = std::stof(opt.substr(5));
                 } else {
                     e.level = 1;
+                }
+                events.push_back(e);
+            } else if (word == "output") {
+                // What the sound plays through, as the audio server would
+                // say: output T speakers|headphones|unknown.
+                e.kind = Event::Output;
+                std::string what;
+                if (!(ls >> e.t >> what))
+                    return fail("expected T speakers|headphones|unknown");
+                if (what == "speakers")
+                    e.id = StudioView::OutputSpeakers;
+                else if (what == "headphones")
+                    e.id = StudioView::OutputHeadphones;
+                else if (what == "unknown")
+                    e.id = StudioView::OutputUnknown;
+                else
+                    return fail("output is speakers, headphones or unknown");
+                events.push_back(e);
+            } else if (word == "room") {
+                // From T the microphone also hears the mix again, through
+                // a room: room T [gain=1] [ms=12] [hz=2500] (gain=0: no
+                // more room). The speakers' trip, for feedback.
+                e.kind = Event::Room;
+                if (!(ls >> e.t))
+                    return fail("expected T");
+                e.level = 1;
+                e.x = 12;
+                e.hz = 2500;
+                std::string opt;
+                while (ls >> opt) {
+                    const auto eq = opt.find('=');
+                    if (eq == std::string::npos)
+                        return fail("bad option");
+                    const std::string k = opt.substr(0, eq);
+                    const float v = std::stof(opt.substr(eq + 1));
+                    if (k == "gain")
+                        e.level = v;
+                    else if (k == "ms")
+                        e.x = std::max(10.0f, v); // more than a render's 8 ms: the mix it hears is out already
+                    else if (k == "hz")
+                        e.hz = v;
+                    else
+                        return fail("bad option");
                 }
                 events.push_back(e);
             } else if (word == "page") {
@@ -333,6 +379,13 @@ struct ScriptPlayer::Impl {
     std::vector<float> mic;
     bool hasMic = false;
     uint64_t micPushed = 0;
+    // The room the mix comes back through (room): its gain, the trip in
+    // samples, a resonance (the speaker and the walls) and a floor of noise.
+    float roomGain = 0;
+    int roomDelay = 576;
+    Svf roomBand;
+    Rng roomNoise{0xB00F};
+    std::vector<float> roomScope;
 };
 
 namespace {
@@ -363,8 +416,10 @@ bool ScriptPlayer::load(const std::string &script, std::string *error) {
     for (const Event &e : d->events) {
         if (e.kind == Event::Voice) {
             d->hasMic = true;
-            singWord(d->mic, e.t, e.t2, e.hz, e.to, e.level, e.vowel, seed += 0x9E37);
+            singWord(d->mic, e.t, e.t2, e.hz, e.to, e.level, e.vowel, seed += 0x9E37, e.vibrato);
             d->end = std::max(d->end, e.t + e.t2);
+        } else if (e.kind == Event::Room) {
+            d->hasMic = true;
         } else if (e.kind == Event::Mic) {
             const std::vector<float> wav = readWavMono(e.key, int(kRate));
             if (wav.empty()) {
@@ -492,6 +547,12 @@ void ScriptPlayer::tick(double t, Session &session) {
         case Event::Tempo:
             session.shiftTempo(std::round(e.x) - std::round(session.view().bpm));
             break;
+        case Event::Output: session.studio()->setOutput(e.id); break;
+        case Event::Room:
+            d->roomGain = e.level;
+            d->roomDelay = int(std::lround(e.x * 0.001 * kRate));
+            d->roomBand.set(e.hz, 3.0f, kRate);
+            break;
         case Event::Mic:
         case Event::Voice:
         case Event::End:
@@ -506,11 +567,27 @@ void ScriptPlayer::tick(double t, Session &session) {
             studio->setInput(StudioView::InputLive);
         const uint64_t upTo = uint64_t(std::llround((t + 1.0 / kFrameRate) * double(studio->sampleRate())));
         float buf[512];
+        // The room: what the speakers played (the mix, as the scope keeps
+        // it) a trip ago, coloured, and the room's own hiss.
+        const uint64_t rendered = studio->samples();
+        const int keep = Studio::kScopeSize;
+        if (d->roomGain > 0) {
+            d->roomScope.resize(size_t(keep));
+            studio->copyScope(d->roomScope.data(), keep);
+        }
         while (d->micPushed < upTo) {
             const int n = int(std::min<uint64_t>(512, upTo - d->micPushed));
             for (int i = 0; i < n; ++i) {
                 const uint64_t k = d->micPushed + uint64_t(i);
                 buf[i] = k < d->mic.size() ? d->mic[size_t(k)] : 0.0f;
+                if (d->roomGain > 0) {
+                    const int64_t j = int64_t(k) - d->roomDelay - (int64_t(rendered) - keep);
+                    const float heard = j >= 0 && j < keep && int64_t(k) - d->roomDelay < int64_t(rendered)
+                                            ? d->roomScope[size_t(j)]
+                                            : 0.0f;
+                    const float x = heard + 0.0005f * d->roomNoise.bipolar();
+                    buf[i] += d->roomGain * (d->roomBand.step(x).band + 0.15f * x);
+                }
             }
             studio->pushInput(buf, n);
             d->micPushed += uint64_t(n);

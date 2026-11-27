@@ -42,6 +42,7 @@
 
 #include "console.h"
 #include "fx.h"
+#include "howl.h"
 #include "parts.h"
 #include "kargyraa.h"
 #include "scream.h"
@@ -49,6 +50,8 @@
 namespace tf {
 
 namespace vocal {
+
+static_assert(pub::FeedbackProbes < kPartData, "fits the page's data");
 
 namespace {
 
@@ -109,6 +112,8 @@ enum ParamId {
                // f[0]: the screwed tape's speed (ScrewSpeed), f[1]: throat singing's style (ThroatStyle),
                // f[2]: where the riot's screamer is (scream::Place),
                // f[3]: the kargyraa's false folds' ratio (kargyraa::Ratio)
+    PHowl,    // i[1]: 1 the player heard the feedback warning (the monitor comes back);
+              // f[0]: the round trip, speakers to microphone, in ms
 };
 
 // The gamelan's tunings: its own two, rooted on the song's key note, or the
@@ -257,56 +262,6 @@ const double kStutterBeats[] = {0.5, 1.0 / 3, 0.25, 1.0 / 6, 0.125};
 const char *kStutterNames[] = {"1/8", "1/8T", "1/16", "1/16T", "1/32"};
 constexpr int kStutterCount = 5;
 
-// Published numbers (pc.view->data).
-namespace pub {
-enum {
-    InPeak = 0,
-    InRms,
-    Hz,
-    Clarity,
-    Gate,
-    Feedback,
-    Monitor,
-    LivePeak,
-    Tape,
-    Freeze,
-    Loops,
-    LeadMidi,
-    Lag,
-    HasInput,
-    Stutter,
-    Lift, // the lift on a soft voice, in dB
-    Voices = 16, // kMaxVoices × (active, midi, level)
-    Overtone = 48, // throat singing: the whistle's harmonic of the drone (0: none), fractional as it sweeps
-    OvertoneMidi,  // and its pitch
-    Scope = 64,  // 64 × (min, max) of the microphone, the last 43 ms
-    ScopeN = 64,
-    // The styles' own pictures, after the scope.
-    TalkMidi = 192, // the talk box's synth: its pitch now (glide and vibrato in it)
-    TalkTarget,     // the note it is heading for
-    TalkGate,       // how open it is (KEYS: a lane held)
-    SitarBuzz,      // how far onto the jawari the main string reaches
-    SitarLevel,     // the main string's level
-    Taraf,          // 13 × the sympathetic strings' levels
-    GamCycle = Taraf + 13, // the beat within the gong's 16-beat cycle
-    GamStruck,      // the last bar struck (its MIDI note), and
-    GamStruckAge,   // how long ago, in seconds
-    ScrewLag,       // seconds the tape head is behind the live voice
-    ScrewLimit,     // the lag at which it jumps back
-    ScrewSpin,      // 1 while the tape spins back or stops
-    ScrewSemis,     // how far down the tape plays
-    ScrewDrop,      // seconds until the head drops onto the grid (−1: none arranged)
-    ScrewDropBar,   // 1 if that drop is at a bar line (two bars behind), 0 on a beat
-    ScrewDeckB,     // how far the crossfader is over to deck B
-    TalkOpen,       // KEYS: how far the synth's filter is open, 0..1
-    RiotOctave,     // the octaves the riot's phrase is screamed up (−1..2)
-    RiotStrain,     // how hard its throat works, 0..1: the false folds' share
-    GrowlUnder,     // the kargyraa's undertone (Hz; 0: silent)
-    GrowlHarmonic,  // the harmonic of it the vowel's resonance is on (0: none)
-    GrowlFocus,     // and where that resonance is (Hz)
-};
-static_assert(GrowlFocus < kPartData, "fits the page's data");
-}
 
 // The nearest note of the key, or of the chord when follow is on, to a
 // MIDI pitch.
@@ -536,7 +491,7 @@ public:
         m_radioLp2.set(2600.0f, 0.9f, rate);
         m_freezeBuf.assign(size_t(rate * 0.75f), 0.0f);
         m_recent.assign(size_t(1) << 17, 0.0f);
-        m_howlHp.set(800.0f, 0.7f, rate);
+        m_howl.init(rate);
         m_tapeL.assign(size_t(1) << 17, 0.0f);
         m_tapeR.assign(size_t(1) << 17, 0.0f);
     }
@@ -640,6 +595,11 @@ public:
             break;
         }
         case PDemo: m_demo = c.i[1] != 0; break;
+        case PHowl:
+            if (c.i[1] == 1)
+                m_howl.acknowledge();
+            m_howl.setLatencyMs(c.f[0]);
+            break;
         case PStyleOpt:
             m_gamTuning = std::clamp(c.i[1], 0, GamTuningCount - 1);
             m_talkSub = c.i[2] != 0;
@@ -681,9 +641,10 @@ public:
 
         // 1. The microphone, cleaned up: rumble off, the room's hiss gated
         //    (gently: a soft consonant still gets through), levelled.
-        float dry[kBlock];
+        float dry[kBlock], heard[kBlock];
         for (int i = 0; i < n; ++i) {
             const float raw = (in ? in[i] : 0.0f) * m_micGain;
+            heard[i] = raw;
             const float a = std::fabs(raw);
             m_inPeak = std::max(m_inPeak, a);
             m_inSq += raw * raw;
@@ -726,28 +687,7 @@ public:
             dry[i] = y;
             tape.dry[size_t(sample & kRingMask)] = y;
             m_src.push(y);
-            if (m_pitch.push(y, m_gate > 0.2f))
-                track();
-            // Feedback: a tone the speakers sing back is one frequency,
-            // steady; above 1 kHz the pitch tracker can't follow it, so its
-            // zero crossings are counted too (a voice's never hold still).
-            const float hi = m_howlHp.step(y).high;
-            if ((hi >= 0) != (m_howlSign >= 0))
-                ++m_howlCross;
-            m_howlSign = hi;
-            m_howlLevel = std::max(std::fabs(hi), m_howlLevel * 0.9995f);
-            if (++m_howlN >= 2048) {
-                const float freq = float(m_howlCross) * m_rate / (2.0f * 2048.0f);
-                const bool steady = freq > 900 && std::fabs(freq - m_howlFreq) < 0.015f * freq && m_howlLevel > 0.25f;
-                m_howlHi = steady ? m_howlHi + 2048 : 0;
-                m_howlFreq = freq;
-                m_howlCross = 0;
-                m_howlN = 0;
-                if (m_howlHi > int(m_rate * 0.6f) && m_monitor) {
-                    m_feedback = int(m_rate * 2);
-                    m_howlHi = 0;
-                }
-            }
+            m_pitch.push(y, m_gate > 0.2f);
             // The voice's last sound, for the freeze to hold.
             if (m_gate > 0.5f && m_gateEnv > m_noise * 6.0f)
                 m_lastVoiced = m_recentW + i + 1;
@@ -1208,7 +1148,10 @@ public:
         // 5. Onto the tape for Space (always, heard or not), into the ears
         //    (when monitored), and the loops on top.
         float livePeak = 0;
-        const float mon = m_monitor && m_feedback <= 0 ? 1.0f : m_monitor ? 0.06f : 0.0f;
+        const float mon = m_monitor ? 1.0f : 0.0f;
+        // Feedback (howl.h): the microphone against what the monitor
+        // sends, and the monitor ducked, then muted, when the two make a
+        // loop. Only the microphone can feed back: not the demo singer.
         // The live voice goes to the studio's monitor bus, round the
         // limiter's look-ahead; the loops below go into the mix.
         float *monL = ctx.monitor(0), *monR = ctx.monitor(1);
@@ -1227,14 +1170,13 @@ public:
             tape.wetL[size_t(s & kRingMask)] = l;
             tape.wetR[size_t(s & kRingMask)] = r;
             const float g = m_monGain.step(mon);
-            monL[i] += l * g;
-            monR[i] += r * g;
+            const float hg = m_howl.step(m_demo ? 0.0f : heard[i], 0.5f * (l + r) * g, g > 0.5f && !m_demo);
+            monL[i] += l * g * hg;
+            monR[i] += r * g * hg;
             livePeak = std::max(livePeak, std::max(std::fabs(l), std::fabs(r)));
         }
         m_livePeak = std::max(livePeak, m_livePeak * 0.97f);
         tape.written.store(int64_t(tr.sample) + n, std::memory_order_release);
-        if (m_feedback > 0)
-            m_feedback -= n;
 
         renderLoops(outL, outR, n, ctx);
     }
@@ -1274,7 +1216,10 @@ public:
         d[pub::Clarity] = m_pitch.clarity();
         d[pub::Gate] = m_gate;
         d[pub::Lift] = 20.0f * std::log10(std::max(1.0f, m_lift));
-        d[pub::Feedback] = m_feedback > 0 ? 1 : 0;
+        d[pub::Feedback] = m_howl.latched() ? 1.0f : m_howl.probing() ? 0.5f : 0.0f;
+        d[pub::FeedbackHz] = m_howl.hz();
+        d[pub::FeedbackCatches] = float(m_howl.catches());
+        d[pub::FeedbackProbes] = float(m_howl.probes());
         d[pub::Monitor] = m_monitor ? 1 : 0;
         d[pub::LivePeak] = m_livePeak;
         d[pub::Tape] = m_tapeStop ? m_tapeRate : 1;
@@ -1337,22 +1282,6 @@ public:
     int voices() const override { return m_activeVoices; }
 
 private:
-    void track() {
-        // Feedback: a pure tone, loud, that doesn't waver for half a
-        // second is the speakers singing into the microphone, not a voice
-        // (which always wavers a little). The voice ducks for two seconds.
-        const float hz = m_pitch.hz();
-        if (hz > 0 && m_pitch.clarity() > 0.99f && m_gateEnv > 0.15f && m_howlHz > 0 &&
-            std::fabs(hz - m_howlHz) < 0.0015f * hz)
-            m_howl += 128;
-        else
-            m_howl = 0;
-        m_howlHz = hz;
-        if (m_howl > int(m_rate * 0.8f) && m_monitor) {
-            m_feedback = int(m_rate * 2);
-            m_howl = 0;
-        }
-    }
 
     // --- the five styles from further afield ------------------------------------
     void initStyles(float rate) {
@@ -2752,11 +2681,7 @@ private:
     uint32_t m_scopeW = 0;
     PitchTracker m_pitch;
     Source m_src;
-    int m_howl = 0, m_feedback = 0;
-    float m_howlHz = 0;
-    Svf m_howlHp;
-    float m_howlSign = 0, m_howlLevel = 0, m_howlFreq = 0;
-    int m_howlCross = 0, m_howlN = 0, m_howlHi = 0;
+    HowlGuard m_howl;
     int64_t m_lastVoiced = -1000000;
     float m_heldHz = 0, m_heldPeriod = 0, m_octRef = -1;
     int m_octAway = 0;
@@ -3030,11 +2955,43 @@ public:
                 m_sungMedian = sung[sung.size() / 2];
             }
         }
-        // The monitor follows the page unless asked otherwise.
-        const bool want = m_monitorMode == 1 || (m_monitorMode == 0 && m_shown);
+        // The monitor follows the page unless asked otherwise, and stays
+        // muted on speakers (the microphone would hear it and howl) until
+        // headphones come or the player says to go ahead (Shift+M).
+        const StudioView &sv = ctx.studio();
+        if (sv.output != StudioView::OutputSpeakers)
+            m_speakersOk = false; // unplugged again later: asked again
+        m_guarded = sv.output == StudioView::OutputSpeakers && !m_speakersOk;
+        const bool asked = m_monitorMode == 1 || (m_monitorMode == 0 && m_shown);
+        const bool want = asked && !m_guarded;
         if (want != m_monitorSent) {
             m_monitorSent = want;
             param(ctx, PMonitor, want ? 1 : 0);
+        }
+        if (m_guarded && asked && m_shown && !m_guardSaid) {
+            m_guardSaid = true;
+            ctx.notice(QStringLiteral("Speakers: the monitor is muted so it can't feed back. Use headphones "
+                                      "(Shift+M: hear it on the speakers anyway)"));
+        }
+        if (!m_guarded)
+            m_guardSaid = false;
+        // The engine heard feedback and muted the monitor (howl.h): say so
+        // once, and let it go when headphones come.
+        const float trip = sv.inputMs + sv.outputMs + sv.bufferMs;
+        const bool howl = v.data[pub::Feedback] > 0.75f;
+        if (howl && !m_howlSaid) {
+            m_howlSaid = true;
+            ctx.notice(QStringLiteral("Feedback: tenfold muted the mic — use headphones (Shift+M: hear it again)"));
+        }
+        if (!howl)
+            m_howlSaid = false;
+        if (howl && sv.output == StudioView::OutputHeadphones && t - m_howlAckAt > 0.5) {
+            m_howlAckAt = t;
+            param(ctx, PHowl, 1, trip);
+            ctx.notice(QStringLiteral("Headphones: the monitor is back"));
+        } else if (std::fabs(trip - m_tripSent) > 2.0f) {
+            m_tripSent = trip;
+            param(ctx, PHowl, 0, trip);
         }
         // Auto level: the loudest of three seconds of singing lands at
         // −10 dBFS (headroom for the shout).
@@ -3181,7 +3138,12 @@ public:
             setFollow(!m_follow, ctx);
             return true;
         case Qt::Key_Delete: letGo(ctx); return true;
-        case Qt::Key_M: cycleMonitor(ctx); return true;
+        case Qt::Key_M:
+            if (shift)
+                hearAnyway(ctx);
+            else
+                cycleMonitor(ctx);
+            return true;
         case Qt::Key_B: styleOption(ctx, shift); return true;
         case Qt::Key_V: setDemo(!m_demo, ctx); return true;
         case Qt::Key_Z: autoLevel(ctx); return true;
@@ -3226,7 +3188,8 @@ public:
         SpotLayer,
         SpotDemo,
         SpotAuto,
-        SpotStyleOpt
+        SpotStyleOpt,
+        SpotHearAnyway
     };
     bool click(QPointF at, ControlContext &ctx) override {
         const int id = m_spots.at(at);
@@ -3249,6 +3212,7 @@ public:
         case SpotDemo: setDemo(!m_demo, ctx); return true;
         case SpotAuto: autoLevel(ctx); return true;
         case SpotStyleOpt: styleOption(ctx, false); return true;
+        case SpotHearAnyway: hearAnyway(ctx); return true;
         default: return false;
         }
     }
@@ -3346,12 +3310,16 @@ public:
             "Z (AUTO)\tsing for three seconds: the microphone's level sets itself\n"
             "Q · W · E · R · T\techo throw · reverb throw · freeze · stutter · tape stop, held\n"
             "M\tmonitor: on this page, always, or off (the loops still record what you sing)\n"
+            "Shift+M\thear the monitor again after a feedback mute, or on speakers (keep them low)\n"
             ", and .\tthe microphone's level down, up (3 dB)\n"
             "F1–F8 · Shift+F1–F8 · Backspace\tlaunch a slot · empty it · stop the vocal loop at the bar\n"
             "a soft voice\tis lifted by itself while you sing, up to 30 dB (LIFT by the meter says how much), so "
             "you can sing quietly; . and , set the microphone's own gain, Z sets it from three seconds of singing\n"
-            "headphones\tthe voice comes back at once: on speakers it would feed back (the page ducks the voice if "
-            "it hears that happen)");
+            "headphones\tthe voice comes back at once: on speakers it would feed back, so on a laptop's own "
+            "speakers the monitor starts muted (Shift+M: on anyway), and if the microphone hears the monitor "
+            "howl (one tone, growing or held dead still, that goes when the monitor is dipped) tenfold mutes "
+            "it and asks for headphones; plugging them in brings it back. The loops still record what you sing "
+            "while it is muted");
     }
 
     QString status() const override {
@@ -4198,6 +4166,25 @@ private:
         m_autoPeak = 0;
         ctx.notice(QStringLiteral("Sing as loud as you will for three seconds: the level follows"));
     }
+    // Shift+M, or a click on the warning: the monitor muted for feedback
+    // (or for the speakers) comes back, on the player's word.
+    void hearAnyway(ControlContext &ctx) {
+        const PartView &v = ctx.studio().parts[ctx.part()];
+        if (v.data[pub::Feedback] > 0.75f) {
+            m_howlAckAt = ctx.now();
+            param(ctx, PHowl, 1, m_tripSent);
+            ctx.notice(QStringLiteral("Monitor back on: turn the speakers down, or it will howl again"));
+            if (m_guarded)
+                m_speakersOk = true;
+            return;
+        }
+        if (m_guarded) {
+            m_speakersOk = true;
+            ctx.notice(QStringLiteral("Monitor on the speakers: keep them low (tenfold mutes it if it starts to howl)"));
+            return;
+        }
+        ctx.notice(QStringLiteral("The monitor isn't muted (Shift+M lifts a feedback or speakers mute)"));
+    }
     void cycleMonitor(ControlContext &ctx) {
         m_monitorMode = (m_monitorMode + 1) % 3;
         static const char *what[] = {"on this page", "on every page", "off (loops still record)"};
@@ -4555,6 +4542,11 @@ private:
     std::vector<int> m_latched;
     int m_preset = Natural, m_octave = 0, m_formant = 0, m_stutter = 2, m_monitorMode = 0;
     bool m_latch = false, m_follow = false, m_shown = false, m_monitorSent = true, m_sentAll = false;
+    // The monitor's guard against feedback: muted on speakers until the
+    // player says (m_speakersOk), and what has been said about it.
+    bool m_guarded = false, m_speakersOk = false, m_guardSaid = false, m_howlSaid = false;
+    double m_howlAckAt = -1;
+    float m_tripSent = -100;
     float m_micDb = 0;
     float m_sungMedian = 57;
     double m_lastRegister = 0, m_lastTrail = 0, m_now = 0, m_connectingSince = -1;
@@ -5336,9 +5328,6 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         c::text(p, pc.rect(0, 0.42f, 1, 0.58f), QStringLiteral("TAPE STOP"), c::alpha(c::red(), 0.9f), int(H * 0.08), true,
                 Qt::AlignCenter);
     }
-    if (d[pub::Feedback] > 0.5f)
-        c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, 0.8f).y()),
-               QStringLiteral("FEEDBACK HEARD: VOICE DUCKED · USE HEADPHONES"), c::red(), 13, true);
     if (noMic && !m_demo) {
         const QRectF box = pc.rect(0.2f, 0.45f, 0.8f, 0.72f);
         p.fillRect(box, QColor(0, 0, 0, 220));
@@ -5383,7 +5372,20 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     c::chip(p, pc, at(0, 0.11), QStringLiteral("NEW  SPACE"), false, &m_spots, SpotNew);
     c::chip(p, pc, at(0.11, 0.23), QStringLiteral("LAYER  ⇧SPACE"), false, &m_spots, SpotLayer);
     static const char *mon[] = {"MONITOR PAGE  M", "MONITOR ALL  M", "MONITOR OFF  M"};
-    c::chip(p, pc, at(0.23, 0.36), QString::fromLatin1(mon[m_monitorMode]), m_monitorMode != 2, &m_spots, SpotMonitor);
+    if (m_monitorMode != 2 && (d[pub::Feedback] > 0.75f || m_guarded)) {
+        // Muted against feedback: the chip says so, in the warning's colour.
+        const QRectF r = at(0.23, 0.36);
+        const QColor tint = d[pub::Feedback] > 0.75f ? c::red() : c::amber();
+        p.fillRect(r, c::alpha(tint, 0.22f));
+        p.setPen(QPen(tint, 1.5));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(r.adjusted(1, 1, -1, -1));
+        c::text(p, r, d[pub::Feedback] > 0.75f ? QStringLiteral("FEEDBACK ⇧M") : QStringLiteral("SPEAKERS ⇧M"),
+                tint, 10, true, Qt::AlignCenter);
+        m_spots.add(r, SpotHearAnyway);
+    } else {
+        c::chip(p, pc, at(0.23, 0.36), QString::fromLatin1(mon[m_monitorMode]), m_monitorMode != 2, &m_spots, SpotMonitor);
+    }
     c::chip(p, pc, at(0.36, 0.44), QStringLiteral("LATCH ⇧↵"), m_latch, &m_spots, SpotLatch);
     c::chip(p, pc, at(0.44, 0.53), QStringLiteral("FOLLOW  §"), m_follow, &m_spots, SpotFollow);
     c::chip(p, pc, at(0.53, 0.60), QStringLiteral("DEMO  V"), m_demo, &m_spots, SpotDemo);
@@ -5431,6 +5433,41 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
         if (m_preset == Tune || m_preset == Robot || m_formant != 0)
             c::text(p, QRectF(m.left() + m.width() * 0.55, m.top() + 12, m.width() * 0.45, 18),
                     QStringLiteral("+%1").arg(double(d[pub::Lag]), 0, 'f', 1), c::alpha(col, 0.6f), 9, true);
+    }
+    // The monitor muted against feedback: heard (the engine caught a howl)
+    // or foreseen (the sound is on speakers). Big, over everything on the
+    // pad, and how to undo it; a click on it is Shift+M.
+    const bool howl = d[pub::Feedback] > 0.75f;
+    const bool guard = m_guarded && (m_monitorMode == 1 || (m_monitorMode == 0 && m_shown));
+    if ((howl || guard) && !(noMic && !m_demo)) {
+        const QRectF box = pc.rect(0.18f, 0.47f, 0.82f, 0.72f);
+        m_spots.add(box, SpotHearAnyway);
+        const QColor tint = howl ? c::red() : c::amber();
+        p.fillRect(box, QColor(0, 0, 0, 225));
+        p.setPen(QPen(tint, 2));
+        p.drawRect(box);
+        const QString head = howl ? QStringLiteral("FEEDBACK: MIC MUTED") : QStringLiteral("SPEAKERS: MONITOR MUTED");
+        c::text(p, QRectF(box.left(), box.top() + 6, box.width(), box.height() * 0.38), head, tint, int(H * 0.048), true,
+                Qt::AlignCenter);
+        const QString why =
+            howl ? (d[pub::FeedbackHz] > 0
+                        ? QStringLiteral("the speakers howled back into the microphone (%1 Hz)")
+                              .arg(int(std::lround(d[pub::FeedbackHz])))
+                        : QStringLiteral("the speakers howled back into the microphone"))
+                 : QStringLiteral("the microphone would hear your voice from the speakers and howl");
+        c::text(p, QRectF(box.left() + 10, box.center().y() - 10, box.width() - 20, box.height() * 0.22), why,
+                c::alpha(QColor(255, 255, 255), 0.88f), 12, false, Qt::AlignCenter);
+        c::text(p, QRectF(box.left() + 10, box.center().y() + box.height() * 0.16, box.width() - 20, box.height() * 0.25),
+                howl ? QStringLiteral("USE HEADPHONES · SHIFT+M OR CLICK: HEAR IT AGAIN")
+                     : QStringLiteral("PLUG IN HEADPHONES · SHIFT+M OR CLICK: ON THE SPEAKERS ANYWAY"),
+                tint, 12, true, Qt::AlignCenter);
+        c::text(p, QRectF(box.left() + 10, box.bottom() - 20, box.width() - 20, 16),
+                QStringLiteral("the loops still record what you sing"), c::alpha(QColor(255, 255, 255), 0.55f), 10,
+                false, Qt::AlignCenter);
+    } else if (d[pub::Feedback] > 0.25f) {
+        // A suspect, being listened to with the monitor dipped.
+        c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, 0.8f).y()), QStringLiteral("LISTENING FOR FEEDBACK"),
+               c::amber(), 11, true);
     }
 }
 

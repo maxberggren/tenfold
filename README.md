@@ -123,6 +123,13 @@ the loop. Each layer plays on its own: its own voice on Bass and Lead, its
 own chords on Chords (a different chord steps the other back), its own
 pattern on Arp, so layers sound together instead of cutting each other off.
 
+**Speakers and feedback.** The Vocal page plays your voice straight back, so
+it wants headphones. On a laptop's own speakers it keeps that monitor muted
+and says so (Shift+M: hear it on the speakers anyway); and if it hears the
+speakers howl back into the microphone, it mutes the monitor at once and asks
+for headphones. Plugging them in brings it back; singing still loops either
+way. See [docs/feedback.md](docs/feedback.md).
+
 **The Song page (0).** A song is a row of sections (intro, groove, build,
 drop, breakdown, outro) in the band under the lanes. I writes one from your
 loops and plays it; Space records one as you play here (clips, mutes, the

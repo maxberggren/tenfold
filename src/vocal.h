@@ -22,6 +22,59 @@
 
 namespace tf::vocal {
 
+// The engine's published numbers (PartView::data), by index.
+namespace pub {
+enum {
+    InPeak = 0,
+    InRms,
+    Hz,
+    Clarity,
+    Gate,
+    Feedback,
+    Monitor,
+    LivePeak,
+    Tape,
+    Freeze,
+    Loops,
+    LeadMidi,
+    Lag,
+    HasInput,
+    Stutter,
+    Lift, // the lift on a soft voice, in dB
+    Voices = 16, // kMaxVoices × (active, midi, level)
+    Overtone = 48, // throat singing: the whistle's harmonic of the drone (0: none), fractional as it sweeps
+    OvertoneMidi,  // and its pitch
+    Scope = 64,  // 64 × (min, max) of the microphone, the last 43 ms
+    ScopeN = 64,
+    // The styles' own pictures, after the scope.
+    TalkMidi = 192, // the talk box's synth: its pitch now (glide and vibrato in it)
+    TalkTarget,     // the note it is heading for
+    TalkGate,       // how open it is (KEYS: a lane held)
+    SitarBuzz,      // how far onto the jawari the main string reaches
+    SitarLevel,     // the main string's level
+    Taraf,          // 13 × the sympathetic strings' levels
+    GamCycle = Taraf + 13, // the beat within the gong's 16-beat cycle
+    GamStruck,      // the last bar struck (its MIDI note), and
+    GamStruckAge,   // how long ago, in seconds
+    ScrewLag,       // seconds the tape head is behind the live voice
+    ScrewLimit,     // the lag at which it jumps back
+    ScrewSpin,      // 1 while the tape spins back or stops
+    ScrewSemis,     // how far down the tape plays
+    ScrewDrop,      // seconds until the head drops onto the grid (−1: none arranged)
+    ScrewDropBar,   // 1 if that drop is at a bar line (two bars behind), 0 on a beat
+    ScrewDeckB,     // how far the crossfader is over to deck B
+    TalkOpen,       // KEYS: how far the synth's filter is open, 0..1
+    RiotOctave,     // the octaves the riot's phrase is screamed up (−1..2)
+    RiotStrain,     // how hard its throat works, 0..1: the false folds' share
+    GrowlUnder,     // the kargyraa's undertone (Hz; 0: silent)
+    GrowlHarmonic,  // the harmonic of it the vowel's resonance is on (0: none)
+    GrowlFocus,     // and where that resonance is (Hz)
+    FeedbackHz,     // the howl's frequency while probed or muted (0: none)
+    FeedbackCatches, // howls caught, ever
+    FeedbackProbes, // suspects ducked to listen, ever
+};
+}
+
 // --- the tape ------------------------------------------------------------------
 
 constexpr int kRingBits = 21;                 // 2^21 samples: 43.7 s at 48 kHz

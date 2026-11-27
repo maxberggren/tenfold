@@ -6,11 +6,14 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QTemporaryDir>
+#include <chrono>
 #include <cmath>
 #include <numeric>
 #include <set>
 
 #include "dsp.h"
+#include "howl.h"
+#include "outputkind.h"
 #include "songfile.h"
 #include "testkit.h"
 #include "vocal.h"
@@ -129,7 +132,9 @@ class VocalTests : public QObject {
                 "freeTimeTakesThePhraseToSpace aPhraseLoopedWithNothingPlayingSetsTheTempoAndReplaysInTime "
                 "withNoMicrophoneTheDemoSingerSingsAndLoops spaceMakesANewLoopAndShiftSpaceLayers "
                 "ctrlZTakesTheVocalLoopBack everyStripAndTheClickPlayWithoutTrouble "
-                "aSongKeepsTheVocalLoopsAndTheirAudio theGongSinksAndThrobs bronzeNeverStepsWhenAStrikeIsStolen")
+                "aSongKeepsTheVocalLoopsAndTheirAudio theGongSinksAndThrobs bronzeNeverStepsWhenAStrikeIsStolen "
+                "aHowlThroughTheRoomIsCaughtAndMuted speakersOrHeadphonesIsReadFromTheGraph")
+    Q_CLASSINFO("alone", "theHowlGuardStaysInsideBudget")
 private slots:
     // --- the microphone, heard -----------------------------------------------------
 
@@ -1531,9 +1536,332 @@ private slots:
         QVERIFY2(std::fabs(hz - 164.8) < 3, qPrintable(QString("%1 Hz").arg(hz)));
     }
 
+    // --- feedback: the monitor on speakers ---------------------------------------------
+
+    void aHowlThroughTheRoomIsCaughtAndMuted() {
+        // The microphone hears the mix again through a room (a resonance at
+        // 1.1, 2.5 or 4 kHz, 12 ms away), loud enough that the loop gains,
+        // and the room's own hiss grows into a howl: moderately (gain 0.45)
+        // or as hot as a laptop gets (0.9, the microphone near full scale).
+        // tenfold dips the monitor within 100 ms of the howl reaching
+        // −30 dBFS in the mix (or before it gets there), mutes it within
+        // 150 ms, at the howl's frequency, and the mix goes quiet; the page
+        // says so, and it stays muted for as long as the room is there.
+        for (const char *gain : {"0.45", "0.9"})
+            for (float hz : {2500.0f, 1100.0f, 4000.0f}) {
+                const std::string script = std::string(kPage) + "room 0.2 gain=" + gain + " hz=" +
+                                           std::to_string(hz) + "\nend 3\n";
+                const Howl h = howl(script);
+                QVERIFY(h.take.error.empty());
+                QVERIFY2(h.mutedAt > 0, "not caught");
+                const double onset = bandOnset(h.take, hz, 0.02, h.probeAt);
+                qInfo("a howl at %.0f Hz, room gain %s: −30 dBFS at %.3f s, dipped %.0f ms later, muted %.0f ms "
+                      "later (at %.0f Hz); %d probe(s); the mix after: %.1f dBFS",
+                      hz, gain, onset, (h.probeAt - onset) * 1000, (h.mutedAt - onset) * 1000, h.mutedHz, h.probes,
+                      20 * std::log10(h.take.rms(h.mutedAt + 0.05, 3.0) + 1e-12));
+                if (onset > 0) {
+                    QVERIFY2(h.probeAt - onset < 0.1, qPrintable(QString("dipped %1 s after").arg(h.probeAt - onset)));
+                    QVERIFY2(h.mutedAt - onset < 0.15, qPrintable(QString("muted %1 s after").arg(h.mutedAt - onset)));
+                }
+                QCOMPARE(h.probes, 1);
+                QVERIFY2(std::fabs(h.mutedHz - hz) < 0.1f * hz, qPrintable(QString("%1 Hz").arg(h.mutedHz)));
+                // Quiet from then on (the room has nothing left to feed on),
+                // and still muted at the end.
+                QVERIFY2(h.take.rms(h.mutedAt + 0.05, 3.0) < 0.001,
+                         qPrintable(QString::number(h.take.rms(h.mutedAt + 0.05, 3.0))));
+                QCOMPARE(h.take.view.parts[kVocal].data[vocal::pub::Feedback], 1.0f);
+                QVERIFY2(h.notices.contains(QStringLiteral("Feedback: tenfold muted the mic")), qPrintable(h.notices));
+                QVERIFY2(h.notices.contains(QStringLiteral("use headphones")), qPrintable(h.notices));
+                // The dip is a fade, not a click: no step between two samples
+                // much larger than the howl's own steepest (a cut at a peak
+                // would step by the whole amplitude, several times that).
+                const size_t at = size_t(h.probeAt * 48000);
+                float before = 0, during = 0;
+                for (size_t i = at - 2400; i < at; ++i)
+                    before = std::max(before, std::fabs(h.take.left[i] - h.take.left[i - 1]));
+                for (size_t i = at; i < at + 4800; ++i)
+                    during = std::max(during, std::fabs(h.take.left[i] - h.take.left[i - 1]));
+                QVERIFY2(during <= before * 1.3f + 1e-4f, qPrintable(QString("%1 against %2").arg(during).arg(before)));
+            }
+    }
+
+    void aHowlUnderSingingIsCaughtToo() {
+        // The same room while a phrase goes on over it: the howl still
+        // comes up through the words and is caught.
+        std::string sing = std::string(kPage) + "room 0.2 gain=0.6\n";
+        for (int k = 0; k < 6; ++k)
+            sing += "voice " + std::to_string(0.3 + 0.45 * k) + " 0.4 hz=" + std::to_string(196 + 22 * (k % 3)) +
+                    " vowel=" + "aeo"[k % 3] + " level=0.3\n";
+        const Howl h = howl(sing + "end 3.4\n");
+        const double onset = bandOnset(h.take, 2500, 0.02, h.mutedAt > 0 ? h.mutedAt : 3.4);
+        qInfo("a howl under singing: −30 dBFS at %.3f s, muted %.0f ms later", onset, (h.mutedAt - onset) * 1000);
+        QVERIFY2(h.mutedAt > 0, "not caught");
+        QVERIFY2(onset < 0 || h.mutedAt - onset < 0.2, qPrintable(QString("%1 %2").arg(onset).arg(h.mutedAt)));
+    }
+
+    void theMuteHoldsUntilHeadphonesOrShiftM() {
+        // Muted, it stays so; Shift+M brings the monitor back (and in the
+        // same room it howls again and is caught again); headphones (the
+        // room gone) bring it back by themselves.
+        const std::string base = std::string(kPage) + "voice 0.3 0.5 hz=220 vowel=a level=0.3\nroom 0.2 gain=0.6\n";
+        const Howl again = howl(base + "key 2.0 Shift+M\nvoice 2.3 0.5 hz=247 level=0.3\nend 3.5\n");
+        qInfo("Shift+M: muted at %.2f s, %d caught in all", again.mutedAt, again.catches);
+        QCOMPARE(again.catches, 2);
+        QVERIFY2(again.notices.contains(QStringLiteral("Monitor back on")), qPrintable(again.notices));
+        const Howl plugged = howl(base + "room 2.0 gain=0\noutput 2.0 headphones\nvoice 2.5 0.6 hz=220 level=0.3\nend 3.5\n");
+        QCOMPARE(plugged.catches, 1);
+        QCOMPARE(plugged.take.view.parts[kVocal].data[vocal::pub::Feedback], 0.0f);
+        QVERIFY2(plugged.notices.contains(QStringLiteral("Headphones: the monitor is back")), qPrintable(plugged.notices));
+        QVERIFY2(plugged.take.rms(2.6, 3.0) > 0.01, "the voice isn't heard again");
+    }
+
+    void loudSingingIsNeverTakenForFeedback() {
+        // On headphones (no room) the microphone hears singing only: loud
+        // words with vibrato, a long held note, a note held dead straight
+        // (a voice can't, the synthetic one can: the hardest case), a
+        // whistle-pure high "oo", a slide, and the styles that make the
+        // most of a voice: never muted. A note this voice sings nearly pure
+        // (its "ee", its "oo", a straight note) may be dipped once to listen,
+        // a single suspect for 100 ms, never twice.
+        struct Case {
+            const char *name;
+            int style;
+            std::string sing;
+            int maxProbes;
+        };
+        const std::vector<Case> cases = {
+            {"phrases", 0,
+             "voice 0.3 0.4 hz=220 level=0.6\nvoice 0.8 0.4 hz=247 vowel=e level=0.6\nvoice 1.3 0.9 hz=262 vowel=o "
+             "level=0.6\nvoice 2.4 0.4 hz=330 vowel=i level=0.6\n",
+             1},
+            {"a held note", 0, "voice 0.3 3.5 hz=440 vowel=a level=0.7\n", 0},
+            {"a straight note", 0, "voice 0.3 3.5 hz=440 vowel=a level=0.7 vib=0\n", 1},
+            {"a straight high oo", 0, "voice 0.3 3.5 hz=880 vowel=u level=0.7 vib=0\n", 1},
+            {"a slide", 0, "voice 0.3 2.0 hz=196 to=523 vowel=a level=0.7 vib=0\n", 0},
+            {"riot", Riot, "voice 0.3 1.2 hz=220 vowel=a level=0.7\nvoice 1.7 1.8 hz=262 vowel=e level=0.8\n", 0},
+            {"riot, straight", Riot, "voice 0.3 3.0 hz=330 vowel=a level=0.8 vib=0\n", 1},
+            {"kargyraa", Growl, "voice 0.3 3.0 hz=130.8 vowel=o level=0.8\n", 0},
+            {"kargyraa, straight", Growl, "voice 0.3 3.0 hz=130.8 vowel=u level=0.8 vib=0\n", 1},
+        };
+        for (const Case &c : cases) {
+            const Howl h = howl(std::string(kPage) + rights(c.style) + c.sing + "end 4.2\n");
+            QVERIFY(h.take.error.empty());
+            qInfo("%-20s peak %.1f dBFS: %d probe(s), %d caught", c.name, 20 * std::log10(h.take.peak()), h.probes,
+                  h.catches);
+            QVERIFY2(h.catches == 0 && h.mutedAt < 0, c.name);
+            QVERIFY2(h.probes <= c.maxProbes, qPrintable(QString("%1: %2 probes").arg(c.name).arg(h.probes)));
+        }
+    }
+
+    void aScreamOrAGrowlAtTheMicrophoneIsNoFeedback() {
+        // What a riot singer or a kargyraa singer sends the microphone, as
+        // recorded (the page's own scream and growl, rendered, played back
+        // into it at full level): no mute, in any style.
+        QTemporaryDir dir;
+        for (int style : {int(Riot), int(Growl)}) {
+            const auto made = playStyle(style, "voice 0.3 1.4 hz=220 vowel=a level=0.6\nvoice 1.9 1.6 hz=196 vowel=o "
+                                               "level=0.6 vib=0\nend 3.8\n");
+            float peak = 1e-6f;
+            for (float x : made.left)
+                peak = std::max(peak, std::fabs(x));
+            std::vector<float> st(made.left.size() * 2);
+            for (size_t i = 0; i < made.left.size(); ++i)
+                st[2 * i] = st[2 * i + 1] = made.left[i] * 0.95f / peak;
+            const std::string path = QDir(dir.path()).filePath(QString("sung%1.wav").arg(style)).toStdString();
+            {
+                WavWriter w;
+                QVERIFY(w.open(path, 48000));
+                w.write(st.data(), st.size() / 2);
+            }
+            for (int heardAs : {0, int(Riot), int(Growl)}) {
+                const Howl h = howl(std::string(kPage) + rights(heardAs) + "mic 0.2 " + path + "\nend 4.2\n");
+                qInfo("%s at the microphone, heard as style %d: %d probe(s), %d caught",
+                      style == Riot ? "a scream" : "a growl", heardAs, h.probes, h.catches);
+                QVERIFY(h.catches == 0);
+                QVERIFY(h.probes <= 1);
+            }
+        }
+    }
+
+    void onSpeakersTheMonitorWaitsForHeadphones() {
+        // The audio server says speakers: the monitor stays muted and the
+        // page asks for headphones; singing still makes a loop (Space), and
+        // the loop plays. Shift+M brings the monitor in on the speakers;
+        // headphones bring it in by themselves.
+        const std::string sing = "voice 0.4 0.6 hz=220 level=0.3\nvoice 1.1 0.6 hz=247 level=0.3\n";
+        uint32_t seq = 0;
+        QString notices;
+        const auto muted = testkit::watch(std::string(kPage) + "output 0 speakers\n" + sing + "key 2.0 Space\nend 6\n",
+                                          [&](double, Session &s) {
+                                              const QString n = s.notice(&seq);
+                                              if (!notices.endsWith(n))
+                                                  notices += n + "\n";
+                                          });
+        qInfo("on speakers: %.1f dBFS while singing; the loop %.1f dBFS", 20 * std::log10(muted.rms(0.5, 1.6) + 1e-12),
+              20 * std::log10(muted.rms(3.0, 6.0) + 1e-12));
+        QVERIFY2(muted.rms(0.5, 1.6) < 1e-4, "the monitor is heard on speakers");
+        QVERIFY2(notices.contains(QStringLiteral("Use headphones")), qPrintable(notices));
+        QCOMPARE(muted.view.parts[kVocal].playing, 0);
+        QVERIFY2(muted.rms(3.0, 6.0) > 0.01, "the loop is silent");
+        const auto anyway = testkit::play(std::string(kPage) + "output 0 speakers\nkey 0.2 Shift+M\n" + sing + "end 2\n");
+        QVERIFY2(anyway.rms(0.5, 1.6) > 0.01, "Shift+M didn't bring the monitor in");
+        const auto plugged =
+            testkit::play(std::string(kPage) + "output 0 speakers\noutput 0.3 headphones\n" + sing + "end 2\n");
+        QVERIFY2(plugged.rms(0.5, 1.6) > 0.01, "headphones didn't bring the monitor in");
+        const auto unknown = testkit::play(std::string(kPage) + "output 0 unknown\n" + sing + "end 2\n");
+        QVERIFY2(unknown.rms(0.5, 1.6) > 0.01, "an output it can't tell is muted");
+    }
+
+    void speakersOrHeadphonesIsReadFromTheGraph() {
+        // The PipeWire graphs of real machines, as pw-dump shows them.
+        using namespace outputkind;
+        auto route = [](int device, const char *name, const char *type) {
+            Route r;
+            r.device = device;
+            r.name = name;
+            r.info["port.type"] = type;
+            return r;
+        };
+        // A MacBook on Asahi Linux: one sink per route (UCM), the speakers
+        // behind a DSP filter chain; tenfold's stream (155) on the
+        // headphones sink, then moved to the speakers' DSP.
+        Graph mac;
+        mac.devices[46] = {{"device.name", "alsa_card.platform-sound"}, {"device.form-factor", "internal"}};
+        mac.routes[46] = {route(0, "[Out] Speaker", "speaker"), route(1, "[Out] Headphones", "headphones")};
+        mac.devices[44] = {{"device.form-factor", "internal"}};
+        mac.routes[44] = {route(0, "[Out] HDMI1", "hdmi")};
+        mac.nodes[61] = {{"node.name", "alsa_output.platform-sound.HiFi__Headphones__sink"}, {"media.class", "Audio/Sink"},
+                         {"device.id", "46"}, {"card.profile.device", "1"}, {"device.icon-name", "audio-card-analog"}};
+        mac.nodes[51] = {{"node.name", "alsa_output.platform-sound.RawSpeakers"}, {"media.class", "Audio/Sink"},
+                         {"device.id", "46"}, {"card.profile.device", "0"}};
+        mac.nodes[87] = {{"node.name", "audio_effect.j416-convolver"}, {"media.class", "Audio/Sink"},
+                         {"node.link-group", "filter-chain-1156-19"}, {"node.description", "MacBook Speakers"}};
+        mac.nodes[92] = {{"node.name", "effect_output.j416-convolver"}, {"media.class", "Stream/Output/Audio"},
+                         {"node.link-group", "filter-chain-1156-19"},
+                         {"target.object", "alsa_output.platform-sound.RawSpeakers"}};
+        mac.nodes[136] = {{"node.name", "alsa_output.platform-39b540000.audio-controller.HiFi__HDMI1__sink"},
+                          {"media.class", "Audio/Sink"}, {"device.id", "44"}, {"card.profile.device", "0"}};
+        mac.nodes[155] = {{"node.name", "tenfold"}, {"media.class", "Stream/Output/Audio"}};
+        mac.links = {{92, 51}, {155, 61}};
+        mac.defaultSink = "alsa_output.platform-sound.HiFi__Headphones__sink";
+        QCOMPARE(classify(mac, 155), int(StudioView::OutputHeadphones));
+        mac.links = {{92, 51}, {155, 87}};
+        QCOMPARE(classify(mac, 155), int(StudioView::OutputSpeakers));
+        // (Its own name says so too, the chain's far end not yet linked.)
+        mac.links = {{155, 87}};
+        QCOMPARE(classify(mac, 155), int(StudioView::OutputSpeakers));
+        mac.links = {{155, 136}};
+        QCOMPARE(classify(mac, 155), int(StudioView::OutputUnknown));
+        // Before the stream is linked: the default sink.
+        mac.links = {};
+        QCOMPARE(classify(mac, 155), int(StudioView::OutputHeadphones));
+
+        // A PC laptop (HDA, the ACP profile): one sink, its route switched
+        // by the jack.
+        Graph pc;
+        pc.devices[40] = {{"device.form-factor", "internal"}};
+        pc.nodes[50] = {{"node.name", "alsa_output.pci-0000_00_1f.3.analog-stereo"}, {"media.class", "Audio/Sink"},
+                        {"device.id", "40"}, {"card.profile.device", "4"}};
+        pc.nodes[70] = {{"node.name", "tenfold"}, {"media.class", "Stream/Output/Audio"}};
+        pc.links = {{70, 50}};
+        pc.routes[40] = {route(4, "analog-output-speaker", "speaker")};
+        QCOMPARE(classify(pc, 70), int(StudioView::OutputSpeakers));
+        pc.routes[40] = {route(4, "analog-output-headphones", "headphones")};
+        QCOMPARE(classify(pc, 70), int(StudioView::OutputHeadphones));
+        // (An older server without port.type: the route's name.)
+        pc.routes[40] = {route(4, "analog-output-speaker", "")};
+        QCOMPARE(classify(pc, 70), int(StudioView::OutputSpeakers));
+
+        // Bluetooth: the form factor, whatever the route.
+        Graph bt;
+        bt.devices[80] = {{"device.api", "bluez5"}, {"device.form-factor", "headset"}};
+        bt.nodes[90] = {{"node.name", "bluez_output.AA_BB.1"}, {"media.class", "Audio/Sink"}, {"device.id", "80"}};
+        bt.nodes[91] = {{"node.name", "tenfold"}};
+        bt.links = {{91, 90}};
+        QCOMPARE(classify(bt, 91), int(StudioView::OutputHeadphones));
+        bt.devices[80]["device.form-factor"] = "speaker";
+        QCOMPARE(classify(bt, 91), int(StudioView::OutputSpeakers));
+        // A USB interface says nothing: nothing is muted.
+        bt.devices[80] = {{"device.api", "alsa"}, {"device.bus", "usb"}};
+        bt.nodes[90]["node.name"] = "alsa_output.usb-Focusrite_Scarlett_2i2.analog-stereo";
+        QCOMPARE(classify(bt, 91), int(StudioView::OutputUnknown));
+    }
+
+    void theHowlGuardStaysInsideBudget() {
+        // The feedback detector alone, ten seconds of a voice and its
+        // monitor against the clock: well under 1 % of real time (an FFT
+        // of 1024 points every 512 samples).
+        TENFOLD_TIMED();
+        HowlGuard g;
+        g.init(48000);
+        Rng rng(3);
+        double phase = 0, sink = 0;
+        const int n = 48000 * 10;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < n; ++i) {
+            phase += (220.0 + 3 * std::sin(i * 1e-4)) / 48000.0;
+            const float x = 0.3f * float(std::sin(kTwoPi * phase)) + 0.01f * rng.bipolar();
+            sink += g.step(x, 0.8f * x, true);
+        }
+        const double share = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / 10.0;
+        qInfo("the howl guard: %.3f %% of real time", share * 100);
+        QVERIFY(sink > 0);
+        QVERIFY2(share < 0.01, qPrintable(QString::number(share)));
+    }
+
 private:
     // The styles by their place on Left / Right (after the page's own six).
     enum { Talk = 6, Throat, Sitar, Gamelan, Screwed, Riot, Growl };
+    // A script followed for feedback: when the page first dipped the
+    // monitor to listen and when it muted it, how often, and what it said.
+    struct Howl {
+        testkit::Take take;
+        double probeAt = -1, mutedAt = -1;
+        float mutedHz = 0;
+        int probes = 0, catches = 0;
+        QString notices;
+    };
+    static Howl howl(const std::string &script) {
+        Howl h;
+        uint32_t seq = 0;
+        h.take = testkit::watch(script, [&](double t, Session &s) {
+            const float *d = s.view().parts[kVocal].data;
+            if (d[vocal::pub::Feedback] > 0.25f && h.probeAt < 0)
+                h.probeAt = t;
+            if (d[vocal::pub::Feedback] > 0.75f && h.mutedAt < 0) {
+                h.mutedAt = t;
+                h.mutedHz = d[vocal::pub::FeedbackHz];
+            }
+            h.probes = int(d[vocal::pub::FeedbackProbes]);
+            h.catches = int(d[vocal::pub::FeedbackCatches]);
+            const QString n = s.notice(&seq);
+            if (!n.isEmpty() && !h.notices.endsWith(n + "\n"))
+                h.notices += n + "\n";
+        });
+        return h;
+    }
+    // When the mix around hz (a third of an octave) first passes `rms`,
+    // over 5 ms windows.
+    // (The start of the run above it that goes on to `before`: the howl,
+    // not a word before it.)
+    static double bandOnset(const testkit::Take &t, float hz, double rms, double before) {
+        Svf band;
+        band.set(hz, 4.0f, 48000.0f);
+        double sum = 0, onset = -1;
+        for (size_t i = 0; i < t.left.size() && double(i) / 48000.0 < before; ++i) {
+            const float y = 0.25f * band.step(t.left[i]).band; // (a Q of 4 lifts its centre 12 dB)
+            sum += double(y) * y;
+            if ((i + 1) % 240 == 0) {
+                const bool over = std::sqrt(sum / 240) > rms;
+                if (!over)
+                    onset = -1;
+                else if (onset < 0)
+                    onset = double(i + 1) / 48000.0;
+                sum = 0;
+            }
+        }
+        return onset;
+    }
     static std::string rights(int n) {
         std::string s;
         for (int k = 0; k < n; ++k)

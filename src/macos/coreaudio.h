@@ -34,6 +34,9 @@ public:
     // The render and capture callbacks.
     void render(float *interleaved, int frames);
     void capture(void *flags, const void *timestamp, unsigned frames);
+    // What the default output is, speakers or headphones, told to the
+    // studio; again whenever CoreAudio says it changed.
+    void watchOutput();
 
 private:
     bool startInput();
@@ -45,6 +48,8 @@ private:
     std::atomic<bool> m_running{false};
     std::atomic<int> m_quantum{0};
     bool m_clockSet = false, m_flushed = false;
+    std::mutex m_watchLock;
+    unsigned m_watched = 0; // the output device listened to (kAudioObjectUnknown: none)
 
     // The microphone.
     mutable std::mutex m_errorLock;

@@ -287,6 +287,13 @@ struct StudioView {
     // buffers included, as it reports them), and the studio's own: the
     // quantum it renders plus what waits in its input ring.
     float inputMs = 0, outputMs = 0, bufferMs = 0;
+    // What the sound comes out of, as far as the system says (best effort:
+    // the audio server's port or data source, see the platform's backend).
+    // On speakers the microphone hears the monitored voice again, so the
+    // Vocal page keeps its monitor muted until asked; Unknown is anything
+    // it can't tell (a line out, HDMI, an interface) and warns of nothing.
+    enum Output : int { OutputUnknown = 0, OutputSpeakers, OutputHeadphones };
+    int output = OutputUnknown;
 };
 
 // A key press or release, for parts that play from the keyboard too. The

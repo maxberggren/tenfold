@@ -2073,6 +2073,7 @@ void Studio::publish() {
     v.input = m_inState.load(std::memory_order_relaxed);
     v.inputMs = m_inMs.load(std::memory_order_relaxed);
     v.outputMs = m_outMs.load(std::memory_order_relaxed);
+    v.output = m_output.load(std::memory_order_relaxed);
     v.bufferMs = float(m_quantum + m_inReserve.load(std::memory_order_relaxed)) * 1000.0f / m_rate;
     v.cpu = s.cpu;
     v.cpuPeak = s.cpuPeak;

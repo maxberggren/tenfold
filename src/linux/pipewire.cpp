@@ -1,16 +1,280 @@
 #include "pipewire.h"
 
+#include <pipewire/extensions/metadata.h>
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
 #include <spa/param/props.h>
+#include <spa/param/route.h>
+#include <spa/pod/parser.h>
 
 #include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <map>
+#include <memory>
 #include <mutex>
 
 #include "dsp.h"
+#include "outputkind.h"
 #include "studio.h"
 
 namespace tf {
+
+// --- what the sound plays through ------------------------------------------------
+
+// Follows the PipeWire graph (on the thread loop it is made on) for what
+// the stream plays into: the nodes, the devices' active routes, the links
+// and the default sink, as outputkind::Graph, classified on every change
+// and handed to onKind (outputkind.h says how).
+class OutputWatch {
+public:
+    OutputWatch(pw_loop *loop, std::function<void(int)> onKind) : m_onKind(std::move(onKind)) {
+        m_context = pw_context_new(loop, nullptr, 0);
+        if (m_context)
+            m_core = pw_context_connect(m_context, nullptr, 0);
+        if (!m_core)
+            return;
+        m_registry = pw_core_get_registry(m_core, PW_VERSION_REGISTRY, 0);
+        static const pw_registry_events events = [] {
+            pw_registry_events e{};
+            e.version = PW_VERSION_REGISTRY_EVENTS;
+            e.global = [](void *data, uint32_t id, uint32_t, const char *type, uint32_t, const spa_dict *props) {
+                static_cast<OutputWatch *>(data)->global(id, type, props);
+            };
+            e.global_remove = [](void *data, uint32_t id) { static_cast<OutputWatch *>(data)->remove(id); };
+            return e;
+        }();
+        pw_registry_add_listener(m_registry, &m_registryHook, &events, this);
+    }
+    ~OutputWatch() {
+        for (auto &[id, b] : m_bound) {
+            spa_hook_remove(&b->hook);
+            pw_proxy_destroy(b->proxy);
+        }
+        m_bound.clear();
+        if (m_registry) {
+            spa_hook_remove(&m_registryHook);
+            pw_proxy_destroy(reinterpret_cast<pw_proxy *>(m_registry));
+        }
+        if (m_core)
+            pw_core_disconnect(m_core);
+        if (m_context)
+            pw_context_destroy(m_context);
+    }
+    bool connected() const { return m_core != nullptr; }
+    // The stream whose sinks count (0: the default sink).
+    void setStream(uint32_t node) {
+        if (node != m_stream) {
+            m_stream = node;
+            update();
+        }
+    }
+    int kind() const { return m_kind; }
+    const outputkind::Graph &graph() const { return m_graph; }
+
+private:
+    struct Bound {
+        OutputWatch *owner = nullptr;
+        uint32_t id = 0;
+        pw_proxy *proxy = nullptr;
+        spa_hook hook{};
+    };
+
+    static outputkind::Props propsOf(const spa_dict *dict) {
+        outputkind::Props p;
+        if (dict) {
+            const spa_dict_item *item;
+            spa_dict_for_each(item, dict) if (item->key && item->value) p[item->key] = item->value;
+        }
+        return p;
+    }
+
+    void global(uint32_t id, const char *type, const spa_dict *props) {
+        if (!type)
+            return;
+        if (std::strcmp(type, PW_TYPE_INTERFACE_Link) == 0) {
+            const outputkind::Props p = propsOf(props);
+            const std::string out = outputkind::get(p, PW_KEY_LINK_OUTPUT_NODE),
+                              in = outputkind::get(p, PW_KEY_LINK_INPUT_NODE);
+            if (!out.empty() && !in.empty()) {
+                m_links[id] = {uint32_t(std::strtoul(out.c_str(), nullptr, 10)), uint32_t(std::strtoul(in.c_str(), nullptr, 10))};
+                relink();
+            }
+        } else if (std::strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+            // (Bound: a node's full properties, card.profile.device and the
+            // link group among them, come with its info, not its global.)
+            m_graph.nodes[id] = propsOf(props);
+            static const pw_node_events events = [] {
+                pw_node_events e{};
+                e.version = PW_VERSION_NODE_EVENTS;
+                e.info = [](void *data, const pw_node_info *info) {
+                    auto *b = static_cast<Bound *>(data);
+                    if (info && (info->change_mask & PW_NODE_CHANGE_MASK_PROPS)) {
+                        b->owner->m_graph.nodes[b->id] = propsOf(info->props);
+                        b->owner->update();
+                    }
+                };
+                return e;
+            }();
+            bind(id, type, PW_VERSION_NODE, &events);
+            update();
+        } else if (std::strcmp(type, PW_TYPE_INTERFACE_Device) == 0) {
+            m_graph.devices[id] = propsOf(props);
+            static const pw_device_events events = [] {
+                pw_device_events e{};
+                e.version = PW_VERSION_DEVICE_EVENTS;
+                e.info = [](void *data, const pw_device_info *info) {
+                    auto *b = static_cast<Bound *>(data);
+                    if (!info)
+                        return;
+                    if (info->change_mask & PW_DEVICE_CHANGE_MASK_PROPS)
+                        b->owner->m_graph.devices[b->id] = propsOf(info->props);
+                    if (info->change_mask & PW_DEVICE_CHANGE_MASK_PARAMS)
+                        for (uint32_t i = 0; i < info->n_params; ++i)
+                            if (info->params[i].id == SPA_PARAM_Route && (info->params[i].flags & SPA_PARAM_INFO_READ)) {
+                                // The routes again, from the start.
+                                b->owner->m_graph.routes[b->id].clear();
+                                pw_device_enum_params(reinterpret_cast<pw_device *>(b->proxy), 0, SPA_PARAM_Route, 0,
+                                                      UINT32_MAX, nullptr);
+                            }
+                    b->owner->update();
+                };
+                e.param = [](void *data, int, uint32_t id, uint32_t, uint32_t, const spa_pod *param) {
+                    auto *b = static_cast<Bound *>(data);
+                    if (id == SPA_PARAM_Route && param) {
+                        outputkind::Route r;
+                        if (parseRoute(param, r)) {
+                            b->owner->m_graph.routes[b->id].push_back(std::move(r));
+                            b->owner->update();
+                        }
+                    }
+                };
+                return e;
+            }();
+            bind(id, type, PW_VERSION_DEVICE, &events);
+            update();
+        } else if (std::strcmp(type, PW_TYPE_INTERFACE_Metadata) == 0) {
+            const outputkind::Props p = propsOf(props);
+            if (outputkind::get(p, PW_KEY_METADATA_NAME) != "default")
+                return;
+            static const pw_metadata_events events = [] {
+                pw_metadata_events e{};
+                e.version = PW_VERSION_METADATA_EVENTS;
+                e.property = [](void *data, uint32_t subject, const char *key, const char *, const char *value) {
+                    auto *b = static_cast<Bound *>(data);
+                    if (subject == PW_ID_CORE && key && std::strcmp(key, "default.audio.sink") == 0) {
+                        // {"name":"alsa_output…"}
+                        std::string name;
+                        if (value)
+                            if (const char *at = std::strstr(value, "\"name\"")) {
+                                const char *open = std::strchr(at + 6, '"');
+                                const char *close = open ? std::strchr(open + 1, '"') : nullptr;
+                                if (open && close)
+                                    name.assign(open + 1, close);
+                            }
+                        b->owner->m_graph.defaultSink = name;
+                        b->owner->update();
+                    }
+                    return 0;
+                };
+                return e;
+            }();
+            bind(id, type, PW_VERSION_METADATA, &events);
+        }
+    }
+
+    static bool parseRoute(const spa_pod *param, outputkind::Route &r) {
+        uint32_t direction = SPA_DIRECTION_OUTPUT;
+        int32_t device = -1;
+        const char *name = nullptr;
+        const spa_pod *info = nullptr;
+        if (spa_pod_parse_object(param, SPA_TYPE_OBJECT_ParamRoute, nullptr, SPA_PARAM_ROUTE_direction,
+                                 SPA_POD_Id(&direction), SPA_PARAM_ROUTE_device, SPA_POD_Int(&device),
+                                 SPA_PARAM_ROUTE_name, SPA_POD_OPT_String(&name), SPA_PARAM_ROUTE_info,
+                                 SPA_POD_OPT_Pod(&info)) < 0)
+            return false;
+        r.output = direction == SPA_DIRECTION_OUTPUT;
+        r.device = device;
+        r.name = name ? name : "";
+        if (info) {
+            // Struct(Int n, then n pairs of strings).
+            spa_pod_parser prs;
+            spa_pod_frame frame;
+            spa_pod_parser_pod(&prs, info);
+            int32_t n = 0;
+            if (spa_pod_parser_push_struct(&prs, &frame) == 0 && spa_pod_parser_get_int(&prs, &n) == 0)
+                for (int32_t i = 0; i < n; ++i) {
+                    const char *k = nullptr, *v = nullptr;
+                    if (spa_pod_parser_get_string(&prs, &k) < 0 || spa_pod_parser_get_string(&prs, &v) < 0)
+                        break;
+                    if (k && v)
+                        r.info[k] = v;
+                }
+        }
+        return true;
+    }
+
+    template <typename Events>
+    void bind(uint32_t id, const char *type, uint32_t version, const Events *events) {
+        auto *proxy = static_cast<pw_proxy *>(pw_registry_bind(m_registry, id, type, version, 0));
+        if (!proxy)
+            return;
+        auto b = std::make_unique<Bound>();
+        b->owner = this;
+        b->id = id;
+        b->proxy = proxy;
+        pw_proxy_add_object_listener(proxy, &b->hook, events, b.get());
+        if (auto old = m_bound.find(id); old != m_bound.end()) {
+            spa_hook_remove(&old->second->hook);
+            pw_proxy_destroy(old->second->proxy);
+        }
+        m_bound[id] = std::move(b);
+    }
+
+    void remove(uint32_t id) {
+        if (auto b = m_bound.find(id); b != m_bound.end()) {
+            spa_hook_remove(&b->second->hook);
+            pw_proxy_destroy(b->second->proxy);
+            m_bound.erase(b);
+        }
+        m_graph.nodes.erase(id);
+        m_graph.devices.erase(id);
+        m_graph.routes.erase(id);
+        if (m_links.erase(id))
+            relink();
+        update();
+    }
+
+    void relink() {
+        m_graph.links.clear();
+        for (const auto &[id, l] : m_links)
+            m_graph.links.push_back(l);
+        update();
+    }
+
+    void update() {
+        const int k = outputkind::classify(m_graph, m_stream ? m_stream : UINT32_MAX);
+        if (k != m_kind || !m_told) {
+            m_kind = k;
+            m_told = true;
+            if (m_onKind)
+                m_onKind(k);
+        }
+    }
+
+    std::function<void(int)> m_onKind;
+    pw_context *m_context = nullptr;
+    pw_core *m_core = nullptr;
+    pw_registry *m_registry = nullptr;
+    spa_hook m_registryHook{};
+    std::map<uint32_t, std::unique_ptr<Bound>> m_bound;
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> m_links;
+    outputkind::Graph m_graph;
+    uint32_t m_stream = 0;
+    int m_kind = StudioView::OutputUnknown;
+    bool m_told = false;
+};
+
 
 struct PipeWireAudio::Impl {
     PipeWireAudio *owner = nullptr;
@@ -33,6 +297,9 @@ struct PipeWireAudio::Impl {
     int reported = -1;
     mutable std::mutex errorLock;
     std::string inputError;
+
+    // What the sound plays through, for the Vocal page's monitor.
+    std::unique_ptr<OutputWatch> watch;
 };
 
 // The latency the server reports for a stream: from the device to us
@@ -127,10 +394,19 @@ static void onCaptureState(void *data, pw_stream_state, pw_stream_state state, c
     }
 }
 
+// Once the stream has a node of its own, the sinks it is linked to are
+// the ones that count.
+static void onStreamState(void *data, pw_stream_state, pw_stream_state state, const char *) {
+    auto *d = static_cast<PipeWireAudio::Impl *>(data);
+    if (d->watch && (state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING))
+        d->watch->setStream(pw_stream_get_node_id(d->stream));
+}
+
 static const pw_stream_events streamEvents = [] {
     pw_stream_events e{};
     e.version = PW_VERSION_STREAM_EVENTS;
     e.process = onProcess;
+    e.state_changed = onStreamState;
     return e;
 }();
 
@@ -237,6 +513,10 @@ bool PipeWireAudio::start() {
         m_engine->setInput(StudioView::InputConnecting);
     }
 
+    // Speakers or headphones: best effort, nothing fails without it.
+    d->watch = std::make_unique<OutputWatch>(pw_thread_loop_get_loop(d->loop),
+                                             [studio = m_engine](int kind) { studio->setOutput(kind); });
+
     if (pw_thread_loop_start(d->loop) < 0) {
         m_error = "Cannot start the audio thread.";
         return false;
@@ -250,6 +530,7 @@ void PipeWireAudio::stop() {
         return;
     if (d->loop)
         pw_thread_loop_stop(d->loop);
+    d->watch.reset();
     if (d->capture)
         pw_stream_destroy(d->capture);
     if (d->stream)
@@ -521,6 +802,46 @@ int measurePipeWireLatency(bool json) {
                                    : "");
     }
     return softwareMs >= 0 ? 0 : 1;
+}
+
+}
+
+namespace tf {
+
+int describePipeWireOutput() {
+    pw_init(nullptr, nullptr);
+    pw_main_loop *loop = pw_main_loop_new(nullptr);
+    if (!loop) {
+        std::printf("cannot start PipeWire\n");
+        return 1;
+    }
+    int code = 0;
+    {
+        OutputWatch watch(pw_main_loop_get_loop(loop), {});
+        if (!watch.connected()) {
+            std::printf("cannot reach PipeWire\n");
+            code = 1;
+        } else {
+            // Half a second for the graph to arrive, then what it says.
+            spa_source *timer = pw_loop_add_timer(
+                pw_main_loop_get_loop(loop), [](void *data, uint64_t) { pw_main_loop_quit(static_cast<pw_main_loop *>(data)); },
+                loop);
+            timespec in{0, 500000000}, never{0, 0};
+            pw_loop_update_timer(pw_main_loop_get_loop(loop), timer, &in, &never, false);
+            pw_main_loop_run(loop);
+            const outputkind::Graph &g = watch.graph();
+            static const char *names[] = {"unknown (nothing muted)", "speakers (the Vocal page mutes its monitor)",
+                                          "headphones"};
+            std::printf("default sink: %s\n", g.defaultSink.empty() ? "?" : g.defaultSink.c_str());
+            for (const auto &[id, p] : g.nodes)
+                if (outputkind::get(p, PW_KEY_MEDIA_CLASS) == "Audio/Sink")
+                    std::printf("  sink %u %s: %s\n", id, outputkind::get(p, PW_KEY_NODE_NAME).c_str(),
+                                names[outputkind::sinkKind(g, id, 0)]);
+            std::printf("plays through: %s\n", names[watch.kind()]);
+        }
+    }
+    pw_main_loop_destroy(loop);
+    return code;
 }
 
 }

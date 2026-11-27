@@ -166,6 +166,9 @@ public:
     // What the audio server says about the microphone and the latencies
     // (milliseconds each way, the devices' included); see StudioView.
     void setInput(int state, float inputMs = 0, float outputMs = 0);
+    // What the sound plays through: StudioView::Output. Any thread.
+    void setOutput(int kind) { m_output.store(kind, std::memory_order_relaxed); }
+    int output() const { return m_output.load(std::memory_order_relaxed); }
     // Samples waiting in the input ring after the last render took its share.
     int inputWaiting() const { return m_inReserve.load(std::memory_order_relaxed); }
 
@@ -257,6 +260,7 @@ private:
     std::atomic<uint64_t> m_inHead{0}, m_inTail{0};
     std::atomic<int> m_inState{0}, m_inReserve{0};
     std::atomic<float> m_inMs{0}, m_outMs{0};
+    std::atomic<int> m_output{0};
     int m_inSlack = 0;        // samples held back after an underrun, so the next doesn't come
     int m_inLow = 1 << 30;    // the least left waiting over the last second
     uint64_t m_inCalm = 0;    // samples rendered since the last underrun

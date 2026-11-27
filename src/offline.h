@@ -32,9 +32,16 @@
 //   mouse T X Y down|up|move                          the mouse on the pad: pressed, it is
 //                                                     one more finger; move alone hovers
 //   tempo T BPM
-//   voice T DUR [hz=220] [to=HZ] [level=0.3] [vowel=a|e|i|o|u]
+//   voice T DUR [hz=220] [to=HZ] [level=0.3] [vowel=a|e|i|o|u] [vib=0.25]
 //                                                     a sung word into the microphone
-//                                                     (a glide to `to`, vibrato when held)
+//                                                     (a glide to `to`, vibrato of vib
+//                                                     semitones when held; 0 sings straight)
+//   room  T [gain=1] [ms=12] [hz=2500]                from T the microphone hears the mix
+//                                                     too, through a room (a resonance
+//                                                     at hz) a trip of ms later: speakers,
+//                                                     for feedback; gain=0 ends it
+//   output T speakers|headphones|unknown              what the sound plays through, as
+//                                                     the audio server would say
 //   mic   T FILE.wav [gain=1]                         a recording into the microphone from T
 //                                                     (with either, the script has a mic;
 //                                                     without, it has none)

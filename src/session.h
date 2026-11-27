@@ -285,10 +285,11 @@ public:
     QString nextStep() const;
 
     // How much the window shows: 0 Play (the pad, LOOP and the sound; the
-    // band's second row folded away), 1 Shape (that row too), 2 Studio
-    // (everything). The keys work at every level.
+    // band's second row folded away, pages zoomed onto what plays), 2
+    // Studio (everything). The keys work at both. (1, the Shape level there
+    // once was, is Studio now.)
     int level() const { return m_level; }
-    void setLevel(int level) { m_level = std::clamp(level, 0, 2); }
+    void setLevel(int level) { m_level = level <= 0 ? 0 : 2; }
     // The band's second row, where level 0 folds it (empty: not folded here).
     QRectF foldedRow(const QRectF &pad) const;
 

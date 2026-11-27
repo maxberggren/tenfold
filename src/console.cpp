@@ -406,8 +406,6 @@ void setPaintLevel(int level) { g_paintLevel = level; }
 int paintLevel() { return g_paintLevel; }
 
 QString friendly(const QString &label) {
-    if (g_paintLevel != 1)
-        return label;
     static const QRegularExpression key(QStringLiteral("^(F\\d{1,2}|DEL|§|[A-Z]|[-+]|.*[⇧↵←→↑↓\\\\].*)$"));
     QStringList words = label.split(QLatin1Char(' '), Qt::SkipEmptyParts);
     // An arrow among the keys left off tells a pair apart (RHYTHM ← and

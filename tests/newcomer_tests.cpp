@@ -228,8 +228,10 @@ private slots:
                 s.setPage(s.pageNamed(QString::fromLatin1(name)));
                 s.setLevel(0);
                 QVERIFY2(s.zoomArea().zooms(), name);
+                // (1, once Shape, is Studio now.)
                 s.setLevel(1);
-                QVERIFY2(s.zoomArea().zooms(), name);
+                QCOMPARE(s.level(), 2);
+                QVERIFY2(!s.zoomArea().zooms(), name);
                 s.setLevel(2);
                 QVERIFY2(!s.zoomArea().zooms(), name);
             }

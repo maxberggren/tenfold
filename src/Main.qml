@@ -461,21 +461,23 @@ ApplicationWindow {
                                 spacing: 4
                                 visible: !backend.tutorialActive
                                 Repeater {
-                                    model: [qsTr("Play"), qsTr("Shape"), qsTr("Studio")]
+                                    // Play and Studio: the levels 0 and 2.
+                                    model: [qsTr("Play"), qsTr("Studio")]
                                     delegate: Rectangle {
                                         id: levelChip
                                         required property int index
                                         required property string modelData
                                         width: parent.width
-                                        height: win.readoutsCompact ? 22 : 26
-                                        color: win.lv === index ? win.amber : levelMouse.containsMouse ? Qt.rgba(1, 0.69, 0, 0.18) : "transparent"
+                                        height: win.readoutsCompact ? 26 : 32
+                                        readonly property int level: index === 0 ? 0 : 2
+                                        color: win.lv === level ? win.amber : levelMouse.containsMouse ? Qt.rgba(1, 0.69, 0, 0.18) : "transparent"
                                         border.color: win.amber
                                         border.width: 1
-                                        opacity: win.lv === index || levelMouse.containsMouse ? 1 : 0.7
+                                        opacity: win.lv === level || levelMouse.containsMouse ? 1 : 0.7
                                         Text {
                                             anchors.centerIn: parent
                                             text: modelData
-                                            color: win.lv === levelChip.index ? "#0a0806" : win.amber
+                                            color: win.lv === levelChip.level ? "#0a0806" : win.amber
                                             font.family: win.mono
                                             font.pixelSize: 12
                                             font.weight: Font.Bold
@@ -487,13 +489,8 @@ ApplicationWindow {
                                             anchors.fill: parent
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: backend.uiLevel = levelChip.index
+                                            onClicked: backend.uiLevel = levelChip.level
                                         }
-                                        ToolTip.visible: levelMouse.containsMouse
-                                        ToolTip.delay: 300
-                                        ToolTip.text: [qsTr("Play: the pad, LOOP IT and the sounds. Nothing else."),
-                                                       qsTr("Shape: swing, tone, glide, tempo, key, metronome, loop length."),
-                                                       qsTr("Studio: everything, with save, open, export and the meters.")][levelChip.index]
                                     }
                                 }
                             }

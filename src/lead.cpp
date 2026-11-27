@@ -4683,9 +4683,9 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
             bool lit;
             int id;
         };
-        // At Shape the steppers say their names in full and show plain
-        // − / +; the keys (⇧ and the arrows) are Studio's.
-        const bool shape = pc.level == 1;
+        // The steppers say their names in full and show plain − / +; the
+        // keys (⇧ and the arrows) are the guide's.
+        const bool shape = true;
         const QString minus = QStringLiteral("−"), plus = QStringLiteral("+");
         const Stepper steppers[] = {
             {shape ? QStringLiteral("OCTAVE") : QStringLiteral("OCT"), shape ? minus : QStringLiteral("↓"),

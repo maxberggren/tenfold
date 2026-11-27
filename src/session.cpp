@@ -537,9 +537,10 @@ bool Session::clickAt(QPointF at) {
     m_mouseOver = true;
     Page &p = *m_pages[size_t(m_page)];
     if (!m_studioTag.isEmpty() && m_studioTag.contains(at)) {
-        // Said, not done: the player chooses to go there.
-        context(m_page).notice(QStringLiteral("%1: in STUDIO, top right").arg(zoomArea().what));
-        ++m_studioNudge;
+        // The way there: Studio, with this page whole.
+        const QString what = zoomArea().what;
+        m_level = 2;
+        context(m_page).notice(QStringLiteral("Studio: %1").arg(what));
         return true;
     }
     if (console::nextChipAt(at) || (!m_soundNext.isEmpty() && m_soundNext.contains(at))) {
@@ -555,8 +556,8 @@ bool Session::clickAt(QPointF at) {
         return true;
     }
     if (const QRectF fold = foldedRow(m_padRect); !fold.isEmpty() && fold.contains(at)) {
-        m_level = 1;
-        context(m_page).notice(QStringLiteral("More controls: swing, tone, glide and the rest"));
+        m_level = 2;
+        context(m_page).notice(QStringLiteral("Studio: every control"));
         return true;
     }
     return p.spec.control->click(at, *p.ctx);
@@ -2706,7 +2707,7 @@ QString Session::nextStep() const {
             return QStringLiteral("It loops! Now add %1: press %2 or click its tab")
                 .arg(pageName(next).toUpper(), pageKey(next));
         if (m_level == 0)
-            return QStringLiteral("A band! More controls (tempo, key, swing) are under SHAPE, top right");
+            return QStringLiteral("A band! Tempo, key, swing and every control are under STUDIO, top right");
         return QStringLiteral("Open 0 SONG and press I: your loops become a track");
     }
     default: break;

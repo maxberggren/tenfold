@@ -73,8 +73,9 @@ QRectF tag(QPainter &p, QPointF at, const QString &text, QColor color, int px = 
 // above it, so they stay clear of the content.
 constexpr qreal kHead = 5;
 inline qreal edge(const PaintContext &pc) { return pc.pad.top() - kHead; }
-// Where a tab on that edge is centred: a little above the line.
-inline qreal tabY(const PaintContext &pc) { return edge(pc) - 4; }
+// Where a tab on that edge is centred: on the line itself, its words cut
+// into it as a panel box's title is.
+inline qreal tabY(const PaintContext &pc) { return edge(pc); }
 // The page's active variation, cut into the pad's top edge a little after
 // its legend (INSTRUMENT ── VARIATION); returns where the next tag goes.
 qreal variation(QPainter &p, const PaintContext &pc, const QString &name);
@@ -155,9 +156,10 @@ QRectF lastClipStrip();
 // The window's level for what follows (Session::paint sets it): below
 // Studio the clip slots say "1 BAR" rather than "1 · 1B".
 void setPaintLevel(int level);
-// A band chip's words at the Shape level: its key left off (F10, DEL, §,
-// ⇧←…: the keys still work, and Studio shows them) and the jargon in plain
-// words (KEY TONE → BRIGHTNESS, OVERDUB → PLAY OVER…). Unchanged elsewhere.
+// A band chip's words: its key left off (F10, DEL, §, ⇧…: the keys still
+// work, and the guide lists them), an arrow that tells a pair apart kept,
+// and the jargon in plain words (KEY TONE → BRIGHTNESS, OVERDUB → PLAY
+// OVER…).
 QString friendly(const QString &label);
 int paintLevel();
 

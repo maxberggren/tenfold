@@ -1757,8 +1757,8 @@ void keyChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString
     c::chip(p, pc, r, QString(), lit, &spots, id);
     const QColor ink = lit ? QColor::fromRgb(c::kInk) : pc.color;
     const qreal w = r.width() - 6;
-    // At Shape: the plain name alone, a line lower; the key is Studio's.
-    if (console::paintLevel() == 1) {
+    // The plain name alone; the key is the guide's.
+    {
         const QString plain = console::friendly(name);
         c::text(p, QRectF(r.left() + 3, r.top(), w, r.height()), plain, ink, fitPx(plain, w, 12), true, Qt::AlignCenter);
         return;
@@ -1773,8 +1773,8 @@ void keyChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString
 // its key at its edge.
 void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &rawName, const QString &value,
               const QString &rawDown, const QString &rawUp, c::Hotspots &spots, int id) {
-    // At Shape: a plain name and − / + for its halves.
-    const bool shape = console::paintLevel() == 1;
+    // A plain name and − / + for its halves.
+    const bool shape = true;
     const QString name = console::friendly(rawName);
     const QString down = shape ? QStringLiteral("−") : rawDown, up = shape ? QStringLiteral("+") : rawUp;
     const QRectF left(r.left(), r.top(), r.width() / 2, r.height()), right(left.right(), r.top(), r.width() / 2, r.height());

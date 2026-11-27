@@ -71,6 +71,10 @@ ApplicationWindow {
     readonly property bool stacked: arrangement === 2
     // Readouts on fewer lines, where room is short.
     readonly property bool compact: arrangement !== 0 || room < 680
+    // The transport and the readouts on fewer lines: where compact, and
+    // also while the pad isn't taken and its big button and note need the
+    // room, so the column doesn't scroll at a common size.
+    readonly property bool readoutsCompact: compact || (!playing && room < 800)
     // A column too short for it all scrolls: the buttons first, then.
     readonly property bool buttonsFirst: arrangement === 0 && room < sideHeight && !backend.tutorialActive
 
@@ -367,11 +371,12 @@ ApplicationWindow {
                     clip: scrolls
                     interactive: scrolls
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: ScrollBar { policy: panelView.scrolls ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff }
+                    ScrollBar.vertical: ScrollBar { id: panelBar; policy: panelView.scrolls ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff }
 
                     GridLayout {
                         id: panel
-                        width: panelView.width - (panelView.scrolls ? 12 : 0)
+                        // Clear of the scroll bar, whatever its style makes its width.
+                        width: panelView.width - (panelView.scrolls ? panelBar.width + 4 : 0)
                         height: Math.max(panelView.height, Layout.minimumHeight)
                         columns: win.arrangement === 0 ? 1 : 2
                         columnSpacing: 16
@@ -392,7 +397,7 @@ ApplicationWindow {
                             Layout.fillWidth: !panel.twoColumns
                             Layout.preferredWidth: panel.twoColumns ? 300 : -1
                             Layout.alignment: Qt.AlignTop
-                            Layout.preferredHeight: win.compact ? 96 : panel.tutorial ? 108 : 128
+                            Layout.preferredHeight: win.readoutsCompact ? 96 : panel.tutorial ? 108 : 128
                             title: qsTr("Transport")
                             color: win.amber
                             Column {
@@ -407,15 +412,15 @@ ApplicationWindow {
                                 // Compact: the chord on the key's line.
                                 Text {
                                     text: qsTr("Key %1 %2").arg(backend.key).arg(backend.mode)
-                                          + (win.compact ? "  ·  " + qsTr("Chord %1").arg(backend.chord) : "")
+                                          + (win.readoutsCompact ? "  ·  " + qsTr("Chord %1").arg(backend.chord) : "")
                                     color: win.cyan
                                     font.family: win.mono
-                                    font.pixelSize: win.compact ? 15 : 16
+                                    font.pixelSize: win.readoutsCompact ? 15 : 16
                                     font.weight: Font.DemiBold
                                     font.capitalization: Font.AllUppercase
                                 }
                                 Text {
-                                    visible: !win.compact
+                                    visible: !win.readoutsCompact
                                     text: qsTr("Chord %1").arg(backend.chord)
                                     color: win.cyan
                                     font.family: win.mono
@@ -433,11 +438,11 @@ ApplicationWindow {
                             Layout.preferredWidth: panel.twoColumns ? 300 : -1
                             Layout.alignment: Qt.AlignTop
                             visible: !panel.tutorial
-                            spacing: win.compact ? 10 : 12
+                            spacing: win.readoutsCompact ? 10 : 12
 
                             Column {
                                 Layout.fillWidth: true
-                                spacing: win.compact ? 4 : 6
+                                spacing: win.readoutsCompact ? 4 : 6
                                 StatusLamp { label: qsTr("Trackpad grabbed"); on: win.playing; color: win.green }
                                 StatusLamp { label: qsTr("Audio running"); on: backend.audioOk; color: win.green }
                                 StatusLamp { label: qsTr("Metronome"); on: backend.metronome; color: win.amber }
@@ -448,16 +453,16 @@ ApplicationWindow {
                             // at the start of their line.
                             Item {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: win.compact ? 32 : 60
+                                Layout.preferredHeight: win.readoutsCompact ? 32 : 60
                                 Rectangle {
                                     id: dspHead
-                                    width: win.compact ? dspTitle.implicitWidth + 16 : parent.width
-                                    height: win.compact ? parent.height : 22
+                                    width: win.readoutsCompact ? dspTitle.implicitWidth + 16 : parent.width
+                                    height: win.readoutsCompact ? parent.height : 22
                                     color: win.green
                                     Text {
                                         id: dspTitle
                                         anchors.centerIn: parent
-                                        text: win.compact ? qsTr("DSP") : qsTr("DSP values")
+                                        text: win.readoutsCompact ? qsTr("DSP") : qsTr("DSP values")
                                         color: "#0a0806"
                                         font.family: win.mono
                                         font.pixelSize: 14
@@ -467,8 +472,8 @@ ApplicationWindow {
                                     }
                                 }
                                 Rectangle {
-                                    x: win.compact ? dspHead.width : 0
-                                    y: win.compact ? 0 : dspHead.height
+                                    x: win.readoutsCompact ? dspHead.width : 0
+                                    y: win.readoutsCompact ? 0 : dspHead.height
                                     width: parent.width - x
                                     height: parent.height - y
                                     color: "transparent"
@@ -481,7 +486,7 @@ ApplicationWindow {
                                               + "   " + qsTr("%n voices", "", backend.voices)
                                         color: win.green
                                         font.family: win.mono
-                                        font.pixelSize: win.compact ? 15 : 17
+                                        font.pixelSize: win.readoutsCompact ? 15 : 17
                                         font.weight: Font.DemiBold
                                         font.capitalization: Font.AllUppercase
                                     }

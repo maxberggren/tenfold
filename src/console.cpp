@@ -171,9 +171,23 @@ qreal textWidth(const QFont &f, const QString &text) {
 }
 
 void drawText(QPainter &p, const QRectF &r, int flags, const QString &text) {
-    const QFont f = p.font();
-    const QFontMetricsF m(f);
+    QFont f = p.font();
     QString s = keyNames(text);
+    // Too wide for its box (a small window's narrow chips): a smaller size,
+    // down to three quarters of it and no less than 7 px, before letters go.
+    if (f.pixelSize() > 7 && textWidth(f, s) > r.width() + 0.5) {
+        const int floor = std::max(7, int(std::ceil(f.pixelSize() * 0.75)));
+        while (f.pixelSize() > floor && textWidth(f, s) > r.width() + 0.5)
+            f.setPixelSize(f.pixelSize() - 1);
+    }
+    const QFont was = p.font();
+    p.setFont(f);
+    struct Restore {
+        QPainter &p;
+        QFont f;
+        ~Restore() { p.setFont(f); }
+    } restore{p, was};
+    const QFontMetricsF m(f);
     bool hasIcon = false;
     for (const QChar c : s)
         hasIcon |= isIcon(c);

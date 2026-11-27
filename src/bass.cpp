@@ -1494,7 +1494,9 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
         const qreal y = pc.at(0, kField * ln[PubCut]).y();
         p.fillRect(QRectF(r.left() + 3, y - 2, r.width() - 6, 4), c::alpha(pc.color, a * 0.9f));
         if (lane == 1)
-            c::text(p, QRectF(r.left(), r.top() + 26, r.width(), 14), QStringLiteral("LOOP"),
+            // At the column's foot, over the note names: the top of the
+            // field carries the sound's name and description.
+            c::text(p, QRectF(r.left(), r.bottom() - 34, r.width(), 14), QStringLiteral("LOOP"),
                     c::alpha(pc.color, a), 10, true, Qt::AlignCenter);
     }
 

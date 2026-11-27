@@ -817,6 +817,8 @@ void Session::refresh() {
             }
             if (m_view.parts[p].playing != m_lastPlaying[p]) {
                 m_lastPlaying[p] = m_view.parts[p].playing;
+                if (m_view.parts[p].playing >= 0)
+                    m_lastLoopSlot[p] = m_view.parts[p].playing;
                 m_loopSince[p] = m_view.beat;
             }
         }
@@ -2764,6 +2766,71 @@ PartControl::PlayArea Session::zoomArea() const {
     if (m_level >= 2 || p.part < 0 || m_tutorial.active())
         return {};
     return p.spec.control->playArea();
+}
+
+}
+
+namespace tf {
+
+std::vector<Session::LoopSummary> Session::loopSummary() const {
+    std::lock_guard lock(m_lock);
+    std::vector<LoopSummary> out;
+    for (int page = 0; page < int(m_pages.size()); ++page) {
+        const Page &p = *m_pages[size_t(page)];
+        if (p.part < 0 || p.part >= m_view.partCount)
+            continue;
+        const PartView &v = m_view.parts[p.part];
+        int loops = 0, slot = -1;
+        for (int s = 0; s < kClipSlots; ++s)
+            if (v.clips[s].state != ClipView::Empty) {
+                ++loops;
+                if (slot < 0)
+                    slot = s;
+            }
+        if (loops == 0)
+            continue;
+        if (v.playing >= 0)
+            slot = v.playing;
+        else if (v.queued >= 0)
+            slot = v.queued;
+        else if (m_lastLoopSlot[p.part] >= 0 && v.clips[m_lastLoopSlot[p.part]].state != ClipView::Empty)
+            slot = m_lastLoopSlot[p.part];
+        LoopSummary l;
+        l.page = page;
+        l.loops = loops;
+        l.beats = int(std::lround(v.clips[slot].lengthBeats));
+        l.playing = v.playing >= 0;
+        l.queued = v.playing < 0 && v.queued >= 0;
+        out.push_back(l);
+    }
+    return out;
+}
+
+void Session::toggleLoop(int page) {
+    std::lock_guard lock(m_lock);
+    if (page < 0 || page >= int(m_pages.size()))
+        return;
+    Page &p = *m_pages[size_t(page)];
+    if (p.part < 0 || p.part >= m_view.partCount)
+        return;
+    const PartView &v = m_view.parts[p.part];
+    if (v.playing >= 0 || v.queued >= 0) {
+        p.ctx->stop(false);
+        p.ctx->notice(QStringLiteral("%1 stops at the bar").arg(pageName(page)));
+        return;
+    }
+    // The loop it played last, or its first.
+    int slot = m_lastLoopSlot[p.part];
+    if (slot < 0 || v.clips[slot].state == ClipView::Empty) {
+        slot = -1;
+        for (int s = 0; s < kClipSlots && slot < 0; ++s)
+            if (v.clips[s].state != ClipView::Empty)
+                slot = s;
+    }
+    if (slot < 0)
+        return;
+    p.ctx->launch(slot, false);
+    p.ctx->notice(QStringLiteral("%1 plays from the bar").arg(pageName(page)));
 }
 
 }

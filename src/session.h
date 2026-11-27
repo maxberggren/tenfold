@@ -46,6 +46,7 @@
 #include <QSizeF>
 #include <QString>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <memory>
@@ -268,6 +269,15 @@ public:
     // Counts the clicks on "▸ IN STUDIO: …": the window pulses its STUDIO chip.
     uint32_t studioNudge() const { return m_studioNudge; }
 
+    // The window's "Your loops": each part that has a loop, the one it
+    // plays (or would play again), and starting or stopping it at the bar.
+    struct LoopSummary {
+        int page = -1, loops = 0, beats = 0;
+        bool playing = false, queued = false;
+    };
+    std::vector<LoopSummary> loopSummary() const;
+    void toggleLoop(int page);
+
     // One sentence for a newcomer: what to do next on the showing page.
     QString nextStep() const;
 
@@ -386,6 +396,12 @@ private:
     };
     std::vector<Audition> m_audition;
     int m_level = 2;
+    // The slot each part last played, for "Your loops" to start it again.
+    std::array<int, kMaxParts> m_lastLoopSlot = [] {
+        std::array<int, kMaxParts> a;
+        a.fill(-1);
+        return a;
+    }();
     QRectF m_soundChip;   // level 0: the SOUND chip under the pad, where last painted
     bool m_soundsAsked = false;
     QRectF m_soundNext;   // level 0: the → beside it

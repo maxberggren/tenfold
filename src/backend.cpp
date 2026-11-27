@@ -795,3 +795,17 @@ QVariantList Backend::styleDetails() const {
     }
     return out;
 }
+
+QVariantList Backend::partLoops() const {
+    QVariantList out;
+    for (const auto &l : m_session->loopSummary()) {
+        QVariantMap m;
+        m[QStringLiteral("page")] = l.page;
+        m[QStringLiteral("loops")] = l.loops;
+        m[QStringLiteral("beats")] = l.beats;
+        m[QStringLiteral("playing")] = l.playing;
+        m[QStringLiteral("queued")] = l.queued;
+        out << m;
+    }
+    return out;
+}

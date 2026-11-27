@@ -930,18 +930,15 @@ private slots:
         testkit::play("page 0 1\nbutton 0.2 0.72 -0.048\nend 0.5\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("techno"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
-        testkit::play("page 0 1\nbutton 0.2 0.70 -0.119\nend 0.5\n", [](Session &s) {
-            QVERIFY2(s.pageStatus().contains(QStringLiteral("tabla"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
-        });
-        // The faded chip at the row's right end is the next kit past the
-        // window: clicking it chooses that kit and the window follows, so
-        // clicking there again and again walks on to the last drum kit,
-        // and the first click already leaves house behind.
+        // The row is one window onto all the kits, ending in "+N MORE"
+        // (the browser) and → at its right end, the next kit: clicking it
+        // again and again walks on through them, and the first click
+        // already leaves house behind.
         testkit::play("page 0 1\nbutton 0.2 0.985 -0.048\nend 0.4\n", [](Session &s) {
             QVERIFY2(!s.pageStatus().contains(QStringLiteral("house"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));
         });
         std::string walk = "page 0 1\n";
-        for (int i = 0; i < 10; ++i)
+        for (int i = 0; i < 9; ++i)
             walk += "button " + std::to_string(0.2 + 0.1 * i) + " 0.985 -0.048\n";
         testkit::play(walk + "end 1.4\n", [](Session &s) {
             QVERIFY2(s.pageStatus().contains(QStringLiteral("brushes"), Qt::CaseInsensitive), qPrintable(s.pageStatus()));

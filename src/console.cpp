@@ -308,8 +308,9 @@ void gauge(QPainter &p, const QRectF &r, float value, QColor color, int segments
     }
 }
 
-QRectF chip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &label, bool lit, Hotspots *spots,
+QRectF chip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &raw, bool lit, Hotspots *spots,
             int id) {
+    const QString label = friendly(raw);
     const bool over = pc.mouseOver && r.contains(pc.mouse);
     if (lit)
         p.fillRect(r, pc.color);
@@ -402,6 +403,38 @@ namespace {
 int g_paintLevel = 2;
 }
 void setPaintLevel(int level) { g_paintLevel = level; }
+int paintLevel() { return g_paintLevel; }
+
+QString friendly(const QString &label) {
+    if (g_paintLevel != 1)
+        return label;
+    static const QRegularExpression key(QStringLiteral("^(F\\d{1,2}|DEL|§|[A-Z]|[-+]|.*[⇧↵←→↑↓\\\\].*)$"));
+    QStringList words = label.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    // An arrow among the keys left off tells a pair apart (RHYTHM ← and
+    // RHYTHM →): it stays, without its ⇧.
+    QString arrow;
+    while (words.size() > 1 && key.match(words.last()).hasMatch()) {
+        for (const QChar c : words.last())
+            if (QStringLiteral("←→↑↓").contains(c))
+                arrow = QString(c);
+        words.removeLast();
+    }
+    QString s = words.join(QLatin1Char(' '));
+    auto withArrow = [&](const QString &w) {
+        return arrow.isEmpty() || w == QStringLiteral("−") || w == QStringLiteral("+") ? w : w + QLatin1Char(' ') + arrow;
+    };
+    static const std::pair<const char *, const char *> plain[] = {
+        {"OVERDUB", "PLAY OVER"},    {"KEY TONE", "BRIGHTNESS"}, {"FOLLOW", "FOLLOW CHORDS"},
+        {"LATCH", "HOLD NOTES"},     {"BACK", "SOUNDS BACK"},    {"LOOP−", "SHORTER"},
+        {"LOOP+", "LONGER"},         {"FALL", "FALL AWAY"},      {"MIX", "BUILD THE MIX"},
+        {"DICE", "SURPRISE ME"},     {"GATE", "RHYTHM"},         {"DARK", "DARKER"},
+        {"BRIGHT", "BRIGHTER"},      {"VOICE", "VOICING"},       {"SQUELCH", "SQUELCH"},
+    };
+    for (const auto &[from, to] : plain)
+        if (s == QString::fromUtf8(from))
+            return withArrow(QString::fromUtf8(to));
+    return withArrow(s);
+}
 
 int firstEmptySlot(const PartView &v) {
     for (int s = 0; s < kClipSlots; ++s)

@@ -1113,9 +1113,11 @@ private slots:
         });
         {
             std::string walk = "page 0 4\n";
-            for (int k = 0; k < 21; ++k)
+            // → at the row's end is the next sound: from the first, one
+            // click a sound reaches the last.
+            for (int k = 0; k < lead::kSounds - 1; ++k)
                 walk += fmt("button %.2f 0.98 -0.048\n", 0.2 + 0.1 * k);
-            testkit::play(walk + "end 2.4\n", [](Session &s) {
+            testkit::play(walk + "end 2.7\n", [](Session &s) {
                 QVERIFY2(s.pageStatus().contains(QString::fromUtf8(lead::sound(lead::kSounds - 1).name)), qPrintable(s.pageStatus()));
             });
         }

@@ -971,16 +971,13 @@ private slots:
         QVERIFY2(status.contains("trance", Qt::CaseInsensitive), qPrintable(status));
         testkit::play("page 0 3\nbutton 0.2 0.677 -0.048\nend 0.5\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains("piano", Qt::CaseInsensitive), qPrintable(status));
-        // The faded chip at the right end chooses the sound beyond the
-        // window, and the window moves on: six of them reach the last
-        // sound; then the faded chip at the left end steps back.
+        // The → chip at the row's end is the next sound, as the → key:
+        // fourteen of them reach the last.
         std::string along = "page 0 3\n";
-        for (int k = 0; k < 6; ++k)
-            along += "button " + num(0.2 + 0.1 * k) + " 0.777 -0.048\n";
+        for (int k = 0; k < 14; ++k)
+            along += "button " + num(0.2 + 0.05 * k) + " 0.825 -0.048\n";
         testkit::play(along + "end 1.0\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains("sitar", Qt::CaseInsensitive), qPrintable(status));
-        testkit::play(along + "button 0.9 0.376 -0.048\nend 1.2\n", [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains("accordion", Qt::CaseInsensitive), qPrintable(status));
         // HOLD, then a chord that keeps ringing after the finger lifts.
         const auto held = testkit::play("page 0 3\nbutton 0.1 0.03 -0.119\ndown 0.2 1 " + cell(0, Triad) +
                                             "\nup 0.6 1\nend 2.5\n",

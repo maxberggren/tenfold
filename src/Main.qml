@@ -722,8 +722,8 @@ ApplicationWindow {
                                     Layout.columnSpan: buttons.columns
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     // At Play the hero: what the window has left over, within reason.
-                                    Layout.minimumHeight: win.lv === 0 ? 72 : 52; Layout.maximumHeight: win.lv === 0 ? 220 : 120
-                                    Layout.preferredHeight: win.lv === 0 ? Math.max(72, Math.min(260, win.room - 400)) : 64
+                                    Layout.minimumHeight: win.lv === 0 && win.room >= 560 ? 64 : 44; Layout.maximumHeight: win.lv === 0 ? 260 : 120
+                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 400 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0))) : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
                                     // While the browser shows, Space keeps a sound there: LOOP steps back.
@@ -769,6 +769,88 @@ ApplicationWindow {
                                     // shorter key, then.
                                     key: "Enter"; color: win.green; active: backend.loopsPaused
                                     onClicked: backend.togglePause()
+                                }
+                                // Below Studio: what the player has made so far, a line a
+                                // part, each started or stopped at the bar with a click.
+                                PanelBox {
+                                    id: yourLoops
+                                    readonly property var parts: backend.partLoops
+                                    visible: win.lv < 2 && !backend.tutorialActive && parts.length > 0
+                                    Layout.columnSpan: buttons.columns
+                                    Layout.fillWidth: true
+                                    Layout.topMargin: 6
+                                    readonly property int rowH: win.room < 560 ? 22 : 26
+                                    Layout.preferredHeight: 34 + parts.length * (rowH + 4)
+                                    title: qsTr("Your loops")
+                                    color: win.amber
+                                    Column {
+                                        width: parent.width
+                                        spacing: 4
+                                        Repeater {
+                                            model: yourLoops.parts
+                                            delegate: Rectangle {
+                                                id: loopRow
+                                                required property var modelData
+                                                readonly property color tint: backend.pageColors[modelData.page]
+                                                readonly property bool on: modelData.playing
+                                                width: parent.width
+                                                height: yourLoops.rowH
+                                                color: rowMouse.containsMouse ? Qt.rgba(tint.r, tint.g, tint.b, 0.18) : "transparent"
+                                                border.color: tint
+                                                border.width: 1
+                                                // Playing: lit square; stopped: an outline; waiting for the bar: blinking.
+                                                Rectangle {
+                                                    id: lamp
+                                                    x: 8
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: 10; height: 10
+                                                    color: loopRow.on ? loopRow.tint : "transparent"
+                                                    border.color: loopRow.tint
+                                                    border.width: 1.5
+                                                    SequentialAnimation on opacity {
+                                                        running: loopRow.modelData.queued
+                                                        loops: Animation.Infinite
+                                                        NumberAnimation { to: 0.2; duration: 250 }
+                                                        NumberAnimation { to: 1; duration: 250 }
+                                                    }
+                                                }
+                                                Text {
+                                                    x: 26
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    text: backend.pageNames[loopRow.modelData.page]
+                                                          + (loopRow.modelData.loops > 1 ? "  ×" + loopRow.modelData.loops : "")
+                                                    color: loopRow.tint
+                                                    font.family: win.mono
+                                                    font.pixelSize: 13
+                                                    font.weight: Font.Bold
+                                                    font.capitalization: Font.AllUppercase
+                                                }
+                                                Text {
+                                                    anchors.right: parent.right
+                                                    anchors.rightMargin: 8
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    readonly property int bars: Math.round(loopRow.modelData.beats / 4)
+                                                    text: (loopRow.modelData.beats < 4
+                                                           ? (loopRow.modelData.beats === 1 ? qsTr("1 beat") : qsTr("%1 beats").arg(loopRow.modelData.beats))
+                                                           : (bars === 1 ? qsTr("1 bar") : qsTr("%1 bars").arg(bars)))
+                                                          + "   " + (rowMouse.containsMouse ? (loopRow.on ? qsTr("stop") : qsTr("play"))
+                                                                                          : loopRow.on ? qsTr("playing") : qsTr("stopped"))
+                                                    color: loopRow.tint
+                                                    opacity: 0.8
+                                                    font.family: win.mono
+                                                    font.pixelSize: 12
+                                                    font.capitalization: Font.AllUppercase
+                                                }
+                                                MouseArea {
+                                                    id: rowMouse
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: backend.toggleLoop(loopRow.modelData.page)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh

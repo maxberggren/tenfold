@@ -138,6 +138,8 @@ class Backend : public QObject {
     Q_PROPERTY(int suggestedPage READ suggestedPage NOTIFY changed)
     // Changes when the player asks where a page's fine-tuning went: STUDIO pulses.
     Q_PROPERTY(int studioNudge READ studioNudge NOTIFY changed)
+    // "Your loops": each part with a loop ({page, loops, beats, playing, queued}).
+    Q_PROPERTY(QVariantList partLoops READ partLoops NOTIFY changed)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -308,6 +310,8 @@ public:
     QVariantList styleDetails() const;
     int suggestedPage() const { return m_session->suggestedPage(); }
     int studioNudge() const { return int(m_session->studioNudge()); }
+    QVariantList partLoops() const;
+    Q_INVOKABLE void toggleLoop(int page) { m_session->toggleLoop(page); }
     Q_INVOKABLE void previewStyle(int index) { m_session->previewStyle(index); }
 
     void shutdown();

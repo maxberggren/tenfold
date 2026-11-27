@@ -1757,6 +1757,12 @@ void keyChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString
     c::chip(p, pc, r, QString(), lit, &spots, id);
     const QColor ink = lit ? QColor::fromRgb(c::kInk) : pc.color;
     const qreal w = r.width() - 6;
+    // At Shape: the plain name alone, a line lower; the key is Studio's.
+    if (console::paintLevel() == 1) {
+        const QString plain = console::friendly(name);
+        c::text(p, QRectF(r.left() + 3, r.top(), w, r.height()), plain, ink, fitPx(plain, w, 12), true, Qt::AlignCenter);
+        return;
+    }
     c::text(p, QRectF(r.left() + 3, r.top() + 1, w, 16), name, ink, fitPx(name, w, 12), true, Qt::AlignCenter);
     c::text(p, QRectF(r.left() + 3, r.top() + 16, w, 13), key, lit ? ink : c::alpha(ink, 0.7f), fitPx(key, w, 10), true,
             Qt::AlignCenter);
@@ -1765,8 +1771,12 @@ void keyChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString
 // A setting the keys step, as one box: its name over its value, the left
 // half clicks down (id) and the right half up (id + 1), each half showing
 // its key at its edge.
-void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &name, const QString &value,
-              const QString &down, const QString &up, c::Hotspots &spots, int id) {
+void stepChip(QPainter &p, const PaintContext &pc, const QRectF &r, const QString &rawName, const QString &value,
+              const QString &rawDown, const QString &rawUp, c::Hotspots &spots, int id) {
+    // At Shape: a plain name and − / + for its halves.
+    const bool shape = console::paintLevel() == 1;
+    const QString name = console::friendly(rawName);
+    const QString down = shape ? QStringLiteral("−") : rawDown, up = shape ? QStringLiteral("+") : rawUp;
     const QRectF left(r.left(), r.top(), r.width() / 2, r.height()), right(left.right(), r.top(), r.width() / 2, r.height());
     spots.add(left, id);
     spots.add(right, id + 1);

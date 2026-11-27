@@ -146,6 +146,11 @@ QRectF lastClipStrip();
 // The window's level for what follows (Session::paint sets it): below
 // Studio the clip slots say "1 BAR" rather than "1 · 1B".
 void setPaintLevel(int level);
+// A band chip's words at the Shape level: its key left off (F10, DEL, §,
+// ⇧←…: the keys still work, and Studio shows them) and the jargon in plain
+// words (KEY TONE → BRIGHTNESS, OVERDUB → PLAY OVER…). Unchanged elsewhere.
+QString friendly(const QString &label);
+int paintLevel();
 
 // A row of clickable chips under the pad (or anywhere): each a label in
 // the page colour, lit when on, brighter under the mouse. Returns the rect.

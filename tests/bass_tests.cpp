@@ -1253,29 +1253,26 @@ private slots:
     }
 
     // The band under the pad, with the mouse. On the scripts' window the
-    // pad is 562.5 px high: row 0 is 0.048 under it, row 1 0.119. The
-    // sounds fill row 0 from 0.38 of the width: fifteen don't fit there,
-    // so it shows eight (0.0775 wide each) around the one playing, the
-    // ends faded where there are more; row 1 is five steppers (0.11, 0.14,
-    // 0.12, 0.12, 0.12 wide, the left half down, the right half up), then
-    // five switches.
+    // pad is 900 x 562.5 px: row 0 is 0.048 under it, row 1 0.119. The
+    // sounds fill row 0 from 0.38 of the width up to the → chip at its end
+    // (46 px): sixteen don't fit, so it shows five around the one playing
+    // (85 px each, 0.38 to 0.85), then "+N MORE" (about 0.86 to 0.94),
+    // which asks for the sound browser; → steps to the next sound, as the
+    // → key does. Row 1 is five steppers (0.11, 0.14, 0.12, 0.12, 0.12
+    // wide, the left half down, the right half up), then five switches.
     void theBandUnderThePadIsClickable() {
-        // From PLUCK it shows SUB to 808 (seven chips, as many as fit
-        // MARIMBULA's name whole): ACID is the fourth.
-        testkit::play("page 0 2\nbutton 0.2 0.651 -0.048\nend 0.4\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Acid));
+        // From PLUCK the window starts at SUB, its first chip.
+        testkit::play("page 0 2\nbutton 0.2 0.42 -0.048\nend 0.4\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Sub));
         });
-        // 808, faded at the right end, picks it and moves the window
-        // along (ACID to UPRIGHT): MOOG is then the sixth.
-        testkit::play("page 0 2\nbutton 0.2 0.961 -0.048\nend 0.4\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Boom));
+        // → is the next sound.
+        testkit::play("page 0 2\nbutton 0.2 0.985 -0.048\nend 0.4\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Pluck) + 1);
         });
-        testkit::play("page 0 2\nbutton 0.2 0.961 -0.048\nbutton 0.4 0.884 -0.048\nend 0.6\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Moog));
-        });
-        // From MARIMBULA, the last, the window ends with it: CHIP is the fourth.
-        testkit::play("page 0 2\nkey 0.1 Q\nkey 0.15 Left\nbutton 0.3 0.651 -0.048\nend 0.5\n", [](Session &s) {
-            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Chip));
+        // "+N MORE" leaves the sound as it is and asks for the browser.
+        testkit::play("page 0 2\nbutton 0.2 0.9 -0.048\nend 0.4\n", [](Session &s) {
+            QCOMPARE(int(s.probe(1, QStringLiteral("sound"))), int(bass::Pluck));
+            QVERIFY(s.takeSoundsAsked());
         });
         // FOLLOW, the second switch.
         testkit::play("page 0 2\nbutton 0.2 0.727 -0.119\nend 0.4\n", [](Session &s) {

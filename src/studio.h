@@ -275,4 +275,13 @@ private:
     size_t m_recordBase = 0;
 };
 
+// How many beats a first loop of `secs` seconds holds when it sets the
+// tempo: the doubling that brings the tempo to 88 BPM or more (up to 32).
+inline double freeLoopBeats(double secs) {
+    double len = 1;
+    while (len * 60.0 / secs < 88.0 && len < 32)
+        len *= 2;
+    return len;
+}
+
 }

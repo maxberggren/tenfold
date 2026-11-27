@@ -66,7 +66,11 @@ about 60 times a second and the page reads as `pc.view->data`.
   carries. `Move` and `Param` too, so knob sweeps and slides loop. While
   Quantise is on (it is to begin with; Ctrl+G turns it off) onsets (`On`,
   or any command flagged `Command::Quantize`) are pulled toward the 16th
-  grid; off, they stay as played, laid back or pushed.
+  grid; off, they stay as played, laid back or pushed. Either way a first
+  loop (the one that sets the tempo) has its bar where the sixteenths fit
+  the playing best, not on its first hit, so one late kick doesn't leave
+  the rest off the beat (phrase loops, the Sampler's chops, keep their
+  first hit's place).
 - **A mixer channel per part:** level, pan, DJ filter, reverb and echo sends,
   pump depth, mute and solo. Set the defaults in `PartSpec::channel`. Any page
   can change any channel with `ctx.setChannel(part, Channel, value)`. The room

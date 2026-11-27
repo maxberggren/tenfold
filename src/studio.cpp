@@ -569,10 +569,11 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
     const size_t from = head > size_t(kHistory) ? head - size_t(kHistory) : 0;
     constexpr double eps = 1e-6;
     constexpr double grid = 0.25;
-    // A take in the studio's time reaches an eighth of a beat early at both
-    // ends: a note landed a hair before the bar line belongs to that bar,
-    // not to the one before.
-    const double early = stretch ? 0.0 : 0.125;
+    // A take reaches an eighth of a beat early at both ends: a note landed a
+    // hair before the bar line belongs to that bar, not to the one before.
+    // (A first loop's window sits where the grid fits the playing best, not
+    // on its first hit, so that hit may land just before it.)
+    const double early = 0.125;
     bool playedOnTheOne = false;
     // Positions in the clip count from the anchor. A take in the studio's
     // time may start anywhere (the last cycle of a pattern played across a
@@ -694,7 +695,9 @@ static void makeClip(Studio::PartState &p, Studio::Impl &s, int slot, double b0,
             if (!found)
                 continue; // the end of something that started before the take
         }
-        clip.events.push_back({pos < 0 ? 0.0 : floorMod(pos, len), c, -1e18});
+        // (In a first loop, a hit a hair before its ONE plays just before
+        // the ONE comes round.)
+        clip.events.push_back({pos < 0 && !stretch ? 0.0 : floorMod(pos, len), c, -1e18});
     }
     // Sounds still held when the take ended stop just before it comes round.
     for (int i = 0; i < openCount; ++i) {
@@ -975,9 +978,7 @@ void Studio::apply(const StudioMsg &m) {
             // Nothing else is playing: this loop is the clock. Its tempo
             // becomes the studio's (a whole BPM, between 88 and 176), and the
             // bar starts where the loop closed.
-            double len = 1;
-            while (len * 60.0 / secs < 88.0 && len < 32)
-                len *= 2;
+            const double len = freeLoopBeats(secs);
             const double bpm = std::round(len * 60.0 / secs);
             const double oldBpm = tr.bpm, oldBeat = nowBeat;
             const double bar = nextBar() + kBeatsPerBar;

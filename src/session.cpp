@@ -1047,6 +1047,65 @@ Cycle findCycle(const std::vector<Hit> &hits, bool oneCycle = false) {
     return found.front();
 }
 
+// Where a first loop's grid sits best under the playing: the loop that
+// [start, stop) found begins on a hit, and that hit may be a little late or
+// early against the rest (a kick played behind the beat). Quantise off, the
+// loop keeps every hit as played, so its bar would start on that one hit
+// and everything else would sit off the beat. A shadow quantise instead:
+// the sixteenths of the loop's tempo are laid over the hits, moved by up to
+// half a sixteenth and stretched by up to 2%, and the window goes where the
+// hits fall closest to them, most of them counting, a stray or swung one
+// only so much. The hits themselves stay where they were played.
+struct GridFit {
+    double start, stop;
+};
+
+GridFit fitGrid(const std::vector<Hit> &hits, double start, double stop) {
+    const double secs = stop - start;
+    if (secs <= 0.15)
+        return {start, stop};
+    const double step = secs / (freeLoopBeats(secs) * 4.0); // a sixteenth, in seconds
+    std::vector<double> xs;
+    for (const Hit &h : hits)
+        if (h.x >= start - step / 2 && h.x < stop - step / 2)
+            xs.push_back(h.x);
+    // (Two numbers fitted to three hits would fit anything.)
+    if (xs.size() < 4)
+        return {start, stop};
+    // The cost of a hit off the grid by r sixteenths: r², but never more
+    // than that of a hit a third of a sixteenth off.
+    auto cost = [&](double origin, double unit) {
+        double sum = 0;
+        for (double x : xs) {
+            const double u = (x - origin) / unit;
+            const double r = u - std::round(u);
+            sum += std::min(r * r, 1.0 / 9.0);
+        }
+        return sum;
+    };
+    double bestStart = start, bestScale = 1, best = cost(start, step);
+    for (int si = -20; si <= 20; ++si) {
+        const double scale = 1.0 + si * 0.001;
+        for (int oi = -50; oi <= 50; ++oi) {
+            const double origin = start + oi * step / 100.0;
+            // (A hair worse than where the loop's own hit put it: the hit
+            // keeps its place unless the grid is truly better elsewhere.)
+            const double c = cost(origin, step * scale) + 1e-4 * (std::abs(si) + std::abs(oi)) / 70.0;
+            if (c < best) {
+                best = c;
+                bestStart = origin;
+                bestScale = scale;
+            }
+        }
+    }
+    // Moved only when the hits sit clearly closer to the grid (2 ms nearer,
+    // on the whole): a hair's gain is the hand's own scatter.
+    const double gain = (std::sqrt(cost(start, step) / double(xs.size())) - std::sqrt(best / double(xs.size()))) * step;
+    if (gain < 0.002)
+        return {start, stop};
+    return {bestStart, bestStart + secs * bestScale};
+}
+
 [[maybe_unused]] double settledLoop(const std::vector<Hit> &hits, double end, double earliest, const std::vector<double> &periods,
                    double longest, double tol, double minScore, double edge) {
     for (double p : periods) {
@@ -1240,7 +1299,7 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
                 hits.push_back({o.t, o.key});
         double start = first, stop = nowT;
         bool settled = false;
-        const Cycle cycle = findCycle(hits, m_pages[size_t(m_page)]->spec.control->loopsOneCycle());
+        Cycle cycle = findCycle(hits, m_pages[size_t(m_page)]->spec.control->loopsOneCycle());
         if (cycle.cycles > 0) {
             start = cycle.start;
             stop = cycle.end;
@@ -1272,7 +1331,26 @@ void Session::toggleRecording(ControlContext &base, bool layer) {
         dlog("  decided (free, sets the tempo): first=%.4f start=%.4f end=%.4f -> capture %.4f s (%.4f beats at the old "
              "tempo) settled=%d hits=%d slot=%d",
              first, start, stop, stop - start, (stop - start) / spb, int(settled), int(hits.size()), slot + 1);
-        // Tightened while quantise is on; off, each hit where it was heard.
+        // The loop's bar where the playing's own beat is, not on its first
+        // hit; then tightened while quantise is on, and off, each hit where
+        // it was heard against that beat.
+        // (Not a loop of phrases, the Sampler's chops: where each begins is
+        // the hand's, on no grid of its own.)
+        const bool phrases = m_pages[size_t(m_page)]->spec.control->loopsOneCycle();
+        const GridFit fit = phrases ? GridFit{start, stop} : fitGrid(hits, start, stop);
+        dlog("  grid fit: start %+.1f ms, length %+.2f%%", (fit.start - start) * 1000.0,
+             ((fit.stop - fit.start) / (stop - start) - 1.0) * 100.0);
+        // (↑↓ take rounds on the same grid: a time moves as the window did.)
+        const double scale = (fit.stop - fit.start) / (stop - start);
+        const double from = start;
+        auto onGrid = [&](double x) { return fit.start + (x - from) * scale; };
+        start = fit.start;
+        stop = fit.stop;
+        if (settled) {
+            cycle.period *= scale;
+            for (double &r : cycle.rounds)
+                r = onGrid(r);
+        }
         ctx.capture(slot, start, stop, m_view.quantise ? 0.85f : 0.0f);
         m_view.parts[part].recording = slot;
         handOver();

@@ -45,7 +45,8 @@ class FrameworkTests : public QObject {
                 "armedRecordingMakesABarLongClip everyPageDrawsWithoutTouches "
                 "anUnreadablePadWithoutPkexecSaysWhatIsMissing keysAreNamedAsTheSystemNamesThem "
                 "quantiseIsOnUntilThePlayerTurnsItOffAndKeptWithTheSong "
-                "theMetronomeClicksWithNothingPlaying newLoopStopsThePagesLoopAndTheNextSpaceMakesAnother")
+                "theMetronomeClicksWithNothingPlaying newLoopStopsThePagesLoopAndTheNextSpaceMakesAnother "
+                "aLateFirstHitLeavesTheLoopOnTheBeat")
 private slots:
     // Esc with the trackpad not taken (a script never has it) pauses and
     // plays, as Ctrl+P does: every loop stops at once, and comes back.
@@ -100,6 +101,69 @@ private slots:
         // A script's Esc leaves the tutorial too, and doesn't pause.
         testkit::play("key 0.1 Ctrl+T\nkey 0.3 Esc\nend 0.5\n", [](Session &s) { QVERIFY(!s.tutorial().active()); });
     }
+
+    // Quantise off, a first loop keeps every hit as played, but its bar sits
+    // where the playing's own beat is, not on its first hit (a shadow
+    // quantise finds it). A bar at 100 BPM, K . H . S . H . K . K . S . H in
+    // eighths, three times round, the kicks 25 ms behind the beat: the
+    // snares land on their beats, and the kicks stay late.
+    void aLateFirstHitLeavesTheLoopOnTheBeat() {
+        const double beat = 0.6;
+        const int pat[8] = {0, 2, 1, 2, 0, 0, 1, 2};
+        const double xs[3] = {0.05, 0.25, 0.45}, late[3] = {0.025, 0.0, -0.01};
+        for (const bool quantise : {false, true}) {
+            std::string script = quantise ? "page 0 1\n" : "page 0 1\nkey 0.1 Ctrl+G\n";
+            unsigned r = 12345; // the hand's own scatter, ±10 ms
+            auto scatter = [&]() {
+                r = r * 1103515245u + 12345u;
+                return 0.02 * (double((r >> 8) & 0xffff) / 65535.0 - 0.5);
+            };
+            char line[96];
+            for (int i = 0; i < 24; ++i) {
+                const int k = pat[i % 8];
+                std::snprintf(line, sizeof line, "tap %.4f %.2f 0.5\n", 0.5 + i * beat / 2 + late[k] + scatter(), xs[k]);
+                script += line;
+            }
+            std::snprintf(line, sizeof line, "key %.4f Space\nend %.4f\n", 0.5 + 12 * beat + 0.03, 0.5 + 12 * beat + 4);
+            script += line;
+            testkit::play(script, [&](Session &s) {
+                QCOMPARE(int(std::lround(s.view().bpm)), 100);
+                ClipSet c;
+                QVERIFY(s.studio()->readClips(c));
+                const auto &clip = c.clips[0][0];
+                QCOMPARE(clip.length, 8.0);
+                double kicks = 0, snares = 0;
+                int nk = 0, ns = 0;
+                for (const auto &e : clip.events) {
+                    if (!(e.c.flags & Command::Quantize) && e.c.type != Command::On)
+                        continue;
+                    const double eighth = std::round(e.pos * 2) / 2;
+                    const double ms = (e.pos - eighth) * beat * 1000;
+                    const int k = pat[int(std::fmod(eighth * 2, 8.0))];
+                    if (k == 1) {
+                        snares += ms;
+                        ++ns;
+                    } else if (k == 0) {
+                        kicks += ms;
+                        ++nk;
+                    }
+                }
+                QCOMPARE(ns, 4);
+                QCOMPARE(nk, 6);
+                // The snares on their beats, the scatter aside (on the first
+                // hit's bar they were 28 ms early).
+                QVERIFY2(std::fabs(snares / ns) < (quantise ? 3 : 6), qPrintable(QString::number(snares / ns)));
+                // Quantise off, the kicks are as late as they were played (25
+                // ms, less what the snares and hats pull the beat); on, pulled
+                // most of the way to it.
+                if (quantise)
+                    QVERIFY2(std::fabs(kicks / nk) < 6, qPrintable(QString::number(kicks / nk)));
+                else
+                    QVERIFY2(kicks / nk > 12 && kicks / nk < 30, qPrintable(QString::number(kicks / nk)));
+            });
+        }
+    }
+
     void spaceLoopsWhatWasJustPlayedAndSetsTheTempo() {
         const auto take = testkit::play(std::string(kBeat) + "end 8\n");
         QVERIFY(take.error.empty());

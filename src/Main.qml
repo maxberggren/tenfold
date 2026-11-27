@@ -31,6 +31,8 @@ ApplicationWindow {
     readonly property string mono: "Noto Sans Mono"
 
     property bool helpVisible: false
+    // A screenshot's: the notice stays up (tenfold screenshot --notice).
+    property bool pinNotice: false
     property bool exportVisible: false
     // The sound browser over the pad (SOUND, or S... the button only: S is a key on pages).
     property bool soundsVisible: false
@@ -995,57 +997,52 @@ ApplicationWindow {
         }
 
         // A notice from a page or a key, big for a moment over the pad (not
-        // the buttons beside it), always on one line: a long one gets a smaller size instead of a
-        // second line. The pad sits inside layouts, so its place is mapped
-        // here; naming its size and the window's makes the binding follow
-        // them.
-        Rectangle {
+        // the buttons beside it), on a black plate so it reads over whatever
+        // the pad is lighting up. It wraps to a readable width, up to three
+        // lines, its size chosen by how much it says. The pad sits inside
+        // layouts, so its place is mapped here; naming its size and the
+        // window's makes the binding follow them.
+        Item {
             id: noticeBox
             readonly property point padAt: (surface.x, surface.y, surface.width, surface.height, win.width, win.height,
                                             surface.mapToItem(parent, 0, 0))
-            // Inside the pad's drawn frame, which sits 30 px in from the item.
-            x: padAt.x + 44
+            readonly property int chars: backend.notice.length
+            readonly property int px: Math.round(Math.min(surface.height / 9, chars <= 28 ? 46 : chars <= 56 ? 38 : 30))
+            // About 26 letters a line at most: easy to read at a glance.
+            width: Math.min(surface.width - 100, px * 0.62 * 26 + 48)
+            height: plate.height
+            x: padAt.x + (surface.width - width) / 2
             y: padAt.y + (surface.height - height) / 2
-            width: surface.width - 88
-            height: 84
-            // No backing: the pad stays in sight under the words.
-            color: "transparent"
-            opacity: 0
+            opacity: win.pinNotice ? 1 : 0
             visible: opacity > 0
+            Rectangle {
+                id: plate
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(parent.width, noticeLabel.contentWidth + 48)
+                height: noticeLabel.contentHeight + 28
+                color: Qt.rgba(0, 0, 0, 0.86)
+                border.color: win.pageColor
+                border.width: 1
+            }
             Text {
                 id: noticeLabel
-                anchors.fill: parent
-                anchors.leftMargin: 18
-                anchors.rightMargin: 18
+                anchors.centerIn: plate
+                width: noticeBox.width - 48
                 horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                wrapMode: Text.NoWrap
-                maximumLineCount: 1
-                // The size that fits one line, worked out here rather than by
-                // fontSizeMode, so the console's arrows (inline images) can
-                // shrink with the letters.
-                TextMetrics {
-                    id: noticeMetrics
-                    font.family: win.wide
-                    font.pixelSize: 56
-                    font.weight: Font.Black
-                    font.letterSpacing: 1
-                    font.capitalization: Font.AllUppercase
-                    text: backend.notice.replace(/[←→↑↓⇧↵⏎◀▶▲▼↕↔]/g, "M")
-                }
-                readonly property int fitted: Math.max(9, Math.min(56, Math.floor(56 * width / Math.max(1, noticeMetrics.advanceWidth * 1.04))))
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+                lineHeight: 1.05
                 textFormat: Text.StyledText
-                text: backend.rich(backend.notice, win.pageColor, fitted)
+                text: backend.rich(backend.notice, win.pageColor, noticeBox.px)
                 font.family: win.wide
-                font.pixelSize: fitted
+                font.pixelSize: noticeBox.px
                 font.weight: Font.Black
-                font.letterSpacing: 1 // fixed pixels: kept small so a shrunk line still fits
+                font.letterSpacing: 1
                 font.capitalization: Font.AllUppercase
                 color: win.pageColor
-                // A thin dark edge round each letter, so the words read over
-                // whatever the pad is lighting up under them.
                 style: Text.Outline
-                styleColor: "#d0000000"
+                styleColor: "#000000"
             }
             Connections {
                 target: backend
@@ -1054,7 +1051,8 @@ ApplicationWindow {
             SequentialAnimation {
                 id: noticeFade
                 NumberAnimation { target: noticeBox; property: "opacity"; to: 1; duration: 60 }
-                PauseAnimation { duration: 1300 }
+                // Longer to read when it says more.
+                PauseAnimation { duration: Math.min(4000, 1300 + noticeBox.chars * 25) }
                 NumberAnimation { target: noticeBox; property: "opacity"; to: 0; duration: 500 }
             }
         }

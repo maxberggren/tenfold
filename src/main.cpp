@@ -57,7 +57,7 @@ static void usage(FILE *out) {
                "                                          render a scripted performance\n"
                "  tenfold bench [--json]                  time a dense case\n"
                "  tenfold latency [--json]                measure the microphone's trip to the ears\n"
-               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page] [--level 0-2] [--welcome] [--sounds N]\n"
+               "  tenfold screenshot <out.png> [script.tf] [--at SECONDS] [--size WxH] [--page N] [--help-page] [--level 0-2] [--welcome] [--sounds N] [--notice TEXT]\n"
                "                     [--tutorial STEP] [--gpu] [--window] [--pad standby|waiting|paused|fault]\n"
                "                     [--export]\n"
                "                                          draw the window mid-performance (page 1-8, 0 arrange, 9 visual, sampler),\n"
@@ -182,6 +182,11 @@ static int screenshot(int argc, char **argv) {
         // The sound browser open, the n-th sound tried.
         window->setProperty("soundsVisible", true);
         backend.chooseSound(std::atoi(sounds), false);
+    }
+    // --notice TEXT: that notice over the pad, held up for the picture.
+    if (const char *notice = option(argc, argv, "--notice")) {
+        backend.session()->say(QString::fromUtf8(notice));
+        window->setProperty("pinNotice", true);
     }
     if (hasFlag(argc, argv, "--help-page"))
         window->setProperty("helpVisible", true);

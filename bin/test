@@ -21,7 +21,9 @@
 # A tier starts its tests in parallel, the slowest first (by how long each
 # took last time), on as many cores as there are, or TENFOLD_JOBS. The
 # full tier's tests that time the studio against the clock run afterwards,
-# one at a time, so the others don't eat into the budget they measure. Only
+# one at a time, so the others don't eat into the budget they measure; a
+# test that measures its own cost (TENFOLD_TIMED) and fails beside others
+# runs again alone, and has failed only if it fails there too. Only
 # the failures' output is shown; every test's is in build/tests/out.
 set -eu
 
@@ -105,12 +107,21 @@ order() {
 # and its timings, and noting whether anything failed.
 cat >"$out/run" <<'RUN'
 #!/bin/sh
-out=$1
+out=$1 line=$2
 set -- $2
 suite=$1 name=$1.$2
 shift
 if TENFOLD_TESTS=$suite ./tenfold_tests -o "$out/$name.txt,txt" -o "$out/$name.xml,junitxml" "$@" \
-    >"$out/$name.log" 2>&1; then :; else touch "$out/$name.failed"; fi
+    >"$out/$name.log" 2>&1; then
+    rm -f "$out/$name.retry"
+elif [ -z "${RETRY:-}" ] && grep -q '^tenfold: a timed test$' "$out/$name.log" &&
+    [ "$(grep -c '^FAIL!  :' "$out/$name.txt")" -gt 0 ]; then
+    # A test timing the studio failed while others ran beside it: it gets
+    # another go once the parallel run is over, with the machine to itself.
+    echo "$line" >"$out/$name.retry"
+else
+    touch "$out/$name.failed"
+fi
 RUN
 chmod +x "$out/run"
 
@@ -119,6 +130,16 @@ count=$(awk '{ n += NF - 2 } END { print n }' "$out/list")
 echo "Running $count tests ($tier tier) on $jobs cores…"
 order parallel | tr '\n' '\0' | xargs -0 -n 1 -P "$jobs" "$out/run" "$out"
 order alone | while IFS= read -r line; do "$out/run" "$out" "$line"; done
+# The timed tests that failed in the crowd, again one at a time: what fails
+# alone too has failed.
+retried=0
+for f in "$out"/*.retry; do
+    [ -e "$f" ] || continue
+    retried=$((retried + 1))
+    line=$(cat "$f")
+    rm -f "$f"
+    RETRY=1 "$out/run" "$out" "$line"
+done
 
 # Seconds per test, for the next run: this run's, and the last known of
 # the tests it didn't run (a dev run keeps the full tier's order).
@@ -150,5 +171,6 @@ echo
 printf '%s\n' "$results" | grep '^SKIP   :' || true
 took=$((($(now) - start) / 100000000))
 echo "$passed passed, $fails failed, $skipped skipped in $((took / 10)).$((took % 10)) s ($tier tier)"
+if [ "$retried" -gt 0 ]; then echo "($retried timed test line(s) failed beside others and were run again alone)"; fi
 if [ "$tier" = dev ]; then echo "bin/test --full runs every test"; fi
 [ "$fails" -eq 0 ]

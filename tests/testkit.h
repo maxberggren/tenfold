@@ -35,6 +35,7 @@ namespace testkit {
             QFAIL("times the studio against the clock: full tier only, take it out of the dev list");       \
         if (qEnvironmentVariableIsSet("TENFOLD_SKIP_TIMING"))                                               \
             QSKIP("timing on a shared virtual machine (TENFOLD_SKIP_TIMING); see the job's bench instead"); \
+        std::fprintf(stderr, "tenfold: a timed test\n"); /* bin/test retries it alone if it fails */      \
     } while (0)
 
 struct Take {

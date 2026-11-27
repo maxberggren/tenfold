@@ -76,7 +76,7 @@ Rectangle {
                     readonly property bool hot: lit || cardMouse.containsMouse
                     readonly property var detail: backend.styleDetails[index]
                     Layout.fillWidth: true
-                    Layout.preferredHeight: welcome.height < 700 ? 100 : 122
+                    Layout.preferredHeight: welcome.height < 700 ? 88 : 104
                     Rectangle {
                         anchors.fill: parent
                         color: card.lit ? card.tint : cardMouse.containsMouse ? Qt.rgba(card.tint.r, card.tint.g, card.tint.b, 0.16) : "transparent"
@@ -112,19 +112,6 @@ Rectangle {
                         font.pixelSize: 13
                         wrapMode: Text.Wrap
                         maximumLineCount: 2
-                        elide: Text.ElideRight
-                    }
-                    Text {
-                        x: 12
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 8
-                        width: parent.width - 24
-                        text: card.detail.sounds.join(" · ")
-                        color: card.lit ? "#0a0806" : card.tint
-                        opacity: 0.7
-                        font.family: "Noto Sans Mono"
-                        font.pixelSize: 11
-                        font.capitalization: Font.AllUppercase
                         elide: Text.ElideRight
                     }
                     MouseArea {

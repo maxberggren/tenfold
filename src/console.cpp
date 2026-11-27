@@ -398,6 +398,10 @@ namespace {
 QRectF g_clipStrip;
 }
 QRectF lastClipStrip() { return g_clipStrip; }
+namespace {
+int g_paintLevel = 2;
+}
+void setPaintLevel(int level) { g_paintLevel = level; }
 
 int firstEmptySlot(const PartView &v) {
     for (int s = 0; s < kClipSlots; ++s)
@@ -451,7 +455,12 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
             continue;
         }
         QString label = QString::number(s + 1);
-        if (c.state != ClipView::Empty && c.lengthBeats > 0) {
+        if (g_paintLevel < 2 && c.state != ClipView::Empty && c.lengthBeats > 0) {
+            // A newcomer's slot: its length in words.
+            const int bars = int(c.lengthBeats / 4);
+            label = c.lengthBeats < 4 ? QStringLiteral("%1 BEAT%2").arg(int(c.lengthBeats)).arg(c.lengthBeats > 1 ? "S" : "")
+                                      : QStringLiteral("%1 BAR%2").arg(bars).arg(bars > 1 ? "S" : "");
+        } else if (c.state != ClipView::Empty && c.lengthBeats > 0) {
             const int bars = int(c.lengthBeats / 4);
             const QString len = c.lengthBeats >= 4 ? (cell.width() >= 74 ? QStringLiteral("%1 BAR").arg(bars)
                                                                           : QStringLiteral("%1B").arg(bars))
@@ -460,7 +469,10 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
         }
         // The words on a dark plate over the sweeping fill, so they read
         // wherever the hand is.
-        const int px = int(std::clamp(cell.height() * 0.45, 9.0, 13.0));
+        int px = int(std::clamp(cell.height() * 0.45, 9.0, 13.0));
+        // Smaller rather than cut off, in a narrow slot.
+        while (px > 8 && textWidth(font(px, true), label) > cell.width() - 6)
+            --px;
         if (c.state != ClipView::Empty) {
             const qreal tw = std::min(cell.width() - 4, textWidth(font(px, true), label) + 8);
             p.fillRect(QRectF(cell.center().x() - tw / 2, cell.center().y() - px * 0.7, tw, px * 1.4),

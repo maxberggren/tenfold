@@ -499,6 +499,10 @@ public:
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
+    std::vector<Area> advancedAreas() const override {
+        return {{0.0f, kRail, 1.0f, 1.0f, QStringLiteral("the rhythm the chords are played in")}};
+    }
+
     // The sound browser: the chord sounds, and two chords to hear one.
     std::vector<SoundChoice> soundChoices() const override {
         std::vector<SoundChoice> out;

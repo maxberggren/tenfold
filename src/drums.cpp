@@ -2694,8 +2694,9 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
     // every kit.
     m_spots.clear();
     c::clips(p, c::bandRow(pc, 0, 0, 0.55), *pc.view, col, pc.time, &m_spots);
-    paintKits(p, pc, c::bandRow(pc, 0, 0.57, 1), 0, Amapiano);
-    paintKits(p, pc, c::bandRow(pc, 1, 0.57, 1), Amapiano, KitCount);
+    // One row onto every kit, around the one playing, ending in "+N MORE"
+    // (all of them in the browser) and →.
+    paintKits(p, pc, c::bandRow(pc, 0, 0.57, 1), 0, KitCount);
     // Swing's − and + flank its gauge, which names it, so they fit in the
     // row with overdub and sounds back.
     const QRectF row = c::bandRow(pc, 1, 0, 0.55);

@@ -40,7 +40,7 @@ ApplicationWindow {
     // At level 0 the tabs show the first parts and the Song; MORE opens the rest.
     property bool allPages: false
     function pageShown(i) {
-        return lv > 0 || allPages || i < 4 || i === backend.arrangePage || i === backend.page
+        return lv >= 2 || allPages || i < 4 || i === backend.arrangePage || i === backend.page
     }
     readonly property int shownPages: {
         let n = 0
@@ -48,7 +48,7 @@ ApplicationWindow {
             n += pageShown(i) ? 1 : 0
         return n
     }
-    readonly property bool moreTab: lv === 0 && !allPages
+    readonly property bool moreTab: lv < 2 && !allPages
     // The dialog has the keyboard while it shows (its prefix field may take
     // it), and the pages get it back when it goes.
     onExportVisibleChanged: exportVisible ? exportDialog.forceActiveFocus() : screen.forceActiveFocus()
@@ -323,8 +323,8 @@ ApplicationWindow {
                                                                 3: qsTr("the melody"), 4: qsTr("running notes"), 5: qsTr("pads and air"),
                                                                 6: qsTr("builds and drops") })
                                 text: tab.silenced !== "" ? "■ " + tab.silenced
-                                      : win.lv === 0 && plain[tab.index] !== undefined ? plain[tab.index]
-                                      : win.lv === 0 && tab.index === backend.arrangePage ? qsTr("make a track")
+                                      : win.lv < 2 && plain[tab.index] !== undefined ? plain[tab.index]
+                                      : win.lv < 2 && tab.index === backend.arrangePage ? qsTr("make a track")
                                       : backend.pageBlurbs[tab.index]
                                 color: tab.current ? "#0a0806" : tab.tint
                                 opacity: 0.75
@@ -712,11 +712,12 @@ ApplicationWindow {
                                     visible: st > 0 && !backend.tutorialActive
                                     Layout.columnSpan: buttons.columns
                                     Layout.fillWidth: true; Layout.fillHeight: true
-                                    Layout.minimumHeight: 52; Layout.maximumHeight: 120
-                                    Layout.preferredHeight: win.lv === 0 ? 108 : 64
+                                    Layout.minimumHeight: 52; Layout.maximumHeight: win.lv === 0 ? 220 : 120
+                                    Layout.preferredHeight: win.lv === 0 ? 170 : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
-                                    opacity: st === 1 ? 0.55 : 1
+                                    // While the browser shows, Space keeps a sound there: LOOP steps back.
+                                    opacity: win.soundsVisible ? 0.3 : st === 1 ? 0.55 : 1
                                     label: st === 4 ? qsTr("Looping on the bar…")
                                          : st === 3 ? qsTr("+  Add a layer")
                                          : qsTr("Loop it")
@@ -724,20 +725,11 @@ ApplicationWindow {
                                         : st === 3 ? qsTr("Play over the loop, then press.")
                                         : st === 2 ? qsTr("Keeps what you just played going round.")
                                         : qsTr("Play something first, then press.")
-                                    key: "Space"
+                                    key: win.soundsVisible ? "" : "Space"
                                     active: st === 4
-                                    beckon: st === 2
+                                    beckon: st === 2 && !win.soundsVisible
                                     glowSpread: win.compact ? 4 : 8
                                     onClicked: modifiers => backend.pressLoop((modifiers & Qt.ShiftModifier) !== 0)
-                                }
-                                PanelButton {
-                                    visible: backend.soundNames.length > 0 && !backend.tutorialActive
-                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    label: qsTr("Sound")
-                                    key: backend.soundIndex >= 0 ? (backend.soundNames[backend.soundIndex] || "") : ""
-                                    color: win.pageColor
-                                    active: win.soundsVisible
-                                    onClicked: win.soundsVisible = !win.soundsVisible
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
@@ -747,7 +739,7 @@ ApplicationWindow {
                                 }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: win.lv >= 1 || backend.recording
+                                    visible: win.lv >= 2 || backend.recording
                                     label: backend.recording
                                            ? (backend.recordingVideo ? qsTr("Video %1") : qsTr("Rec %1"))
                                              .arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
@@ -810,7 +802,7 @@ ApplicationWindow {
                                     // Beside Export, so Open and Save share the next row
                                     // (with the tutorial, Export hides and it sits beside Undo).
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: win.lv >= 1
+                                    visible: win.lv >= 2
                                     label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
                                     onClicked: win.helpVisible = !win.helpVisible
                                 }
@@ -836,7 +828,7 @@ ApplicationWindow {
                                     Layout.columnSpan: 2
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     // While it runs, the tutorial's own panel has Leave: the room goes to its text.
-                                    visible: !backend.tutorialActive && win.lv >= 1
+                                    visible: !backend.tutorialActive && win.lv >= 2
                                     label: backend.tutorialActive ? qsTr("Leave tutorial") : qsTr("Tutorial: make a track")
                                     key: "Ctrl T"; color: win.green; active: backend.tutorialActive
                                     onClicked: backend.toggleTutorial()
@@ -882,7 +874,8 @@ ApplicationWindow {
                     // Below Studio the NEXT box is the coach: the bar says
                     // only what the page and the studio report.
                     text: win.lv < 2 && (backend.padState === Backend.Idle || backend.padState === Backend.Ready || backend.padState === Backend.Playing)
-                          ? (backend.pageStatus !== "" ? backend.pageStatus : " ")
+                          ? (backend.soundIndex >= 0 ? qsTr("Sound: %1").arg(backend.soundNames[backend.soundIndex] || "")
+                             : backend.pageStatus !== "" ? backend.pageStatus : " ")
                             + (backend.audioOk || backend.audioError === "" ? "" : "     " + qsTr("No sound: %1").arg(backend.audioError))
                             + (backend.savedNotice !== "" ? "     " + qsTr("Saved %1").arg(backend.savedNotice) : "")
                           : ((backend.padState === Backend.Playing ? qsTr("Playing")

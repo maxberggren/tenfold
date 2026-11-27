@@ -384,7 +384,9 @@ private:
     QRectF m_soundChip;   // level 0: the SOUND chip under the pad, where last painted
     bool m_soundsAsked = false;
     QRectF m_soundNext;   // level 0: the → beside it
+    std::vector<int> m_liveIds; // touches in the last frame delivered, to tell a landing
     int partsWithLoops() const;
+    QString howToPlay(int page) const; // a sentence on how the page is played
     QRectF m_padRect; // where the pad was last painted, for foldedRow()
     void playAudition(double t);
     void stopAudition();

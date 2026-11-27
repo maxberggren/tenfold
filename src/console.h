@@ -143,6 +143,9 @@ bool clickClip(int id, const PartView &v, ControlContext &ctx);
 int firstEmptySlot(const PartView &v);
 // Where clips() last drew the clip strip (the UI thread's last paint).
 QRectF lastClipStrip();
+// The window's level for what follows (Session::paint sets it): below
+// Studio the clip slots say "1 BAR" rather than "1 · 1B".
+void setPaintLevel(int level);
 
 // A row of clickable chips under the pad (or anywhere): each a label in
 // the page colour, lit when on, brighter under the mouse. Returns the rect.

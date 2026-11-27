@@ -21,7 +21,8 @@ class NewcomerTests : public QObject {
                 "everyInstrumentPageListsItsSoundsAndChoosesThem aSoundTriedIsHeardAndLeftOutOfTheNextLoop "
                 "theLoopButtonSaysWhatSpaceWouldDo pressingLoopIsSpace everyStyleNamesRealSounds "
                 "aStyleSetsTheSoundsAndTheTempo theNextLoopGoesInTheFirstEmptySlot "
-                "levelZeroFoldsTheSecondRowOnInstrumentPagesOnly theNextStepFollowsThePlayer")
+                "levelZeroFoldsTheSecondRowOnInstrumentPagesOnly theNextStepFollowsThePlayer "
+                "coveredControlsIgnoreFingersAndTheMouseOpensStudio")
 private slots:
     // Each instrument page lists its sounds, says which is chosen, and
     // chooses one as ← → would.
@@ -213,9 +214,36 @@ private slots:
                            if (t >= 6.5 && t < 6.51)
                                looped = s.nextStep();
                        });
-        QVERIFY(before.contains(QLatin1String("Z X C V")));
+        QVERIFY(before.contains(QLatin1String("Z X C V")) && before.startsWith(QLatin1String("Your turn")));
         QVERIFY(playing.contains(QLatin1String("LOOP")));
         QVERIFY(looped.contains(QLatin1String("BASS")));
+    }
+
+    // Below Studio the fine-tuning parts of a pad (the bass's rail) are
+    // covered: a finger landing there plays nothing, and the mouse pressed
+    // there opens Studio.
+    void coveredControlsIgnoreFingersAndTheMouseOpensStudio() {
+        testkit::play("end 0.1\n", [](Session &s) {
+            for (const char *name : {"bass", "chords", "arp"}) {
+                s.setPage(s.pageNamed(QString::fromLatin1(name)));
+                QVERIFY2(!s.soundChoices().empty(), name);
+            }
+        });
+        int levelAfterMouse = -1;
+        int voicesOnRail = -1;
+        testkit::watch("page 0 bass\n"
+                       "down 0.5 1 0.5 0.9\nup 1.0 1\n"
+                       "mouse 1.5 0.5 0.9 down\nmouse 1.6 0.5 0.9 up\nend 2\n",
+                       [&](double t, Session &s) {
+                           if (t < 0.2)
+                               s.setLevel(0);
+                           if (t >= 0.8 && voicesOnRail < 0)
+                               voicesOnRail = s.view().parts[1].voices;
+                           if (t >= 1.9 && levelAfterMouse < 0)
+                               levelAfterMouse = s.level();
+                       });
+        QVERIFY2(voicesOnRail == 0, qPrintable(QString::number(voicesOnRail)));
+        QCOMPARE(levelAfterMouse, 2);
     }
 };
 

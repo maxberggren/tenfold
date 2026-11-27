@@ -600,6 +600,16 @@ public:
         bool down;
     };
     virtual std::vector<AuditionStep> audition() const { return {}; }
+    // The parts of the pad that fine-tune rather than play (a rail of
+    // rhythms, a bank of shapers), in pad units (x0, y0, x1, y1, y up), with
+    // a few words on what is there. Below the Studio level the session
+    // covers them with that line, a click there opens Studio, and a finger
+    // landing there is ignored.
+    struct Area {
+        float x0, y0, x1, y1;
+        QString what;
+    };
+    virtual std::vector<Area> advancedAreas() const { return {}; }
 };
 
 // A phrase for audition(): each key held for `len` beats from `at`.

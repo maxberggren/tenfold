@@ -705,6 +705,10 @@ public:
     // in it, a filter swept or grit turned up as the hand did it.
     bool layersKeepKnobMoves() const override { return true; }
 
+    std::vector<Area> advancedAreas() const override {
+        return {{0.0f, kField, 1.0f, 1.0f, QStringLiteral("octave, roll, wobble, filter and grit")}};
+    }
+
     // The sound browser: the bass sounds, and a bar of a bassline to hear one.
     std::vector<SoundChoice> soundChoices() const override {
         std::vector<SoundChoice> out;

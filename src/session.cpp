@@ -577,6 +577,28 @@ void Session::deliver(const Frame &f) {
     for (auto &page : m_pages)
         page->spec.control->background(f.t, *page->ctx);
     Page &p = *m_pages[size_t(m_page)];
+    // Below Studio a finger landing on a covered part of the pad is ignored
+    // until it lifts; the mouse pressed there opens Studio instead.
+    if (m_level < 2) {
+        const auto areas = p.spec.control->advancedAreas();
+        for (int i = 0; i < f.count && !areas.empty(); ++i) {
+            const Touch &t = f.touches[i];
+            if (std::find(m_liveIds.begin(), m_liveIds.end(), t.id) != m_liveIds.end())
+                continue;
+            for (const auto &a : areas)
+                if (t.x >= a.x0 && t.x <= a.x1 && t.y >= a.y0 && t.y <= a.y1) {
+                    m_ignored.push_back(t.id);
+                    if (t.id == kMouseId) {
+                        m_level = 2;
+                        context(m_page).notice(QStringLiteral("Studio: every control, %1 too").arg(a.what));
+                    }
+                    break;
+                }
+        }
+    }
+    m_liveIds.clear();
+    for (int i = 0; i < f.count; ++i)
+        m_liveIds.push_back(f.touches[i].id);
     const bool quiet = f.t < m_quietUntil && p.spec.control->quietAfterSpace();
     if (m_ignored.empty() && !quiet) {
         p.spec.control->frame(f, *p.ctx);
@@ -881,6 +903,7 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     pc.mouse = m_mousePx;
     pc.level = m_level;
     console::resetBrowseChips();
+    console::setPaintLevel(p.part >= 0 ? m_level : 2);
     painter.save();
     p.spec.control->paint(painter, pc);
     painter.restore();
@@ -915,6 +938,20 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
         console::text(painter, m_soundChip.adjusted(10, 0, -10, 0),
                       QStringLiteral("%1 MORE  ▸").arg(int(choices.size()) - 1), console::alpha(pc.color, 0.75f), 12,
                       true, Qt::AlignRight | Qt::AlignVCenter);
+    }
+    if (m_level < 2 && p.part >= 0) {
+        // The fine-tuning parts of the pad, covered with what they hold.
+        for (const auto &a : p.spec.control->advancedAreas()) {
+            const QRectF r = pc.rect(a.x0, a.y0, a.x1, a.y1).adjusted(1, 1, -1, -1);
+            painter.fillRect(r, Qt::black);
+            painter.setPen(QPen(console::alpha(pc.color, 0.3f), 1, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(r.adjusted(4, 4, -4, -4));
+            const bool over = m_mouseIn && m_mouseX >= a.x0 && m_mouseX <= a.x1 && m_mouseY >= a.y0 && m_mouseY <= a.y1;
+            console::text(painter, r.adjusted(12, 0, -12, 0),
+                          QStringLiteral("▸  STUDIO  ·  %1").arg(a.what.toUpper()),
+                          console::alpha(pc.color, over ? 0.95f : 0.5f), 12, true, Qt::AlignCenter);
+        }
     }
     if (const QRectF fold = foldedRow(pad); !fold.isEmpty()) {
         // Level 0: the band's second row folds away under one line that
@@ -2565,20 +2602,21 @@ bool Session::applyStyle(int index) {
 // --- the next step, for a newcomer ---------------------------------------------
 
 // How each page is played, in a sentence a newcomer can follow.
-static QString howToPlay(const QString &page) {
-    if (page == QLatin1String("Drums"))
-        return QStringLiteral("Tap the pads, or press Z X C V on the keyboard");
-    if (page == QLatin1String("Bass"))
+QString Session::howToPlay(int page) const {
+    auto is = [&](const char *name) { return page == pageNamed(QString::fromLatin1(name)); };
+    if (is("drums"))
+        return QStringLiteral("Your turn: tap the pads, or press Z X C V on the keyboard");
+    if (is("bass"))
         return QStringLiteral("Your turn: touch the pad, or press Z X C V B for bass notes");
-    if (page == QLatin1String("Chords"))
+    if (is("chords"))
         return QStringLiteral("Your turn: hold a column, or press A S D F G for chords");
-    if (page == QLatin1String("Lead"))
+    if (is("lead"))
         return QStringLiteral("Your turn: slide a finger, or press A S D F G H for notes");
-    if (page == QLatin1String("Arp"))
+    if (is("arp"))
         return QStringLiteral("Your turn: hold notes on the left, or hold A D G");
-    if (page == QLatin1String("Atmos"))
+    if (is("atmos"))
         return QStringLiteral("Your turn: rest fingers on the pad, or press Q W E R for a scene");
-    if (page == QLatin1String("FX"))
+    if (is("fx"))
         return QStringLiteral("Your turn: touch the field for a riser, or Z X C V for hits");
     return QStringLiteral("Your turn: click or tap the pad to play");
 }
@@ -2633,7 +2671,7 @@ QString Session::nextStep() const {
     }
     default: break;
     }
-    return howToPlay(pageName(m_page));
+    return howToPlay(m_page);
 }
 
 }

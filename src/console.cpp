@@ -471,8 +471,13 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
         // wherever the hand is.
         int px = int(std::clamp(cell.height() * 0.45, 9.0, 13.0));
         // Smaller rather than cut off, in a narrow slot.
-        while (px > 7 && textWidth(font(px, true), label) > cell.width() - 4)
+        while (px > 9 && textWidth(font(px, true), label) > cell.width() - 4)
             --px;
+        // Still too wide to read: the bars as a number, with the "BAR"
+        // left to the wider slots.
+        if (g_paintLevel < 2 && c.state != ClipView::Empty && textWidth(font(px, true), label) > cell.width() - 4)
+            label = c.lengthBeats >= 4 ? QStringLiteral("%1").arg(int(c.lengthBeats / 4))
+                                       : QStringLiteral("%1/4").arg(int(c.lengthBeats));
         if (c.state != ClipView::Empty) {
             const qreal tw = std::min(cell.width() - 4, textWidth(font(px, true), label) + 8);
             p.fillRect(QRectF(cell.center().x() - tw / 2, cell.center().y() - px * 0.7, tw, px * 1.4),

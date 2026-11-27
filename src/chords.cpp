@@ -1160,6 +1160,12 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
                 // above and below are named by their mood at the left.
                 chordText(p, cell, name, c::alpha(col, r == Triad ? 0.85f : 0.55f),
                           int(std::clamp(cellH * 0.17, 11.0, 16.0)), r == Triad);
+            } else {
+                // The others' cells still say they play: a soft dot each.
+                p.setPen(Qt::NoPen);
+                p.setBrush(c::alpha(col, 0.4f));
+                p.drawEllipse(cell.center(), 3.5, 3.5);
+                p.setBrush(Qt::NoBrush);
             }
         }
         // The numeral heads its column (from Shape on).
@@ -1177,7 +1183,9 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
         if (pc.level == 0)
             label = r == Power ? QStringLiteral("PUNCHY") : r == Sus ? QStringLiteral("OPEN")
                   : r == Triad ? QStringLiteral("PLAIN") : r == Add9 ? QStringLiteral("DREAMY") : QStringLiteral("SMOOTH");
-        c::text(p, QRectF(at.x() + 6, at.y() - (pc.level == 0 ? 20 : 16), 90, pc.level == 0 ? 16 : 13), label,
+        // (A newcomer's at the top of its row, so it reads as that row's.)
+        const qreal top = pc.at(0, (r + 1) * kRowHeight).y();
+        c::text(p, pc.level == 0 ? QRectF(at.x() + 8, top + 6, 90, 16) : QRectF(at.x() + 6, at.y() - 16, 60, 13), label,
                 c::alpha(col, pc.level == 0 ? 0.7f : 0.45f), pc.level == 0 ? 12 : 9, true);
     }
     c::grid(p, pc, cols, 1, col, 0.22f);

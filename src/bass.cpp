@@ -1532,6 +1532,17 @@ void Control::paintField(QPainter &p, const PaintContext &pc, const Tuning &tuni
     const Recipe &R = recipe(m_sound);
     const QPointF at = pc.at(0.012f, kField - 0.045f);
     const QRectF tagR = c::tag(p, at, QString::fromUtf8(R.name), pc.color, 16);
+    if (pc.level == 0) {
+        // A newcomer's line: what the sound does under a finger, without
+        // the numbers or the keys (a part naming a key, "\ saw or
+        // square", is left to Shape).
+        QStringList what;
+        for (const QString &part : QString::fromUtf8(R.what).split(QStringLiteral(", ")))
+            if (!part.contains(QLatin1Char('\\')))
+                what << part;
+        c::text(p, QRectF(tagR.right() + 10, tagR.top(), pc.pad.width() * 0.6, tagR.height()), what.join(QStringLiteral(", ")),
+                c::alpha(pc.color, 0.75f), 12);
+    } else
     c::text(p, QRectF(tagR.right() + 10, tagR.top(), pc.pad.width() * 0.6, tagR.height()),
             QStringLiteral("%1 · %2 %3% · slide %4 ms")
                 .arg(QString::fromUtf8(R.what), morphName(m_sound).toLower())

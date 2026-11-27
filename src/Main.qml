@@ -723,7 +723,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     // At Play the hero: what the window has left over, within reason.
                                     Layout.minimumHeight: win.lv === 0 ? 72 : 52; Layout.maximumHeight: win.lv === 0 ? 220 : 120
-                                    Layout.preferredHeight: win.lv === 0 ? Math.max(72, Math.min(180, win.room - 400)) : 64
+                                    Layout.preferredHeight: win.lv === 0 ? Math.max(72, Math.min(260, win.room - 400)) : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
                                     // While the browser shows, Space keeps a sound there: LOOP steps back.

@@ -320,6 +320,7 @@ private:
     // What a pause (or Ctrl+Backspace) stopped: each part's slot, or −1.
     int m_pausedSlots[kMaxParts];
     bool m_songPaused = false;
+    double m_pausedAt = -1e9; // when the last pause came, for its notice
     // The metronome, left on across a pause, is silent until play: the
     // studio keeps its count, so it comes back on the one.
     bool m_metronomeHeld = false;

@@ -1,6 +1,7 @@
 // The studio and the session: clock, clips, mixer, pages and keys.
 
 #include <QDir>
+#include <QJsonArray>
 #include <QFile>
 #include <QImage>
 #include <QRegularExpression>
@@ -43,7 +44,7 @@ class FrameworkTests : public QObject {
                 "aMelodyThatStartsMidBarLoopsWithoutAGap clipsCanBeCopiedLayeredAndChained "
                 "spaceLayersOntoThePlayingLoop aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn "
                 "aLayerLandsWithoutCuttingTheLoop shiftSpaceMakesANewLoopInstead "
-                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay numberKeysChangePages ctrlKeysMoveTempoAndKey "
+                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay aLoopMadeWhilePausedKeepsThePausedLoops aSongSavedPausedOpensReadyToPlay numberKeysChangePages ctrlKeysMoveTempoAndKey "
                 "leavingAPageLetsGoOfHeldNotes stoppingWaitsForTheBar muteSilencesAChannel "
                 "armedRecordingMakesABarLongClip everyPageDrawsWithoutTouches "
                 "anUnreadablePadWithoutPkexecSaysWhatIsMissing keysAreNamedAsTheSystemNamesThem "
@@ -843,6 +844,48 @@ private slots:
             for (int i = 0; i < lines.size(); ++i)
                 QVERIFY2(!bare.match(lines[i]).hasMatch(), qPrintable(QString("%1:%2: a bare Return pauses: %3").arg(name).arg(i + 1).arg(lines[i].trimmed())));
         }
+    }
+
+    // A loop made while paused plays alone; pausing it and playing again
+    // brings back the loops paused before it too, not only the new one.
+    void aLoopMadeWhilePausedKeepsThePausedLoops() {
+        const auto take = testkit::play(std::string(kBeat) +
+                                        "key 3 Ctrl+P\npage 3.1 2\n"
+                                        "tap 3.3 0.1 0.5\ntap 3.8 0.3 0.5\ntap 4.3 0.2 0.5\ntap 4.8 0.1 0.5\n"
+                                        "key 5.3 Space\nkey 7 Ctrl+P\nkey 8 Ctrl+P\nend 10\n");
+        QCOMPARE(take.view.parts[1].playing, 0);
+        QCOMPARE(take.view.parts[0].playing, 0);
+    }
+
+    // A song saved while paused (or after Ctrl+Backspace) opens paused:
+    // Ctrl+P plays the loops that were stopped. A slot launched while
+    // paused takes down the "Paused" notice.
+    void aSongSavedPausedOpensReadyToPlay() {
+        for (const char *stop : {"key 3 Ctrl+P\n", "key 3 Ctrl+Backspace\n"}) {
+            testkit::reopen(std::string(kBeat) + stop + "end 6\n", 1, [](Session &, Session &o, const QJsonObject &doc) {
+                QCOMPARE(doc.value("parts").toArray().at(0).toObject().value("paused").toInt(-1), 0);
+                QVERIFY(o.paused());
+                o.key(KeyEvent{Qt::Key_P, Qt::ControlModifier, true});
+                QCOMPARE(o.notice(nullptr), QStringLiteral("Playing"));
+                const double t0 = scriptClock();
+                for (int i = 0; i < 400 && o.view().parts[0].playing < 0; ++i) {
+                    setScriptClock(t0 + i / 125.0);
+                    o.refresh();
+                    float buf[384 * 2];
+                    o.studio()->render(buf, 384);
+                }
+                QCOMPARE(o.view().parts[0].playing, 0);
+            });
+        }
+        testkit::play(std::string(kBeat) + "key 3 Ctrl+P\nkey 3.2 F1\nend 5\n", [](Session &s) {
+            QCOMPARE(s.view().parts[0].playing, 0);
+            QCOMPARE(s.notice(nullptr), QStringLiteral("Playing"));
+        });
+        // With loops in their slots but none paused, Ctrl+P doesn't say
+        // there is nothing.
+        testkit::play(std::string(kBeat) + "key 3 Ctrl+P\nkey 3.5 Ctrl+P\nkey 5 Backspace\nkey 7 Ctrl+P\nkey 7.2 Ctrl+P\nend 8\n", [](Session &s) {
+            QVERIFY2(!s.notice(nullptr).startsWith(QStringLiteral("Nothing to play yet")), qPrintable(s.notice(nullptr)));
+        });
     }
 
     void numberKeysChangePages() {

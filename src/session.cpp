@@ -20,6 +20,12 @@
 
 namespace tf {
 
+namespace {
+// Said when everything pauses; once something plays again, by any way
+// (F1, a clip clicked), it gives way to "Playing" rather than stay up.
+const QString kPausedNotice = QStringLiteral("Paused · Ctrl+P plays it again");
+}
+
 struct Session::Page {
     PartSpec spec;
     bool followsChords = true;
@@ -787,6 +793,17 @@ void Session::refresh() {
                 m_handSounding[p][((b % kSoundBins) + kSoundBins) % kSoundBins] = held;
             }
             m_soundBin[p] = bin;
+        }
+    }
+    // (Not in the first moments of the pause: a view the studio published
+    // before it heard the pause still shows the loops playing.)
+    if (m_notice == kPausedNotice && now() - m_pausedAt > 0.25) {
+        bool playing = false;
+        for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+            playing |= m_view.parts[p].playing >= 0;
+        if (playing) {
+            m_notice = QStringLiteral("Playing");
+            ++m_noticeSeq;
         }
     }
     m_tutorial.update(*this);
@@ -1917,12 +1934,17 @@ void Session::togglePause() {
     if (playing) {
         // Pause: every loop stops now, and what played is remembered. The
         // Song page's song stops where it is.
+        // A part that isn't playing keeps what an earlier pause remembered
+        // of it: a loop made while paused plays alone, and pausing it again
+        // doesn't forget the loops that were paused before it.
         for (int p = 0; p < kMaxParts; ++p) {
-            m_pausedSlots[p] = -1;
-            if (p >= m_view.partCount)
+            if (p >= m_view.partCount) {
+                m_pausedSlots[p] = -1;
                 continue;
+            }
             PartView &pv = m_view.parts[p];
-            m_pausedSlots[p] = pv.playing >= 0 ? pv.playing : pv.queued;
+            if (pv.playing >= 0 || pv.queued >= 0)
+                m_pausedSlots[p] = pv.playing >= 0 ? pv.playing : pv.queued;
         }
         m_songPaused = arrange.spec.control->pause(*arrange.ctx);
         for (int i = 0; i < m_partCount; ++i)
@@ -1934,7 +1956,8 @@ void Session::togglePause() {
         // moves on to a bar line when play comes.
         m_lastTake = {};
         holdMetronome(true);
-        ctx.notice(QStringLiteral("Paused · Ctrl+P plays it again"));
+        m_pausedAt = now();
+        ctx.notice(kPausedNotice);
         return;
     }
     uint64_t which = 0;
@@ -1948,7 +1971,12 @@ void Session::togglePause() {
     }
     if (count == 0 && !m_songPaused) {
         holdMetronome(false);
-        ctx.notice(QStringLiteral("Nothing to play yet: play, then Space makes a loop"));
+        bool made = false;
+        for (int p = 0; p < m_view.partCount && p < kMaxParts; ++p)
+            for (const ClipView &c : m_view.parts[p].clips)
+                made = made || c.state != ClipView::Empty;
+        ctx.notice(made ? QStringLiteral("Nothing was paused: F1–F8 on a page start its loops")
+                        : QStringLiteral("Nothing to play yet: play, then Space makes a loop"));
         return;
     }
     StudioMsg m;
@@ -2055,6 +2083,9 @@ QJsonObject Session::saveSong(QString *error) {
         part[QStringLiteral("settings")] = settings;
         const bool known = p < clips.parts;
         part[QStringLiteral("playing")] = known ? clips.playing[p] : -1;
+        // What a pause (or Ctrl+Backspace) stopped, for Ctrl+P after opening.
+        if (known && clips.playing[p] < 0 && m_pausedSlots[p] >= 0 && clips.clips[p][m_pausedSlots[p]].length > 0)
+            part[QStringLiteral("paused")] = m_pausedSlots[p];
         QJsonArray list;
         for (int c = 0; known && c < kClipSlots; ++c)
             if (clips.clips[p][c].length > 0)
@@ -2106,7 +2137,7 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
     struct PartIn {
         int page = -1;
         QJsonObject mix, settings, audio;
-        int playing = -1;
+        int playing = -1, paused = -1;
     };
     std::vector<PartIn> partsIn;
     auto set = std::make_unique<ClipSet>();
@@ -2156,6 +2187,8 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
         in.audio = po.value(QStringLiteral("audio")).toObject();
         const int playing = po.value(QStringLiteral("playing")).toInt(-1);
         in.playing = playing >= 0 && playing < kClipSlots && filled[playing] ? playing : -1;
+        const int paused = po.value(QStringLiteral("paused")).toInt(-1);
+        in.paused = in.playing < 0 && paused >= 0 && paused < kClipSlots && filled[paused] ? paused : -1;
         partsIn.push_back(in);
     }
 
@@ -2239,6 +2272,10 @@ bool Session::openSong(const QJsonObject &doc, QString *error) {
     for (const PartIn &in : partsIn)
         if (in.playing >= 0)
             ctx.launchPart(m_pages[size_t(in.page)]->part, in.playing, false);
+    // A song saved paused opens paused: Ctrl+P plays what was stopped.
+    for (const PartIn &in : partsIn)
+        if (in.paused >= 0)
+            m_pausedSlots[m_pages[size_t(in.page)]->part] = in.paused;
     // Back on the page that was showing when the song was saved.
     QString shown = doc.value(QStringLiteral("page")).toString();
     if (shown == QLatin1String("Arrange"))

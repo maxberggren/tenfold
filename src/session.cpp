@@ -502,7 +502,10 @@ void Session::pointer(float x, float y, bool down, bool inside) {
 }
 
 QRectF Session::padRect(QSizeF item) {
-    const qreal top = 14 + console::kHead, side = 30, bottom = kBandHeight;
+    // At the sides only the frame's own stroke (it is drawn on the pad's
+    // edge, 2 px wide): the frame lines up with the window's margin, the
+    // wordmark above it and the panel beside it.
+    const qreal top = 14 + console::kHead, side = 1, bottom = kBandHeight;
     return QRectF(side, top, std::max<qreal>(1, item.width() - 2 * side), std::max<qreal>(1, item.height() - top - bottom));
 }
 

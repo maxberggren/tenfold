@@ -74,17 +74,17 @@ ApplicationWindow {
     readonly property real room: height - 2 * margin - header.height - 20 - 28
     readonly property int arrangement: {
         const w = width - 2 * margin, h = room
-        // How far the pad (Session::padRect: 60 px of frame across, 115 down)
+        // How far the pad (Session::padRect: 2 px of frame across, 115 down)
         // is from the trackpad's shape; much more when the panel won't fit,
         // and when the pad is too narrow for the rows of controls under it.
         function cost(itemW, itemH, fits) {
-            const padW = itemW - 60, padH = itemH - 115
+            const padW = itemW - 2, padH = itemH - 115
             if (padH < 100)
                 return 99
             return Math.abs(Math.log(Math.max(20, padW) / padH / 1.6)) + (fits ? 0 : 1) + (padW < 480 ? 2 : 0)
         }
-        const costs = [cost(w - 16 - sideWidth, h, h >= sideHeight),
-                       cost(w - 16 - wideWidth, h, h >= wideHeight) + 0.15,
+        const costs = [cost(w - margin - sideWidth, h, h >= sideHeight),
+                       cost(w - margin - wideWidth, h, h >= wideHeight) + 0.15,
                        cost(w, h - 10 - stackHeight, h - 10 - stackHeight - 115 >= 200) + 0.1]
         return costs.indexOf(Math.min(costs[0], costs[1], costs[2]))
     }
@@ -381,7 +381,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 columns: win.stacked ? 1 : 2
-                columnSpacing: 16
+                // As wide as the window's margin: the pad's frame is as far
+                // from the panel as the panel is from the window's edge.
+                columnSpacing: win.margin
                 rowSpacing: 10
 
                 Surface {
@@ -1100,9 +1102,9 @@ ApplicationWindow {
         SoundBrowser {
             readonly property point padAt: (surface.x, surface.y, surface.width, surface.height, win.width, win.height,
                                             surface.mapToItem(parent, 0, 0))
-            x: padAt.x + 22
+            x: padAt.x
             y: padAt.y + 2
-            width: surface.width - 44
+            width: surface.width
             height: surface.height - 6
             z: 40
             visible: win.soundsVisible && backend.soundNames.length > 0

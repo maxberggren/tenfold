@@ -29,8 +29,9 @@ struct Finger {
 };
 
 // The window a script's `button` clicks are made in: its pad 900 x 562.5,
-// a MacBook trackpad's proportions, as the scripts were written for.
-constexpr double kButtonItemW = 960, kButtonItemH = 562.5 + 14 + 5 + 96;
+// a MacBook trackpad's proportions, as the scripts were written for (the
+// pad's frame takes 1 px at each side, Session::padRect).
+constexpr double kButtonItemW = 900 + 2 * 1, kButtonItemH = 562.5 + 14 + 5 + 96;
 
 // A key as Qt names it (A, F1, Shift+Left); the comma and the full stop
 // also by name, since a comma in such a name separates two keys.

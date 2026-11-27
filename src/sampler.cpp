@@ -565,21 +565,25 @@ QString cacheRoot() {
 // packages put them (../share/tenfold for the Arch and Nix packages and
 // the tarball, ../Resources in the macOS app), else in build/ beside a
 // program built there (bin/model), else Hugging Face's cache, where the
-// Python separator tenfold once had left them. "" if none of these has it.
+// Python separator tenfold once had left them. Tenfold's compact file
+// (htdemucs.tfq) first, the published one as Hugging Face has it after.
+// "" if none of these has either.
 QString stemModel() {
     const QString env = qEnvironmentVariable("TENFOLD_STEMS_MODEL");
     if (!env.isEmpty())
         return QFileInfo::exists(env) ? env : QString();
-    const QString file = QStringLiteral("htdemucs.safetensors");
     const QString app = QCoreApplication::applicationDirPath();
     QString hub = qEnvironmentVariable("HF_HOME");
     if (hub.isEmpty())
         hub = QDir::homePath() + QStringLiteral("/.cache/huggingface");
-    for (const QString &path :
-         {app + QStringLiteral("/../share/tenfold/") + file, app + QStringLiteral("/../Resources/") + file,
-          app + QLatin1Char('/') + file, app + QStringLiteral("/../../../") + file,
-          hub + QStringLiteral("/hub/models--adefossez--HTDemucs/snapshots/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/"
-                               "955717e8.safetensors")})
+    QStringList paths;
+    for (const QString &file : {QStringLiteral("htdemucs.tfq"), QStringLiteral("htdemucs.safetensors")})
+        for (const QString &dir : {app + QStringLiteral("/../share/tenfold/"), app + QStringLiteral("/../Resources/"),
+                                   app + QLatin1Char('/'), app + QStringLiteral("/../../../")})
+            paths << dir + file;
+    paths << hub + QStringLiteral("/hub/models--adefossez--HTDemucs/snapshots/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/"
+                                  "955717e8.safetensors");
+    for (const QString &path : paths)
         if (QFileInfo::exists(path))
             return QFileInfo(path).canonicalFilePath();
     return {};
@@ -943,7 +947,7 @@ private:
             const QString modelPath = stemModel();
             if (modelPath.isEmpty())
                 return failed(QStringLiteral("The stem model isn't installed with this tenfold "
-                                             "(htdemucs.safetensors; TENFOLD_STEMS_MODEL names one)"));
+                                             "(htdemucs.tfq; TENFOLD_STEMS_MODEL names one)"));
             m_separating = true;
             say(QStringLiteral("STEMS: LOADING THE MODEL"));
             std::string why;

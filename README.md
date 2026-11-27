@@ -262,10 +262,13 @@ stretched at all. So:
 **Stems.** S splits the song into drums, bass, vocals and the rest with
 Demucs's Hybrid Transformer model (htdemucs, Meta, MIT licence), computed
 by tenfold itself on the CPU (`src/stems.cpp`): no Python, no download, no
-graphics card. Its weights (84 MB) come with the packages; a build fetches
-them into `build/` (`bin/model`). A four-minute song takes about 27 seconds
-on an M2 Pro's eight fast cores, and comes out as PyTorch's Demucs would
-have it, to within rounding. The stems are kept beside the download, so a
+graphics card. Its weights come with the packages in a compact form of
+tenfold's own, 40 MB where the published file is 84: each layer kept as
+finely as the stems need it (`extras/htdemucs-bits.txt`), so they differ
+from the published weights' stems by 45 to 56 dB, far less than moving
+the song's segments by a tenth of a second changes them. A build makes it
+in `build/` (`bin/model`). A four-minute song takes about 27 seconds on an
+M2 Pro's eight fast cores. The stems are kept beside the download, so a
 song separated once has them at once the next time.
 
 **Songs.** A song file names the sampled song (its path or link), the grid

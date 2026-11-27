@@ -22,7 +22,7 @@ package() {
   install -Dm755 build/tenfold "$pkgdir/usr/bin/tenfold"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   # The stem separator's weights (bin/model put them there) and their licence.
-  install -Dm644 build/htdemucs.safetensors "$pkgdir/usr/share/$pkgname/htdemucs.safetensors"
+  install -Dm644 build/htdemucs.tfq "$pkgdir/usr/share/$pkgname/htdemucs.tfq"
   install -Dm644 extras/LICENSE-htdemucs "$pkgdir/usr/share/licenses/$pkgname/LICENSE-htdemucs"
   install -Dm644 "$startdir/tenfold.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/tenfold.svg"
   install -Dm644 "$startdir/tenfold.desktop" "$pkgdir/usr/share/applications/tenfold.desktop"

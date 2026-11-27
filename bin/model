@@ -1,11 +1,16 @@
 #!/bin/sh
-# Puts the stem separator's weights at build/htdemucs.safetensors, where
-# the packages take them from: htdemucs, Demucs's Hybrid Transformer model
-# (Meta, MIT licence, extras/LICENSE-htdemucs), 84 MB, as Hugging Face
-# keeps it at a fixed commit. Taken from Hugging Face's own cache when it is
-# there, fetched otherwise, and checked against its SHA-256 either way.
+# Puts the stem separator's weights at build/htdemucs.tfq, where the
+# packages take them from: htdemucs, Demucs's Hybrid Transformer model
+# (Meta, MIT licence, extras/LICENSE-htdemucs), in tenfold's compact form
+# (40 MB; see src/stems.cpp and extras/htdemucs-bits.txt).
 #
-#   bin/model          fetch it if build/ doesn't have it yet
+# extras/htdemucs.tfq when the repository carries it; otherwise made from
+# the published file (84 MB), as Hugging Face keeps it at a fixed commit:
+# taken from Hugging Face's own cache when it is there, fetched otherwise,
+# checked against its SHA-256 either way, and compacted by the tenfold just
+# built (`tenfold stem-model`).
+#
+#   bin/model          make it if build/ doesn't have it yet
 #
 # bin/build runs this. Without a network the build still finishes, and the
 # Sampler says the model isn't there when S is pressed.
@@ -16,30 +21,48 @@ revision=cbc8a9b1a87023b7fd74e7b3412e6321c0eab003
 file=955717e8.safetensors
 sum=d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd
 url="https://huggingface.co/adefossez/HTDemucs/resolve/$revision/$file"
-dest="$ROOT/build/htdemucs.safetensors"
+published="$ROOT/build/htdemucs.safetensors"
+dest="$ROOT/build/htdemucs.tfq"
+
+[ -f "$dest" ] && [ "$dest" -nt "$ROOT/extras/htdemucs-bits.txt" ] && exit 0
+mkdir -p "$ROOT/build"
+if [ -f "$ROOT/extras/htdemucs.tfq" ]; then
+    cp "$ROOT/extras/htdemucs.tfq" "$dest"
+    echo "Stem model at $dest"
+    exit 0
+fi
 
 sha256() {
     if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 good() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$sum" ]; }
 
-good "$dest" && exit 0
-mkdir -p "$ROOT/build"
-cached="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--adefossez--HTDemucs/snapshots/$revision/$file"
-if good "$cached"; then
-    cp "$cached" "$dest.part"
-else
-    echo "Fetching the stem model (84 MB) from Hugging Face"
-    if ! curl -fL --retry 3 --silent --show-error -o "$dest.part" "$url"; then
-        rm -f "$dest.part"
-        echo "bin/model: couldn't fetch $url; the Sampler will have no stems" >&2
+if ! good "$published"; then
+    cached="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--adefossez--HTDemucs/snapshots/$revision/$file"
+    if good "$cached"; then
+        cp "$cached" "$published.part"
+    else
+        echo "Fetching the stem model (84 MB) from Hugging Face"
+        if ! curl -fL --retry 3 --silent --show-error -o "$published.part" "$url"; then
+            rm -f "$published.part"
+            echo "bin/model: couldn't fetch $url; the Sampler will have no stems" >&2
+            exit 1
+        fi
+    fi
+    if ! good "$published.part"; then
+        rm -f "$published.part"
+        echo "bin/model: the stem model isn't the one expected (SHA-256 $sum)" >&2
         exit 1
     fi
+    mv "$published.part" "$published"
 fi
-if ! good "$dest.part"; then
-    rm -f "$dest.part"
-    echo "bin/model: the stem model isn't the one expected (SHA-256 $sum)" >&2
+
+tenfold="$ROOT/build/tenfold"
+[ -x "$tenfold" ] || tenfold="$ROOT/build/tenfold.app/Contents/MacOS/tenfold"
+if [ ! -x "$tenfold" ]; then
+    echo "bin/model: build tenfold first (bin/build), it compacts the model" >&2
     exit 1
 fi
+"$tenfold" stem-model "$published" "$ROOT/extras/htdemucs-bits.txt" "$dest.part"
 mv "$dest.part" "$dest"
 echo "Stem model at $dest"

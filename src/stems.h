@@ -3,15 +3,16 @@
 // Splitting a song into drums, bass, vocals and the rest, on the CPU and
 // with nothing but tenfold itself: the Hybrid Transformer Demucs network
 // (htdemucs, Défossez and Rouard, Meta, MIT licence) computed here in C++
-// from its published weights. The weights are one file, the one Demucs
-// keeps on Hugging Face (adefossez/HTDemucs), read as it is; tenfold's
-// packages carry it.
+// from its published weights (adefossez/HTDemucs on Hugging Face).
+// Tenfold's packages carry them in a compact form, half the size, whose
+// stems differ from the published weights' by 45 to 56 dB (see compact()
+// and stems.cpp); the published file reads too.
 //
 // The network takes 7.8 seconds of 44.1 kHz stereo at a time. A song is
 // cut into such segments overlapping by a quarter, each runs on a core of
 // its own, and the overlaps are cross-faded, exactly as Demucs's own
-// apply_model() does; the result matches PyTorch's to within float
-// rounding.
+// apply_model() does; from the published weights the result matches
+// PyTorch's to within float rounding.
 
 #include <atomic>
 #include <cstdint>
@@ -25,9 +26,16 @@ namespace tf::stems {
 // The network's weights, read from their file and shared by every worker.
 struct Model;
 
-// Reads the weights (htdemucs's safetensors file, as Hugging Face has it).
-// nullptr, and the reason in *error, if the file is missing or isn't that.
+// Reads the weights: tenfold's compact file (htdemucs.tfq), or htdemucs's
+// safetensors file as Hugging Face has it. nullptr, and the reason in
+// *error, if the file is missing or isn't either.
 std::shared_ptr<const Model> load(const std::string &path, std::string *error);
+
+// Writes the compact file from either: bits(name) is how finely each
+// convolution or linear layer's weights are kept, the step 2^-bits of its
+// channels' RMS (0 keeps them as halves). See stems.cpp.
+bool compact(const std::string &from, const std::string &to, const std::function<double(const std::string &)> &bits,
+             std::string *error);
 
 // The network's sources, in its own order.
 enum Source : int { Drums = 0, Bass, Other, Vocals, kSources };
@@ -72,6 +80,11 @@ void segment(const Model &model, const float *in, float *out, const Probe &probe
 // (100 dB down from 95% of the lower rate's Nyquist frequency), centred so
 // nothing is delayed. Returns ceil(n · to / from) samples.
 std::vector<float> resample(const float *in, size_t n, int from, int to);
+
+// Each tensor of two models side by side, for the compact file's tests.
+void forEachWeight(const Model &a, const Model &b,
+                   const std::function<void(const std::string &name, const std::vector<int> &shape, const float *x,
+                                            const float *y, size_t n)> &fn);
 
 // Matrix product for the network, exposed for its tests: C (M×N, row
 // stride ldc) = A·B, plus C itself if `accumulate`. A is M×K (element (m,k)

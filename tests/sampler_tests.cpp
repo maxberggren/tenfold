@@ -1054,9 +1054,9 @@ private slots:
         // arrows then have them to choose from.
         QString model = qEnvironmentVariable("TENFOLD_STEMS_MODEL");
         if (model.isEmpty())
-            model = QStringLiteral(TENFOLD_SRC "/../build/htdemucs.safetensors");
+            model = QStringLiteral(TENFOLD_SRC "/../build/htdemucs.tfq");
         if (!QFile::exists(model))
-            QSKIP("no htdemucs.safetensors here (bin/model fetches it)");
+            QSKIP("no htdemucs.tfq here (bin/model makes it)");
         qputenv("TENFOLD_STEMS_MODEL", QFile::encodeName(model));
         qputenv("TENFOLD_STEMS_IN_SCRIPTS", "1");
         const QString path = write(QStringLiteral("separated.wav"), song(120, 4));

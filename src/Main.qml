@@ -678,7 +678,7 @@ ApplicationWindow {
                                     Layout.maximumHeight: modest ? 48 : win.playing ? 60 : 112
                                     Layout.preferredHeight: modest ? 48 : win.playing ? buttons.bh : backend.tutorialActive || win.compact ? 60 : 96
                                     label: win.playing ? (modest ? qsTr("Release the trackpad") : qsTr("Release pad"))
-                                         : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Waiting for the trackpad…"))
+                                         : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Taking the trackpad…"))
                                          : failed ? qsTr("▶  Retry the trackpad")
                                          : modest ? qsTr("Play with the trackpad")
                                          : qsTr("▶  Take the trackpad")
@@ -694,8 +694,10 @@ ApplicationWindow {
                                         : qsTr("The pointer stops and every finger plays. Esc gives it back.")
                                           + (backend.padNeedsPassword ? " " + qsTr("Needs your password, once each time tenfold starts.") : "")
                                     key: win.playing || waiting ? "Esc" : ""
-                                    color: failed ? win.red : waiting ? win.amber : win.green
-                                    active: win.playing
+                                    // Lit green from the click until it is given back: taking
+                                    // it changes the words, never the colour.
+                                    color: failed ? win.red : win.green
+                                    active: win.playing || waiting
                                     beckon: !win.playing && !waiting && !modest
                                     hint: backend.tutorialActive && backend.tutorialButton === "pad" && !win.playing
                                     onClicked: backend.togglePlay()

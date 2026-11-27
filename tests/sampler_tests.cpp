@@ -1056,7 +1056,7 @@ private slots:
         if (model.isEmpty())
             model = QStringLiteral(TENFOLD_SRC "/../build/htdemucs.tfq");
         if (!QFile::exists(model))
-            QSKIP("no htdemucs.tfq here (bin/model makes it)");
+            QSKIP("no htdemucs.tfq here (bin/model copies it)");
         qputenv("TENFOLD_STEMS_MODEL", QFile::encodeName(model));
         qputenv("TENFOLD_STEMS_IN_SCRIPTS", "1");
         const QString path = write(QStringLiteral("separated.wav"), song(120, 4));

@@ -161,7 +161,7 @@ private slots:
         // layers left as halves exactly, and a file cut short is damaged.
         const QString from = published();
         if (from.isEmpty())
-            QSKIP("no htdemucs.safetensors here (bin/model fetches it)");
+            QSKIP("no htdemucs.safetensors here (bin/model --remake fetches it)");
         QTemporaryDir dir;
         const std::string to = (dir.path() + QStringLiteral("/m.tfq")).toStdString();
         std::string why;
@@ -204,7 +204,7 @@ private slots:
     void aSongIsSplitIntoStemsThatAddUpToIt() {
         const QString path = weights();
         if (path.isEmpty())
-            QSKIP("no stem model here (bin/model makes one; TENFOLD_STEMS_MODEL names one)");
+            QSKIP("no stem model here (bin/model copies one; TENFOLD_STEMS_MODEL names one)");
         std::string why;
         const auto model = stems::load(path.toStdString(), &why);
         QVERIFY2(model, why.c_str());

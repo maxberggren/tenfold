@@ -4683,15 +4683,20 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
             bool lit;
             int id;
         };
+        // At Shape the steppers say their names in full and show plain
+        // − / +; the keys (⇧ and the arrows) are Studio's.
+        const bool shape = pc.level == 1;
+        const QString minus = QStringLiteral("−"), plus = QStringLiteral("+");
         const Stepper steppers[] = {
-            {QStringLiteral("OCT"), QStringLiteral("↓"), QStringLiteral("↑"), SpotOctDown, SpotOctUp,
-             (float(m_shift) + 1) / 2, 2, true},
-            {QStringLiteral("GLIDE"), QStringLiteral("⇧↓"), QStringLiteral("⇧↑"), SpotGlideDown, SpotGlideUp,
-             (float(m_glide) + 2) / 4, 4, true},
+            {shape ? QStringLiteral("OCTAVE") : QStringLiteral("OCT"), shape ? minus : QStringLiteral("↓"),
+             shape ? plus : QStringLiteral("↑"), SpotOctDown, SpotOctUp, (float(m_shift) + 1) / 2, 2, true},
+            {QStringLiteral("GLIDE"), shape ? minus : QStringLiteral("⇧↓"), shape ? plus : QStringLiteral("⇧↑"), SpotGlideDown,
+             SpotGlideUp, (float(m_glide) + 2) / 4, 4, true},
             {QStringLiteral("TONE"), QStringLiteral("-"), QStringLiteral("+"), SpotDarker, SpotBrighter,
              (float(m_tone) + kToneSteps) / (2 * kToneSteps), 2 * kToneSteps, true},
-            {m_gate ? QString::fromUtf8(gateName(m_gate)) : QStringLiteral("GATE"), QStringLiteral("⇧←"),
-             QStringLiteral("⇧→"), SpotGateDown, SpotGateUp, float(m_gate) / (kGates - 1), kGates - 1, false},
+            {m_gate ? QString::fromUtf8(gateName(m_gate)) : shape ? QStringLiteral("RHYTHM") : QStringLiteral("GATE"),
+             shape ? minus : QStringLiteral("⇧←"), shape ? plus : QStringLiteral("⇧→"), SpotGateDown, SpotGateUp,
+             float(m_gate) / (kGates - 1), kGates - 1, false},
         };
         const Switch switches[] = {
             {QStringLiteral("FOLLOW §"), m_follow, SpotFollow},

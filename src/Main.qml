@@ -780,14 +780,17 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.topMargin: 6
                                     readonly property int rowH: win.room < 560 ? 22 : 26
-                                    Layout.preferredHeight: 34 + parts.length * (rowH + 4)
+                                    // A short window lists two, and says how many more, so LOOP keeps its room.
+                                    readonly property int shown: win.room < 560 ? Math.min(2, parts.length) : parts.length
+                                    readonly property int hidden: parts.length - shown
+                                    Layout.preferredHeight: 34 + shown * (rowH + 4) + (hidden > 0 ? 18 : 0)
                                     title: qsTr("Your loops")
                                     color: win.amber
                                     Column {
                                         width: parent.width
                                         spacing: 4
                                         Repeater {
-                                            model: yourLoops.parts
+                                            model: yourLoops.parts.slice(0, yourLoops.shown)
                                             delegate: Rectangle {
                                                 id: loopRow
                                                 required property var modelData
@@ -849,6 +852,15 @@ ApplicationWindow {
                                                     onClicked: backend.toggleLoop(loopRow.modelData.page)
                                                 }
                                             }
+                                        }
+                                        Text {
+                                            visible: yourLoops.hidden > 0
+                                            text: yourLoops.hidden === 1 ? qsTr("+1 more part") : qsTr("+%1 more parts").arg(yourLoops.hidden)
+                                            color: win.amber
+                                            opacity: 0.7
+                                            font.family: win.mono
+                                            font.pixelSize: 12
+                                            font.capitalization: Font.AllUppercase
                                         }
                                     }
                                 }

@@ -424,7 +424,7 @@ QString friendly(const QString &label) {
         return arrow.isEmpty() || w == QStringLiteral("−") || w == QStringLiteral("+") ? w : w + QLatin1Char(' ') + arrow;
     };
     static const std::pair<const char *, const char *> plain[] = {
-        {"OVERDUB", "PLAY OVER"},    {"KEY TONE", "BRIGHTNESS"}, {"FOLLOW", "FOLLOW CHORDS"},
+        {"OVERDUB", "PLAY OVER"},    {"KEY TONE", "BRIGHTNESS"},
         {"LATCH", "HOLD NOTES"},     {"BACK", "SOUNDS BACK"},    {"LOOP−", "SHORTER"},
         {"LOOP+", "LONGER"},         {"FALL", "FALL AWAY"},      {"MIX", "BUILD THE MIX"},
         {"DICE", "SURPRISE ME"},     {"GATE", "RHYTHM"},         {"DARK", "DARKER"},

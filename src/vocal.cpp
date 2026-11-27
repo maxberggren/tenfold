@@ -2981,7 +2981,7 @@ public:
         const bool howl = v.data[pub::Feedback] > 0.75f;
         if (howl && !m_howlSaid) {
             m_howlSaid = true;
-            ctx.notice(QStringLiteral("Feedback: tenfold muted the mic — use headphones (Shift+M: hear it again)"));
+            ctx.notice(QStringLiteral("Feedback: tenfold muted your monitor — use headphones (Shift+M: hear it again)"));
         }
         if (!howl)
             m_howlSaid = false;
@@ -5440,30 +5440,36 @@ void Page::paint(QPainter &p, const PaintContext &pc) {
     const bool howl = d[pub::Feedback] > 0.75f;
     const bool guard = m_guarded && (m_monitorMode == 1 || (m_monitorMode == 0 && m_shown));
     if ((howl || guard) && !(noMic && !m_demo)) {
-        const QRectF box = pc.rect(0.18f, 0.47f, 0.82f, 0.72f);
+        const QRectF box = pc.rect(0.12f, 0.45f, 0.88f, 0.74f);
         m_spots.add(box, SpotHearAnyway);
         const QColor tint = howl ? c::red() : c::amber();
         p.fillRect(box, QColor(0, 0, 0, 225));
         p.setPen(QPen(tint, 2));
         p.drawRect(box);
-        const QString head = howl ? QStringLiteral("FEEDBACK: MIC MUTED") : QStringLiteral("SPEAKERS: MONITOR MUTED");
-        c::text(p, QRectF(box.left(), box.top() + 6, box.width(), box.height() * 0.38), head, tint, int(H * 0.048), true,
-                Qt::AlignCenter);
+        // Five rows, top to bottom, each its own height: the heading, why,
+        // the two ways out, and what still works. Only the monitor is
+        // muted (the microphone still records), so the words say that.
+        const qreal pad = 8, row = (box.height() - 2 * pad) / 5.4;
+        auto line = [&](double at, double rows) {
+            return QRectF(box.left() + 12, box.top() + pad + row * at, box.width() - 24, row * rows);
+        };
+        const int small = int(std::clamp(H * 0.021, 9.0, 12.0));
+        c::text(p, line(0, 1.4), howl ? QStringLiteral("FEEDBACK: MONITOR MUTED") : QStringLiteral("SPEAKERS: MONITOR MUTED"),
+                tint, int(std::clamp(H * 0.045, 14.0, 26.0)), true, Qt::AlignCenter);
         const QString why =
             howl ? (d[pub::FeedbackHz] > 0
-                        ? QStringLiteral("the speakers howled back into the microphone (%1 Hz)")
+                        ? QStringLiteral("the speakers howled into the mic (%1 Hz): you won't hear yourself")
                               .arg(int(std::lround(d[pub::FeedbackHz])))
-                        : QStringLiteral("the speakers howled back into the microphone"))
-                 : QStringLiteral("the microphone would hear your voice from the speakers and howl");
-        c::text(p, QRectF(box.left() + 10, box.center().y() - 10, box.width() - 20, box.height() * 0.22), why,
-                c::alpha(QColor(255, 255, 255), 0.88f), 12, false, Qt::AlignCenter);
-        c::text(p, QRectF(box.left() + 10, box.center().y() + box.height() * 0.16, box.width() - 20, box.height() * 0.25),
-                howl ? QStringLiteral("USE HEADPHONES · SHIFT+M OR CLICK: HEAR IT AGAIN")
-                     : QStringLiteral("PLUG IN HEADPHONES · SHIFT+M OR CLICK: ON THE SPEAKERS ANYWAY"),
-                tint, 12, true, Qt::AlignCenter);
-        c::text(p, QRectF(box.left() + 10, box.bottom() - 20, box.width() - 20, 16),
-                QStringLiteral("the loops still record what you sing"), c::alpha(QColor(255, 255, 255), 0.55f), 10,
-                false, Qt::AlignCenter);
+                        : QStringLiteral("the speakers howled into the mic: you won't hear yourself"))
+                 : QStringLiteral("the mic would hear you from the speakers and howl: you won't hear yourself");
+        c::text(p, line(1.4, 1), why, c::alpha(QColor(255, 255, 255), 0.88f), small, false, Qt::AlignCenter);
+        c::text(p, line(2.4, 1), howl ? QStringLiteral("USE HEADPHONES") : QStringLiteral("PLUG IN HEADPHONES"), tint,
+                small + 1, true, Qt::AlignCenter);
+        c::text(p, line(3.4, 1),
+                howl ? QStringLiteral("SHIFT+M OR CLICK: HEAR IT AGAIN") : QStringLiteral("SHIFT+M OR CLICK: USE THE SPEAKERS"),
+                tint, small, true, Qt::AlignCenter);
+        c::text(p, line(4.4, 1), QStringLiteral("the loops still record what you sing"),
+                c::alpha(QColor(255, 255, 255), 0.55f), std::max(8, small - 1), false, Qt::AlignCenter);
     } else if (d[pub::Feedback] > 0.25f) {
         // A suspect, being listened to with the monitor dipped.
         c::tag(p, QPointF(pc.pad.center().x(), pc.at(0, 0.8f).y()), QStringLiteral("LISTENING FOR FEEDBACK"),

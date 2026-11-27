@@ -1570,7 +1570,7 @@ private slots:
                 QVERIFY2(h.take.rms(h.mutedAt + 0.05, 3.0) < 0.001,
                          qPrintable(QString::number(h.take.rms(h.mutedAt + 0.05, 3.0))));
                 QCOMPARE(h.take.view.parts[kVocal].data[vocal::pub::Feedback], 1.0f);
-                QVERIFY2(h.notices.contains(QStringLiteral("Feedback: tenfold muted the mic")), qPrintable(h.notices));
+                QVERIFY2(h.notices.contains(QStringLiteral("Feedback: tenfold muted your monitor")), qPrintable(h.notices));
                 QVERIFY2(h.notices.contains(QStringLiteral("use headphones")), qPrintable(h.notices));
                 // The dip is a fade, not a click: no step between two samples
                 // much larger than the howl's own steepest (a cut at a peak

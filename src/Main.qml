@@ -513,7 +513,7 @@ ApplicationWindow {
                                     width: parent.parent.width - (backend.tutorialActive ? 0 : 100)
                                     elide: Text.ElideRight
                                     text: qsTr("Key %1 %2").arg(backend.key).arg(backend.mode)
-                                          + (win.readoutsCompact ? "  ·  " + qsTr("Chord %1").arg(backend.chord) : "")
+                                          + (win.readoutsCompact && backend.tutorialActive ? "  ·  " + qsTr("Chord %1").arg(backend.chord) : "")
                                     color: win.cyan
                                     font.family: win.mono
                                     font.pixelSize: win.readoutsCompact ? 15 : 16
@@ -521,7 +521,8 @@ ApplicationWindow {
                                     font.capitalization: Font.AllUppercase
                                 }
                                 Text {
-                                    visible: !win.readoutsCompact
+                                    // Its own line beside the level chips; on the key's line in the tutorial.
+                                    visible: !win.readoutsCompact || !backend.tutorialActive
                                     text: qsTr("Chord %1").arg(backend.chord)
                                     color: win.cyan
                                     font.family: win.mono

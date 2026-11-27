@@ -164,7 +164,7 @@ also has a button in the band under the pad, so the mouse alone can play:
 | - + | tone: darker, brighter |
 | Enter | play and pause everything (as Ctrl+P) |
 | Shift Enter | hold or latch (FX and Song: drop; Drums: keep the roll) |
-| F10 | overdub |
+| F10 | overdub (FX and the Song page: drop) |
 | § (the key left of 1) | follow the Chords page |
 | Delete | let go, or sounds back |
 | F1–F8 · Shift F1–F8 · Backspace | launch a slot · clear it · stop |
@@ -194,7 +194,10 @@ page's recorded singing), which ones play, the mix, each page's sounds and setti
 scenes. Ctrl+Shift+S saves it under a new name, Ctrl+O opens one (the
 buttons beside the pad do the same). Quitting keeps the song in
 `~/.local/state/tenfold/last.tenfold`, and the next start offers it back:
-Ctrl+Shift+O. A song file is JSON you can read; `tenfold check song.tenfold`
+Ctrl+Shift+O. Starting over (Ctrl+N twice, or the tutorial over loops)
+keeps the song it clears in `before-start-over.tenfold` beside it, and
+Ctrl+Shift+O opens whichever of the two is newer. A song saved while paused
+opens paused: Ctrl+P plays it. A song file is JSON you can read; `tenfold check song.tenfold`
 says whether one opens and what is in it.
 
 **Export.** EXPORT beside the pad (Ctrl+E) writes the song, or the loops

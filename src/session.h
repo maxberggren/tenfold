@@ -21,7 +21,8 @@
 //                           is what Return was on the page (hold, latch, drop),
 //                           F10 overdub
 //   Ctrl+Backspace          stop every clip at the next bar
-//   Ctrl+Z                  take back the newest loop (on any page)
+//   Ctrl+Z                  take back this page's newest loop (on the Song
+//                           page, the newest anywhere)
 //   Ctrl+N, Ctrl+N          start over: every loop cleared
 //   Ctrl+T                  the tutorial, on or off; while it runs Ctrl+Return
 //                           goes to its next step, Ctrl+Shift+Return back

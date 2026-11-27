@@ -21,8 +21,8 @@ package() {
   cd "$startdir/.."
   install -Dm755 build/tenfold "$pkgdir/usr/bin/tenfold"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-  # The stem separator's weights (bin/model put them there) and their licence.
-  install -Dm644 build/htdemucs.safetensors "$pkgdir/usr/share/$pkgname/htdemucs.safetensors"
+  # The stem separator's weights (bin/model copies them from extras/) and their licence.
+  install -Dm644 build/htdemucs.tfq "$pkgdir/usr/share/$pkgname/htdemucs.tfq"
   install -Dm644 extras/LICENSE-htdemucs "$pkgdir/usr/share/licenses/$pkgname/LICENSE-htdemucs"
   # The restorer's weights and their licence.
   install -Dm644 build/apollo.bin "$pkgdir/usr/share/$pkgname/apollo.bin"

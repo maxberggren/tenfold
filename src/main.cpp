@@ -18,6 +18,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
 #include "backend.h"
 #include "console.h"
@@ -25,6 +26,7 @@
 #include "offline.h"
 #include "session.h"
 #include "songfile.h"
+#include "stems.h"
 #include "studio.h"
 #include "surface.h"
 #include "theme.h"
@@ -71,7 +73,9 @@ static void usage(FILE *out) {
                "                    [--fps N] [--size WxH] [--quality 0-3]\n"
                "                                          the visualizer drawn as the script plays: a video with\n"
                "                                          its sound (needs ffmpeg), or the frame at --at (needs a\n"
-               "                                          display with OpenGL, Vulkan or Metal)\n",
+               "                                          display with OpenGL, Vulkan or Metal)\n"
+               "  tenfold stem-model <htdemucs.safetensors> <bits.txt> <out.tfq>\n"
+               "                                          write the compact stem model the Sampler reads\n",
                out);
 }
 
@@ -226,6 +230,35 @@ static int check(int argc, char **argv) {
     return 0;
 }
 
+// The compact stem model from the published one and a table of bits per
+// layer ("name bits" lines, # for comments): see stems.cpp.
+static int stemModel(const char *from, const char *table, const char *to) {
+    std::ifstream f(table);
+    if (!f) {
+        std::fprintf(stderr, "tenfold: cannot read %s\n", table);
+        return 1;
+    }
+    std::unordered_map<std::string, double> bits;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::istringstream s(line);
+        std::string name;
+        double b = 0;
+        if (line.empty() || line[0] == '#' || !(s >> name >> b)) {
+            continue;
+        }
+        bits[name] = b;
+    }
+    std::string error;
+    const bool ok = tf::stems::compact(from, to, [&](const std::string &name) {
+        const auto it = bits.find(name);
+        return it == bits.end() ? 0.0 : it->second;
+    }, &error);
+    if (!ok)
+        std::fprintf(stderr, "tenfold: %s\n", error.c_str());
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char *argv[]) {
     // The system's own commands (the Linux trackpad helper, run as root)
     // come first: they must not start any of Qt.
@@ -253,6 +286,8 @@ int main(int argc, char *argv[]) {
         return screenshot(argc, argv);
     if (argc == 3 && std::strcmp(argv[1], "check") == 0)
         return check(argc, argv);
+    if (argc == 5 && std::strcmp(argv[1], "stem-model") == 0)
+        return stemModel(argv[2], argv[3], argv[4]);
     if (argc >= 4 && std::strcmp(argv[1], "visualize") == 0) {
         QGuiApplication app(argc, argv);
         app.setApplicationName("tenfold");

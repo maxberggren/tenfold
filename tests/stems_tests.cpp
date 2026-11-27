@@ -1,6 +1,7 @@
 // The stem separator (stems.h): its matrix product against the plain sum,
 // alone and split between threads; its resampler; a file that isn't the
-// model; and, when the weights are on this machine, a song separated.
+// model; and, when the weights are on this machine, the compact file and a
+// song separated.
 //
 // That the network itself is Demucs's was checked layer by layer against
 // PyTorch's htdemucs (Demucs 4.1.0) when it was written: every layer within
@@ -8,6 +9,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <chrono>
 #include <cmath>
@@ -21,9 +23,21 @@ using namespace tf;
 
 namespace {
 
+// The published weights, when this machine has them.
+QString published() {
+    for (const QString &p :
+         {QStringLiteral(TENFOLD_SRC "/../build/htdemucs.safetensors"),
+          QDir::homePath() + QStringLiteral("/.cache/huggingface/hub/models--adefossez--HTDemucs/snapshots/"
+                                            "cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/955717e8.safetensors")})
+        if (QFile::exists(p))
+            return p;
+    return {};
+}
+
 // Where the weights may be: as the app looks for them, plus the build's.
 QString weights() {
     QStringList paths = {qEnvironmentVariable("TENFOLD_STEMS_MODEL"),
+                         QStringLiteral(TENFOLD_SRC "/../build/htdemucs.tfq"),
                          QStringLiteral(TENFOLD_SRC "/../build/htdemucs.safetensors"),
                          QDir::homePath() + QStringLiteral("/.cache/huggingface/hub/models--adefossez--HTDemucs/"
                                                            "snapshots/cbc8a9b1a87023b7fd74e7b3412e6321c0eab003/"
@@ -141,10 +155,56 @@ private slots:
         QVERIFY2(QString::fromStdString(why).contains(QStringLiteral("damaged")), why.c_str());
     }
 
+    void theCompactFileKeepsEachWeightWithinHalfItsStep() {
+        // Every layer compacted at 6 bits: each weight comes back within
+        // half a step (1/128 of its channel's RMS) of the published one, the
+        // layers left as halves exactly, and a file cut short is damaged.
+        const QString from = published();
+        if (from.isEmpty())
+            QSKIP("no htdemucs.safetensors here (bin/model --remake fetches it)");
+        QTemporaryDir dir;
+        const std::string to = (dir.path() + QStringLiteral("/m.tfq")).toStdString();
+        std::string why;
+        QVERIFY2(stems::compact(from.toStdString(), to, [](const std::string &name) {
+            return name.rfind("crosstransformer.layers.0.", 0) == 0 ? 0.0 : 6.0;
+        }, &why), why.c_str());
+        qInfo("compact at 6 bits: %.1f MB", double(QFileInfo(QString::fromStdString(to)).size()) / 1e6);
+        const auto a = stems::load(from.toStdString(), &why), b = stems::load(to, &why);
+        QVERIFY2(a && b, why.c_str());
+        int exact = 0, kept = 0;
+        stems::forEachWeight(*a, *b, [&](const std::string &name, const std::vector<int> &shape, const float *x,
+                                         const float *y, size_t n) {
+            if (shape.size() < 2 || n < 1024 || name.rfind("crosstransformer.layers.0.", 0) == 0) {
+                QVERIFY2(std::equal(x, x + n, y), name.c_str());
+                ++exact;
+                return;
+            }
+            ++kept;
+            const bool tr = name.find("conv_tr") != std::string::npos;
+            const size_t rows = size_t(shape[tr ? 1 : 0]), inner = tr ? n / size_t(shape[0]) / rows : n / rows;
+            auto row = [&](size_t i) { return tr ? (i / inner) % rows : i / inner; };
+            std::vector<double> sq(rows, 0);
+            for (size_t i = 0; i < n; ++i)
+                sq[row(i)] += double(x[i]) * x[i];
+            for (size_t i = 0; i < n; ++i) {
+                const double step = std::sqrt(sq[row(i)] / double(n / rows)) / 64;
+                QVERIFY2(std::fabs(double(x[i]) - y[i]) <= 0.5 * step * 1.0001 + 1e-12, name.c_str());
+            }
+        });
+        QCOMPARE(exact + kept, 533);
+        QVERIFY(kept > 100);
+        QFile f(QString::fromStdString(to));
+        QVERIFY(f.open(QIODevice::ReadWrite));
+        QVERIFY(f.resize(f.size() / 2));
+        f.close();
+        QVERIFY(!stems::load(to, &why));
+        QVERIFY2(QString::fromStdString(why).contains(QStringLiteral("damaged")), why.c_str());
+    }
+
     void aSongIsSplitIntoStemsThatAddUpToIt() {
         const QString path = weights();
         if (path.isEmpty())
-            QSKIP("no htdemucs.safetensors here (TENFOLD_STEMS_MODEL names one)");
+            QSKIP("no stem model here (bin/model copies one; TENFOLD_STEMS_MODEL names one)");
         std::string why;
         const auto model = stems::load(path.toStdString(), &why);
         QVERIFY2(model, why.c_str());
@@ -196,7 +256,7 @@ private slots:
     void separatingStopsWhenCalledOff() {
         const QString path = weights();
         if (path.isEmpty())
-            QSKIP("no htdemucs.safetensors here");
+            QSKIP("no stem model here");
         std::string why;
         const auto model = stems::load(path.toStdString(), &why);
         QVERIFY(model);

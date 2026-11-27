@@ -2465,7 +2465,7 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 const int deg = g + (tonal(pad) ? int(std::lround(m_edit[pad].tune)) : 0);
                 name += QStringLiteral(" ") + QString::fromUtf8(gamelanNoteName(deg, m_pelog)).toUpper();
             }
-        } else if (tonal(pad)) {
+        } else if (tonal(pad) && pc.level > 0) {
             int deg = pad == TomMid ? 2 : pad == TomHi || pad == Perc || pad == Bell ? 4 : 0;
             deg += int(std::lround(m_edit[pad].tune));
             const int pc12 = (int(std::lround(harm.midi(deg, 0))) % 12 + 12) % 12;
@@ -2595,7 +2595,8 @@ void DrumsControl::paint(QPainter &p, const PaintContext &pc) {
                 thumb = h.rate;
         const bool on = thumb >= 0 || m_repeatKeys;
         const QRectF strip = pc.rect(0, 0, 1, kStripY);
-        for (int r = 0; r < kRates; ++r) {
+        // A newcomer's pad: the strip shows only while a thumb rests on it.
+        for (int r = 0; r < (pc.level > 0 || on ? kRates : 0); ++r) {
             const QRectF seg(strip.left() + strip.width() * r / kRates + 2, strip.top() + 1,
                              strip.width() / kRates - 4, strip.height() - 2);
             const bool lit = r == thumb || (thumb < 0 && m_repeatKeys);
@@ -2729,7 +2730,8 @@ void DrumsControl::paintKits(QPainter &p, const PaintContext &pc, const QRectF &
     const int lit = m_kit >= first && m_kit < last ? m_kit - first : -1;
     // A loop playing on a kit not shown glows faintly in that kit's chip,
     // rather than on the shown kit's pads (see kDataKitLoop).
-    console::chips(p, pc, row, names, lit, &m_spots, SpotKit + first, 4, pc.view->data + kDataKitLoop + first);
+    console::chips(p, pc, row, names, lit, &m_spots, SpotKit + first, 4, pc.view->data + kDataKitLoop + first,
+                   first == 0 ? console::kBrowseRowNext : console::kBrowseRow);
 }
 
 // The hang, drawn as it is played: its shell, the ding in the middle, the

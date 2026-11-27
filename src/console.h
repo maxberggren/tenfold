@@ -112,8 +112,27 @@ inline QRectF bandRow(const PaintContext &pc, int row, double x0 = 0, double x1 
 // clickable as idBase + its index. A label "" leaves a gap. `glow`, if
 // given, is one 0..1 per label: a soft fill under the chips not lit (the
 // drums' kits a loop is playing while another kit is shown).
+// browse: a row of the page's sounds (kBrowseRow, or kBrowseRowNext for the
+// one row of a page that also gets the → chip). When they don't all fit, it
+// shows those around the lit one and ends in a "+N MORE" chip (browseChip)
+// that opens the sound browser with every one of them; with Next, a "→"
+// chip at its end steps to the next sound, as the → key does.
+constexpr int kBrowseRow = 1, kBrowseRowNext = 2;
 void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, int lit,
-           Hotspots *spots, int idBase, double gap = 4, const float *glow = nullptr);
+           Hotspots *spots, int idBase, double gap = 4, const float *glow = nullptr, int browse = 0);
+// The "→" chip: the next sound, as → does (nextChipAt for the session).
+void nextChip(QPainter &p, const PaintContext &pc, const QRectF &r);
+bool nextChipAt(QPointF at);
+constexpr double kNextChipWidth = 46;
+// The "+N MORE" chip: white, so it reads as a way on rather than a sound.
+// Where it was drawn is remembered for the session (browseChipAt), which
+// opens the browser when it is clicked; resetBrowseChips() starts a paint.
+void browseChip(QPainter &p, const PaintContext &pc, const QRectF &r, int more);
+bool browseChipAt(QPointF at);
+void resetBrowseChips();
+// The first of `shown` consecutive items that keeps `lit` among them,
+// moving from `rest` only as far as it must.
+int windowFirst(int lit, int rest, int shown, int count);
 
 // Ids the shared clip strip answers to: kClipSpot + slot.
 constexpr int kClipSpot = 1000;
@@ -122,6 +141,8 @@ constexpr int kClipSpot = 1000;
 bool clickClip(int id, const PartView &v, ControlContext &ctx);
 // The slot the next loop goes into (drawn as "+"), or −1 when all are full.
 int firstEmptySlot(const PartView &v);
+// Where clips() last drew the clip strip (the UI thread's last paint).
+QRectF lastClipStrip();
 
 // A row of clickable chips under the pad (or anywhere): each a label in
 // the page colour, lit when on, brighter under the mouse. Returns the rect.

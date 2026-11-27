@@ -5827,7 +5827,7 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
             }
             return;
         }
-        c::chips(p, pc, r, labels, lit, &m_spots, SpotScene + from, gap);
+        c::chips(p, pc, r, labels, lit, &m_spots, SpotScene + from, gap, nullptr, from == 0 ? console::kBrowseRowNext : console::kBrowseRow);
     };
     sceneRow(half(0, 0, 0.35, 1), 0, kShiftScenes);
     sceneRow(half(0, 1, 0.35, 1), kShiftScenes, kSceneCount);

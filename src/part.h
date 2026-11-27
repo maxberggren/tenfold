@@ -391,6 +391,9 @@ public:
     // stops, kept in its slot, so the next Space makes a loop of its own.
     // False when it has no loop playing.
     virtual bool newLoop() { return false; }
+    // A "+N MORE" chip touched on the pad: the window opens the sound
+    // browser with every one of the page's sounds.
+    virtual void browseSounds() {}
     virtual void clearPart(int part, int slot) = 0;
     // A time t (the touch clock, as ctx.timeAt(beat) gives it) schedules the
     // change for that moment, to the sample block; 0 is now.
@@ -430,6 +433,9 @@ struct PaintContext {
     // lighting a control drawn around the pad (see PartControl::click).
     bool mouseOver = false;
     QPointF mouse;
+    // How much the window shows (Session::level): 0 for a newcomer, who
+    // sees the pad plainly (no note letters, no strips until used); 2 all.
+    int level = 2;
     // Pad coordinates (0..1, y up) to item pixels and back.
     QPointF at(float x, float y) const {
         return {pad.left() + double(x) * pad.width(), pad.bottom() - double(y) * pad.height()};

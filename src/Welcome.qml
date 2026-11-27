@@ -11,16 +11,27 @@ Rectangle {
     readonly property color green: "#39FF88"
     readonly property var tints: ["#FF8A1F", "#FF4FD8", "#2EE6FF", "#FFB000", "#39FF88", "#A98BFF", "#FF4136", "#FFD23F"]
     signal tutorial()
+    // The style chosen (and heard): Start begins with it.
+    property int chosen: 0
+    property bool heard: false
+    readonly property int count: backend.styleNames.length
+    function choose(i) {
+        chosen = (i + count) % count
+        heard = true
+        backend.previewStyle(chosen)
+    }
 
     onVisibleChanged: if (visible) forceActiveFocus()
     Keys.onPressed: event => {
-        if (event.key === Qt.Key_Escape || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            backend.endWelcome(-1)
-            event.accepted = true
-        } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_8) {
-            backend.endWelcome(event.key - Qt.Key_1)
-            event.accepted = true
-        }
+        event.accepted = true
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) backend.endWelcome(chosen)
+        else if (event.key === Qt.Key_Escape) backend.endWelcome(-1)
+        else if (event.key === Qt.Key_Left) choose(chosen - 1)
+        else if (event.key === Qt.Key_Right) choose(chosen + 1)
+        else if (event.key === Qt.Key_Up) choose(chosen - grid.columns)
+        else if (event.key === Qt.Key_Down) choose(chosen + grid.columns)
+        else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_8) choose(event.key - Qt.Key_1)
+        else event.accepted = false
     }
 
     ColumnLayout {
@@ -41,7 +52,7 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
-            text: qsTr("Make a track with your fingers. Pick a style to start from:")
+            text: qsTr("Make a track with your fingers. Touch a style to hear it, then start:")
             color: welcome.amber
             font.family: "Noto Sans Mono"
             font.pixelSize: 18
@@ -49,6 +60,7 @@ Rectangle {
         }
 
         GridLayout {
+            id: grid
             Layout.fillWidth: true
             Layout.topMargin: 8
             columns: welcome.width < 760 ? 2 : 4
@@ -60,35 +72,59 @@ Rectangle {
                     id: card
                     required property int index
                     readonly property color tint: welcome.tints[index % welcome.tints.length]
+                    readonly property bool lit: welcome.chosen === index
+                    readonly property bool hot: lit || cardMouse.containsMouse
+                    readonly property var detail: backend.styleDetails[index]
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 104
+                    Layout.preferredHeight: welcome.height < 700 ? 100 : 122
                     Rectangle {
                         anchors.fill: parent
-                        color: cardMouse.containsMouse ? card.tint : "transparent"
+                        color: card.lit ? card.tint : cardMouse.containsMouse ? Qt.rgba(card.tint.r, card.tint.g, card.tint.b, 0.16) : "transparent"
                         border.color: card.tint
-                        border.width: 2
+                        border.width: card.lit ? 3 : 2
                     }
                     Text {
                         x: 12; y: 8
                         text: (card.index + 1) + " " + backend.styleNames[card.index]
-                        color: cardMouse.containsMouse ? "#0a0806" : card.tint
+                        color: card.lit ? "#0a0806" : card.tint
                         font.family: "Noto Sans Mono"
                         font.pixelSize: 20
                         font.weight: Font.Bold
                         font.capitalization: Font.AllUppercase
                     }
                     Text {
-                        x: 12
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 10
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        y: 12
+                        text: card.detail.bpm + " BPM"
+                        color: card.lit ? "#0a0806" : card.tint
+                        opacity: 0.8
+                        font.family: "Noto Sans Mono"
+                        font.pixelSize: 12
+                        font.weight: Font.Bold
+                    }
+                    Text {
+                        x: 12; y: 38
                         width: parent.width - 24
                         text: backend.styleWhats[card.index]
-                        color: cardMouse.containsMouse ? "#0a0806" : card.tint
-                        opacity: 0.85
+                        color: card.lit ? "#0a0806" : card.tint
                         font.family: "Noto Sans Mono"
                         font.pixelSize: 13
                         wrapMode: Text.Wrap
                         maximumLineCount: 2
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        x: 12
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 8
+                        width: parent.width - 24
+                        text: card.detail.sounds.join(" · ")
+                        color: card.lit ? "#0a0806" : card.tint
+                        opacity: 0.7
+                        font.family: "Noto Sans Mono"
+                        font.pixelSize: 11
+                        font.capitalization: Font.AllUppercase
                         elide: Text.ElideRight
                     }
                     MouseArea {
@@ -96,7 +132,8 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: backend.endWelcome(card.index)
+                        // Touched again once heard: start with it.
+                        onClicked: card.lit && welcome.heard ? backend.endWelcome(card.index) : welcome.choose(card.index)
                     }
                 }
             }
@@ -109,11 +146,12 @@ Rectangle {
             PanelButton {
                 Layout.preferredWidth: 300
                 Layout.preferredHeight: 48
-                label: qsTr("▶  Just let me play")
+                label: qsTr("▶  Start with %1").arg(backend.styleNames[welcome.chosen] || "")
                 key: "Enter"
                 color: welcome.green
                 active: true
-                onClicked: backend.endWelcome(-1)
+                beckon: welcome.heard
+                onClicked: backend.endWelcome(welcome.chosen)
             }
             PanelButton {
                 Layout.preferredWidth: 300
@@ -131,7 +169,7 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
-            text: qsTr("Every sound can be changed later with SOUND, and more controls unfold as you go.")
+            text: qsTr("Every sound can be changed later with SOUND. Esc skips this and keeps the studio's own sounds.")
             color: welcome.amber
             opacity: 0.6
             font.family: "Noto Sans Mono"

@@ -4668,7 +4668,7 @@ void LeadControl::paint(QPainter &p, const PaintContext &pc) {
         QStringList names;
         for (int s = 0; s < kSounds; ++s)
             names << QString::fromUtf8(sound(s).name).toUpper();
-        c::chips(p, pc, c::bandRow(pc, 0, 0.43, 1), names, m_sound, &m_spots, SpotSound);
+        c::chips(p, pc, c::bandRow(pc, 0, 0.43, 1), names, m_sound, &m_spots, SpotSound, 4, nullptr, console::kBrowseRowNext);
     }
     {
         struct Stepper {

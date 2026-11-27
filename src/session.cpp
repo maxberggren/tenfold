@@ -159,6 +159,7 @@ public:
     }
     void stopPart(int part, bool now) override { simple(StudioMsg::Stop, part, 0, now); }
     bool newLoop() override { return m_s->newLoop(); }
+    void browseSounds() override { m_s->m_soundsAsked = true; }
     void clearPart(int part, int slot) override { simple(StudioMsg::Clear, part, slot, 0); }
     void setChannel(int part, int channel, float value, double t) override {
         StudioMsg m;
@@ -535,6 +536,18 @@ bool Session::clickAt(QPointF at) {
     m_mousePx = at;
     m_mouseOver = true;
     Page &p = *m_pages[size_t(m_page)];
+    if (console::nextChipAt(at) || (!m_soundNext.isEmpty() && m_soundNext.contains(at))) {
+        KeyEvent k;
+        k.key = Qt::Key_Right;
+        keyForPage(k);
+        k.down = false;
+        keyForPage(k);
+        return true;
+    }
+    if ((!m_soundChip.isEmpty() && m_soundChip.contains(at)) || console::browseChipAt(at)) {
+        m_soundsAsked = true;
+        return true;
+    }
     if (const QRectF fold = foldedRow(m_padRect); !fold.isEmpty() && fold.contains(at)) {
         m_level = 1;
         context(m_page).notice(QStringLiteral("More controls: swing, tone, glide and the rest"));
@@ -866,10 +879,43 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
     pc.hoverY = m_mouseY;
     pc.mouseOver = m_mouseOver;
     pc.mouse = m_mousePx;
+    pc.level = m_level;
+    console::resetBrowseChips();
     painter.save();
     p.spec.control->paint(painter, pc);
     painter.restore();
     m_padRect = pad;
+    m_soundChip = {};
+    m_soundNext = {};
+    if (m_level == 0 && p.part >= 0 && p.part < 7 && !p.spec.control->soundChoices().empty()) {
+        // A newcomer's first row: the clip slots once there is a loop, and in
+        // place of the row of sounds one chip that opens them all, heard.
+        const QRectF row = console::bandRow(pc, 0);
+        const QRectF clips = console::lastClipStrip();
+        bool anyClip = false;
+        for (const auto &c : pc.view->clips)
+            anyClip |= c.state != ClipView::Empty;
+        const qreal left = anyClip && !clips.isEmpty() && std::abs(clips.top() - row.top()) < 2 ? clips.right() + 8
+                                                                                                   : row.left();
+        painter.fillRect(QRectF(left, row.top() - 4, row.right() - left + 4, row.height() + 8), Qt::black);
+        m_soundNext = QRectF(row.right() - console::kNextChipWidth, row.top(), console::kNextChipWidth, row.height());
+        console::nextChip(painter, pc, m_soundNext);
+        m_soundChip = QRectF(left, row.top(), m_soundNext.left() - 4 - left, row.height());
+        const auto choices = p.spec.control->soundChoices();
+        const int chosen = p.spec.control->soundChoice();
+        const QString name = chosen >= 0 && chosen < int(choices.size()) ? choices[size_t(chosen)].name.toUpper()
+                                                                          : QStringLiteral("—");
+        const bool over = m_mouseOver && m_soundChip.contains(m_mousePx);
+        painter.fillRect(m_soundChip, console::alpha(pc.color, over ? 0.3f : 0.14f));
+        painter.setPen(QPen(pc.color, 1.5));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(m_soundChip);
+        console::text(painter, m_soundChip.adjusted(10, 0, -10, 0),
+                      QStringLiteral("SOUND  ·  %1").arg(name), pc.color, 13, true, Qt::AlignLeft | Qt::AlignVCenter);
+        console::text(painter, m_soundChip.adjusted(10, 0, -10, 0),
+                      QStringLiteral("%1 MORE  ▸").arg(int(choices.size()) - 1), console::alpha(pc.color, 0.75f), 12,
+                      true, Qt::AlignRight | Qt::AlignVCenter);
+    }
     if (const QRectF fold = foldedRow(pad); !fold.isEmpty()) {
         // Level 0: the band's second row folds away under one line that
         // unfolds it.
@@ -2361,6 +2407,11 @@ void Session::chooseSound(int index, bool hear) {
     p.spec.control->chooseSound(index, *p.ctx);
     if (!hear)
         return;
+    // Never into the player's loop: not while a take waits for its bar
+    // line, nor while the loop overdubs.
+    if (p.part >= 0 && p.part < m_view.partCount &&
+        (m_view.parts[p.part].recording >= 0 || m_view.parts[p.part].overdub))
+        return;
     const double bpm = std::max(60.0, m_view.bpm);
     const double t0 = now() + 0.03;
     for (const auto &step : p.spec.control->audition())
@@ -2436,9 +2487,14 @@ Session::LoopState Session::loopState() const {
     const Context &ctx = *p.ctx;
     if (!m_audition.empty())
         return LoopState::Empty; // a sound being tried is not playing to keep
+    // As Space sees it: something sounding now (a latched bed, an arp left
+    // running) is looped as it sounds; else what was played since the
+    // part's loop last changed.
+    if (v.voices > 0)
+        return LoopState::Make;
     if (ctx.onsetHead > 0) {
         const auto &last = ctx.onsets[(ctx.onsetHead - 1) % ctx.onsets.size()];
-        if (now() - last.t < 20.0)
+        if (ctx.beatAt(last.t) >= m_loopSince[p.part] - 1e-6)
             return LoopState::Make;
     }
     return LoopState::Empty;
@@ -2508,33 +2564,76 @@ bool Session::applyStyle(int index) {
 
 // --- the next step, for a newcomer ---------------------------------------------
 
-QString Session::nextStep() const {
-    std::lock_guard lock(m_lock);
-    const Page &p = *m_pages[size_t(m_page)];
-    if (p.part < 0)
-        return {};
-    int loops = 0, parts = 0;
+// How each page is played, in a sentence a newcomer can follow.
+static QString howToPlay(const QString &page) {
+    if (page == QLatin1String("Drums"))
+        return QStringLiteral("Tap the pads, or press Z X C V on the keyboard");
+    if (page == QLatin1String("Bass"))
+        return QStringLiteral("Your turn: touch the pad, or press Z X C V B for bass notes");
+    if (page == QLatin1String("Chords"))
+        return QStringLiteral("Your turn: hold a column, or press A S D F G for chords");
+    if (page == QLatin1String("Lead"))
+        return QStringLiteral("Your turn: slide a finger, or press A S D F G H for notes");
+    if (page == QLatin1String("Arp"))
+        return QStringLiteral("Your turn: hold notes on the left, or hold A D G");
+    if (page == QLatin1String("Atmos"))
+        return QStringLiteral("Your turn: rest fingers on the pad, or press Q W E R for a scene");
+    if (page == QLatin1String("FX"))
+        return QStringLiteral("Your turn: touch the field for a riser, or Z X C V for hits");
+    return QStringLiteral("Your turn: click or tap the pad to play");
+}
+
+int Session::partsWithLoops() const {
+    int parts = 0;
     for (int q = 0; q < m_view.partCount; ++q) {
         bool any = false;
         for (const auto &c : m_view.parts[q].clips)
             any |= c.state != ClipView::Empty;
-        loops += m_view.parts[q].playing >= 0;
         parts += any;
     }
+    return parts;
+}
+
+int Session::suggestedPage() const {
+    std::lock_guard lock(m_lock);
+    // Once a part loops, the next of the first four without a loop.
+    if (loopState() != LoopState::Layer || partsWithLoops() >= 4)
+        return -1;
+    static const char *order[] = {"drums", "bass", "chords", "lead"};
+    for (const char *name : order) {
+        const int page = pageNamed(QString::fromLatin1(name));
+        if (page < 0 || page == m_page)
+            continue;
+        const Page &q = *m_pages[size_t(page)];
+        bool any = false;
+        for (const auto &c : m_view.parts[q.part].clips)
+            any |= c.state != ClipView::Empty;
+        if (!any)
+            return page;
+    }
+    return -1;
+}
+
+QString Session::nextStep() const {
+    std::lock_guard lock(m_lock);
+    const Page &p = *m_pages[size_t(m_page)];
+    if (p.part < 0)
+        return m_page == arrangePage() ? QStringLiteral("Press I and your loops become a whole track") : QString();
     switch (loopState()) {
     case LoopState::Waiting: return QStringLiteral("Keep playing: the loop starts on the bar line");
-    case LoopState::Make: return QStringLiteral("Like it? Press LOOP (Space) to keep it going");
-    case LoopState::Layer:
-        if (parts < 2)
-            return QStringLiteral("Now add another part: try 2 BASS or 3 CHORDS");
-        if (parts < 4)
-            return QStringLiteral("Play over it and press LOOP to add a layer, or open another part");
-        return QStringLiteral("Sounding good: RECORD keeps it, 0 SONG makes it a track");
+    case LoopState::Make: return QStringLiteral("Like it? Press LOOP IT to keep it going round");
+    case LoopState::Layer: {
+        const int next = suggestedPage();
+        if (next >= 0)
+            return QStringLiteral("It loops! Now add %1: press %2 or click its tab")
+                .arg(pageName(next).toUpper(), pageKey(next));
+        if (m_level == 0)
+            return QStringLiteral("A band! More controls (tempo, key, swing) are under SHAPE, top right");
+        return QStringLiteral("Open 0 SONG and press I: your loops become a track");
+    }
     default: break;
     }
-    if (m_page == 0)
-        return QStringLiteral("Tap the pads, or press Z X C V on the keyboard");
-    return QStringLiteral("Click or tap the pad, or press the letter keys, to play");
+    return howToPlay(pageName(m_page));
 }
 
 }
@@ -2545,8 +2644,39 @@ QRectF Session::foldedRow(const QRectF &pad) const {
     const Page &p = *m_pages[size_t(m_page)];
     if (m_level > 0 || p.part < 0 || p.part >= 7 || pad.isEmpty())
         return {};
-    // console::bandRow(pc, 1): the second row of controls under the pad.
-    return QRectF(pad.left(), pad.bottom() + 12 + 40, pad.width(), 30);
+    PaintContext pc;
+    pc.pad = pad;
+    return console::bandRow(pc, 1);
+}
+
+}
+
+namespace tf {
+
+void Session::previewStyle(int index) {
+    std::lock_guard lock(m_lock);
+    if (!applyStyle(index))
+        return;
+    stopAudition();
+    // Its drums, bass and chords together, a bar of each.
+    const double bpm = std::max(60.0, double(styles()[size_t(index)].bpm));
+    const double t0 = now() + 0.05;
+    for (const char *name : {"drums", "bass", "chords"}) {
+        const int page = pageNamed(QString::fromLatin1(name));
+        if (page < 0)
+            continue;
+        for (const auto &step : m_pages[size_t(page)]->spec.control->audition())
+            m_audition.push_back({t0 + step.beat * 60.0 / bpm, page, step.key, step.down});
+    }
+    std::stable_sort(m_audition.begin(), m_audition.end(),
+                     [](const Audition &a, const Audition &b) { return a.t < b.t; });
+}
+
+bool Session::takeSoundsAsked() {
+    std::lock_guard lock(m_lock);
+    const bool asked = m_soundsAsked;
+    m_soundsAsked = false;
+    return asked;
 }
 
 }

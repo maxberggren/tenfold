@@ -1641,7 +1641,7 @@ void FxPage::paint(QPainter &p, const PaintContext &pc) {
     QStringList sets;
     for (int s = 0; s < SetCount; ++s)
         sets << QString::fromUtf8(palette(s).label);
-    c::chips(p, pc, c::bandRow(pc, 0, 0.31, 1), sets, m_set, &m_spots, SpotSet, 3);
+    c::chips(p, pc, c::bandRow(pc, 0, 0.31, 1), sets, m_set, &m_spots, SpotSet, 3, nullptr, console::kBrowseRowNext);
     c::text(p, c::bandRow(pc, 1, 0, 0.07), QStringLiteral("⇧← →"), c::alpha(col, 0.7f), 11, true, Qt::AlignCenter);
     QStringList styles;
     for (int s = 0; s < StyleCount; ++s)

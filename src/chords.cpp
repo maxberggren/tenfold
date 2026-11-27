@@ -1272,7 +1272,7 @@ void Control::paint(QPainter &p, const PaintContext &pc) {
     const qreal clipsW = top.width() - keysW - soundsW - 2 * between;
     c::clips(p, QRectF(top.left(), top.top(), clipsW, top.height()), *pc.view, col, pc.time, &m_spots);
     const QRectF soundsRow(top.left() + clipsW + between, top.top(), soundsW, top.height());
-    c::chips(p, pc, soundsRow, sounds, m_style, &m_spots, SpotStyle, gap);
+    c::chips(p, pc, soundsRow, sounds, m_style, &m_spots, SpotStyle, gap, nullptr, console::kBrowseRowNext);
     // Under the window onto the sounds, a dot for each of them, the chosen
     // one lit: how many there are, and how many wait beyond the faded ends.
     {

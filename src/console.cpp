@@ -394,6 +394,11 @@ void beats(QPainter &p, const PaintContext &pc, QColor color) {
     }
 }
 
+namespace {
+QRectF g_clipStrip;
+}
+QRectF lastClipStrip() { return g_clipStrip; }
+
 int firstEmptySlot(const PartView &v) {
     for (int s = 0; s < kClipSlots; ++s)
         if (v.clips[s].state == ClipView::Empty)
@@ -402,6 +407,7 @@ int firstEmptySlot(const PartView &v) {
 }
 
 void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double time, Hotspots *spots) {
+    g_clipStrip = r;
     const qreal w = r.width() / kClipSlots;
     const bool blink = std::fmod(time, 0.5) < 0.25;
     // The first empty slot is where the next loop goes: a "+" there, and a
@@ -445,20 +451,118 @@ void clips(QPainter &p, const QRectF &r, const PartView &v, QColor color, double
             continue;
         }
         QString label = QString::number(s + 1);
-        if (c.state != ClipView::Empty && c.lengthBeats > 0)
-            label += c.lengthBeats >= 4 ? QStringLiteral(" %1B").arg(int(c.lengthBeats / 4))
-                                        : QStringLiteral(" %1/4").arg(int(c.lengthBeats));
-        text(p, cell, label,
-             c.state == ClipView::Playing || c.state == ClipView::Recording ? QColor::fromRgb(kInk) : col,
-             int(std::clamp(cell.height() * 0.45, 9.0, 13.0)), true, Qt::AlignCenter);
+        if (c.state != ClipView::Empty && c.lengthBeats > 0) {
+            const int bars = int(c.lengthBeats / 4);
+            const QString len = c.lengthBeats >= 4 ? (cell.width() >= 74 ? QStringLiteral("%1 BAR").arg(bars)
+                                                                          : QStringLiteral("%1B").arg(bars))
+                                                   : QStringLiteral("%1/4").arg(int(c.lengthBeats));
+            label += QStringLiteral(" · ") + len;
+        }
+        // The words on a dark plate over the sweeping fill, so they read
+        // wherever the hand is.
+        const int px = int(std::clamp(cell.height() * 0.45, 9.0, 13.0));
+        if (c.state != ClipView::Empty) {
+            const qreal tw = std::min(cell.width() - 4, textWidth(font(px, true), label) + 8);
+            p.fillRect(QRectF(cell.center().x() - tw / 2, cell.center().y() - px * 0.7, tw, px * 1.4),
+                       QColor(0, 0, 0, 200));
+        }
+        text(p, cell, label, c.state == ClipView::Recording ? red() : col, px, true, Qt::AlignCenter);
     }
 }
 
-void chips(QPainter &p, const PaintContext &pc, const QRectF &r, const QStringList &labels, int lit,
-           Hotspots *spots, int idBase, double gap, const float *glow) {
+namespace {
+std::vector<QRectF> g_browseChips;
+}
+
+std::vector<QRectF> g_nextChips;
+
+void resetBrowseChips() {
+    g_browseChips.clear();
+    g_nextChips.clear();
+}
+
+bool nextChipAt(QPointF at) {
+    for (const QRectF &r : g_nextChips)
+        if (r.contains(at))
+            return true;
+    return false;
+}
+
+void nextChip(QPainter &p, const PaintContext &pc, const QRectF &r) {
+    static const QColor white("#F4F1E8");
+    const bool over = pc.mouseOver && r.contains(pc.mouse);
+    p.fillRect(r, over ? white : alpha(white, 0.12f));
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(white, 1.5));
+    p.drawRect(r);
+    text(p, r, QStringLiteral("→"), over ? QColor::fromRgb(kInk) : white,
+         int(std::clamp(r.height() * 0.5, 10.0, 15.0)), true, Qt::AlignCenter);
+    g_nextChips.push_back(r);
+}
+
+bool browseChipAt(QPointF at) {
+    for (const QRectF &r : g_browseChips)
+        if (r.contains(at))
+            return true;
+    return false;
+}
+
+int windowFirst(int lit, int rest, int shown, int count) {
+    rest = std::clamp(rest, 0, std::max(0, count - shown));
+    if (lit < 0)
+        return rest;
+    if (lit < rest)
+        return lit;
+    if (lit >= rest + shown)
+        return std::min(count - shown, lit - shown + 1);
+    return rest;
+}
+
+void browseChip(QPainter &p, const PaintContext &pc, const QRectF &r, int more) {
+    static const QColor white("#F4F1E8");
+    const bool over = pc.mouseOver && r.contains(pc.mouse);
+    p.fillRect(r, over ? white : alpha(white, 0.12f));
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(white, 1.5));
+    p.drawRect(r);
+    text(p, r.adjusted(4, 0, -4, 0), QStringLiteral("+%1 MORE").arg(more), over ? QColor::fromRgb(kInk) : white,
+         int(std::clamp(r.height() * 0.42, 9.0, 13.0)), true, Qt::AlignCenter);
+    g_browseChips.push_back(r);
+}
+
+void chips(QPainter &p, const PaintContext &pc, const QRectF &row, const QStringList &labels, int lit,
+           Hotspots *spots, int idBase, double gap, const float *glow, int browseMode) {
     const int n = int(labels.size());
     if (n == 0)
         return;
+    QRectF r = row;
+    if (browseMode == kBrowseRowNext && r.width() > 4 * kNextChipWidth) {
+        nextChip(p, pc, QRectF(r.right() - kNextChipWidth, r.top(), kNextChipWidth, r.height()));
+        r.setRight(r.right() - kNextChipWidth - gap);
+    }
+    if (browseMode) {
+        const QFont f = font(int(std::clamp(r.height() * 0.42, 9.0, 13.0)), true);
+        double need = 0;
+        for (const QString &l : labels)
+            need = std::max(need, textWidth(f, keyNames(l)) + 14);
+        const int fits = std::max(3, int((r.width() + gap) / (need + gap)));
+        if (n > fits) {
+            // The lit one and its neighbours, then the way to all of them.
+            const int shown = fits - 1;
+            const int first = windowFirst(lit, std::max(0, lit - shown / 2), shown, n);
+            const double w = (r.width() + gap) / fits;
+            for (int k = 0; k < shown; ++k) {
+                const int i = first + k;
+                const QRectF cell(r.left() + k * w, r.top(), w - gap, r.height());
+                if (glow && i != lit && glow[i] > 0.02f)
+                    p.fillRect(cell, alpha(pc.color, 0.3f * std::min(1.0f, glow[i])));
+                if (!labels[i].isEmpty())
+                    chip(p, pc, cell, labels[i], i == lit, spots, idBase + i);
+            }
+            browseChip(p, pc, QRectF(r.left() + shown * w, r.top(), w - gap, r.height()), n - shown);
+            return;
+        }
+    }
     // As many as fit with their names whole. More than that, and the row
     // becomes a window onto them that follows the lit one, the chip at
     // each end faded where there are more beyond it (still clickable: a

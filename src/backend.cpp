@@ -651,6 +651,8 @@ void Backend::tick() {
         m_lastPage = m_session->page();
         emit pageChanged();
     }
+    if (m_session->takeSoundsAsked())
+        emit soundsAsked();
     // The band's fold opens the level from the pad itself: kept, as the
     // window's own choice is.
     if (!m_simulated && m_session->level() != m_savedLevel) {
@@ -777,5 +779,19 @@ QStringList Backend::styleWhats() const {
     QStringList out;
     for (const auto &s : tf::Session::styles())
         out << QString::fromUtf8(s.what);
+    return out;
+}
+
+QVariantList Backend::styleDetails() const {
+    QVariantList out;
+    for (const auto &s : tf::Session::styles()) {
+        QVariantMap m;
+        m[QStringLiteral("bpm")] = s.bpm;
+        QStringList sounds;
+        for (int i = 0; i < 4; ++i) // drums, bass, chords, lead
+            sounds << QString::fromUtf8(s.sounds[i]);
+        m[QStringLiteral("sounds")] = sounds;
+        out << m;
+    }
     return out;
 }

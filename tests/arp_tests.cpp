@@ -834,9 +834,9 @@ private slots:
         // / is the same switch, and so is the lit chip tapped again.
         testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.2 /\nend 0.4\n", [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains(QStringLiteral("Leslie fast")), qPrintable(status));
-        // The organ sits at the faded end of the lower row, so picking it
-        // draws the row along by one: it is tapped again where it now is.
-        testkit::play("page 0 5\nmouse 0.2 0.373 0.04 down\nmouse 0.3 0.373 0.04 up\n"
+        // The organ picked, the lower row shows it in its fourth chip: tapped
+        // there it is its switch.
+        testkit::play("page 0 5\nkey 0.1 Shift+B\n"
                       "mouse 0.4 0.29 0.04 down\nmouse 0.5 0.29 0.04 up\nend 0.7\n",
                       [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains(QStringLiteral("organ (Leslie fast)")), qPrintable(status));
@@ -901,28 +901,34 @@ private slots:
     }
 
     void theLowerRowIsAWindowOntoTheSoundsPastTheDanceFloor() {
-        // Five chips in the lower row for ten sounds: with the marimba lit
-        // they show marimba to organ, so the chip under the last column
-        // is the organ; with the gamelan lit the window has moved to the
-        // end, and its first column, faded, is the steel pan; touching it
-        // picks it, and the row moves back by one so the organ is under the
-        // first column.
+        // Four chips in the lower row for ten sounds, then "+6 MORE": with
+        // the marimba lit they show marimba to juno, and the last column
+        // asks for the sound browser instead of picking a sound; with the
+        // gamelan lit the window has moved to the end, its first column the
+        // sitar; touching it picks it and the window stays.
         const std::string lower = " 0.04\n";
         auto chipX = [](int col) { return std::to_string(0.58 * (col + 0.5) / 7.0); };
         QString status;
-        testkit::play("page 0 5\nkey 0.1 Shift+Z\ntap 0.3 " + chipX(4) + lower + "end 0.6\n",
+        bool asked = false;
+        testkit::play("page 0 5\nkey 0.1 Shift+Z\ntap 0.3 " + chipX(4) + lower + "end 0.6\n", [&](Session &s) {
+            status = s.pageStatus();
+            asked = s.takeSoundsAsked();
+        });
+        QVERIFY2(status.contains(QStringLiteral("marimba")), qPrintable(status));
+        QVERIFY(asked);
+        testkit::play("page 0 5\nkey 0.1 Shift+Z\ntap 0.3 " + chipX(3) + lower + "end 0.6\n",
                       [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains(QStringLiteral("organ")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("juno")), qPrintable(status));
         testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\nend 0.3\n",
                       [&](Session &s) { status = s.pageStatus(); });
         QVERIFY2(status.contains(QStringLiteral("gamelan")), qPrintable(status));
         testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\ntap 0.3 " + chipX(0) + lower + "end 0.6\n",
                       [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains(QStringLiteral("steel pan")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("sitar")), qPrintable(status));
         testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\ntap 0.3 " + chipX(0) + lower + "tap 0.5 " +
-                          chipX(0) + lower + "end 0.8\n",
+                          chipX(1) + lower + "end 0.8\n",
                       [&](Session &s) { status = s.pageStatus(); });
-        QVERIFY2(status.contains(QStringLiteral("organ")), qPrintable(status));
+        QVERIFY2(status.contains(QStringLiteral("log drum")), qPrintable(status));
         // The top row stays put: Z is the pluck whatever the window shows.
         testkit::play("page 0 5\nkey 0.1 Shift+B\nkey 0.15 Shift+B\ntap 0.3 " + chipX(0) + " 0.11\nend 0.6\n",
                       [&](Session &s) { status = s.pageStatus(); });

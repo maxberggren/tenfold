@@ -255,6 +255,13 @@ public:
     };
     static const std::vector<Style> &styles();
     bool applyStyle(int index);
+    // A style chosen and heard: its drums, bass and chords play a bar.
+    void previewStyle(int index);
+    // The page a newcomer is pointed to next (its tab pulses), or −1.
+    int suggestedPage() const;
+    // The SOUND chip under the pad was clicked (level 0): the window opens
+    // the browser. True once per click.
+    bool takeSoundsAsked();
 
     // One sentence for a newcomer: what to do next on the showing page.
     QString nextStep() const;
@@ -374,6 +381,10 @@ private:
     };
     std::vector<Audition> m_audition;
     int m_level = 2;
+    QRectF m_soundChip;   // level 0: the SOUND chip under the pad, where last painted
+    bool m_soundsAsked = false;
+    QRectF m_soundNext;   // level 0: the → beside it
+    int partsWithLoops() const;
     QRectF m_padRect; // where the pad was last painted, for foldedRow()
     void playAudition(double t);
     void stopAudition();

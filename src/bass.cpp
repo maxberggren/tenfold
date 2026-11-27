@@ -1791,30 +1791,29 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
         // follows the one playing, the chip at each end faded where there
         // are more beyond it (a click there moves along), as console::chips
         // does for a row of plain labels.
-        const QRectF row = c::bandRow(pc, 0, 0.38, 1);
+        QRectF row = c::bandRow(pc, 0, 0.38, 1);
         constexpr double gap = 4;
+        // → at the end: the next sound, as the → key.
+        console::nextChip(p, pc, QRectF(row.right() - console::kNextChipWidth, row.top(), console::kNextChipWidth, row.height()));
+        row.setRight(row.right() - console::kNextChipWidth - gap);
         double need = 0;
         for (int s = 0; s < SoundCount; ++s)
             need = std::max(need, console::textWidth(c::font(12, true), QString::fromUtf8(recipe(s).name)) + 12);
         const int fits = std::max(3, int((row.width() + gap) / (need + gap)));
-        int first = 0, shown = SoundCount;
-        if (SoundCount > fits) {
-            shown = fits;
-            first = std::clamp(m_sound - shown / 2, 0, SoundCount - shown);
-        }
-        const qreal w = (row.width() + gap) / double(shown);
+        // More than fit: those around the one playing, then "+N MORE",
+        // which opens every sound in the browser.
+        const bool over = SoundCount > fits;
+        const int shown = over ? fits - 1 : SoundCount;
+        const int first = over ? console::windowFirst(m_sound, std::max(0, m_sound - shown / 2), shown, SoundCount) : 0;
+        const qreal w = (row.width() + gap) / double(over ? fits : shown);
         for (int k = 0; k < shown; ++k) {
             const int s = first + k;
-            const bool more = (k == 0 && first > 0) || (k == shown - 1 && s < SoundCount - 1);
-            if (more) {
-                p.save();
-                p.setOpacity(0.3);
-            }
             keyChip(p, pc, QRectF(row.left() + k * w, row.top(), w - gap, row.height()), QString::fromUtf8(recipe(s).name),
                     keyOf(s), s == m_sound, m_spots, SpotSound + s);
-            if (more)
-                p.restore();
         }
+        if (over)
+            console::browseChip(p, pc, QRectF(row.left() + shown * w, row.top(), w - gap, row.height()),
+                                SoundCount - shown);
     }
 
     const QRectF row = c::bandRow(pc, 1);

@@ -3162,32 +3162,28 @@ constexpr int kColumns = 8;
 constexpr int kBottomChips = 7;
 constexpr int kSoundCols = 5;
 constexpr int kWorld = SoundCount - kSoundCols; // the sounds the lower row looks onto
-static_assert(kWorld >= kSoundCols && kWorld <= 2 * kSoundCols);
-// The first of the lower row's sounds (counted from the first past the top
-// row) with `sound` lit, the window having stood at `rest`. It moves only
-// as far as it must for the lit chip to sit clear of a faded end, so a
-// chip picked in the middle of the row stays under the finger (the lit
-// organ or juno tapped again is its switch), and one picked at a faded end
-// draws the row along by one.
+static_assert(kWorld >= kSoundCols - 1 && kWorld <= 2 * kSoundCols);
+// The lower row shows four of the sounds past the dance floor's, around
+// the one lit, and ends in "+N MORE", which opens them all in the sound
+// browser. The window moves only as far as it must to keep the lit one in
+// it, so a chip picked stays under the finger (the lit organ or juno
+// tapped again is its switch).
+constexpr int kWindow = kSoundCols - 1;
+constexpr int kBrowse = -2; // soundChip(): the "+N MORE" chip
 int worldFirst(int sound, int rest) {
-    rest = std::clamp(rest, 0, kWorld - kSoundCols);
+    rest = std::clamp(rest, 0, kWorld - kWindow);
     if (sound < kSoundCols)
         return rest;
-    const int at = sound - kSoundCols;
-    const int lo = rest + (rest > 0 ? 1 : 0);
-    const int hi = rest + kSoundCols - 1 - (rest + kSoundCols < kWorld ? 1 : 0);
-    if (at < lo)
-        return std::max(0, at - 1);
-    if (at > hi)
-        return std::min(kWorld - kSoundCols, at - kSoundCols + 2);
-    return rest;
+    return console::windowFirst(sound - kSoundCols, rest, kWindow, kWorld);
 }
 // The sound chip under a point of the band, or −1 (follow, latch).
 int soundChip(float u, float y, int first) {
     const int col = std::clamp(int(u * kBottomChips), 0, kBottomChips - 1);
     if (col >= kSoundCols)
         return -1;
-    return y > 0.5f * kChipsLow ? col : kSoundCols + first + col;
+    if (y > 0.5f * kChipsLow)
+        return col;
+    return col == kWindow ? kBrowse : kSoundCols + first + col;
 }
 // The letter that picks a sound, and how many presses of it with Shift
 // (0 for none: the top row's sounds need no Shift).
@@ -4199,7 +4195,9 @@ private:
                 if (chip < kSoundCols) {
                     // The lit organ or juno chip tapped again is its switch.
                     const int sound = soundChip(u, t.y, worldFirst(m_s.sound, m_world));
-                    if (sound == m_s.sound && hasSwitch(sound))
+                    if (sound == kBrowse)
+                        ctx.browseSounds();
+                    else if (sound == m_s.sound && hasSwitch(sound))
                         flipSwitch(ctx);
                     else
                         setSound(sound, ctx);
@@ -4747,14 +4745,13 @@ void ArpControl::paintChips(QPainter &p, const PaintContext &pc) {
         const QRectF r = i < kSoundCols ? pc.rect(x0, half, x1, kChipsLow).adjusted(4, 5, -4, -2)
                          : i < kSlots  ? pc.rect(x0, 0.0f, x1, half).adjusted(4, 2, -4, -7)
                                        : pc.rect(x0, 0.0f, x1, kChipsLow).adjusted(4, 5, -4, -7);
-        const int sound = i < kSoundCols ? i : i < kSlots ? kSoundCols + first + column : -1;
-        // A lower chip at an end of the window with more sounds beyond it.
-        const bool more = i >= kSoundCols && i < kSlots &&
-                          ((column == 0 && first > 0) || (column == kSoundCols - 1 && first + kSoundCols < kWorld));
-        if (more) {
-            p.save();
-            p.setOpacity(0.3);
+        // The lower row's last chip: the way to every sound.
+        if (i >= kSoundCols && i < kSlots && column == kWindow) {
+            c::browseChip(p, pc, r, SoundCount - kSoundCols - kWindow);
+            continue;
         }
+        const int sound = i < kSoundCols ? i : i < kSlots ? kSoundCols + first + column : -1;
+        constexpr bool more = false;
         bool lit;
         QString label;
         QColor tint = col;

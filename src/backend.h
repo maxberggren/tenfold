@@ -132,6 +132,10 @@ class Backend : public QObject {
     Q_PROPERTY(QString nextStep READ nextStep NOTIFY changed)
     Q_PROPERTY(QStringList styleNames READ styleNames CONSTANT)
     Q_PROPERTY(QStringList styleWhats READ styleWhats CONSTANT)
+    // Each style's tempo and the sounds it sets, for its card.
+    Q_PROPERTY(QVariantList styleDetails READ styleDetails CONSTANT)
+    // The tab a newcomer is pointed to next (it pulses), or −1.
+    Q_PROPERTY(int suggestedPage READ suggestedPage NOTIFY changed)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -299,6 +303,9 @@ public:
     Q_INVOKABLE void pressLoop(bool fresh = false) { m_session->pressLoop(fresh); }
     QStringList styleNames() const;
     QStringList styleWhats() const;
+    QVariantList styleDetails() const;
+    int suggestedPage() const { return m_session->suggestedPage(); }
+    Q_INVOKABLE void previewStyle(int index) { m_session->previewStyle(index); }
 
     void shutdown();
     // Plays a script into the session and studio up to a moment, as fast as
@@ -311,6 +318,8 @@ signals:
     void pageChanged();
     void noticeChanged();
     void exportChanged();
+    // A "+N MORE" or SOUND chip under the pad was clicked: open the browser.
+    void soundsAsked();
 
 private:
     void tick();

@@ -42,6 +42,7 @@ HEADERS += \
     src/udu.h \
     src/tabla.h \
     src/cuica.h \
+    src/export.h \
     src/offline.h \
     src/part.h \
     src/platform.h \
@@ -85,6 +86,7 @@ SOURCES += \
     src/backend.cpp \
     src/console.cpp \
     src/contacts.cpp \
+    src/export.cpp \
     src/offline.cpp \
     src/parts.cpp \
     src/session.cpp \

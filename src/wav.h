@@ -1,7 +1,9 @@
 #pragma once
 
 // A 24-bit stereo WAV writer with TPDF dither, for recordings and offline
-// renders. The header is rewritten with the real length on close.
+// renders. The header is rewritten with the real length on close. Chunks of
+// metadata (whole chunks, id and size included: an export's 'bext' and
+// 'acid', see export.h) go between the format and the sound.
 
 #include <cstdint>
 #include <cstdio>
@@ -17,11 +19,14 @@ class WavWriter {
 public:
     ~WavWriter() { close(); }
 
-    bool open(const std::string &path, int rate) {
+    bool open(const std::string &path, int rate, const std::string &chunks = {}) {
         m_file = std::fopen(path.c_str(), "wb");
         if (!m_file)
             return false;
         m_rate = rate;
+        m_chunks = chunks;
+        if (m_chunks.size() & 1)
+            m_chunks.push_back('\0');
         m_frames = 0;
         writeHeader();
         return true;
@@ -68,7 +73,7 @@ private:
     void writeHeader() {
         const uint32_t data = uint32_t(m_frames * 6);
         std::fwrite("RIFF", 1, 4, m_file);
-        put32(36 + data);
+        put32(36 + uint32_t(m_chunks.size()) + data);
         std::fwrite("WAVEfmt ", 1, 8, m_file);
         put32(16);
         put16(1);
@@ -77,11 +82,14 @@ private:
         put32(uint32_t(m_rate) * 6);
         put16(6);
         put16(24);
+        if (!m_chunks.empty())
+            std::fwrite(m_chunks.data(), 1, m_chunks.size(), m_file);
         std::fwrite("data", 1, 4, m_file);
         put32(data);
     }
 
     FILE *m_file = nullptr;
+    std::string m_chunks;
     int m_rate = 48000;
     size_t m_frames = 0;
     Rng m_rng{0xD17E};

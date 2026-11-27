@@ -1877,6 +1877,8 @@ public:
             d[PubGlint0 + 3 * g + 2] = 0;
     }
 
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<AtmosEngine>(); }
+
     int voices() const override {
         int n = 0;
         for (const Voice &v : m_voices)

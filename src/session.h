@@ -197,6 +197,10 @@ public:
     bool openSong(const QJsonObject &doc, QString *error = nullptr);
     // Whether there is anything to keep: a clip in any slot.
     bool anythingMade() const;
+    // The Song page's song, for an export: its bars (0: no song), and
+    // played once from its top at a bar of the studio's clock.
+    int songBars() const;
+    void playSong(int bar);
     // A notice in the window from outside the pages (a file saved, opened).
     void say(const QString &text);
 

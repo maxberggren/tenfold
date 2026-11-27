@@ -2543,6 +2543,12 @@ private:
         }
     }
 
+    int songBars() const override { return m_song.length(); }
+    void playSong(int bar, ControlContext &ctx) override {
+        if (!m_song.empty())
+            startSong(bar, false, ctx);
+    }
+
     // Pause: the song stops where it is, and plays on from the top of that
     // bar when play comes. A song being recorded ends at the bar.
     bool pause(ControlContext &) override {

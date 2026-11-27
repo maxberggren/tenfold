@@ -54,7 +54,59 @@ const float kDefaultMaster[MasterCount] = {0.35f, 0.1f, 0.5f, 0.35f, 0.5f, 0.0f,
 // The echo's divisions of the beat, picked by EchoTime.
 const double kEchoBeats[] = {0.25, 0.5, 0.75, 1.0, 1.5, 2.0};
 
+// A channel's DJ filter at v (0 low-pass .. 0.5 open .. 1 high-pass).
+void setChannelFilter(Svf &fl, Svf &fr, float v, float &cached, float rate) {
+    if (std::fabs(v - cached) < 0.002f)
+        return;
+    cached = v;
+    float hz;
+    if (v < 0.5f)
+        hz = 60.0f * std::exp2(v / 0.5f * 8.4f); // 60 Hz .. 20 kHz
+    else
+        hz = 20.0f * std::exp2((v - 0.5f) / 0.5f * 9.6f); // 20 Hz .. 15 kHz
+    fl.set(hz, 0.95f, rate);
+    fr.set(hz, 0.95f, rate);
 }
+
+}
+
+// An export's stems (exportStems): each tap is one stem's own channel strip
+// (a voice's: its own filter, set as the part's channel is), its own room
+// (the studio's, with the same settings, so each stem carries its own
+// tail), and its own master section, which takes the gains the master gave
+// the whole mix.
+struct Studio::Stems {
+    StemSink *sink = nullptr;
+    StemOptions opt;
+    struct Tap {
+        int part = 0;
+        bool voice = false;
+        const float *dryL = nullptr, *dryR = nullptr; // what the engine played, before the channel
+        Svf filtL, filtR;
+        float filtSet = -1;
+        Reverb reverb;
+        TapeEcho echo;
+        Svf masterL, masterR;
+        float masterFiltSet = -1;
+        Svf sideLp, lowBand;
+        DcBlock dcL, dcR;
+        float delayL[Limiter::W] = {}, delayR[Limiter::W] = {};
+        int delayPos = 0;
+        float outL[kBlock] = {}, outR[kBlock] = {};
+    };
+    std::vector<std::unique_ptr<Tap>> taps;
+    std::vector<const float *> tapL, tapR;
+    // What the block's mixer did, kept for the taps: each part through its
+    // channel, the gain it had at each sample (level, mute, pump), its pan,
+    // filter and sends; and the master's gains at each sample.
+    float postL[kMaxParts][kBlock] = {}, postR[kMaxParts][kBlock] = {};
+    float gain[kMaxParts][kBlock] = {};
+    float panL[kMaxParts] = {}, panR[kMaxParts] = {}, filt[kMaxParts] = {}, rs[kMaxParts] = {}, es[kMaxParts] = {};
+    float lowK[kBlock] = {}, glue[kBlock] = {}, lim[kBlock] = {}, roomDuck[kBlock] = {};
+    float wet = 1, mgain = 1, master[MasterCount] = {};
+    float echoSeconds = 0.5f;
+};
+static_assert(Limiter::W - 1 == Studio::kStemLatency, "the stems wait as long as the limiter looks ahead");
 
 struct Studio::PartState {
     std::unique_ptr<PartEngine> engine;
@@ -206,7 +258,118 @@ struct Studio::Impl : AudioContext {
 
     float cpu = 0, cpuPeak = 0, peak = 0, rms = 0;
     uint64_t lastPublish = 0;
+
+    std::unique_ptr<Studio::Stems> stems; // an export's (exportStems), else none
 };
+
+namespace {
+
+// A part's engine during an export: it plays as it would, and says what
+// notes it sounds; beside it, the voices split from it (addVoice), each a
+// twin of it hearing only its share of the commands, in a context that
+// gives it the studio's clock, harmony and pump but lets it change none of
+// them (the part itself sets the chord and pumps the mix).
+class FanOut : public PartEngine {
+public:
+    struct PartContext : AudioContext {
+        AudioContext *s = nullptr;
+        StemSink *sink = nullptr;
+        int part = 0;
+        const Transport &transport() const override { return s->transport(); }
+        const Harmony &harmony() const override { return s->harmony(); }
+        double now() const override { return s->now(); }
+        int offsetOf(double t, int n) const override { return s->offsetOf(t, n); }
+        void pump(int offset, float strength) override { s->pump(offset, strength); }
+        void setChord(int root, const int *tones, int count) override { s->setChord(root, tones, count); }
+        const float *duck() const override { return s->duck(); }
+        const float *input() const override { return s->input(); }
+        float *monitor(int channel) override { return s->monitor(channel); }
+        void note(int key, float midi, float velocity, int offset, int length) override {
+            const int64_t at = int64_t(s->transport().sample) + offset;
+            sink->note(part, uint64_t(std::max<int64_t>(0, at)), key, midi, velocity, length);
+        }
+    };
+    struct VoiceContext : AudioContext {
+        AudioContext *s = nullptr;
+        float monL[kBlock] = {}, monR[kBlock] = {};
+        const Transport &transport() const override { return s->transport(); }
+        const Harmony &harmony() const override { return s->harmony(); }
+        double now() const override { return s->now(); }
+        int offsetOf(double t, int n) const override { return s->offsetOf(t, n); }
+        void pump(int, float) override {}
+        void setChord(int, const int *, int) override {}
+        const float *duck() const override { return s->duck(); }
+        const float *input() const override { return s->input(); }
+        float *monitor(int channel) override { return s->monitor(channel) ? (channel ? monR : monL) : nullptr; }
+    };
+    struct Voice {
+        std::unique_ptr<PartEngine> engine;
+        std::function<bool(Command &)> keep;
+        VoiceContext ctx;
+        float bufL[kBlock] = {}, bufR[kBlock] = {};
+    };
+
+    FanOut(std::unique_ptr<PartEngine> inner, AudioContext *studio, StemSink *sink, int part)
+        : m_inner(std::move(inner)) {
+        m_ctx.s = studio;
+        m_ctx.sink = sink;
+        m_ctx.part = part;
+    }
+    Voice *add(std::unique_ptr<PartEngine> twin, std::function<bool(Command &)> keep, float rate) {
+        auto v = std::make_unique<Voice>();
+        twin->init(rate);
+        v->engine = std::move(twin);
+        v->keep = std::move(keep);
+        v->ctx.s = m_ctx.s;
+        m_voices.push_back(std::move(v));
+        return m_voices.back().get();
+    }
+
+    void init(float rate) override { m_inner->init(rate); }
+    void command(const Command &c, AudioContext &) override {
+        m_inner->command(c, m_ctx);
+        for (auto &v : m_voices) {
+            Command mine = c;
+            if (v->keep(mine))
+                v->engine->command(mine, v->ctx);
+        }
+    }
+    void render(float *l, float *r, int n, AudioContext &) override {
+        m_inner->render(l, r, n, m_ctx);
+        for (auto &v : m_voices) {
+            std::fill(v->bufL, v->bufL + n, 0.0f);
+            std::fill(v->bufR, v->bufR + n, 0.0f);
+            std::fill(v->ctx.monL, v->ctx.monL + n, 0.0f);
+            std::fill(v->ctx.monR, v->ctx.monR + n, 0.0f);
+            v->engine->render(v->bufL, v->bufR, n, v->ctx);
+            for (int i = 0; i < n; ++i) {
+                v->bufL[i] += v->ctx.monL[i];
+                v->bufR[i] += v->ctx.monR[i];
+            }
+        }
+    }
+    void silence(bool hard) override {
+        m_inner->silence(hard);
+        for (auto &v : m_voices)
+            v->engine->silence(hard);
+    }
+    void publish(float *data) override { m_inner->publish(data); }
+    int voices() const override { return m_inner->voices(); }
+    bool layersDropDoubles() const override { return m_inner->layersDropDoubles(); }
+    void clipChanged(int slot) override {
+        m_inner->clipChanged(slot);
+        for (auto &v : m_voices)
+            v->engine->clipChanged(slot);
+    }
+    std::unique_ptr<PartEngine> twin() const override { return m_inner->twin(); }
+
+private:
+    std::unique_ptr<PartEngine> m_inner;
+    PartContext m_ctx;
+    std::vector<std::unique_ptr<Voice>> m_voices;
+};
+
+}
 
 Studio::Studio(float rate) : m_rate(rate), d(std::make_unique<Impl>()) {
     d->rate = rate;
@@ -1234,6 +1397,7 @@ void Studio::pullInput(float *dst, int n) {
 void Studio::drain() {
     StudioMsg m;
     d->blockTime = m_time0 + double(m_sample) / double(m_rate);
+    d->transportState.sample = m_sample; // a command heard now is heard at the coming block's start
     while (m_queue.pop(m))
         apply(m);
 }
@@ -1590,20 +1754,11 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
           sendER[kBlock] = {};
     float directL[kBlock] = {}, directR[kBlock] = {};
     bool anyDirect = false;
-    auto setFilter = [&](Svf &fl, Svf &fr, float v, float &cached) {
-        if (std::fabs(v - cached) < 0.002f)
-            return;
-        cached = v;
-        float hz;
-        if (v < 0.5f)
-            hz = 60.0f * std::exp2(v / 0.5f * 8.4f); // 60 Hz .. 20 kHz
-        else
-            hz = 20.0f * std::exp2((v - 0.5f) / 0.5f * 9.6f); // 20 Hz .. 15 kHz
-        fl.set(hz, 0.95f, s.rate);
-        fr.set(hz, 0.95f, s.rate);
-    };
+    auto setFilter = [&](Svf &fl, Svf &fr, float v, float &cached) { setChannelFilter(fl, fr, v, cached, s.rate); };
+    Stems *st = s.stems.get();
     for (auto &pp : m_parts) {
         PartState &p = *pp;
+        const int pi = int(&pp - m_parts.data());
         const float *ch = p.channel;
         const bool audible = p.channelTarget[Mute] < 0.5f && (!anySolo || p.channelTarget[Solo] > 0.5f);
         const float muteTarget = audible ? 1.0f : 0.0f;
@@ -1633,6 +1788,11 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             R *= gain * panR;
             mixL[i] += L;
             mixR[i] += R;
+            if (st) {
+                st->postL[pi][i] = L;
+                st->postR[pi][i] = R;
+                st->gain[pi][i] = gain;
+            }
             if (p.direct) {
                 // The monitor bus: the same channel, its own filter, into
                 // the path round the limiter.
@@ -1661,6 +1821,13 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         p.peak = std::max(pk, p.peak * 0.97f);
         p.rms += (std::sqrt(sq / float(2 * n)) - p.rms) * 0.1f;
         anyDirect |= p.direct;
+        if (st) {
+            st->panL[pi] = panL;
+            st->panR[pi] = panR;
+            st->filt[pi] = filt;
+            st->rs[pi] = rs;
+            st->es[pi] = es;
+        }
     }
 
     // The room: echo into reverb, both pumping with the kick a little.
@@ -1714,6 +1881,8 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             const float m2 = mid - (1.0f - g) * low;
             L = m2 + side;
             R = m2 - side;
+            if (st)
+                st->lowK[i] = 1.0f - g;
         }
         // Glue: a gentle 2:1 bus compressor with a slow release, then make-up.
         {
@@ -1723,6 +1892,8 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
             const float g = s.glueEnv > thr ? std::pow(thr / s.glueEnv, 0.5f) : 1.0f;
             L *= g * 1.8f * mgain;
             R *= g * 1.8f * mgain;
+            if (st)
+                st->glue[i] = g * 1.8f * mgain;
         }
         // The metronome: a short blip on every beat, higher on the one.
         if (s.metronome) {
@@ -1750,6 +1921,10 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         L = s.dcL.step(L);
         R = s.dcR.step(R);
         s.limiter.process(L, R);
+        if (st) {
+            st->lim[i] = s.limiter.gain();
+            st->roomDuck[i] = roomDuck;
+        }
         // A monitored voice joins here, after the limiter's look-ahead, so
         // it reaches the ears as soon as it arrived: through the master
         // filter and level (a build's sweep takes the voice too), and a
@@ -1787,6 +1962,13 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         outR[i] = R;
         peak = std::max(peak, std::max(std::fabs(L), std::fabs(R)));
         sumSq += double(L) * L + double(R) * R;
+    }
+    if (st) {
+        std::copy(M, M + MasterCount, st->master);
+        st->wet = wet;
+        st->mgain = mgain;
+        st->echoSeconds = float(spb * kEchoBeats[std::clamp(int(M[EchoTime] * 5.99f), 0, 5)]);
+        renderStems(outL, outR, n);
     }
 
     uint32_t w = m_scopeWrite.load(std::memory_order_relaxed);
@@ -1898,6 +2080,133 @@ void Studio::publish() {
     for (int i = 0; i < 256; ++i)
         v.scope[i] = m_scope[(w - 1024u + uint32_t(i) * 4u) & (kScopeSize - 1)];
     m_views.publish();
+}
+
+// --- export -------------------------------------------------------------------
+
+namespace {
+
+std::unique_ptr<Studio::Stems::Tap> makeTap(int part, bool voice, const float *dryL, const float *dryR, float rate) {
+    auto t = std::make_unique<Studio::Stems::Tap>();
+    t->part = part;
+    t->voice = voice;
+    t->dryL = dryL;
+    t->dryR = dryR;
+    t->reverb.init(rate);
+    t->echo.init(rate);
+    t->sideLp.set(120.0f, 0.7f, rate);
+    t->lowBand.set(150.0f, 0.7f, rate);
+    return t;
+}
+
+}
+
+void Studio::exportStems(StemSink *sink, const StemOptions &options) {
+    d->stems = std::make_unique<Stems>();
+    Stems &st = *d->stems;
+    st.sink = sink;
+    st.opt = options;
+    for (int i = 0; i < int(m_parts.size()); ++i) {
+        PartState &p = *m_parts[size_t(i)];
+        p.engine = std::make_unique<FanOut>(std::move(p.engine), d.get(), sink, i);
+        st.taps.push_back(makeTap(i, false, p.bufL, p.bufR, m_rate));
+        st.tapL.push_back(st.taps.back()->outL);
+        st.tapR.push_back(st.taps.back()->outR);
+    }
+}
+
+int Studio::addVoice(int part, std::function<bool(Command &)> keep) {
+    if (!d->stems || part < 0 || part >= int(m_parts.size()))
+        return -1;
+    // Every part's engine is a FanOut since exportStems.
+    auto *fan = static_cast<FanOut *>(m_parts[size_t(part)]->engine.get());
+    std::unique_ptr<PartEngine> twin = fan->twin();
+    if (!twin)
+        return -1;
+    FanOut::Voice *v = fan->add(std::move(twin), std::move(keep), m_rate);
+    Stems &st = *d->stems;
+    st.taps.push_back(makeTap(part, true, v->bufL, v->bufR, m_rate));
+    st.tapL.push_back(st.taps.back()->outL);
+    st.tapR.push_back(st.taps.back()->outR);
+    return int(st.taps.size()) - 1;
+}
+
+// Each stem as the mixer and the master made the mix (see renderBlock),
+// on its own: everything there is linear but the master's dynamics, whose
+// gains are the whole mix's, so the part stems add up to the mix.
+void Studio::renderStems(const float *mixL, const float *mixR, int n) {
+    Stems &st = *d->stems;
+    const float *M = st.master;
+    const float mf = M[MasterFilter];
+    const bool mlp = mf < 0.49f, mhp = mf > 0.51f;
+    const bool linked = st.opt.master;
+    for (auto &tp : st.taps) {
+        Stems::Tap &t = *tp;
+        const int p = t.part;
+        float L[kBlock], R[kBlock];
+        if (st.opt.preFader) {
+            std::copy(t.dryL, t.dryL + n, L);
+            std::copy(t.dryR, t.dryR + n, R);
+        } else {
+            if (!t.voice) {
+                std::copy(st.postL[p], st.postL[p] + n, L);
+                std::copy(st.postR[p], st.postR[p] + n, R);
+            } else {
+                // The part's channel, on this voice alone.
+                const float filt = st.filt[p];
+                const bool lp = filt < 0.49f, hp = filt > 0.51f;
+                if (lp || hp)
+                    setChannelFilter(t.filtL, t.filtR, filt, t.filtSet, m_rate);
+                for (int i = 0; i < n; ++i) {
+                    float l = t.dryL[i], r = t.dryR[i];
+                    if (lp) {
+                        l = t.filtL.step(l).low;
+                        r = t.filtR.step(r).low;
+                    } else if (hp) {
+                        l = t.filtL.step(l).high;
+                        r = t.filtR.step(r).high;
+                    }
+                    L[i] = l * st.gain[p][i] * st.panL[p];
+                    R[i] = r * st.gain[p][i] * st.panR[p];
+                }
+            }
+            t.reverb.set(M[RoomSize], M[RoomShimmer]);
+            t.echo.set(M[EchoFeedback], st.echoSeconds);
+            if (mlp || mhp)
+                setChannelFilter(t.masterL, t.masterR, mf, t.masterFiltSet, m_rate);
+            for (int i = 0; i < n; ++i) {
+                float eL, eR, rL, rR;
+                t.echo.process(L[i] * st.es[p], R[i] * st.es[p], eL, eR);
+                t.reverb.process(L[i] * st.rs[p] + 0.5f * eL, R[i] * st.rs[p] + 0.5f * eR, rL, rR);
+                float l = L[i] + (eL + rL * st.wet) * st.roomDuck[i], r = R[i] + (eR + rR * st.wet) * st.roomDuck[i];
+                if (mlp) {
+                    l = t.masterL.step(l).low;
+                    r = t.masterR.step(r).low;
+                } else if (mhp) {
+                    l = t.masterL.step(l).high;
+                    r = t.masterR.step(r).high;
+                }
+                const float mid = 0.5f * (l + r);
+                float side = 0.5f * (l - r);
+                side -= t.sideLp.step(side).low;
+                const float low = t.lowBand.step(mid).low;
+                const float m2 = linked ? mid - st.lowK[i] * low : mid;
+                const float g = linked ? st.glue[i] : st.mgain;
+                L[i] = t.dcL.step((m2 + side) * g);
+                R[i] = t.dcR.step((m2 - side) * g);
+            }
+        }
+        // As late as the limiter makes the mix, and (linked) its gain.
+        for (int i = 0; i < n; ++i) {
+            t.delayL[t.delayPos] = L[i];
+            t.delayR[t.delayPos] = R[i];
+            t.delayPos = (t.delayPos + 1) % Limiter::W;
+            const float g = linked && !st.opt.preFader ? st.lim[i] : 1.0f;
+            t.outL[i] = t.delayL[t.delayPos] * g;
+            t.outR[i] = t.delayR[t.delayPos] * g;
+        }
+    }
+    st.sink->stems(mixL, mixR, st.tapL.data(), st.tapR.data(), int(st.taps.size()), n);
 }
 
 }

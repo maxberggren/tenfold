@@ -333,6 +333,7 @@ public:
     void silence(bool hard) override;
     void publish(float *data) override;
     int voices() const override;
+    std::unique_ptr<PartEngine> twin() const override;
 
     // Every note the engine started, newest last, for the page and the
     // tests: the sample it started on, the beat, its pitch, velocity, lane.

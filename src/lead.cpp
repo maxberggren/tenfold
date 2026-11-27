@@ -611,8 +611,10 @@ public:
             while (k < m_pendingCount && m_pending[size_t(k)].offset <= at)
                 apply(m_pending[size_t(k++)].c, ctx);
             const int until = k < m_pendingCount ? std::min(n, m_pending[size_t(k)].offset) : n;
-            if (until > at)
+            if (until > at) {
                 renderSegment(l, r, at, until - at, ctx);
+                report(ctx, at);
+            }
             at = until;
         }
         for (; k < m_pendingCount; ++k)
@@ -695,7 +697,33 @@ public:
         return n;
     }
 
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<LeadEngine>(); }
+
 private:
+    // The notes each line holds, its harmony voices included, as an
+    // export's MIDI hears them (AudioContext::note): the note each bank of
+    // the line's voice is on, to the nearest semitone, while a finger (or a
+    // loop) holds it.
+    void report(AudioContext &ctx, int off) {
+        for (int li = 0; li < kLines; ++li) {
+            const Line &line = m_lines[size_t(li)];
+            const Voice *v = line.voice >= 0 ? &m_voices[size_t(line.voice)] : nullptr;
+            const bool held = line.count > 0 && v && v->active && v->owner == li;
+            for (int b = 0; b < Voice::kBanks; ++b) {
+                const int key = li * Voice::kBanks + b;
+                const int now = held && v->banks[b].want > 0.05f ? int(std::lround(v->banks[b].target)) : -1;
+                if (now != m_said[size_t(key)])
+                    ctx.note(key, float(now), line.top() ? line.top()->vel : 0.8f, off);
+                m_said[size_t(key)] = now;
+            }
+        }
+    }
+    std::array<int, kLines * Voice::kBanks> m_said = [] {
+        std::array<int, kLines * Voice::kBanks> a{};
+        a.fill(-1);
+        return a;
+    }();
+
     struct Pending {
         Command c;
         int offset = 0;

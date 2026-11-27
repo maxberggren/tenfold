@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -96,6 +97,35 @@ struct StudioMsg {
     void *ptr = nullptr;
 };
 
+// An export's ears (export.h): after every block, the mix and each stem's
+// share of it, and the notes the parts' engines say they sound.
+class StemSink {
+public:
+    virtual ~StemSink() = default;
+    // n frames: the mix as it left the studio, and each tap's (the parts
+    // first, by index, then the voices in the order they were added).
+    virtual void stems(const float *mixL, const float *mixR, const float *const *l, const float *const *r, int taps,
+                       int n) = 0;
+    // A part's engine sounds a note (AudioContext::note), at this sample of
+    // the studio's clock.
+    virtual void note(int part, uint64_t sample, int key, float midi, float velocity, int length) {
+        (void)part, (void)sample, (void)key, (void)midi, (void)velocity, (void)length;
+    }
+};
+
+struct StemOptions {
+    // Pre-fader: each stem is its engine's own dry sound, before the
+    // channel (level, pan, filter, pump, mutes, sends) and the room; the
+    // stems no longer add up to the mix.
+    bool preFader = false;
+    // Post-fader, with the master bus: the glue, the low end held in check
+    // and the limiter act on the whole mix, and each stem gets the very
+    // gain they gave it at each sample, so the stems add up to the mix.
+    // Without: the master's level and filter only, no dynamics, with the
+    // headroom that leaves.
+    bool master = true;
+};
+
 class Studio {
 public:
     explicit Studio(float rate = 48000.0f);
@@ -173,14 +203,32 @@ public:
     };
     bool popDebug(DebugEvent &e);
 
+    // Export (export.h), before rendering starts: every part's stem (its
+    // channel, its own share of the room, and the master as the options
+    // say), delivered with the mix after each block, and every part's
+    // notes. Rendering is the same as without, sample for sample.
+    void exportStems(StemSink *sink, const StemOptions &options);
+    // After exportStems, before rendering: one voice of a part as a stem of
+    // its own: a twin of the part's engine (PartEngine::twin) that hears
+    // what keep() lets through (and may change in place) of every command
+    // the part hears. It plays through the part's channel, in the same
+    // harmony and pump, into a room of its own, and is never in the mix.
+    // Its tap's index, or −1 when the part's engine has no twin.
+    int addVoice(int part, std::function<bool(Command &)> keep);
+    // The master's look-ahead: the mix leaves the studio this many samples
+    // after it was played, and so does every stem.
+    static constexpr int kStemLatency = 63;
+
     double lastBlockLoad() const { return m_lastLoad; }
     uint64_t samples() const { return m_sample; }
     int activeVoices() const;
 
     struct Impl;
     struct PartState;
+    struct Stems;
 
 private:
+    void renderStems(const float *mixL, const float *mixR, int n);
     void apply(const StudioMsg &m);
     void drain();
     bool exchange(StudioMsg::Kind kind, ClipSet &set);

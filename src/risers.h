@@ -1354,6 +1354,8 @@ public:
         d[pub::Layers] = float(layers);
     }
 
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<Engine>(); }
+
     // What is sounding, as the studio's Space hears it: an impact counts for
     // its first three beats only, so a take of a build and its drop ends on
     // the bar after the drop, not wherever the crash's tail fades out.

@@ -238,6 +238,9 @@ public:
         }
     }
 
+    // A twin plays the same songs, published once to both.
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<Engine>(m_bank); }
+
     int voices() const override {
         int n = 0;
         for (const Voice &v : m_voices)

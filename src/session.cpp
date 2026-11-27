@@ -1918,6 +1918,17 @@ bool Session::anythingMade() const {
     return false;
 }
 
+int Session::songBars() const {
+    std::lock_guard lock(m_lock);
+    return m_pages[size_t(arrangePage())]->spec.control->songBars();
+}
+
+void Session::playSong(int bar) {
+    std::lock_guard lock(m_lock);
+    Page &page = *m_pages[size_t(arrangePage())];
+    page.spec.control->playSong(bar, *page.ctx);
+}
+
 void Session::say(const QString &text) {
     std::lock_guard lock(m_lock);
     context(m_page).notice(text);

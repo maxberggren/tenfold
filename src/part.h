@@ -163,6 +163,16 @@ public:
     // What can wait (its loops) goes into l and r and the mix as usual.
     // Null for any other part.
     virtual float *monitor(int channel) { (void)channel; return nullptr; }
+    // What the engine sounds, as notes, for the MIDI file an export writes
+    // (export.h); nothing listens otherwise, and the call costs nothing.
+    // key is the engine's own name for a note sounding (a lane, a voice): a
+    // key holds one note at a time, so a new note on it ends the last, and
+    // midi < 0 ends it. offset: the sample of the coming block it starts on
+    // (past the block for a hit held back). length > 0: a note of so many
+    // samples, which ends by itself (a drum hit, an arp's step).
+    virtual void note(int key, float midi, float velocity, int offset, int length = 0) {
+        (void)key, (void)midi, (void)velocity, (void)offset, (void)length;
+    }
 };
 
 class PartEngine {
@@ -191,6 +201,11 @@ public:
     // again (Ctrl+Z, Ctrl+Shift+Z): an engine that keeps settings per layer
     // of a loop lets go of what a layer no longer there had set.
     virtual void clipChanged(int slot) { (void)slot; }
+    // A second engine like this one, as it was made (sharing whatever the
+    // page publishes to it, such as the Sampler's songs), for an export
+    // that renders one voice of the part apart from the rest
+    // (Studio::addVoice). Null when the part can't be split.
+    virtual std::unique_ptr<PartEngine> twin() const { return nullptr; }
 };
 
 // A clip slot as the pages see it.
@@ -542,6 +557,11 @@ public:
     // 0 when there is no such step, or −1 when it has no take to change.
     virtual int loopBeats(int dir) const { (void)dir; return -1; }
     virtual void resizeLoop(int dir, ControlContext &ctx) { (void)dir, (void)ctx; }
+    // The Song page, for an export: the bars its song lasts (0 when there
+    // is none), and the song played once from its top, starting at that
+    // bar of the studio's clock.
+    virtual int songBars() const { return 0; }
+    virtual void playSong(int bar, ControlContext &ctx) { (void)bar, (void)ctx; }
 };
 
 // One part, as the studio and the session know it.

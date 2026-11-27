@@ -2176,6 +2176,10 @@ struct Engine::Impl {
     uint64_t barCount = 0;
     float level = 0;
     std::vector<Fired> *log = nullptr; // a ring, sized at init
+    // The block's context while it renders, and the length of the step
+    // being played: each note started goes to an export's MIDI as well.
+    AudioContext *noteCtx = nullptr;
+    int noteLength = 0;
     uint64_t logCount = 0;
     double expectBeat = -1;
     uint64_t jumpedAt = 0;
@@ -2631,6 +2635,8 @@ struct Engine::Impl {
         f.accent = accent;
         recent[recentHead] = f;
         recentHead = (recentHead + 1) % kRecent;
+        if (noteCtx)
+            noteCtx->note(-1, midi, vel, cursor, std::max(1, noteLength));
         if (log) {
             (*log)[logCount % log->size()] = f;
             ++logCount;
@@ -2648,6 +2654,7 @@ struct Engine::Impl {
         const bool tie = s.gate > 0.97f && r == 1;
         const float gateSec =
             tie ? subSec * 1.08f : std::max(0.012f, (r > 1 ? std::min(s.gate, 0.7f) : s.gate) * subSec);
+        noteLength = int(std::min(gateSec, subSec) * rate);
         const float rollGain = L.sub > 0 ? std::pow(0.8f, float(L.sub)) : 1.0f;
         const int cyc = accentCycle(s.accent);
         const float accentGain =
@@ -2916,6 +2923,7 @@ void Engine::command(const Command &c, AudioContext &ctx) {
 
 void Engine::render(float *l, float *r, int n, AudioContext &ctx) {
     Impl &s = *d;
+    s.noteCtx = &ctx;
     const Transport &tr = ctx.transport();
     const Harmony &h = ctx.harmony();
     const double b0 = tr.beat, bps = tr.beatsPerSample;
@@ -3110,6 +3118,8 @@ void Engine::publish(float *data) {
         o[3] = f.midi > 0 ? float(std::min(f.lane, 1) + 1) : 0.0f; // 1 live, 2 the loop (any layer)
     }
 }
+
+std::unique_ptr<PartEngine> Engine::twin() const { return std::make_unique<Engine>(); }
 
 int Engine::voices() const {
     int n = 0;

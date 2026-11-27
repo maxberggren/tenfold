@@ -379,6 +379,13 @@ inline const CuicaStroke &cuicaStroke(int pad) {
 }
 inline constexpr int kCuicaHand = Snare, kCuicaThumb = Clap;
 
+// A pad as a General MIDI drum (channel 10), for an export's MIDI file:
+// the drum it stands for in the dance kits.
+inline int gmNote(int pad) {
+    static const int notes[PadCount] = {36, 38, 39, 42, 35, 37, 70, 46, 45, 47, 50, 63, 49, 51, 56, 81};
+    return notes[std::clamp(pad, 0, PadCount - 1)];
+}
+
 inline const char *padName(int pad) {
     static const char *names[PadCount] = {"kick", "snare", "clap", "hat", "808",   "rim",  "shaker", "open",
                                           "tom lo", "tom mid", "tom hi", "conga", "crash", "ride", "bell", "zap"};
@@ -4735,6 +4742,7 @@ public:
                 // live one and a loop's both on the stick.
                 if (replay && (m_muted[(c.id >> 24) & 7] >> pad & 1u))
                     return;
+                ctx.note(c.id, float(gmNote(pad)), c.f[0], delay);
                 Pending p;
                 p.wait = delay;
                 p.cmd = c;
@@ -4754,6 +4762,11 @@ public:
             } else {
                 m_lastLive[pad] = at;
             }
+            // A hit is a short note; the 808 held, a note until its Off.
+            if (c.type == Command::On)
+                ctx.note(c.id, float(gmNote(pad)), c.f[0], delay);
+            else
+                ctx.note(-1, float(gmNote(pad)), c.f[0], delay, int(0.1f * m_rate));
             Pending p;
             p.wait = delay;
             p.cmd = c;
@@ -4762,6 +4775,8 @@ public:
             break;
         }
         case Command::Off:
+            ctx.note(c.id, -1, 0, delay);
+            [[fallthrough]];
         case Command::Move:
         case Paddle: {
             Pending p;
@@ -5012,6 +5027,7 @@ public:
     // A hit played along with the loop while layering is a double, not a
     // new part of the groove.
     bool layersDropDoubles() const override { return true; }
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<Engine>(); }
 
     int voices() const override {
         int n = (m_sub.active ? 1 : 0) + (m_hang.active() ? 1 : 0) + (m_slit.active() ? 1 : 0) + (m_pipes.active() ? 1 : 0) +

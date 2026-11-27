@@ -1556,6 +1556,7 @@ public:
                 if (cur)
                     release(*cur);
                 L.voice = -1;
+                tellNotes(lane, nullptr, 0, ctx.offsetOf(c.t, kBlock), ctx);
                 // The chord of the moment falls back to the newest still
                 // held: the loop's under a live one, a layer's first layer
                 // under the chord layered on it.
@@ -1775,7 +1776,23 @@ public:
         return n;
     }
 
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<Engine>(); }
+
 private:
+    // The chord a lane holds, as an export's MIDI hears it
+    // (AudioContext::note): its voicing's notes, to the nearest semitone,
+    // from the moment it is played until it is let go (the sound's own
+    // rhythm, a stab's gate, is the sound's, not the notes').
+    void tellNotes(int lane, const Voicing *vc, float vel, int offset, AudioContext &ctx) {
+        for (int k = 0; k < 4; ++k) {
+            const int now = vc && k < vc->count ? int(std::lround(vc->notes[k])) : -1;
+            if (now != m_said[lane][k])
+                ctx.note(lane * 4 + k, float(now), vel, offset);
+            m_said[lane][k] = now;
+        }
+    }
+    int m_said[kLanes][4] = {{-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}};
+
     struct Entry {
         int id = -1, degree = 0, colour = Triad, style = Pad, reg = 0;
         float vel = 0.8f, pressure = 0.5f, big = 0, filter = 0.5f;
@@ -2026,6 +2043,7 @@ private:
         L.shape = shape;
         if (tell)
             announce(lane, ctx);
+        tellNotes(lane, L.voice >= 0 ? &vc : nullptr, e.vel, offset, ctx);
     }
 
     // How far each note of a voicing may bend: up to the next note of the

@@ -1775,6 +1775,7 @@ public:
     // For the page.
     float level() const { return m_level; }
     float midi() const { return float(m_midi); }
+    float target() const { return float(m_target); } // the note it is on, or gliding to
     float cut() const { return m_cutNow; }
     float amp() const { return m_amp; }
     float lfo() const { return m_lfo; }
@@ -2760,6 +2761,7 @@ public:
         while (done < n) {
             while (k < m_pendingCount && m_pending[k].off <= done)
                 apply(m_pending[k++].c, ctx, done);
+            report(ctx, done);
             const int next = k < m_pendingCount ? std::min(n, m_pending[k].off) : n;
             segment(l + done, r + done, next - done, done, ctx);
             done = next;
@@ -2767,6 +2769,7 @@ public:
         while (k < m_pendingCount)
             apply(m_pending[k++].c, ctx, n);
         m_pendingCount = 0;
+        report(ctx, n - 1);
         m_harmony = ctx.harmony();
         m_beat = ctx.transport().beatAt(n);
     }
@@ -2831,6 +2834,8 @@ public:
         for (int k = 1; k < kClipLayers; ++k)
             m_shapeSlot[slot][k] = Shape{};
     }
+
+    std::unique_ptr<PartEngine> twin() const override { return std::make_unique<Engine>(); }
 
     int voices() const override {
         int n = int(m_live.active());
@@ -2989,9 +2994,22 @@ private:
         }
     }
 
+    // The notes each lane holds, as an export's MIDI hears them
+    // (AudioContext::note): key 0 the live lane, 1… the loop's layers.
+    void report(AudioContext &ctx, int off) {
+        for (int k = 0; k <= kClipLayers; ++k) {
+            const Lane &ln = k == 0 ? m_live : m_clip[size_t(k - 1)];
+            const int now = ln.holding() ? int(std::lround(ln.target())) : -1;
+            if (now != m_said[k])
+                ctx.note(k, float(now), ln.current().vel, off);
+            m_said[k] = now;
+        }
+    }
+
     float m_rate = 48000;
     Lane m_live;
     std::array<Lane, kClipLayers> m_clip; // a loop's layers, each its own mono line
+    int m_said[kClipLayers + 1] = {-1, -1, -1, -1, -1};
     Shape m_shapeLive, m_shapeSlot[kClipSlots][kClipLayers];
     Pending m_pending[kPending];
     int m_pendingCount = 0;

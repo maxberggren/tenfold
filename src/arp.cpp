@@ -5124,7 +5124,7 @@ void ArpControl::paintStrip(QPainter &p, const PaintContext &pc) {
         const qreal w = (r.width() + 4) / 3;
         c::chip(p, pc, QRectF(r.left(), r.top(), w - 4, r.height()), QStringLiteral("DICE  N"), false, &m_spots,
                 SpotDice);
-        c::chip(p, pc, QRectF(r.left() + w, r.top(), w - 4, r.height()), QStringLiteral("OVERDUB  ⇧⏎"), m_overdub,
+        c::chip(p, pc, QRectF(r.left() + w, r.top(), w - 4, r.height()), QStringLiteral("OVERDUB  F10"), m_overdub,
                 &m_spots, SpotOverdub);
         // Let go is only worth a lit outline while something is latched.
         if (latched)

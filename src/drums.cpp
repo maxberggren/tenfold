@@ -723,7 +723,7 @@ public:
             "is still a click away), swing, the loop shorter or longer, "
             "overdub, sounds back\n"
             "Space\tloops what you just played (alone, it sets the tempo; over a loop, from its bar)\n"
-            "Shift+Enter\toverdub on or off: what you play joins the loop\n"
+            "F10\toverdub on or off: what you play joins the loop\n"
             "hold a pad, Delete\ttakes that drum out of the loop playing (again: back in); with no loop, only its "
             "shaping goes back to the kit's\n"
             "Delete\tevery drum back to the kit's own sound\n"

@@ -407,8 +407,18 @@ class RisersTests : public QObject {
     Q_CLASSINFO("dev",
                 "aLoopsFallDropsOnlyItsOwnLayersRisers fingersPlayAndStayFinite aClickAloneMakesADrop "
                 "keysPlayRisersAndHits spaceLoopsTheHitRow theSongKeepsTheFxSettings garbageSettingsOpenSanely "
-                "anyCommandValuesAreSafe")
+                "anyCommandValuesAreSafe spaceLayersAndShiftSpaceMakesANewLoop")
 private slots:
+    // As the guide says: Space over the FX loop layers onto it, Shift+Space
+    // makes a new loop in another slot.
+    void spaceLayersAndShiftSpaceMakesANewLoop() {
+        const std::string base = std::string(kBeat) + "page 3 7\ntap 4.55 0.1 0.1\nkey 6.7 Space\ntap 8.55 0.3 0.1\n";
+        const auto layered = testkit::play(base + "key 10.7 Space\nend 12\n");
+        QCOMPARE(layered.view.parts[6].playing, 0);
+        QCOMPARE(int(layered.view.parts[6].clips[1].state), int(ClipView::Empty));
+        const auto fresh = testkit::play(base + "key 10.7 Shift+Space\nend 12\n");
+        QCOMPARE(fresh.view.parts[6].playing, 1);
+    }
     void aLoopsFallDropsOnlyItsOwnLayersRisers() {
         // A riser from the hand and one replayed by a loop's second layer;
         // the loop's "every riser falls" drops its own, not the hand's. The

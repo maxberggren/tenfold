@@ -3732,7 +3732,7 @@ public:
             "- and + (or =)\ttone: darker, brighter\n"
             "Shift+Return (or F12)\tharmony holds after the fingers lift\n"
             "F10\toverdub onto the playing loop\n"
-            "the key left of 1: § (` on US; or \\, F11)\tfollow the chord: notes and harmony land on chord tones\n"
+            "the key left of 1: § (` on US; or \\)\tfollow the chord: notes and harmony land on chord tones\n"
             "Delete\tlet the held harmony go\n"
             "F1–F8, Shift+F1–F8\tlaunch a slot, clear it\n"
             "Backspace\tstop this part at the next bar\n"

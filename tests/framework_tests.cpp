@@ -1,6 +1,9 @@
 // The studio and the session: clock, clips, mixer, pages and keys.
 
+#include <QDir>
+#include <QFile>
 #include <QImage>
+#include <QRegularExpression>
 #include <QPainter>
 
 #include "console.h"
@@ -40,7 +43,7 @@ class FrameworkTests : public QObject {
                 "aMelodyThatStartsMidBarLoopsWithoutAGap clipsCanBeCopiedLayeredAndChained "
                 "spaceLayersOntoThePlayingLoop aLayerOnAMonoPartPlaysOnAVoiceOfItsOwn "
                 "aLayerLandsWithoutCuttingTheLoop shiftSpaceMakesANewLoopInstead "
-                "spaceWithNothingPlayedMakesNoLoop numberKeysChangePages ctrlKeysMoveTempoAndKey "
+                "spaceWithNothingPlayedMakesNoLoop returnKeysDoWhatThePagesSay numberKeysChangePages ctrlKeysMoveTempoAndKey "
                 "leavingAPageLetsGoOfHeldNotes stoppingWaitsForTheBar muteSilencesAChannel "
                 "armedRecordingMakesABarLongClip everyPageDrawsWithoutTouches "
                 "anUnreadablePadWithoutPkexecSaysWhatIsMissing keysAreNamedAsTheSystemNamesThem "
@@ -810,6 +813,36 @@ private slots:
         QCOMPARE(int(std::lround(studio.view().bpm)), 120);
         QCOMPARE(studio.view().parts[0].playing, 0);
         QCOMPARE(int(studio.view().parts[0].clips[0].lengthBeats), 4);
+    }
+
+    // Enter pauses on every page; what Return was on a page is Shift+Enter,
+    // and overdub is F10. The pages' chips say so: F10 turns overdub on on
+    // Bass, Atmos and Arp (their chips once said ⇧⏎), and no chip or help
+    // line anywhere shows a bare ⏎ or ↵, which would be the pause.
+    void returnKeysDoWhatThePagesSay() {
+        for (int page : {2, 5, 6}) {
+            const auto f10 = testkit::play(std::string(kBeat) + "page 3 " + std::to_string(page) + "\nkey 3.4 F10\nend 4\n",
+                                          [](Session &s) { QVERIFY(!s.paused()); });
+            QVERIFY2(f10.view.parts[page - 1].overdub, qPrintable(QString::number(page)));
+            testkit::play(std::string(kBeat) + "page 3 " + std::to_string(page) + "\nkey 3.4 Return\nend 4\n",
+                          [](Session &s) { QVERIFY(s.paused()); });
+        }
+        testkit::play(std::string(kBeat) + "page 3 6\nkey 3.4 Shift+Return\nend 4\n", [](Session &s) {
+            QVERIFY(!s.paused());
+            QVERIFY(!s.view().parts[5].overdub);
+            QVERIFY(s.notice(nullptr).startsWith(QStringLiteral("Hold")));
+        });
+        const QDir src(QStringLiteral(TENFOLD_SRC));
+        const QRegularExpression bare(QStringLiteral("(?<!⇧)(?<!⇧ )[⏎↵]"));
+        for (const QString &name : src.entryList({QStringLiteral("*.cpp")}, QDir::Files)) {
+            if (name == QLatin1String("console.cpp")) // draws the glyphs themselves
+                continue;
+            QFile f(src.filePath(name));
+            QVERIFY(f.open(QIODevice::ReadOnly));
+            const QStringList lines = QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'));
+            for (int i = 0; i < lines.size(); ++i)
+                QVERIFY2(!bare.match(lines[i]).hasMatch(), qPrintable(QString("%1:%2: a bare Return pauses: %3").arg(name).arg(i + 1).arg(lines[i].trimmed())));
+        }
     }
 
     void numberKeysChangePages() {

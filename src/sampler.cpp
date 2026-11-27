@@ -1148,6 +1148,21 @@ public:
         const bool shift = k.modifiers & Qt::ShiftModifier;
         if (k.modifiers & (Qt::AltModifier | Qt::MetaModifier))
             return false;
+        // The slots, as on every page: F1–F8 launch, Shift clears, Backspace
+        // stops the loop at the bar.
+        if ((k.key >= Qt::Key_F1 && k.key <= Qt::Key_F8) || k.key == Qt::Key_Backspace) {
+            if (!k.down || k.repeat)
+                return true;
+            if (k.key == Qt::Key_Backspace) {
+                ctx.stop();
+            } else if (shift) {
+                ctx.clear(k.key - Qt::Key_F1);
+                ctx.notice(QStringLiteral("Sampler slot %1 cleared").arg(k.key - Qt::Key_F1 + 1));
+            } else {
+                ctx.launch(k.key - Qt::Key_F1);
+            }
+            return true;
+        }
         switch (k.key) {
         case Qt::Key_Left:
         case Qt::Key_Right:

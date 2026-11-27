@@ -161,7 +161,7 @@ class SamplerTests : public QObject {
     Q_CLASSINFO("dev",
                 "atItsOwnTempoTheSongPlaysSampleForSample aDroppedSongIsReadAndTheStudioTakesItsTempo "
                 "aTapPlaysItsChopOnceAsTheSongHasIt "
-                "spaceLoopsTheChopsJustPlayed ctrlZTakesBackTheSamplersLoop aSongFileBringsTheSongBackWithItsLoop "
+                "spaceLoopsTheChopsJustPlayed theSlotKeysStopLaunchAndClear ctrlZTakesBackTheSamplersLoop aSongFileBringsTheSongBackWithItsLoop "
                 "aFileThatIsNoSoundSaysSo thePageDrawsEmptyLoadedAndPlaying")
 
 private:
@@ -955,6 +955,25 @@ private slots:
         QVERIFY(take.rms(5.0, 6.0) > 0.02);
         QVERIFY(take.rms(8.0, 9.0) > 0.02);
         QVERIFY2(std::fabs(take.view.bpm - 100.0) < 0.5, qPrintable(QString::number(take.view.bpm)));
+    }
+
+    // The slot keys its guide names, as on every page: Backspace stops the
+    // loop, F1 launches it again, Shift+F1 clears the slot.
+    void theSlotKeysStopLaunchAndClear() {
+        const Lay l = layOf(m_song, "key 0.2 Shift+Right\nkey 0.25 Shift+Right\n");
+        const std::string size = "key 0.2 Shift+Right\nkey 0.25 Shift+Right\n";
+        const double b = std::round(l.beatOf(0)) + 8;
+        std::string script = drop(m_song) + size;
+        for (int i = 0; i < 4; ++i)
+            script += "tap " + num(1.0 + 0.6 * i) + " " + l.at(b + (i % 2 ? 2 : 0)) + "\n";
+        script += "key 3.4 Space\nkey 5.0 Backspace\n";
+        const auto stopped = testkit::play(script + "end 8\n");
+        QCOMPARE(stopped.view.parts[kSampler].playing, -1);
+        QVERIFY(stopped.view.parts[kSampler].clips[0].state != ClipView::Empty);
+        const auto again = testkit::play(script + "key 8.0 F1\nend 11\n");
+        QCOMPARE(again.view.parts[kSampler].playing, 0);
+        const auto cleared = testkit::play(script + "key 8.0 Shift+F1\nend 9\n");
+        QCOMPARE(int(cleared.view.parts[kSampler].clips[0].state), int(ClipView::Empty));
     }
 
     void aSongFileBringsTheSongBackWithItsLoop() {

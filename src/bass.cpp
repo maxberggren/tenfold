@@ -733,7 +733,7 @@ public:
             "GRIT\tdrive; up/down how much, sideways warm, tube, fold\n"
             "FILTER\ta fader for whatever sounds, the loop too: middle leaves it, up opens, down darkens; sideways morph (ACID: squelch)\n"
             "click\twith a note down, strike it again accented; with only shapers down, latch them\n"
-            "LOOP (rail, far left), Enter or F9\talso: record the coming bars from the next bar line; tap again to close\n"
+            "LOOP (rail, far left), or F9\talso: record the coming bars from the next bar line; tap again to close\n"
             "Z X C … /   A S D … '   Shift\tthe scale from the keyboard, and an octave up; Shift accents\n"
             "Shift+↑ ↓   Shift+[ ]   Shift+Q … P\tslide time   morph   that sound with a square for its saw (UPRIGHT: palm-muted)\n"
             "UPRIGHT pressed lightly\ta ghost note: mostly the finger\n"
@@ -1830,15 +1830,15 @@ void Control::paintBand(QPainter &p, const PaintContext &pc) {
         }
         toggle(0, recipe(m_sound).string > 0 || recipe(m_sound).marimbula > 0 ? QStringLiteral("MUTE") : !has ? QStringLiteral("—")
                   : m_square[m_sound] ? QStringLiteral("SQUARE") : QStringLiteral("SAW"),
-               has ? m_sound < kLetteredSounds ? QStringLiteral("⇧%1").arg(QChar(keys[m_sound])) : QStringLiteral("\\")
-                   : QString(),
+               // Past P a sound has no letter, so no key: the chip is clicked.
+               has && m_sound < kLetteredSounds ? QStringLiteral("⇧%1").arg(QChar(keys[m_sound])) : QString(),
                has && m_square[m_sound], SpotSquare);
         if (!has)
             p.restore();
     }
     toggle(1, QStringLiteral("FOLLOW"), QStringLiteral("§"), m_follow, SpotFollow);
-    toggle(2, QStringLiteral("LATCH"), QStringLiteral("⏎"), m_latchNext ? blink : latched, SpotLatch);
-    toggle(3, QStringLiteral("OVERDUB"), QStringLiteral("⇧⏎"), pc.view->overdub, SpotOverdub);
+    toggle(2, QStringLiteral("LATCH"), QStringLiteral("⇧⏎"), m_latchNext ? blink : latched, SpotLatch);
+    toggle(3, QStringLiteral("OVERDUB"), QStringLiteral("F10"), pc.view->overdub, SpotOverdub);
     toggle(4, QStringLiteral("LET GO"), QStringLiteral("DEL"), false, SpotFree);
 }
 

@@ -4193,7 +4193,7 @@ void ArrangeControl::paintTop(QPainter &p, const PaintContext &pc, int parts) {
             if (m.kind == MDrop && pc.beat < m.b0)
                 d = &m;
         c::button(p, r, QStringLiteral("DROP"), pc.color, d && blink);
-        QString sub = QStringLiteral("RETURN");
+        QString sub = QStringLiteral("⇧RETURN");
         if (d) {
             const double left = d->b0 - pc.beat;
             sub = QStringLiteral("IN ") + countdown(left);

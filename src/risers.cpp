@@ -325,7 +325,7 @@ public:
             "Delete (or Q)\tthe whole build falls away\n"
             "F1–F8 · Shift+F1–F8\tlaunch a slot at the next bar · empty it\n"
             "Backspace\tstop the FX clip at the next bar\n"
-            "Space\tloop what you just played (as on every page); Shift+Space layers it onto the loop playing\n"
+            "Space\tloop what you just played (as on every page); over the FX loop playing it layers on top; Shift+Space makes a new loop instead\n"
             "under the pad, with the mouse\tthe clips (click: launch or stop), the sets, the drop styles, riser "
             "length, DROP, the build falling away, and whether builds move the mix\n"
             "land in the build field\ta riser: the column is the sound (noise, pitch, saw, roll, swell, renamed by "

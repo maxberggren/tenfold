@@ -5847,12 +5847,12 @@ void AtmosControl::paint(QPainter &p, const PaintContext &pc) {
     static const char *pumpName[3] = {"OFF", "KICK", "BEAT"};
     const int pump = std::clamp(int(std::lround(d[PubPump])), 0, 2);
     row(half(1, 0, 0, 0.645), {
-        {QStringLiteral("HOLD  ⏎"), m_hold, SpotHold},
+        {QStringLiteral("HOLD  ⇧⏎"), m_hold, SpotHold},
         {QStringLiteral("FREEZE  F"), d[PubFreeze] > 0.5f, SpotFreeze},
         {QStringLiteral("CLOUD  G"), d[PubCloud] > 0.5f, SpotCloud},
         {QStringLiteral("SWELL ON/OFF  S"), m_swellClicked || m_swellHeld, SpotSwell},
         {QStringLiteral("⇧←  PUMP %1  ⇧→").arg(QString::fromUtf8(pumpName[pump])), pump > 0, SpotPumpDown, SpotPumpUp},
-        {QStringLiteral("OVERDUB  ⇧⏎"), pc.view->overdub, SpotOverdub},
+        {QStringLiteral("OVERDUB  F10"), pc.view->overdub, SpotOverdub},
         {QStringLiteral("LET GO  DEL"), false, SpotLetGo},
     });
     // The styles: L, which steps on to the next, always in sight, then the

@@ -31,7 +31,7 @@ class FrameworkTests : public QObject {
     Q_CLASSINFO("alone", "theBenchRunsWellInsideRealTime")
     // The tests bin/test runs while developing; the rest run with --full.
     Q_CLASSINFO("dev",
-                "thePadIsAskedForOnlyWhenThePlayerHasToAct spaceLoopsWhatWasJustPlayedAndSetsTheTempo "
+                "escPausesAndPlaysWithThePadNotTaken escGivesTheTakenPadBackBeforeItPauses spaceLoopsWhatWasJustPlayedAndSetsTheTempo "
                 "overAPlayingLoopSpaceTakesTheBarsJustPlayed pauseStopsEveryLoopAndPlayBringsThemBackOnTheOne "
                 "playWithNothingToPlaySaysSo aNewLoopPlaysItsFirstBeatOnTheFirstPass aLateSpaceAddsNoEmptyBars "
                 "ctrlZTakesBackTheNewestLoopAndBringsBackTheOneBefore ctrlZTakesBackThisPagesOwnLoop "

@@ -220,8 +220,35 @@ size_t onset(const Wav &w) {
 class ExportTests : public QObject {
     Q_OBJECT
     // The quick checks: the chunks and key signatures, and a cancel.
-    Q_CLASSINFO("dev", "theChunksSayTheTempoAndTheBeats keySignaturesFollowTheMode aCancelledExportLeavesNothing")
+    Q_CLASSINFO("dev", "theChunksSayTheTempoAndTheBeats keySignaturesFollowTheMode aCancelledExportLeavesNothing anExportThatWritesNothingFails")
 private slots:
+    // Parts asked for by names none has, with the mix and MIDI off: nothing
+    // written is a failed export, not an empty success. A song saved paused
+    // exports the loops the pause stopped.
+    void anExportThatWritesNothingFails() {
+        const QJsonObject doc = saved(std::string(kLoops) + "end 16\n");
+        QTemporaryDir dir;
+        ExportOptions o;
+        o.folder = dir.filePath(QStringLiteral("none"));
+        o.song = false;
+        o.bars = 1;
+        o.mix = o.midi = false;
+        o.parts = {QStringLiteral("Nope")};
+        const ExportResult r = exportSong(doc, o);
+        QVERIFY(!r.ok);
+        QVERIFY(r.files.isEmpty());
+        QVERIFY(r.error.startsWith(QStringLiteral("Nothing was written")));
+        QVERIFY(!QDir(o.folder).exists());
+        const QJsonObject paused = saved(std::string(kLoops) + "key 15.5 Ctrl+P\nend 16\n");
+        ExportOptions p;
+        p.folder = dir.filePath(QStringLiteral("paused"));
+        p.song = false;
+        p.bars = 1;
+        p.midi = false;
+        const ExportResult pr = exportSong(paused, p);
+        QVERIFY2(pr.ok, qPrintable(pr.error));
+        QVERIFY(!pr.files.isEmpty());
+    }
     void theChunksSayTheTempoAndTheBeats() {
         const QByteArray a = acidChunk(123.5, 64, 69);
         QCOMPARE(a.left(4), QByteArray("acid"));

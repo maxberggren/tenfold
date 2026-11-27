@@ -474,6 +474,9 @@ ExportResult exportSong(const QJsonObject &songIn, const ExportOptions &o, const
         in.name = po.value(QStringLiteral("name")).toString();
         in.settings = po.value(QStringLiteral("settings")).toObject();
         in.playing = po.value(QStringLiteral("playing")).toInt(-1);
+        // A song saved paused exports the loops the pause stopped.
+        if (in.playing < 0)
+            in.playing = po.value(QStringLiteral("paused")).toInt(-1);
         for (const QJsonValue &cv : po.value(QStringLiteral("clips")).toArray()) {
             int slot = -1;
             ClipSet::Clip clip;
@@ -483,6 +486,7 @@ ExportResult exportSong(const QJsonObject &songIn, const ExportOptions &o, const
         }
         partsIn.push_back(std::move(in));
         po[QStringLiteral("playing")] = -1;
+        po.remove(QStringLiteral("paused"));
         partsJson[i] = po;
     }
     doc[QStringLiteral("parts")] = partsJson;
@@ -560,7 +564,7 @@ ExportResult exportSong(const QJsonObject &songIn, const ExportOptions &o, const
     const int songBars = session.songBars();
     const bool song = o.song && songBars > 0;
     if (o.song && songBars == 0)
-        res.notes << QStringLiteral("No song on the Song page: the loops playing, for %1 bars").arg(o.bars);
+        res.notes << QStringLiteral("No song on the Song page: the loops playing, for %1 bars").arg(std::clamp(o.bars, 1, 512));
     int launches = 0;
     if (!song)
         for (int p = 0; p < session.partCount() && p < kMaxParts; ++p)
@@ -774,6 +778,13 @@ ExportResult exportSong(const QJsonObject &songIn, const ExportOptions &o, const
         }
     }
     say(1, QStringLiteral("Done"));
+    // Asked for nothing that exists (parts by names no part has, no mix, no
+    // MIDI): nothing was written, and that is no export.
+    if (res.files.isEmpty()) {
+        res.error = QStringLiteral("Nothing was written: none of the parts asked for has a loop, and the mix and MIDI were off");
+        QDir().rmdir(o.folder); // only if it is empty: a folder made for this
+        return res;
+    }
     res.ok = true;
     return res;
 }

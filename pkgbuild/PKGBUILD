@@ -25,7 +25,7 @@ package() {
   install -Dm644 build/htdemucs.tfq "$pkgdir/usr/share/$pkgname/htdemucs.tfq"
   install -Dm644 extras/LICENSE-htdemucs "$pkgdir/usr/share/licenses/$pkgname/LICENSE-htdemucs"
   # The restorer's weights and their licence.
-  install -Dm644 build/apollo.bin "$pkgdir/usr/share/$pkgname/apollo.bin"
+  install -Dm644 build/apollo.tfq "$pkgdir/usr/share/$pkgname/apollo.tfq"
   install -Dm644 extras/LICENSE-apollo "$pkgdir/usr/share/licenses/$pkgname/LICENSE-apollo"
   install -Dm644 "$startdir/tenfold.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/tenfold.svg"
   install -Dm644 "$startdir/tenfold.desktop" "$pkgdir/usr/share/applications/tenfold.desktop"

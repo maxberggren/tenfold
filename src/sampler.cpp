@@ -592,22 +592,25 @@ QString stemModel() {
 }
 
 // The restore model's weights, looked for as the stem model's are:
-// TENFOLD_RESTORE_MODEL, the packages' places, build/ (bin/model), else
-// Hugging Face's cache. "" if none of these has it.
+// TENFOLD_RESTORE_MODEL, the compact file (apollo.tfq) or the published one
+// in the packages' places or build/ (bin/model), else Hugging Face's cache.
+// "" if none of these has it.
 QString restoreModel() {
     const QString env = qEnvironmentVariable("TENFOLD_RESTORE_MODEL");
     if (!env.isEmpty())
         return QFileInfo::exists(env) ? env : QString();
-    const QString file = QStringLiteral("apollo.bin");
     const QString app = QCoreApplication::applicationDirPath();
     QString hub = qEnvironmentVariable("HF_HOME");
     if (hub.isEmpty())
         hub = QDir::homePath() + QStringLiteral("/.cache/huggingface");
-    for (const QString &path :
-         {app + QStringLiteral("/../share/tenfold/") + file, app + QStringLiteral("/../Resources/") + file,
-          app + QLatin1Char('/') + file, app + QStringLiteral("/../../../") + file,
-          hub + QStringLiteral("/hub/models--JusperLee--Apollo/snapshots/c68bd80fdd9c0d93d2f4a833cb154624f660a561/"
-                               "pytorch_model.bin")})
+    QStringList paths;
+    for (const QString &file : {QStringLiteral("apollo.tfq"), QStringLiteral("apollo.bin")})
+        for (const QString &dir : {app + QStringLiteral("/../share/tenfold/"), app + QStringLiteral("/../Resources/"),
+                                   app + QLatin1Char('/'), app + QStringLiteral("/../../../")})
+            paths << dir + file;
+    paths << hub + QStringLiteral("/hub/models--JusperLee--Apollo/snapshots/c68bd80fdd9c0d93d2f4a833cb154624f660a561/"
+                                  "pytorch_model.bin");
+    for (const QString &path : paths)
         if (QFileInfo::exists(path))
             return QFileInfo(path).canonicalFilePath();
     return {};
@@ -1039,7 +1042,7 @@ private:
             const QString modelPath = restoreModel();
             if (modelPath.isEmpty())
                 return failed(QStringLiteral("The restore model isn't installed with this tenfold "
-                                             "(apollo.bin; TENFOLD_RESTORE_MODEL names one)"));
+                                             "(apollo.tfq; TENFOLD_RESTORE_MODEL names one)"));
             m_restoring = true;
             say(QStringLiteral("RESTORING: LOADING THE MODEL"));
             std::string why;
@@ -2388,7 +2391,7 @@ private:
             } else if (!m_restoreMissingSaid) {
                 m_restoreMissingSaid = true;
                 ctx.notice(QStringLiteral("This song went through a lossy codec; restoring it needs the restore model "
-                                          "(apollo.bin), which this tenfold wasn't installed with"));
+                                          "(apollo.tfq), which this tenfold wasn't installed with"));
             }
         }
     }
@@ -2459,7 +2462,7 @@ private:
         }
         if (restoreModel().isEmpty()) {
             ctx.notice(QStringLiteral("The restore model isn't installed with this tenfold "
-                                      "(apollo.bin; TENFOLD_RESTORE_MODEL names one)"));
+                                      "(apollo.tfq; TENFOLD_RESTORE_MODEL names one)"));
             return;
         }
         const bool first = !m_restorer.busy();

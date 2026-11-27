@@ -283,8 +283,12 @@ in the background at the lowest priority while the song already plays as
 it came, and takes about as long as the song on an M2 Pro's eight fast
 cores; then O goes back and forth between the song restored and the
 original, and S makes the stems from the restored one. O starts it for any
-other song, and calls it off while it runs. Its weights (66 MB) come with
-the packages and `bin/model`, and the restored song is kept beside the
+other song, and calls it off while it runs. Its weights come with the
+repository and the packages in tenfold's compact form like the stem
+model's: 12.6 MB where the published file is 66, each layer kept only as
+finely as the restored sound needs (`extras/apollo-bits.txt`), which
+restores eight test clips as close to their lossless originals as the
+published weights do, to 0.01 dB. The restored song is kept beside the
 download like the stems.
 
 **Songs.** A song file names the sampled song (its path or link), the grid

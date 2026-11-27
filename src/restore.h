@@ -7,8 +7,10 @@
 // Band-sequence Modeling for High-Quality Audio Restoration", 2024; weights
 // CC BY-SA 4.0, extras/LICENSE-apollo) computed here in C++ from its
 // published weights, written from the paper and the shapes of those
-// weights. The weights are the one file Hugging Face keeps
-// (JusperLee/Apollo), PyTorch's own format, read as it is: a zip of raw
+// weights. The packages carry them in tenfold's compact form (apollo.tfq,
+// 12.6 MB where the published file is 66), which restores the same to
+// within 0.01 dB (see extras/apollo-bits.txt); the published file,
+// PyTorch's own (JusperLee/Apollo), is read as it is too: a zip of raw
 // tensors and a pickle naming them, of which only plain data is taken.
 //
 // The network works on 20 ms frames, 10 ms apart, of each channel alone,
@@ -30,9 +32,21 @@ namespace tf::restore {
 // The network's weights, read from their file and shared by every worker.
 struct Model;
 
-// Reads the weights (PyTorch's file, as Hugging Face has it). nullptr,
-// and the reason in *error, if the file is missing or isn't that.
+// Reads the weights: tenfold's compact file (apollo.tfq), or PyTorch's
+// file as Hugging Face has it. nullptr, and the reason in *error, if the
+// file is missing or is neither.
 std::shared_ptr<const Model> load(const std::string &path, std::string *error);
+
+// Writes the compact file from either: bits(name) is how finely each
+// convolution's weights are kept, the step 2^-bits of each output channel's
+// RMS (0: as published, as are the norms, biases and rotary tables).
+bool compact(const std::string &from, const std::string &to, const std::function<double(const std::string &)> &bits,
+             std::string *error);
+
+// Each tensor of two models side by side, for the compact file's tests.
+void forEachWeight(const Model &a, const Model &b,
+                   const std::function<void(const std::string &name, const std::vector<int> &shape, const float *x,
+                                            const float *y, size_t n)> &fn);
 
 constexpr int kRate = 44100; // the network's own
 constexpr int kHop = 441;    // samples between frames

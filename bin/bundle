@@ -64,7 +64,7 @@ install -Dm644 "$ROOT/LICENSE" "$appdir/LICENSE"
 install -Dm644 "$ROOT/build/htdemucs.tfq" "$appdir/usr/share/tenfold/htdemucs.tfq"
 install -Dm644 "$ROOT/extras/LICENSE-htdemucs" "$appdir/LICENSE-htdemucs"
 # The restorer's, likewise.
-install -Dm644 "$ROOT/build/apollo.bin" "$appdir/usr/share/tenfold/apollo.bin"
+install -Dm644 "$ROOT/build/apollo.tfq" "$appdir/usr/share/tenfold/apollo.tfq"
 install -Dm644 "$ROOT/extras/LICENSE-apollo" "$appdir/LICENSE-apollo"
 install -Dm644 "$ROOT/extras/70-tenfold.rules" "$appdir/extras/70-tenfold.rules"
 printf '%s\n' "$version" >"$appdir/VERSION"

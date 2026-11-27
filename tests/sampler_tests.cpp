@@ -1112,9 +1112,9 @@ private slots:
         // restored song is kept in its cache folder.
         QString model = qEnvironmentVariable("TENFOLD_RESTORE_MODEL");
         if (model.isEmpty())
-            model = QStringLiteral(TENFOLD_SRC "/../build/apollo.bin");
+            model = QStringLiteral(TENFOLD_SRC "/../build/apollo.tfq");
         if (!QFile::exists(model))
-            QSKIP("no apollo.bin here (bin/model fetches it)");
+            QSKIP("no apollo.tfq here (bin/model copies it)");
         qputenv("TENFOLD_RESTORE_MODEL", QFile::encodeName(model));
         qputenv("TENFOLD_RESTORE_IN_SCRIPTS", "1");
         const QString path = write(QStringLiteral("lossy.mp3"), song(120, 1));

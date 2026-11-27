@@ -26,6 +26,7 @@
 #include "offline.h"
 #include "session.h"
 #include "songfile.h"
+#include "restore.h"
 #include "stems.h"
 #include "studio.h"
 #include "surface.h"
@@ -75,7 +76,9 @@ static void usage(FILE *out) {
                "                                          its sound (needs ffmpeg), or the frame at --at (needs a\n"
                "                                          display with OpenGL, Vulkan or Metal)\n"
                "  tenfold stem-model <htdemucs.safetensors> <bits.txt> <out.tfq>\n"
-               "                                          write the compact stem model the Sampler reads\n",
+               "                                          write the compact stem model the Sampler reads\n"
+               "  tenfold restore-model <apollo.bin> <bits.txt> <out.tfq>\n"
+               "                                          write the compact restore model the Sampler reads\n",
                out);
 }
 
@@ -232,7 +235,11 @@ static int check(int argc, char **argv) {
 
 // The compact stem model from the published one and a table of bits per
 // layer ("name bits" lines, # for comments): see stems.cpp.
-static int stemModel(const char *from, const char *table, const char *to) {
+// A bits table (name and bits a line, # for comments) and the compactor it
+// is for: `tenfold stem-model` and `tenfold restore-model`.
+using Compactor = bool (*)(const std::string &, const std::string &, const std::function<double(const std::string &)> &,
+                           std::string *);
+static int compactModel(Compactor compact, const char *from, const char *table, const char *to) {
     std::ifstream f(table);
     if (!f) {
         std::fprintf(stderr, "tenfold: cannot read %s\n", table);
@@ -250,7 +257,7 @@ static int stemModel(const char *from, const char *table, const char *to) {
         bits[name] = b;
     }
     std::string error;
-    const bool ok = tf::stems::compact(from, to, [&](const std::string &name) {
+    const bool ok = compact(from, to, [&](const std::string &name) {
         const auto it = bits.find(name);
         return it == bits.end() ? 0.0 : it->second;
     }, &error);
@@ -287,7 +294,9 @@ int main(int argc, char *argv[]) {
     if (argc == 3 && std::strcmp(argv[1], "check") == 0)
         return check(argc, argv);
     if (argc == 5 && std::strcmp(argv[1], "stem-model") == 0)
-        return stemModel(argv[2], argv[3], argv[4]);
+        return compactModel(tf::stems::compact, argv[2], argv[3], argv[4]);
+    if (argc == 5 && std::strcmp(argv[1], "restore-model") == 0)
+        return compactModel(tf::restore::compact, argv[2], argv[3], argv[4]);
     if (argc >= 4 && std::strcmp(argv[1], "visualize") == 0) {
         QGuiApplication app(argc, argv);
         app.setApplicationName("tenfold");

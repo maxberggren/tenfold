@@ -22,13 +22,7 @@
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forAll (pkgs: let
-        # The restorer's weights (bin/model fetches the same file).
-        restoreModel = pkgs.fetchurl {
-          url = "https://huggingface.co/JusperLee/Apollo/resolve/c68bd80fdd9c0d93d2f4a833cb154624f660a561/pytorch_model.bin";
-          hash = "sha256-mdmvfx/yDmPDkwNVE6ZVOSgY1mtNf8I9ZYF1wfFejXY=";
-        };
-      in {
+      packages = forAll (pkgs: {
         default = pkgs.stdenv.mkDerivation {
           pname = "tenfold";
           version = "0.5.0";
@@ -49,7 +43,7 @@
             install -Dm644 LICENSE $out/share/licenses/tenfold/LICENSE
             install -Dm644 extras/htdemucs.tfq $out/share/tenfold/htdemucs.tfq
             install -Dm644 extras/LICENSE-htdemucs $out/share/licenses/tenfold/LICENSE-htdemucs
-            install -Dm644 ${restoreModel} $out/share/tenfold/apollo.bin
+            install -Dm644 extras/apollo.tfq $out/share/tenfold/apollo.tfq
             install -Dm644 extras/LICENSE-apollo $out/share/licenses/tenfold/LICENSE-apollo
             runHook postInstall
           '';

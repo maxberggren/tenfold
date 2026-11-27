@@ -8,6 +8,9 @@
 
 #include <QByteArray>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -423,6 +426,88 @@ private:
     std::unordered_map<uint32_t, Ptr> memo;
 };
 
+
+// --- Tenfold's compact form (apollo.tfq), as src/stems.cpp keeps htdemucs:
+// the weights of each convolution are whole multiples of a step of their
+// own for each output channel, the step 2^-bits of that channel's RMS,
+// finer for the layers the sound is most sensitive to
+// (extras/apollo-bits.txt). The multiples, zigzagged into 16 bits, are
+// deflated as two streams, low bytes and high bytes. The norms, biases and
+// rotary tables stay as the published floats.
+//
+//   "TFAPOLQ1", u32 length, a JSON array of {n: name, s: shape, f: "f" or
+//   "q", o: offset}, with for "q" lo and hi: the two streams' lengths after
+//   the steps (f32, one per output channel); then the data.
+
+constexpr char kCompactMagic[9] = "TFAPOLQ1";
+
+bool compactable(const std::string &name, const std::vector<int> &shape, size_t count) {
+    return shape.size() >= 2 && count >= 1024 && name.find("_freq") == std::string::npos;
+}
+
+// The tensors of a compact file, or false if it is damaged.
+bool readCompact(const QByteArray &bytes, Model &model) {
+    if (bytes.size() < 12)
+        return false;
+    const uint32_t headerSize = le32(bytes.constData() + 8);
+    if (headerSize > uint64_t(bytes.size()) - 12)
+        return false;
+    const QJsonArray entries = QJsonDocument::fromJson(bytes.mid(12, qsizetype(headerSize))).array();
+    const char *base = bytes.constData() + 12 + headerSize;
+    const uint64_t dataSize = uint64_t(bytes.size()) - 12 - headerSize;
+    std::unordered_map<std::string, QJsonObject> byName;
+    for (const QJsonValue &e : entries)
+        byName[e.toObject().value(QStringLiteral("n")).toString().toStdString()] = e.toObject();
+    for (const auto &[name, shape] : expectedShapes()) {
+        const auto it = byName.find(name);
+        if (it == byName.end())
+            return false;
+        const QJsonObject &entry = it->second;
+        const QJsonArray dims = entry.value(QStringLiteral("s")).toArray();
+        bool same = dims.size() == qsizetype(shape.size());
+        for (qsizetype i = 0; same && i < dims.size(); ++i)
+            same = dims[i].toInt() == shape[size_t(i)];
+        if (!same)
+            return false;
+        size_t count = 1;
+        for (int d : shape)
+            count *= size_t(d);
+        const uint64_t at = uint64_t(entry.value(QStringLiteral("o")).toInteger(-1));
+        Tensor t;
+        t.shape = shape;
+        t.v.resize(count);
+        if (entry.value(QStringLiteral("f")).toString() == QLatin1String("f")) {
+            if (at > dataSize || dataSize - at < 4 * count)
+                return false;
+            for (size_t i = 0; i < count; ++i) {
+                const uint32_t b = le32(base + at + 4 * i);
+                std::memcpy(&t.v[i], &b, 4);
+            }
+        } else {
+            if (!compactable(name, shape, count))
+                return false;
+            const size_t rows = size_t(shape[0]), inner = count / rows;
+            const uint64_t lo = uint64_t(entry.value(QStringLiteral("lo")).toInteger(-1)),
+                           hi = uint64_t(entry.value(QStringLiteral("hi")).toInteger(-1));
+            if (at > dataSize || lo > dataSize || hi > dataSize || dataSize - at < 4 * rows + lo + hi)
+                return false;
+            std::vector<float> step(rows);
+            std::memcpy(step.data(), base + at, 4 * rows);
+            const QByteArray low = qUncompress(reinterpret_cast<const uchar *>(base + at + 4 * rows), qsizetype(lo));
+            const QByteArray high = qUncompress(reinterpret_cast<const uchar *>(base + at + 4 * rows + lo), qsizetype(hi));
+            if (size_t(low.size()) != count || size_t(high.size()) != count)
+                return false;
+            for (size_t i = 0; i < count; ++i) {
+                const uint32_t z = uint8_t(low[qsizetype(i)]) | uint32_t(uint8_t(high[qsizetype(i)])) << 8;
+                const int32_t q = int32_t(z >> 1) ^ -int32_t(z & 1);
+                t.v[i] = float(q) * step[i / inner];
+            }
+        }
+        model.t.emplace(name, std::move(t));
+    }
+    return true;
+}
+
 } // namespace
 
 std::shared_ptr<const Model> load(const std::string &path, std::string *error) {
@@ -436,6 +521,12 @@ std::shared_ptr<const Model> load(const std::string &path, std::string *error) {
         return fail(QStringLiteral("The restore model isn't there (%1)").arg(QString::fromStdString(path)));
     const QByteArray bytes = file.readAll();
     const QString damaged = QStringLiteral("The restore model's file is damaged (%1)").arg(QString::fromStdString(path));
+    if (bytes.startsWith(kCompactMagic)) {
+        auto model = std::make_shared<Model>();
+        if (!readCompact(bytes, *model))
+            return fail(damaged);
+        return model;
+    }
 
     std::unordered_map<std::string, ZipEntry> entries;
     if (!readZip(bytes.constData(), bytes.size(), entries))
@@ -504,6 +595,83 @@ std::shared_ptr<const Model> load(const std::string &path, std::string *error) {
         model->t.emplace(name, std::move(out));
     }
     return model;
+}
+
+void forEachWeight(const Model &a, const Model &b,
+                   const std::function<void(const std::string &, const std::vector<int> &, const float *, const float *,
+                                            size_t)> &fn) {
+    for (const auto &[name, shape] : expectedShapes()) {
+        const Tensor &x = a[name], &y = b[name];
+        fn(name, shape, x.data(), y.data(), x.v.size());
+    }
+}
+
+bool compact(const std::string &from, const std::string &to, const std::function<double(const std::string &)> &bits,
+             std::string *error) {
+    auto fail = [&](const std::string &why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    const auto model = load(from, error);
+    if (!model)
+        return false;
+    QJsonArray entries;
+    QByteArray data;
+    for (const auto &[name, shape] : expectedShapes()) {
+        const Tensor &t = model->t.at(name);
+        QJsonObject e{{QStringLiteral("n"), QString::fromStdString(name)}, {QStringLiteral("o"), qint64(data.size())}};
+        QJsonArray dims;
+        for (int d : shape)
+            dims.append(d);
+        e.insert(QStringLiteral("s"), dims);
+        const double b = compactable(name, shape, t.v.size()) ? bits(name) : 0;
+        if (b <= 0) {
+            e.insert(QStringLiteral("f"), QStringLiteral("f"));
+            for (float x : t.v) {
+                uint32_t u;
+                std::memcpy(&u, &x, 4);
+                data.append(char(u & 255)).append(char(u >> 8 & 255)).append(char(u >> 16 & 255)).append(char(u >> 24));
+            }
+        } else {
+            e.insert(QStringLiteral("f"), QStringLiteral("q"));
+            const size_t rows = size_t(shape[0]), inner = t.v.size() / rows;
+            std::vector<float> step(rows);
+            for (size_t k = 0; k < rows; ++k) {
+                double sq = 0;
+                for (size_t i = 0; i < inner; ++i)
+                    sq += double(t.v[k * inner + i]) * t.v[k * inner + i];
+                step[k] = float(std::sqrt(sq / double(inner)) * std::exp2(-b));
+            }
+            QByteArray low(qsizetype(t.v.size()), 0), high(qsizetype(t.v.size()), 0);
+            for (size_t i = 0; i < t.v.size(); ++i) {
+                const float s = step[i / inner];
+                const long q = s > 0 ? std::lround(t.v[i] / s) : 0;
+                if (q < -32768 || q > 32767)
+                    return fail(name + " needs more than 16 bits at " + std::to_string(b));
+                const uint32_t z = uint32_t(q << 1) ^ uint32_t(q >> 31);
+                low[qsizetype(i)] = char(z & 255);
+                high[qsizetype(i)] = char(z >> 8);
+            }
+            const QByteArray lo = qCompress(low, 9), hi = qCompress(high, 9);
+            e.insert(QStringLiteral("lo"), qint64(lo.size()));
+            e.insert(QStringLiteral("hi"), qint64(hi.size()));
+            data.append(reinterpret_cast<const char *>(step.data()), qsizetype(4 * step.size()));
+            data.append(lo).append(hi);
+        }
+        entries.append(e);
+    }
+    const QByteArray header = QJsonDocument(entries).toJson(QJsonDocument::Compact);
+    QFile out(QString::fromStdString(to));
+    if (!out.open(QIODevice::WriteOnly))
+        return fail("can't write " + to);
+    const uint32_t n = uint32_t(header.size());
+    const char length[4] = {char(n & 255), char(n >> 8 & 255), char(n >> 16 & 255), char(n >> 24)};
+    out.write(kCompactMagic, 8);
+    out.write(length, 4);
+    out.write(header);
+    out.write(data);
+    return out.error() == QFile::NoError || fail("can't write " + to);
 }
 
 // ---------------------------------------------------------------------------

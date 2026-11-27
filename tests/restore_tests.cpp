@@ -4,6 +4,11 @@
 // Apollo gave for the same sound, a song restored in blocks against in one
 // piece, a sound cut off at 16 kHz given its top back, and calling it off.
 //
+// The compact file the packages carry (extras/apollo.tfq, 12.6 MB) was
+// measured against the published weights on eight test clips: the same
+// distance from their lossless originals to 0.01 dB (shrink notes in
+// extras/apollo-bits.txt).
+//
 // That the network itself is Apollo's was checked stage by stage against
 // PyTorch when it was written: on sound with something in every band,
 // every layer within 3e-6 of PyTorch's (relative RMS) and the output at
@@ -12,6 +17,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <atomic>
 #include <chrono>
@@ -27,8 +33,25 @@ using namespace tf;
 
 namespace {
 
+// How close the bundled compact file's output stays to the published
+// weights' (dB SNR): 43.4 measured, with some room.
+constexpr double kBundledSnr = 40;
+
+// The published weights, when this machine has them.
+QString published() {
+    for (const QString &p :
+         {QStringLiteral(TENFOLD_SRC "/../build/apollo.bin"),
+          QDir::homePath() + QStringLiteral("/.cache/huggingface/hub/models--JusperLee--Apollo/snapshots/"
+                                            "c68bd80fdd9c0d93d2f4a833cb154624f660a561/pytorch_model.bin")})
+        if (QFile::exists(p))
+            return p;
+    return {};
+}
+
+// Where the weights may be: as the app looks for them, plus the build's.
 QString weights() {
     QStringList paths = {qEnvironmentVariable("TENFOLD_RESTORE_MODEL"),
+                         QStringLiteral(TENFOLD_SRC "/../build/apollo.tfq"),
                          QStringLiteral(TENFOLD_SRC "/../build/apollo.bin"),
                          QDir::homePath() + QStringLiteral("/.cache/huggingface/hub/models--JusperLee--Apollo/"
                                                            "snapshots/c68bd80fdd9c0d93d2f4a833cb154624f660a561/"
@@ -88,7 +111,8 @@ class RestoreTests : public QObject {
     Q_OBJECT
     // Restoring takes every fast core, which the tests that time the
     // studio would feel: these run on their own, after the rest.
-    Q_CLASSINFO("alone", "theNetworkIsApollos aSongRestoredInBlocksIsTheSameAsInOnePiece "
+    Q_CLASSINFO("alone", "theNetworkIsApollos theBundledCompactFileRestoresAsThePublishedOne "
+                         "theCompactFileKeepsEachWeightWithinHalfItsStep aSongRestoredInBlocksIsTheSameAsInOnePiece "
                          "aSoundCutOffAt16kHzGetsItsTopBack restoringStopsWhenCalledOff")
     // The tests bin/test runs while developing; the rest run with --full.
     Q_CLASSINFO("dev", "lossyFilesAreKnownByTheirEnding aFileThatIsNotTheModelIsSaidToBe")
@@ -121,9 +145,9 @@ private slots:
     }
 
     void theNetworkIsApollos() {
-        const QString path = weights();
+        const QString path = published();
         if (path.isEmpty())
-            QSKIP("no apollo.bin here (bin/model fetches it; TENFOLD_RESTORE_MODEL names one)");
+            QSKIP("no published apollo.bin here (bin/model --remake fetches it)");
         std::string why;
         const auto model = restore::load(path.toStdString(), &why);
         QVERIFY2(model, why.c_str());
@@ -142,6 +166,79 @@ private slots:
         for (const auto &[i, want] : at)
             QVERIFY2(std::fabs(y[size_t(i)] - want) < 3e-5,
                      qPrintable(QStringLiteral("y[%1] = %2, PyTorch %3").arg(i).arg(y[size_t(i)], 0, 'f', 7).arg(want, 0, 'f', 7)));
+    }
+
+    void theCompactFileKeepsEachWeightWithinHalfItsStep() {
+        // Every convolution compacted at 6 bits but the first layer's: each
+        // weight comes back within half a step (1/128 of its channel's RMS)
+        // of the published one, the rest exactly, and a file cut short is
+        // damaged.
+        const QString from = published();
+        if (from.isEmpty())
+            QSKIP("no published apollo.bin here (bin/model --remake fetches it)");
+        QTemporaryDir dir;
+        const std::string to = (dir.path() + QStringLiteral("/m.tfq")).toStdString();
+        std::string why;
+        auto first = [](const std::string &name) { return name.rfind("net.0.", 0) == 0; };
+        QVERIFY2(restore::compact(from.toStdString(), to, [&](const std::string &name) { return first(name) ? 0.0 : 6.0; },
+                                  &why),
+                 why.c_str());
+        qInfo("compact at 6 bits: %.1f MB", double(QFileInfo(QString::fromStdString(to)).size()) / 1e6);
+        const auto a = restore::load(from.toStdString(), &why), b = restore::load(to, &why);
+        QVERIFY2(a && b, why.c_str());
+        int exact = 0, kept = 0;
+        restore::forEachWeight(*a, *b, [&](const std::string &name, const std::vector<int> &shape, const float *x,
+                                           const float *y, size_t n) {
+            if (shape.size() < 2 || n < 1024 || name.find("_freq") != std::string::npos || first(name)) {
+                QVERIFY2(std::equal(x, x + n, y), name.c_str());
+                ++exact;
+                return;
+            }
+            ++kept;
+            const size_t rows = size_t(shape[0]), inner = n / rows;
+            for (size_t r = 0; r < rows; ++r) {
+                double sq = 0;
+                for (size_t i = 0; i < inner; ++i)
+                    sq += double(x[r * inner + i]) * x[r * inner + i];
+                const double step = std::sqrt(sq / double(inner)) / 64;
+                for (size_t i = 0; i < inner; ++i)
+                    QVERIFY2(std::fabs(double(x[r * inner + i]) - y[r * inner + i]) <= 0.5 * step * 1.0001 + 1e-12,
+                             name.c_str());
+            }
+        });
+        QCOMPARE(exact + kept, 654);
+        QVERIFY(kept > 200);
+        QFile f(QString::fromStdString(to));
+        QVERIFY(f.open(QIODevice::ReadWrite));
+        QVERIFY(f.resize(f.size() / 2));
+        f.close();
+        QVERIFY(!restore::load(to, &why));
+        QVERIFY2(QString::fromStdString(why).contains(QStringLiteral("damaged")), why.c_str());
+    }
+
+    void theBundledCompactFileRestoresAsThePublishedOne() {
+        // The file the packages carry (extras/apollo.tfq) against the
+        // published weights, on a second of sound with something in every
+        // band.
+        const QString from = published();
+        const QString bundled = QStringLiteral(TENFOLD_SRC "/../extras/apollo.tfq");
+        if (from.isEmpty())
+            QSKIP("no published apollo.bin here (bin/model --remake fetches it)");
+        std::string why;
+        const auto a = restore::load(from.toStdString(), &why), b = restore::load(bundled.toStdString(), &why);
+        QVERIFY2(a && b, why.c_str());
+        const std::vector<float> x = everything(restore::kRate);
+        std::vector<float> ya(x.size()), yb(x.size());
+        restore::whole(*a, x.data(), x.size(), ya.data());
+        restore::whole(*b, x.data(), x.size(), yb.data());
+        double err = 0, sig = 0;
+        for (size_t i = 0; i < x.size(); ++i) {
+            err += double(ya[i] - yb[i]) * (ya[i] - yb[i]);
+            sig += double(ya[i]) * ya[i];
+        }
+        const double snr = 10 * std::log10(sig / err);
+        qInfo("compact against published: %.1f dB", snr);
+        QVERIFY(snr > kBundledSnr);
     }
 
     void aSongRestoredInBlocksIsTheSameAsInOnePiece() {

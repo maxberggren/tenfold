@@ -15,6 +15,7 @@
 #include <ctime>
 
 #include "console.h"
+#include "export.h"
 #include "offline.h"
 #include "visualizer.h"
 
@@ -55,6 +56,9 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
         });
     }
 
+    m_exportFolder = QDir(QStandardPaths::writableLocation(QStandardPaths::MusicLocation)).filePath(
+        QStringLiteral("tenfold/exports"));
+
     m_timer.setInterval(16);
     m_timer.setTimerType(Qt::PreciseTimer);
     connect(&m_timer, &QTimer::timeout, this, &Backend::tick);
@@ -62,6 +66,134 @@ Backend::Backend(bool live, QObject *parent) : QObject(parent), m_simulated(!liv
 }
 
 Backend::~Backend() { shutdown(); }
+
+// --- export -------------------------------------------------------------------
+
+QStringList Backend::exportParts() const {
+    QStringList out;
+    const StudioView &v = m_session->view();
+    for (int p = 0; p < m_session->partCount() && p < v.partCount; ++p) {
+        bool any = false;
+        for (const ClipView &c : v.parts[p].clips)
+            any |= c.state != ClipView::Empty;
+        if (any)
+            out << m_session->pageName(p);
+    }
+    return out;
+}
+
+int Backend::loopBars() const {
+    // The longest loop playing, in whole bars: one pass of everything.
+    const StudioView &v = m_session->view();
+    float beats = 0;
+    for (int p = 0; p < v.partCount; ++p)
+        if (v.parts[p].playing >= 0)
+            beats = std::max(beats, v.parts[p].clips[v.parts[p].playing].lengthBeats);
+    return std::max(4, int(std::ceil(beats / 4.0f - 1e-3f)));
+}
+
+QString Backend::exportStatus() const {
+    std::lock_guard lock(m_exportLock);
+    return exporting() ? m_exportWhat : m_exportResult;
+}
+
+QString Backend::defaultExportPrefix() const {
+    return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH.mm "));
+}
+
+void Backend::setExportFolder(const QString &folder) {
+    if (folder.isEmpty())
+        return;
+    m_exportFolder = folder;
+    emit exportChanged();
+}
+
+void Backend::pickExportFolder() {
+    m_picker->pickFolder(tr("Export to folder"), m_exportFolder, [this](const QString &folder) { setExportFolder(folder); });
+}
+
+bool Backend::startExport(const QVariantMap &in) {
+    if (exporting())
+        return false;
+    QString error;
+    // The song as Ctrl+S would save it, read here; the render is the
+    // export thread's, in a studio of its own, while this one plays on.
+    const QJsonObject doc = m_session->saveSong(&error);
+    if (doc.isEmpty()) {
+        std::lock_guard lock(m_exportLock);
+        m_exportResult = error;
+        emit exportChanged();
+        return false;
+    }
+    ExportOptions o;
+    o.folder = in.value(QStringLiteral("folder"), m_exportFolder).toString();
+    o.prefix = in.value(QStringLiteral("prefix")).toString();
+    o.rate = m_studio->sampleRate();
+    o.song = in.value(QStringLiteral("song"), true).toBool();
+    o.bars = in.value(QStringLiteral("bars"), 8).toInt();
+    o.parts = in.value(QStringLiteral("parts")).toStringList();
+    o.voices = in.value(QStringLiteral("voices"), false).toBool();
+    o.mix = in.value(QStringLiteral("mix"), true).toBool();
+    o.midi = in.value(QStringLiteral("midi"), true).toBool();
+    o.tails = in.value(QStringLiteral("tails"), true).toBool();
+    o.preFader = in.value(QStringLiteral("preFader"), false).toBool();
+    o.master = in.value(QStringLiteral("master"), true).toBool();
+    if (o.parts.isEmpty() && !o.mix) {
+        std::lock_guard lock(m_exportLock);
+        m_exportResult = tr("Nothing chosen to export");
+        emit exportChanged();
+        return false;
+    }
+    if (o.parts.isEmpty())
+        o.parts << QStringLiteral("-"); // no part, the mix alone
+    m_exportCancel = false;
+    m_exportFinished = false;
+    m_exportFraction = 0;
+    m_exportedFolder.clear();
+    {
+        std::lock_guard lock(m_exportLock);
+        m_exportWhat = tr("Getting ready");
+        m_exportResult.clear();
+    }
+    m_exportThread = std::thread([this, doc, o] {
+        const ExportResult r = exportSong(doc, o, &m_exportCancel, [this](double f, const QString &what) {
+            m_exportFraction = f;
+            std::lock_guard lock(m_exportLock);
+            m_exportWhat = what;
+        });
+        {
+            std::lock_guard lock(m_exportLock);
+            if (r.cancelled)
+                m_exportResult = tr("Export cancelled; nothing was kept");
+            else if (!r.ok)
+                m_exportResult = tr("Not exported: %1").arg(r.error);
+            else
+                m_exportResult = tr("%n file(s) in %1", nullptr, int(r.files.size())).arg(r.folder) +
+                                 (r.notes.isEmpty() ? QString() : QStringLiteral(" (") + r.notes.join(QStringLiteral("; ")) + QLatin1Char(')'));
+        }
+        {
+            std::lock_guard lock(m_exportLock);
+            m_exportWrote = r.ok ? r.folder : QString();
+        }
+        m_exportFinished = true;
+    });
+    emit exportChanged();
+    return true;
+}
+
+void Backend::finishExport() {
+    if (m_exportThread.joinable())
+        m_exportThread.join();
+    m_exportFinished = false;
+    QString said;
+    {
+        std::lock_guard lock(m_exportLock);
+        said = m_exportResult;
+        m_exportedFolder = m_exportWrote;
+    }
+    m_session->say(said);
+    emit exportChanged();
+}
 
 // Where a recording went is worth a glance, not a place in the bar for
 // good: it goes after five seconds (the tutorial still has it).
@@ -103,6 +235,9 @@ void Backend::shutdown() {
     m_tickerRun = false;
     if (m_ticker.joinable())
         m_ticker.join();
+    m_exportCancel = true;
+    if (m_exportThread.joinable())
+        m_exportThread.join();
     stopRecording();
     // Waits for a video still being muxed, while the picture's engine is
     // still there.
@@ -475,6 +610,10 @@ void Backend::tick() {
         m_session->idle(monotonicSeconds());
     }
     m_session->refresh();
+    if (m_exportFinished.load())
+        finishExport();
+    else if (exporting())
+        emit exportChanged();
     // Back in front and taken again: no longer away, so a pad lost from
     // here on is waiting for its button again.
     if (m_pausedByFocus && m_inFront && m_touch->status() == Pad::Grabbed)

@@ -95,6 +95,13 @@ public:
     }
     virtual void saveFile(const QString &title, const QString &name, const QString &folder,
                           std::function<void(const QString &)> done) = 0;
+    // A folder (where an export goes), starting in `folder`: done gets the
+    // folder picked, or an empty path. A picker that can't ask answers
+    // empty at once.
+    virtual void pickFolder(const QString &title, const QString &folder, std::function<void(const QString &)> done) {
+        (void)title, (void)folder;
+        done({});
+    }
 };
 
 // Ctrl+S, Ctrl+Shift+S, Ctrl+O and the song kept on quit: the session's

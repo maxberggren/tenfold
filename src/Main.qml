@@ -31,6 +31,7 @@ ApplicationWindow {
     readonly property string mono: "Noto Sans Mono"
 
     property bool helpVisible: false
+    property bool exportVisible: false
     readonly property bool playing: backend.padState === Backend.Playing
     readonly property color pageColor: backend.pageColors[backend.page]
 
@@ -97,7 +98,9 @@ ApplicationWindow {
     // taken), and with nothing of that to escape it pauses and plays, as
     // Ctrl+P (Session::escape).
     function back() {
-        if (win.helpVisible)
+        if (win.exportVisible)
+            backend.exporting ? backend.cancelExport() : win.exportVisible = false
+        else if (win.helpVisible)
             win.helpVisible = false
         else
             backend.escape()
@@ -126,6 +129,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+S"; context: Qt.ApplicationShortcut; onActivated: backend.saveSongAs() }
     Shortcut { sequence: "Ctrl+O"; context: Qt.ApplicationShortcut; onActivated: backend.openSong() }
     Shortcut { sequence: "Ctrl+Shift+O"; context: Qt.ApplicationShortcut; onActivated: backend.reopenLastSong() }
+    Shortcut { sequence: "Ctrl+E"; context: Qt.ApplicationShortcut; onActivated: win.exportVisible = true }
     // A link to a song (or a sound file's path) on the clipboard goes to the Sampler.
     Shortcut { sequence: StandardKey.Paste; context: Qt.ApplicationShortcut; onActivated: backend.paste() }
     Shortcut {
@@ -641,6 +645,14 @@ ApplicationWindow {
                                     // Shift-click: save as, as Ctrl+Shift+S does.
                                     onClicked: modifiers => (modifiers & Qt.ShiftModifier) ? backend.saveSongAs() : backend.saveSong()
                                 }
+                                // Stems, voices and MIDI for another studio (ExportDialog.qml).
+                                PanelButton {
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: !backend.tutorialActive
+                                    label: backend.exporting ? qsTr("Export %1%").arg(Math.round(backend.exportProgress * 100)) : qsTr("Export")
+                                    key: "Ctrl E"; color: win.cyan; active: win.exportVisible || backend.exporting
+                                    onClicked: win.exportVisible = true
+                                }
                                 PanelButton {
                                     Layout.columnSpan: 2
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
@@ -795,6 +807,13 @@ ApplicationWindow {
             tint: win.pageColor
             pageHelp: backend.pageHelp
         }
+    }
+
+    // Export, over everything but the glass's scanlines.
+    ExportDialog {
+        anchors.fill: parent
+        visible: win.exportVisible
+        onClosed: win.exportVisible = false
     }
 
     // Scanlines over the glass.

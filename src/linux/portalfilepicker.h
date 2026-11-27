@@ -35,6 +35,7 @@ public:
     void openSound(const QString &title, std::function<void(const QString &)> done) override;
     void saveFile(const QString &title, const QString &name, const QString &folder,
                   std::function<void(const QString &)> done) override;
+    void pickFolder(const QString &title, const QString &folder, std::function<void(const QString &)> done) override;
 
     // Said when no dialog can be shown (no portal, the call refused), since
     // to the player that would look like a key that does nothing.
@@ -42,7 +43,8 @@ public:
 
 private:
     void ask(const QString &method, const QString &title, QVariantMap options,
-             std::function<void(const QString &)> done, bool sounds = false);
+             std::function<void(const QString &)> done, int kind = Songs);
+    enum Kind { Songs, Sounds, Folders };
 
     int m_next = 0;
 };

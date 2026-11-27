@@ -76,6 +76,22 @@ void MacFilePicker::saveFile(const QString &title, const QString &name, const QS
     }];
 }
 
+void MacFilePicker::pickFolder(const QString &title, const QString &folder, std::function<void(const QString &)> done) {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.message = title.toNSString();
+    panel.canChooseFiles = NO;
+    panel.canChooseDirectories = YES;
+    panel.canCreateDirectories = YES;
+    panel.allowsMultipleSelection = NO;
+    panel.prompt = @"Choose";
+    if (!folder.isEmpty())
+        panel.directoryURL = [NSURL fileURLWithPath:folder.toNSString() isDirectory:YES];
+    auto answer = std::make_shared<std::function<void(const QString &)>>(std::move(done));
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+        (*answer)(response == NSModalResponseOK && panel.URL ? QString::fromNSString(panel.URL.path) : QString());
+    }];
+}
+
 namespace platform {
 
 std::unique_ptr<Pad> openPad(FrameSink *sink) { return std::make_unique<Trackpad>(sink); }

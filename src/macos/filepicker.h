@@ -12,6 +12,7 @@ public:
     void openSound(const QString &title, std::function<void(const QString &)> done) override;
     void saveFile(const QString &title, const QString &name, const QString &folder,
                   std::function<void(const QString &)> done) override;
+    void pickFolder(const QString &title, const QString &folder, std::function<void(const QString &)> done) override;
 };
 
 }

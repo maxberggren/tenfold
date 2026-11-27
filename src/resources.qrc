@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file alias="Main.qml">Main.qml</file>
         <file alias="HelpPage.qml">HelpPage.qml</file>
+        <file alias="ExportDialog.qml">ExportDialog.qml</file>
         <file alias="PanelBox.qml">PanelBox.qml</file>
         <file alias="PanelButton.qml">PanelButton.qml</file>
         <file alias="StatusLamp.qml">StatusLamp.qml</file>

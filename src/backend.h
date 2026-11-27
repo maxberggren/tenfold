@@ -8,8 +8,10 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 #include "console.h"
@@ -103,6 +105,19 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList tutorialChecks READ tutorialChecks NOTIFY changed)
     // 0 working on it, 1 just done (celebrating), 2 done before (came back with Back)
     Q_PROPERTY(int tutorialState READ tutorialState NOTIFY changed)
+    // Export (export.h): where it goes, what there is to export, and how it
+    // is going while it renders on a thread of its own.
+    Q_PROPERTY(QString exportFolder READ exportFolder NOTIFY exportChanged)
+    Q_PROPERTY(int sampleRate READ sampleRate CONSTANT)
+    Q_PROPERTY(QStringList exportParts READ exportParts NOTIFY exportChanged)
+    Q_PROPERTY(int songBars READ songBars NOTIFY exportChanged)
+    Q_PROPERTY(int loopBars READ loopBars NOTIFY exportChanged)
+    Q_PROPERTY(bool exporting READ exporting NOTIFY exportChanged)
+    Q_PROPERTY(double exportProgress READ exportProgress NOTIFY exportChanged)
+    Q_PROPERTY(QString exportStatus READ exportStatus NOTIFY exportChanged)
+    // After an export: the folder it wrote (empty when it failed or was
+    // cancelled), and what it says.
+    Q_PROPERTY(QString exportedFolder READ exportedFolder NOTIFY exportChanged)
 
 public:
     enum PadState { Idle, Starting, Ready, Playing, Failed };
@@ -180,6 +195,25 @@ public:
 
     tf::Session *session() const { return m_session.get(); }
 
+    QString exportFolder() const { return m_exportFolder; }
+    int sampleRate() const { return int(m_studio->sampleRate()); }
+    QStringList exportParts() const;
+    int songBars() const { return m_session->songBars(); }
+    int loopBars() const;
+    bool exporting() const { return m_exportThread.joinable(); }
+    double exportProgress() const { return m_exportFraction.load(); }
+    QString exportStatus() const;
+    QString exportedFolder() const { return m_exportedFolder; }
+    // The dialog's choices (keys as ExportOptions names them); false when
+    // an export is running already or there is nothing to export.
+    Q_INVOKABLE bool startExport(const QVariantMap &options);
+    Q_INVOKABLE void cancelExport() { m_exportCancel = true; }
+    Q_INVOKABLE void pickExportFolder();
+    Q_INVOKABLE void setExportFolder(const QString &folder);
+    // The dialog opened: the parts and bars it offers are looked at again.
+    Q_INVOKABLE void refreshExport() { emit exportChanged(); }
+    Q_INVOKABLE QString defaultExportPrefix() const;
+
     Q_INVOKABLE void play();     // take the trackpad
     Q_INVOKABLE void giveBack(); // let go of it, sound keeps going
     Q_INVOKABLE bool closeMenu(); // a page's right-click menu, if one is open
@@ -244,6 +278,7 @@ signals:
     void frame();
     void pageChanged();
     void noticeChanged();
+    void exportChanged();
 
 private:
     void tick();
@@ -288,4 +323,12 @@ private:
     std::atomic<bool> m_tickerRun{false};
     std::atomic<bool> m_recorderRun{false};
     QElapsedTimer m_recordClock;
+
+    void finishExport();
+    QString m_exportFolder;
+    std::thread m_exportThread;
+    std::atomic<bool> m_exportCancel{false}, m_exportFinished{false};
+    std::atomic<double> m_exportFraction{0};
+    mutable std::mutex m_exportLock;
+    QString m_exportWhat, m_exportResult, m_exportedFolder, m_exportWrote;
 };

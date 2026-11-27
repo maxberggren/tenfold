@@ -35,6 +35,7 @@ Rectangle {
         "Ctrl S\t" + qsTr("save the song: every loop, the mix, each page's sounds and the Song page, to pick up where you left off (Shift: save as)"),
         "Ctrl O\t" + qsTr("open a saved song in place of what plays now"),
         "Ctrl Shift O\t" + qsTr("pick up the song as it was when tenfold last quit"),
+        "Ctrl E\t" + qsTr("export: a WAV per part (and per drum, stem or layer), the mix and MIDI, all from bar 1 and the same length, for Live or any studio"),
         "Ctrl R\t" + qsTr("record to ~/Music/tenfold"),
         "Ctrl Shift R\t" + qsTr("record the Visual page's picture with the sound, to an .mp4 beside the recording (needs ffmpeg; Shift+click Record does the same)"),
         "Ctrl T\t" + qsTr("the tutorial: a whole track, step by step, from a cleared studio (with loops made, press it twice; Ctrl Return next, Ctrl Shift Return back, Esc leaves)"),

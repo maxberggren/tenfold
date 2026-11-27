@@ -89,7 +89,19 @@ void PortalFilePicker::openFile(const QString &title, std::function<void(const Q
 }
 
 void PortalFilePicker::openSound(const QString &title, std::function<void(const QString &)> done) {
-    ask(QStringLiteral("OpenFile"), title, {}, std::move(done), true);
+    ask(QStringLiteral("OpenFile"), title, {}, std::move(done), Sounds);
+}
+
+void PortalFilePicker::pickFolder(const QString &title, const QString &folder, std::function<void(const QString &)> done) {
+    // The portal's chooser picks a folder with "directory" (version 3 on).
+    QVariantMap options;
+    options.insert(QStringLiteral("directory"), true);
+    if (!folder.isEmpty()) {
+        QByteArray bytes = QFile::encodeName(folder);
+        bytes.append('\0');
+        options.insert(QStringLiteral("current_folder"), bytes);
+    }
+    ask(QStringLiteral("OpenFile"), title, options, std::move(done), Folders);
 }
 
 void PortalFilePicker::saveFile(const QString &title, const QString &name, const QString &folder,
@@ -106,7 +118,8 @@ void PortalFilePicker::saveFile(const QString &title, const QString &name, const
 }
 
 void PortalFilePicker::ask(const QString &method, const QString &title, QVariantMap options,
-                           std::function<void(const QString &)> done, bool sounds) {
+                           std::function<void(const QString &)> done, int kind) {
+    const bool sounds = kind == Sounds;
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (!bus.isConnected()) {
         if (onError)
@@ -135,8 +148,10 @@ void PortalFilePicker::ask(const QString &method, const QString &title, QVariant
                                    : Filters{{QStringLiteral("tenfold songs"), {{0, QStringLiteral("*.tenfold")}}}};
     options.insert(QStringLiteral("handle_token"), token);
     options.insert(QStringLiteral("modal"), true);
-    options.insert(QStringLiteral("filters"), QVariant::fromValue(filters));
-    options.insert(QStringLiteral("current_filter"), QVariant::fromValue(filters.first()));
+    if (kind != Folders) {
+        options.insert(QStringLiteral("filters"), QVariant::fromValue(filters));
+        options.insert(QStringLiteral("current_filter"), QVariant::fromValue(filters.first()));
+    }
 
     QDBusMessage call = QDBusMessage::createMethodCall(kService, kPath, QStringLiteral("org.freedesktop.portal.FileChooser"), method);
     call << QString() << title << options;

@@ -2675,20 +2675,20 @@ bool Session::applyStyle(int index) {
 QString Session::howToPlay(int page) const {
     auto is = [&](const char *name) { return page == pageNamed(QString::fromLatin1(name)); };
     if (is("drums"))
-        return QStringLiteral("Your turn: tap the pads, or press Z X C V on the keyboard");
+        return QStringLiteral("Your turn\nTap the pads, or press Z X C V on the keyboard");
     if (is("bass"))
-        return QStringLiteral("Your turn: touch the pad, or press Z X C V B for bass notes");
+        return QStringLiteral("Your turn\nTouch the pad, or press Z X C V B for bass notes");
     if (is("chords"))
-        return QStringLiteral("Your turn: hold a column, or press A S D F G for chords");
+        return QStringLiteral("Your turn\nHold a column, or press A S D F G for chords");
     if (is("lead"))
-        return QStringLiteral("Your turn: slide a finger, or press A S D F G H. A thumb on the left adds a harmony");
+        return QStringLiteral("Your turn\nSlide a finger, or press A S D F G H. A thumb on the left adds a harmony");
     if (is("arp"))
-        return QStringLiteral("Your turn: hold notes on the left, or hold A D G");
+        return QStringLiteral("Your turn\nHold notes on the left, or hold A D G");
     if (is("atmos"))
-        return QStringLiteral("Your turn: rest fingers on the pad, or press Q W E R for a scene");
+        return QStringLiteral("Your turn\nRest fingers on the pad, or press Q W E R for a scene");
     if (is("fx"))
-        return QStringLiteral("Your turn: touch the field for a riser, or Z X C V for hits");
-    return QStringLiteral("Your turn: click or tap the pad to play");
+        return QStringLiteral("Your turn\nTouch the field for a riser, or Z X C V for hits");
+    return QStringLiteral("Your turn\nClick or tap the pad to play");
 }
 
 int Session::partsWithLoops() const {
@@ -2730,14 +2730,14 @@ QString Session::nextStep() const {
         if (m_page != arrangePage())
             return {};
         if (partsWithLoops() == 0)
-            return QStringLiteral("Make a few loops first: start on 1 DRUMS");
+            return QStringLiteral("Make a few loops first\nStart on 1 DRUMS");
         if (songBars() == 0)
-            return QStringLiteral("Press MAKE A TRACK: your loops become a whole song");
-        return QStringLiteral("Your track! Make it again for another, or save it with FILE");
+            return QStringLiteral("Make a track\nPress MAKE A TRACK: your loops become a whole song");
+        return QStringLiteral("Your track!\nMake it again for another, or save it with FILE");
     }
     switch (loopState()) {
-    case LoopState::Waiting: return QStringLiteral("Keep playing: the loop starts on the bar line");
-    case LoopState::Make: return QStringLiteral("Like it? Press LOOP IT to keep it going round");
+    case LoopState::Waiting: return QStringLiteral("Keep playing\nThe loop starts on the bar line");
+    case LoopState::Make: return QStringLiteral("Like it?\nPress LOOP IT to keep it going round");
     case LoopState::Layer: {
         const int next = suggestedPage();
         const int parts = partsWithLoops();
@@ -2747,23 +2747,23 @@ QString Session::nextStep() const {
         case Discovery::Sounds: {
             const int count = int(p.spec.control->soundChoices().size());
             return m_level == 0
-                       ? QStringLiteral("It loops! %1 has %2 sounds: click SOUND under the pad to hear them all")
+                       ? QStringLiteral("It loops!\n%1 has %2 sounds: click SOUND under the pad to hear them all")
                              .arg(pageName(m_page).toUpper()).arg(count)
-                       : QStringLiteral("It loops! %1 has %2 sounds: click +MORE under the pad to hear them all")
+                       : QStringLiteral("It loops!\n%1 has %2 sounds: click +MORE under the pad to hear them all")
                              .arg(pageName(m_page).toUpper()).arg(count);
         }
         case Discovery::Parts:
-            return QStringLiteral("A band forming! There are %1 instruments: click + MORE at the top to see them all")
+            return QStringLiteral("A band forming!\nThere are %1 instruments: click + MORE at the top to see them all")
                 .arg(m_partCount);
         default: break;
         }
         if (next >= 0 && parts < 4)
-            return QStringLiteral("It loops! Now add %1: press %2 or click its tab")
+            return QStringLiteral("It loops!\nNow add %1: press %2 or click its tab")
                 .arg(pageName(next).toUpper(), pageKey(next));
         if (next >= 0)
-            return QStringLiteral("A band! Make it a track on 0 SONG, or add %1 next: press %2")
+            return QStringLiteral("A band!\nMake it a track on 0 SONG, or add %1 next: press %2")
                 .arg(pageName(next).toUpper(), pageKey(next));
-        return QStringLiteral("Every part loops! Open 0 SONG and make it a track");
+        return QStringLiteral("Every part loops!\nOpen 0 SONG and make it a track");
     }
     default: break;
     }

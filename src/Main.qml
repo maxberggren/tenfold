@@ -512,85 +512,130 @@ ApplicationWindow {
                             visible: !panel.tutorial
                             spacing: win.readoutsCompact ? 10 : 12
 
-                            // Below the Studio level: what to do next, in place of the readouts.
-                            PanelBox {
+                            // NEXT, as the tutorial's card: a header in the page's colour (✕
+                            // there: no more steps, every control out for good), the step's
+                            // title, what to do, and a line to try. A click on it does what it
+                            // says: loop, hear a part's sounds, open the next part, see every
+                            // instrument, make the track, or take the trackpad.
+                            Item {
+                                id: nextBox
                                 visible: win.lv < 2
                                 Layout.fillWidth: true
-                                // Room for three lines from the start: a longer step never
+                                // Room for the longest step from the start: a longer one never
                                 // moves the buttons under it.
-                                Layout.preferredHeight: Math.max(nextText.implicitHeight, 3 * nextText.font.pixelSize * 1.4) + 34
-                                title: qsTr("Next")
-                                color: win.pageColor
-                                // A click does what it says: loop, open the part it names,
-                                // the Song page, make the track, or take the trackpad.
-                                readonly property bool acts: !win.soundsVisible && (backend.nextClickable || nextText.padTip)
+                                Layout.preferredHeight: Math.max(nextCol.implicitHeight + 3 + 26 + 14, 132)
+                                readonly property color tint: win.pageColor
+                                readonly property color paper: "#F4E9D4"
+                                // Once a couple of loops go round: the trackpad, if not taken
+                                // yet, on an instrument's page, where fingers would play it.
+                                readonly property bool padTip: !win.playing && backend.partLoops.length >= 2
+                                                               && backend.padState !== Backend.Starting
+                                                               && backend.page < backend.arrangePage
+                                readonly property bool failed: backend.padState === Backend.Failed
+                                readonly property bool acts: !win.soundsVisible && !failed && (backend.nextClickable || padTip)
+                                readonly property string title: failed ? qsTr("The trackpad")
+                                                               : win.soundsVisible ? qsTr("Sounds")
+                                                               : backend.nextTitle
+                                readonly property string body: failed ? qsTr("It can't be taken: %1").arg(backend.error)
+                                                              : win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.")
+                                                              : backend.nextBody
                                 Rectangle {
                                     anchors.fill: parent
-                                    anchors.margins: -6
-                                    visible: nextBox.acts && nextMouse.containsMouse
-                                    color: Qt.rgba(win.pageColor.r, win.pageColor.g, win.pageColor.b, 0.16)
+                                    color: nextMouse.containsMouse && nextBox.acts
+                                           ? Qt.rgba(nextBox.tint.r, nextBox.tint.g, nextBox.tint.b, 0.12) : "#000000"
+                                    border.color: nextBox.tint
+                                    border.width: 3
                                 }
                                 MouseArea {
                                     id: nextMouse
                                     anchors.fill: parent
-                                    anchors.margins: -10
                                     hoverEnabled: true
                                     enabled: nextBox.acts
                                     cursorShape: nextBox.acts ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: if (!backend.doNextStep() && nextText.padTip) backend.togglePlay()
+                                    onClicked: if (!backend.doNextStep() && nextBox.padTip) backend.togglePlay()
                                 }
-                                // ✕ cut into the box's top line at the right, as NEXT is at the
-                                // left: no more steps, every control out now (for good, as an
-                                // unfolded control does). Drawn in the console's lines.
+                                // The header, as the tutorial's: NEXT, and the ✕.
                                 Rectangle {
-                                    id: nextClose
-                                    z: 2
-                                    // On the line: the box's frame runs through the middle of
-                                    // its title's height, here above the content's top.
-                                    x: parent.width + 10 - 14 - width
-                                    y: -parent.y
-                                    width: 27
-                                    height: 17
-                                    color: closeMouse.containsMouse ? win.pageColor : "#000000"
-                                    Repeater {
-                                        model: [45, -45]
-                                        delegate: Rectangle {
-                                            required property int modelData
-                                            anchors.centerIn: parent
-                                            width: 12
-                                            height: 2
-                                            rotation: modelData
-                                            antialiasing: true
-                                            color: closeMouse.containsMouse ? "#0a0806" : win.pageColor
+                                    id: nextHead
+                                    x: 3; y: 3
+                                    width: parent.width - 6
+                                    height: 26
+                                    color: nextBox.tint
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        x: 10
+                                        text: qsTr("Next")
+                                        color: "#0a0806"
+                                        font.family: win.mono
+                                        font.pixelSize: 15
+                                        font.weight: Font.Bold
+                                        font.letterSpacing: 1.5
+                                        font.capitalization: Font.AllUppercase
+                                    }
+                                    Rectangle {
+                                        id: nextClose
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.rightMargin: 4
+                                        width: 22; height: 20
+                                        color: closeMouse.containsMouse ? "#0a0806" : "transparent"
+                                        Repeater {
+                                            model: [45, -45]
+                                            delegate: Rectangle {
+                                                required property int modelData
+                                                anchors.centerIn: parent
+                                                width: 13; height: 2
+                                                rotation: modelData
+                                                antialiasing: true
+                                                color: closeMouse.containsMouse ? nextBox.tint : "#0a0806"
+                                            }
+                                        }
+                                        MouseArea {
+                                            id: closeMouse
+                                            anchors.fill: parent
+                                            anchors.margins: -4
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: backend.uiLevel = 2
                                         }
                                     }
-                                    MouseArea {
-                                        id: closeMouse
-                                        anchors.fill: parent
-                                        anchors.margins: -5
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: backend.uiLevel = 2
-                                    }
                                 }
-                                Text {
-                                    id: nextText
-                                    width: parent.width
-                                    // Once a couple of loops go round: the trackpad, if not taken yet.
-                                    // Only on an instrument's page, where fingers would play it.
-                                    readonly property bool padTip: !win.playing && backend.partLoops.length >= 2
-                                                                   && backend.padState !== Backend.Starting
-                                                                   && backend.page < backend.arrangePage
-                                    // The trackpad couldn't be taken: why, where it can be read
-                                    // (the small button has no room for it).
-                                    text: backend.padState === Backend.Failed ? qsTr("The trackpad can't be taken: %1").arg(backend.error)
-                                          : win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.")
-                                          : backend.nextStep + (padTip ? "\n" + qsTr("Try PLAY WITH THE TRACKPAD: every finger plays.") : "")
-                                    color: win.pageColor
-                                    font.family: win.mono
-                                    font.pixelSize: 15
-                                    font.weight: Font.DemiBold
-                                    wrapMode: Text.Wrap
+                                ColumnLayout {
+                                    id: nextCol
+                                    x: 12
+                                    y: nextHead.y + nextHead.height + 8
+                                    width: parent.width - 24
+                                    spacing: 4
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: nextBox.title
+                                        color: nextBox.tint
+                                        font.family: win.mono
+                                        font.pixelSize: 19
+                                        font.weight: Font.Black
+                                        font.capitalization: Font.AllUppercase
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: nextBox.body
+                                        color: nextBox.paper
+                                        font.family: win.mono
+                                        font.pixelSize: 14
+                                        lineHeight: 1.1
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: 4
+                                        visible: nextBox.padTip && !win.soundsVisible && !nextBox.failed
+                                        text: "<b>" + qsTr("Try") + "</b>  " + qsTr("PLAY WITH THE TRACKPAD: every finger plays.")
+                                        textFormat: Text.StyledText
+                                        color: "#2EE6FF"
+                                        font.family: win.mono
+                                        font.pixelSize: 13
+                                        wrapMode: Text.Wrap
+                                    }
                                 }
                             }
 
@@ -758,7 +803,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     // At Play the hero: what the window has left over, within reason.
                                     Layout.minimumHeight: win.lv === 0 && win.room >= 560 ? 64 : 44; Layout.maximumHeight: win.lv === 0 ? 260 : 120
-                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 430 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0)
+                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 480 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0)
                                                                                                    - (newLoopButton.visible ? buttons.bh + 8 : 0))) : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
@@ -837,7 +882,9 @@ ApplicationWindow {
                                 PanelBox {
                                     id: yourLoops
                                     readonly property var parts: backend.partLoops
-                                    visible: win.lv < 2 && !backend.tutorialActive && parts.length > 0
+                                    // (A short window leaves it out: the slots under the pad show
+                                    // the loops too.)
+                                    visible: win.lv < 2 && !backend.tutorialActive && parts.length > 0 && win.room >= 520
                                     Layout.columnSpan: buttons.columns
                                     Layout.fillWidth: true
                                     Layout.topMargin: 6

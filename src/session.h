@@ -296,7 +296,8 @@ public:
     std::vector<LoopSummary> loopSummary() const;
     void toggleLoop(int page);
 
-    // One sentence for a newcomer: what to do next on the showing page.
+    // A newcomer's next step on the showing page: a short title, a newline,
+    // then what to do ("It loops!\nNow add BASS: press 2 or click its tab").
     QString nextStep() const;
     // What a click on that sentence does: loop, open a page, write the
     // track, or nothing (it only says how to play).

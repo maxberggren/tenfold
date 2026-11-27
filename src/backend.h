@@ -144,6 +144,9 @@ class Backend : public QObject {
     // The LOOP button (Session::LoopState) and the next step for a newcomer.
     Q_PROPERTY(int loopState READ loopState NOTIFY changed)
     Q_PROPERTY(QString nextStep READ nextStep NOTIFY changed)
+    // The step's title and what to do, as the card shows them.
+    Q_PROPERTY(QString nextTitle READ nextTitle NOTIFY changed)
+    Q_PROPERTY(QString nextBody READ nextBody NOTIFY changed)
     // The NEXT card does what it says when clicked (Session::nextAction).
     Q_PROPERTY(bool nextClickable READ nextClickable NOTIFY changed)
     // What a NEXT click would do (Session::NextAction::Kind), for what it points at.
@@ -329,6 +332,8 @@ public:
     Q_INVOKABLE void chooseSound(int index, bool hear = true) { m_session->chooseSound(index, hear); }
     int loopState() const { return int(m_session->loopState()); }
     QString nextStep() const { return tf::console::keyNames(m_session->nextStep()); }
+    QString nextTitle() const { return nextStep().section(QLatin1Char('\n'), 0, 0); }
+    QString nextBody() const { return nextStep().section(QLatin1Char('\n'), 1); }
     Q_INVOKABLE void pressLoop(bool fresh = false) { m_session->pressLoop(fresh); }
     bool nextClickable() const { return m_session->nextAction().kind != tf::Session::NextAction::None; }
     int nextKind() const { return int(m_session->nextAction().kind); }

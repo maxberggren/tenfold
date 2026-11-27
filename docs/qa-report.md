@@ -2,6 +2,31 @@
 
 I tested the app at `6f14619` (master as this branch began), on Linux with the offscreen platform. The dev test tier passed: 210 tests in 25 s.
 
+## Status after the fixes
+
+Each bug below is fixed on this branch, with a regression test, unless noted otherwise.
+
+| Bug | Fix | Test |
+|---|---|---|
+| 1 ⏎ labels | The chips say ⇧⏎ / F10, and the help texts match | `FrameworkTests::returnKeysDoWhatThePagesSay` (also scans the sources for a bare ⏎/↵) |
+| 2 Song page Shift+Space | Shift+Space no longer undoes the song | `ArrangeTests::shiftSpaceLeavesTheSongAndSpaceNeedsALoop` |
+| 3 pause forgets loops | A pause keeps what it remembered of parts that aren't playing | `FrameworkTests::aLoopMadeWhilePausedKeepsThePausedLoops` |
+| 4 paused song opens silent | The song file keeps each part's `paused` slot and opens paused; Ctrl+P plays it | `FrameworkTests::aSongSavedPausedOpensReadyToPlay` |
+| 5 3-bar Shift+Space loop | A new loop takes only what was played since `m_loopSince`; loops are 1, 2, 4, 8 or 16 bars | `FrameworkTests::aNewLoopTakesOnlyThePlayingSinceTheLoop` |
+| 6 FX help | Space and Shift+Space described the right way round | `RisersTests::spaceLayersAndShiftSpaceMakesANewLoop` |
+| 7 Sampler slot keys | F1–F8, Shift+F1–F8 and Backspace now work | `SamplerTests::theSlotKeysStopLaunchAndClear` |
+| 8 Lead F11 | Removed from the help (the window takes F11 for full screen) | text only |
+| 9 bass LOOP marker | Moved to the foot of the column | screenshot |
+| 10 start over | The cleared song is kept in `before-start-over.tenfold`; the notice names Ctrl+Shift+O, which opens the newer kept song | `FrameworkTests::startingOverKeepsTheOldSong` |
+| 11 panel scroll bar | Readouts go compact while the pad isn't taken; the column keeps clear of the bar's width | screenshots at 1320×900 / 1320×800 |
+| 12 band at the minimum size | **Partly fixed.** Text shrinks to ¾ before eliding (LATCH, FOLLOW… read at 800×500). At 640×440 the chips are still elided. The minimum size stays, because tiled window managers ignore it (see the "any size" notes); more needs a band redesign. | screenshots |
+| 13 empty song | Space with no loops records nothing and says so; "1 bar" | in the bug 2 test |
+| 14 stale "Paused" | Gives way to "Playing" once something plays | in the bug 4 test |
+| 15 tempo error | **Not a bug.** My probe used `"bpm"`; the field is `"tempo"`. Out-of-range tempos open clamped. | — |
+| 16 Shift accents | `console::unshifted` on press and release in Drums and Lead | `DrumsTests::shiftedPunctuationPlaysAndLetsGo` |
+| 17 Bass `\` chip | No key shown for sounds past P | text only |
+| 18 export of nothing | Fails, says why and removes its empty folder; a paused song exports its loops | `ExportTests::anExportThatWritesNothingFails` |
+
 ## How I tested
 
 - **Driving the real session headlessly.** I wrote a throwaway QtTest suite with about 70 probes. It uses `testkit::play`, `watch` and `reopen`: scripted taps, keys, voice and `drop` lines go through the real `Session` and `Studio`. The suite then prints the clips, the notice and the pause state. The suite is not committed; a copy is in the session's shared notes folder as `qa_probe_tests.cpp`. To run it, add it to `tests/tenfold_tests.pro` and run `TENFOLD_TESTS=QaProbeTests,QaProbe2Tests,QaProbe3Tests build/tests/tenfold_tests`.

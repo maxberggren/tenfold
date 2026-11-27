@@ -653,6 +653,20 @@ public:
     // --- drawing -------------------------------------------------------------
 
     void paint(QPainter &p, const PaintContext &pc) override;
+    // The browser's picture of a kit: the page as it draws that kit (its
+    // pads, or the one instrument it is), the kit put back after.
+    bool paintsSounds() const override { return true; }
+    bool paintSound(QPainter &p, const PaintContext &pc, int index) override {
+        if (index < 0 || index >= KitCount)
+            return false;
+        const int kit = m_kit;
+        const console::Hotspots spots = m_spots;
+        m_kit = index;
+        paint(p, pc);
+        m_kit = kit;
+        m_spots = spots;
+        return true;
+    }
     void paintKits(QPainter &p, const PaintContext &pc, const QRectF &row, int first, int last);
 
     // The sound browser: the kits, and a beat on the bottom row to hear one.

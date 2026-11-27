@@ -604,6 +604,14 @@ public:
         bool down;
     };
     virtual std::vector<AuditionStep> audition() const { return {}; }
+    // A picture of the page with that sound chosen, for its tile in the
+    // browser, painted into pc.pad (a small one) without changing what is
+    // chosen. False: the page has no picture of its sounds.
+    virtual bool paintsSounds() const { return false; }
+    virtual bool paintSound(QPainter &p, const PaintContext &pc, int index) {
+        (void)p, (void)pc, (void)index;
+        return false;
+    }
     // The part of the pad that plays, where the rest fine-tunes (a rail of
     // rhythms, a bank of shapers), in pad units (y up), with a few words on
     // what the rest holds. Below the Studio level the session zooms the pad

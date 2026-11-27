@@ -3011,3 +3011,40 @@ bool Session::takeAllPartsAsked() {
 }
 
 }
+
+namespace tf {
+
+QImage Session::soundPicture(int index, QSize size) {
+    std::lock_guard lock(m_lock);
+    Page &p = *m_pages[size_t(m_page)];
+    if (p.part < 0 || size.isEmpty())
+        return {};
+    QImage image(size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::black);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    PaintContext pc;
+    // The pad alone fills the picture: its frame's legend and the band
+    // under it are left outside.
+    pc.pad = QRectF(2, 2, size.width() - 4, size.height() - 4);
+    pc.studio = &m_view;
+    pc.view = &m_view.parts[p.part];
+    pc.color = p.spec.color;
+    pc.time = now();
+    pc.beat = context(m_page).beatAt(pc.time);
+    pc.scale = float(pc.pad.height() / 600.0);
+    pc.level = 0;
+    painter.setClipRect(pc.pad.adjusted(-1, -1, 1, 1));
+    // Its clickable places are the page's at its real size, not these.
+    const bool drawn = p.spec.control->paintSound(painter, pc, index);
+    painter.end();
+    return drawn ? image : QImage();
+}
+
+bool Session::hasSoundPictures() const {
+    std::lock_guard lock(m_lock);
+    const Page &p = *m_pages[size_t(m_page)];
+    return p.part >= 0 && p.spec.control->paintsSounds();
+}
+
+}

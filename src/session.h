@@ -40,6 +40,7 @@
 // mix, save and open songs, quit). The pad is taken with the window's Take
 // the trackpad button.
 
+#include <QImage>
 #include <QJsonObject>
 #include <QPointF>
 #include <QRectF>
@@ -247,6 +248,10 @@ public:
     int soundChoice() const;
     void chooseSound(int index, bool hear = true);
     bool auditioning() const;
+    // The browser's pictures: the showing page drawn with that sound, at
+    // that size (empty where the page has none), and whether it has them.
+    QImage soundPicture(int index, QSize size);
+    bool hasSoundPictures() const;
 
     // The LOOP button: what Space would do on the showing page now.
     //   None     a page that makes no loops (the Song page, the picture)

@@ -828,3 +828,24 @@ QVariantList Backend::partLoops() const {
     }
     return out;
 }
+
+QImage SoundPictureProvider::requestImage(const QString &id, QSize *size, const QSize &requested) {
+    // <page>/<index>/<w>x<h>: drawn for the page showing (the browser shows
+    // only its own page's sounds).
+    const QStringList parts = id.split(QLatin1Char('/'));
+    const int index = parts.value(1).toInt();
+    QSize want(360, 200);
+    const QStringList wh = parts.value(2).split(QLatin1Char('x'));
+    if (wh.size() == 2 && wh[0].toInt() > 0 && wh[1].toInt() > 0)
+        want = QSize(wh[0].toInt(), wh[1].toInt());
+    if (requested.isValid() && !requested.isEmpty())
+        want = requested;
+    // Drawn three times the size and scaled down: a miniature of the page,
+    // its words and lines in proportion rather than crowding a small pad.
+    QImage image = m_backend->session()->soundPicture(index, want * 3);
+    if (!image.isNull())
+        image = image.scaled(want, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    if (size)
+        *size = image.size();
+    return image;
+}

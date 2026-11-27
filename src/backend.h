@@ -31,6 +31,18 @@ class VideoRecorder;
 // The console's arrows and key symbols for the window's text: QML asks for
 // "image://icon/<hex code point>/<rrggbb>" and gets the same line art the
 // pages draw (console::drawIcon).
+// The sound browser's pictures: "image://sound/<page>/<index>/<w>x<h>"
+// (the page and size there so a cached one is the right one).
+class SoundPictureProvider : public QQuickImageProvider {
+public:
+    explicit SoundPictureProvider(class Backend *backend)
+        : QQuickImageProvider(QQuickImageProvider::Image), m_backend(backend) {}
+    QImage requestImage(const QString &id, QSize *size, const QSize &requested) override;
+
+private:
+    class Backend *m_backend;
+};
+
 class IconProvider : public QQuickImageProvider {
 public:
     IconProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
@@ -125,6 +137,8 @@ class Backend : public QObject {
     // The sound browser: the showing page's sounds, what each is, the one chosen.
     Q_PROPERTY(QStringList soundNames READ soundNames NOTIFY pageChanged)
     Q_PROPERTY(QStringList soundWhats READ soundWhats NOTIFY pageChanged)
+    // The showing page draws a picture of each sound for its tile.
+    Q_PROPERTY(bool soundPictures READ soundPictures NOTIFY pageChanged)
     Q_PROPERTY(int soundIndex READ soundIndex NOTIFY changed)
     Q_PROPERTY(bool auditioning READ auditioning NOTIFY changed)
     // The LOOP button (Session::LoopState) and the next step for a newcomer.
@@ -305,6 +319,7 @@ public:
     QStringList soundNames() const;
     QStringList soundWhats() const;
     int soundIndex() const { return m_session->soundChoice(); }
+    bool soundPictures() const { return m_session->hasSoundPictures(); }
     bool auditioning() const { return m_session->auditioning(); }
     Q_INVOKABLE void chooseSound(int index, bool hear = true) { m_session->chooseSound(index, hear); }
     int loopState() const { return int(m_session->loopState()); }

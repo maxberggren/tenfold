@@ -95,7 +95,9 @@ Rectangle {
             Layout.fillHeight: true
             // As many across as keep a tile about 180 px wide, the rows
             // sharing the height.
-            columns: Math.max(2, Math.min(6, Math.floor((width + columnSpacing) / (180 + columnSpacing))))
+            // Tiles with a picture want more room across.
+            readonly property int tileWidth: backend.soundPictures ? 230 : 180
+            columns: Math.max(2, Math.min(6, Math.floor((width + columnSpacing) / (tileWidth + columnSpacing))))
             readonly property int rows: Math.ceil(browser.count / columns)
             columnSpacing: 8
             rowSpacing: 8
@@ -110,7 +112,7 @@ Rectangle {
                     Layout.fillHeight: true
                     Layout.preferredWidth: 180
                     Layout.minimumHeight: 34
-                    Layout.maximumHeight: 96
+                    Layout.maximumHeight: backend.soundPictures ? 140 : 96
 
                     Rectangle {
                         anchors.fill: parent
@@ -132,8 +134,35 @@ Rectangle {
                             NumberAnimation { from: 0; to: tile.width; duration: 900 }
                         }
                     }
+                    // The page drawn with this sound (the Drums page: the kit's pads,
+                    // or the one instrument it is), at the tile's right.
+                    Rectangle {
+                        id: picture
+                        visible: backend.soundPictures
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.margins: 4
+                        width: visible ? Math.min(parent.width * 0.5, height * 1.6) : 0
+                        color: "#000000"
+                        Image {
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            readonly property int w: Math.max(8, Math.round(width))
+                            readonly property int h: Math.max(8, Math.round(height))
+                            source: picture.visible && w > 8 && h > 8
+                                    ? "image://sound/" + backend.page + "/" + tile.index + "/" + w + "x" + h : ""
+                            sourceSize: Qt.size(w, h)
+                            asynchronous: false
+                            cache: true
+                            smooth: true
+                        }
+                    }
                     Column {
-                        anchors.fill: parent
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: picture.visible ? picture.left : parent.right
                         anchors.margins: 8
                         spacing: 2
                         Text {

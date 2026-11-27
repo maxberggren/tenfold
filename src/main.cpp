@@ -146,6 +146,7 @@ static int screenshot(int argc, char **argv) {
     engine.rootContext()->setContextProperty("visual", &visual);
     backend.setVisualizer(&visual, &engine);
     engine.addImageProvider(QStringLiteral("icon"), new IconProvider);
+    engine.addImageProvider(QStringLiteral("sound"), new SoundPictureProvider(&backend));
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
         return 1;
@@ -341,6 +342,7 @@ int main(int argc, char *argv[]) {
     engine.rootContext()->setContextProperty("visual", &visual);
     backend.setVisualizer(&visual, &engine);
     engine.addImageProvider(QStringLiteral("icon"), new IconProvider);
+    engine.addImageProvider(QStringLiteral("sound"), new SoundPictureProvider(&backend));
     engine.load(QUrl("qrc:/Main.qml"));
     if (engine.rootObjects().isEmpty())
         return 1;

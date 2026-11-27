@@ -3715,6 +3715,11 @@ public:
         return {0.0f, 0.0f, kSplit, kChipsTop, QStringLiteral("pattern, rate, rhythm, range, tone, echo")};
     }
     bool soundsOnPad() const override { return true; }
+    // The chips along the bottom (sounds, follow, latch) and the patterns
+    // along the top of the notes (the six pads on the right are dragged).
+    bool buttonAt(float x, float y) const override {
+        return (x < kSplit && (y <= kChipsLow || y >= kChipsTop));
+    }
 
     // The sound browser: the arp sounds, and a held chord to hear one run.
     std::vector<SoundChoice> soundChoices() const override {

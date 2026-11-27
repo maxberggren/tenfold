@@ -499,6 +499,7 @@ public:
     }
 
     void paint(QPainter &p, const PaintContext &pc) override;
+    bool buttonAt(float x, float y) const override { (void)x; return y >= kRail; } // the rhythms
     PlayArea playArea() const override {
         return {0.0f, 0.0f, 1.0f, kRail, QStringLiteral("the rhythm the chords play in")};
     }

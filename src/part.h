@@ -615,6 +615,10 @@ public:
         bool zooms() const { return x0 > 0 || y0 > 0 || x1 < 1 || y1 < 1; }
     };
     virtual PlayArea playArea() const { return {}; }
+    // A button drawn on the pad itself, at this point (pad units, y up):
+    // something a tap presses rather than plays (a sound chip, a rhythm,
+    // a clip). The mouse turns into a hand over it.
+    virtual bool buttonAt(float x, float y) const { (void)x, (void)y; return false; }
     // The page draws its own sound chips on the pad (the Arp): the session's
     // level-0 SOUND chip under the pad would show them twice.
     virtual bool soundsOnPad() const { return false; }

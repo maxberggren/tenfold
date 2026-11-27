@@ -2553,6 +2553,8 @@ private:
         }
     }
 
+    // The Song page's pad is all things to tap: clips, scenes, sections, moves.
+    bool buttonAt(float x, float y) const override { (void)x, (void)y; return true; }
     int songBars() const override { return m_song.length(); }
     void playSong(int bar, ControlContext &ctx) override {
         if (!m_song.empty())

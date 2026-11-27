@@ -2889,6 +2889,18 @@ namespace tf {
 
 bool Session::clickableAt(QPointF at) const {
     std::lock_guard lock(m_lock);
+    // On the pad: a button the page drew there (in its own units, through
+    // the zoom where there is one).
+    if (!m_padRect.isEmpty() && m_padRect.contains(at)) {
+        const Page &p = *m_pages[size_t(m_page)];
+        float x = float((at.x() - m_padRect.left()) / m_padRect.width());
+        float y = float((m_padRect.bottom() - at.y()) / m_padRect.height());
+        if (const PartControl::PlayArea z = zoomArea(); z.zooms()) {
+            x = z.x0 + x * (z.x1 - z.x0);
+            y = z.y0 + y * (z.y1 - z.y0);
+        }
+        return p.spec.control->buttonAt(x, y);
+    }
     for (const QRectF &r : {m_soundChip, m_soundNext, m_studioTag, foldedRow(m_padRect)})
         if (!r.isEmpty() && r.contains(at))
             return true;

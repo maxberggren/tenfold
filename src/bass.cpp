@@ -705,6 +705,7 @@ public:
     // in it, a filter swept or grit turned up as the hand did it.
     bool layersKeepKnobMoves() const override { return true; }
 
+    bool buttonAt(float x, float y) const override { (void)x; return y >= kField; } // the rail
     PlayArea playArea() const override {
         return {0.0f, 0.0f, 1.0f, kField, QStringLiteral("octave, roll, wobble, filter, grit")};
     }

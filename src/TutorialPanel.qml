@@ -126,12 +126,6 @@ Item {
                     Layout.preferredHeight: 40
                     visible: !panel.onPage
                     color: panel.tint
-                    SequentialAnimation on opacity {
-                        running: !panel.onPage
-                        loops: Animation.Infinite
-                        NumberAnimation { to: 0.55; duration: 450 }
-                        NumberAnimation { to: 1; duration: 450 }
-                    }
                     Text {
                         anchors.centerIn: parent
                         text: qsTr("Press %1 · %2").arg(panel.pageKey).arg(panel.pageName)

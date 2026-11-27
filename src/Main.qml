@@ -285,12 +285,6 @@ ApplicationWindow {
                                 color: "transparent"
                                 border.color: "#FFFFFF"
                                 border.width: 3
-                                SequentialAnimation on opacity {
-                                    running: tab.called
-                                    loops: Animation.Infinite
-                                    NumberAnimation { to: 0.15; duration: 450 }
-                                    NumberAnimation { to: 1; duration: 450 }
-                                }
                             }
                             Text {
                                 x: 8
@@ -468,15 +462,6 @@ ApplicationWindow {
                                         id: levelChip
                                         required property int index
                                         required property string modelData
-                                        // "▸ IN STUDIO: …" on a pad was clicked: STUDIO says here I am.
-                                        property int nudges: backend.studioNudge
-                                        onNudgesChanged: if (index === 2 && nudges > 0) nudge.restart()
-                                        SequentialAnimation {
-                                            id: nudge
-                                            loops: 4
-                                            ColorAnimation { target: levelChip; property: "color"; to: win.amber; duration: 220 }
-                                            ColorAnimation { target: levelChip; property: "color"; to: "transparent"; duration: 220 }
-                                        }
                                         width: parent.width
                                         height: win.readoutsCompact ? 22 : 26
                                         color: win.lv === index ? win.amber : levelMouse.containsMouse ? Qt.rgba(1, 0.69, 0, 0.18) : "transparent"

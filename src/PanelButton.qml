@@ -34,13 +34,8 @@ Item {
             opacity: (index === 0 ? 0.7 : 0.35) * (0.35 + 0.65 * button.breath)
         }
     }
-    property real breath: 1
-    SequentialAnimation on breath {
-        running: button.beckon
-        loops: Animation.Infinite
-        NumberAnimation { to: 0.25; duration: 900; easing.type: Easing.InOutSine }
-        NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine }
-    }
+    // Steady: a beckoning button is lit and ringed, without breathing.
+    readonly property real breath: 1
 
     Rectangle {
         visible: button.hint
@@ -49,12 +44,6 @@ Item {
         color: "transparent"
         border.color: "#FFFFFF"
         border.width: 3
-        SequentialAnimation on opacity {
-            running: button.hint
-            loops: Animation.Infinite
-            NumberAnimation { to: 0.2; duration: 500 }
-            NumberAnimation { to: 1; duration: 500 }
-        }
     }
 
     Rectangle {

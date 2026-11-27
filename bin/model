@@ -1,45 +1,79 @@
 #!/bin/sh
-# Puts the stem separator's weights at build/htdemucs.safetensors, where
-# the packages take them from: htdemucs, Demucs's Hybrid Transformer model
-# (Meta, MIT licence, extras/LICENSE-htdemucs), 84 MB, as Hugging Face
-# keeps it at a fixed commit. Taken from Hugging Face's own cache when it is
-# there, fetched otherwise, and checked against its SHA-256 either way.
+# Puts the Sampler's two networks' weights in build/, where the program and
+# the packages take them from, each in tenfold's compact form, which the
+# repository carries in extras/:
 #
-#   bin/model          fetch it if build/ doesn't have it yet
+#   htdemucs.tfq  the stem separator: htdemucs, Demucs's Hybrid Transformer
+#                 model (Meta, MIT licence, extras/LICENSE-htdemucs), 40 MB
+#                 (see src/stems.cpp)
+#   apollo.tfq    the restorer: Apollo (Kai Li and Yi Luo, CC BY-SA 4.0,
+#                 extras/LICENSE-apollo), 15 MB (see src/restore.cpp)
 #
-# bin/build runs this. Without a network the build still finishes, and the
-# Sampler says the model isn't there when S is pressed.
+#   bin/model          copy them from extras/ into build/
+#   bin/model --remake make them again in extras/ from the published files
+#                      (84 and 66 MB) and extras/*-bits.txt, after changing
+#                      the bits
+#
+# --remake takes each published file as Hugging Face keeps it at a fixed
+# commit: from Hugging Face's own cache when it is there, fetched otherwise,
+# checked against its SHA-256 either way, and compacted by the tenfold just
+# built (`tenfold stem-model`, `tenfold restore-model`). bin/build runs the
+# plain form.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-revision=cbc8a9b1a87023b7fd74e7b3412e6321c0eab003
-file=955717e8.safetensors
-sum=d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd
-url="https://huggingface.co/adefossez/HTDemucs/resolve/$revision/$file"
-dest="$ROOT/build/htdemucs.safetensors"
+mkdir -p "$ROOT/build"
+
+if [ "${1:-}" != "--remake" ]; then
+    for f in htdemucs.tfq apollo.tfq; do
+        cmp -s "$ROOT/extras/$f" "$ROOT/build/$f" 2>/dev/null || cp "$ROOT/extras/$f" "$ROOT/build/$f"
+    done
+    exit 0
+fi
 
 sha256() {
     if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
-good() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$sum" ]; }
 
-good "$dest" && exit 0
-mkdir -p "$ROOT/build"
-cached="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--adefossez--HTDemucs/snapshots/$revision/$file"
-if good "$cached"; then
-    cp "$cached" "$dest.part"
-else
-    echo "Fetching the stem model (84 MB) from Hugging Face"
-    if ! curl -fL --retry 3 --silent --show-error -o "$dest.part" "$url"; then
-        rm -f "$dest.part"
-        echo "bin/model: couldn't fetch $url; the Sampler will have no stems" >&2
-        exit 1
-    fi
-fi
-if ! good "$dest.part"; then
-    rm -f "$dest.part"
-    echo "bin/model: the stem model isn't the one expected (SHA-256 $sum)" >&2
+tenfold="$ROOT/build/tenfold"
+[ -x "$tenfold" ] || tenfold="$ROOT/build/tenfold.app/Contents/MacOS/tenfold"
+if [ ! -x "$tenfold" ]; then
+    echo "bin/model: build tenfold first (bin/build), it compacts the models" >&2
     exit 1
 fi
-mv "$dest.part" "$dest"
-echo "Stem model at $dest"
+
+# remake <what> <repo> <revision> <file> <sha256> <size> <published> <command> <name>
+remake() {
+    what=$1 repo=$2 revision=$3 file=$4 sum=$5 size=$6 published="$ROOT/build/$7" command=$8 name=$9
+    good() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$sum" ]; }
+    if ! good "$published"; then
+        cached="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--$(printf '%s' "$repo" | sed 's|/|--|')/snapshots/$revision/$file"
+        if good "$cached"; then
+            cp "$cached" "$published.part"
+        else
+            url="https://huggingface.co/$repo/resolve/$revision/$file"
+            echo "Fetching the published $what ($size) from Hugging Face"
+            if ! curl -fL --retry 3 --silent --show-error -o "$published.part" "$url"; then
+                rm -f "$published.part"
+                echo "bin/model: couldn't fetch $url" >&2
+                exit 1
+            fi
+        fi
+        if ! good "$published.part"; then
+            rm -f "$published.part"
+            echo "bin/model: the published $what isn't the one expected (SHA-256 $sum)" >&2
+            exit 1
+        fi
+        mv "$published.part" "$published"
+    fi
+    bundled="$ROOT/extras/$name.tfq"
+    "$tenfold" "$command" "$published" "$ROOT/extras/$name-bits.txt" "$bundled.part"
+    mv "$bundled.part" "$bundled"
+    cp "$bundled" "$ROOT/build/$name.tfq"
+    echo "The $what remade at $bundled"
+}
+
+remake "stem model" adefossez/HTDemucs cbc8a9b1a87023b7fd74e7b3412e6321c0eab003 955717e8.safetensors \
+    d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd "84 MB" htdemucs.safetensors stem-model htdemucs
+remake "restore model" JusperLee/Apollo c68bd80fdd9c0d93d2f4a833cb154624f660a561 pytorch_model.bin \
+    99d9af7f1ff20e63c393035513a655392818d66b4d7fc23d658175c1f15e8d76 "66 MB" apollo.bin restore-model apollo

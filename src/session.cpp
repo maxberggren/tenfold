@@ -546,7 +546,7 @@ bool Session::clickAt(QPointF at) {
         // The way there: Studio, with this page whole.
         const QString what = zoomArea().what;
         m_level = 2;
-        context(m_page).notice(QStringLiteral("Studio: %1").arg(what));
+        context(m_page).notice(QStringLiteral("Every control is out now: %1 too").arg(what));
         return true;
     }
     if (console::nextChipAt(at) || (!m_soundNext.isEmpty() && m_soundNext.contains(at))) {
@@ -565,7 +565,7 @@ bool Session::clickAt(QPointF at) {
     }
     if (const QRectF fold = foldedRow(m_padRect); !fold.isEmpty() && fold.contains(at)) {
         m_level = 2;
-        context(m_page).notice(QStringLiteral("Studio: every control"));
+        context(m_page).notice(QStringLiteral("Every control is out now"));
         return true;
     }
     return p.spec.control->click(at, *p.ctx);
@@ -863,6 +863,12 @@ void Session::refresh() {
         }
     }
     m_tutorial.update(*this);
+    // The steps are done once a track is made: every control comes out,
+    // for good (and with a song opened from a file, too).
+    if (m_level == 0 && !m_tutorial.active() && songBars() > 0) {
+        m_level = 2;
+        context(m_page).notice(QStringLiteral("Your track! Every control is out now"));
+    }
 }
 
 // No stretch longer than maxGap in [t0, t1] where the part was silent.
@@ -958,9 +964,9 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
         // whole line won't fit, just the way there.
         const QFont f = console::font(11, true);
         const qreal limit = pad.right() - 80;
-        QString line = QStringLiteral("▸ IN STUDIO: %1").arg(zoom.what.toUpper());
+        QString line = QStringLiteral("▸ MORE: %1").arg(zoom.what.toUpper());
         if (console::textWidth(f, line) + 16 > limit - after - 8)
-            line = QStringLiteral("▸ MORE IN STUDIO");
+            line = QStringLiteral("▸ MORE CONTROLS");
         const qreal tw = console::textWidth(f, line) + 16;
         m_studioTag = QRectF(std::max(after + 8, limit - tw), console::tabY(edge) - 10, tw, 20);
         const bool over = m_mouseOver && m_studioTag.contains(m_mousePx);
@@ -2721,7 +2727,7 @@ QString Session::nextStep() const {
             return QStringLiteral("Make a few loops first: start on 1 DRUMS");
         if (songBars() == 0)
             return QStringLiteral("Press MAKE A TRACK: your loops become a whole song");
-        return QStringLiteral("Your track! Make it again for another, or save it under STUDIO");
+        return QStringLiteral("Your track! Make it again for another, or save it with FILE");
     }
     switch (loopState()) {
     case LoopState::Waiting: return QStringLiteral("Keep playing: the loop starts on the bar line");

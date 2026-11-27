@@ -301,10 +301,11 @@ public:
     // NEXT asked for every tab to show (AllParts): true once per click.
     bool takeAllPartsAsked();
 
-    // How much the window shows: 0 Play (the pad, LOOP and the sound; the
-    // band's second row folded away, pages zoomed onto what plays), 2
-    // Studio (everything). The keys work at both. (1, the Shape level there
-    // once was, is Studio now.)
+    // How much the window shows: 0 for a newcomer (the pad, LOOP and the
+    // sound; the band's second row folded away, pages zoomed onto what
+    // plays), 2 everything. It only ever opens: unfolding a control, or
+    // making the first track (refresh()), brings everything out for good.
+    // The keys work at both. (1, a middle level there once was, is 2.)
     int level() const { return m_level; }
     void setLevel(int level) { m_level = level <= 0 ? 0 : 2; }
     // The band's second row, where level 0 folds it (empty: not folded here).

@@ -78,11 +78,27 @@ techno, trance, amapiano, gamelan): a click starts with one, every page
 set to its sound and tempo. *Show me how, step by step* (Enter) starts
 the tutorial instead; Esc keeps the studio's own sounds.
 
-**Play and Studio.** Two chips in the Transport box set how much the
-window shows; every key works at both.
+**Easy to begin with, then everything.** A first start shows only what
+playing needs; every key works from the start.
 
-- **Play**, where a newcomer starts: five tabs (Drums, Bass, Chords, Lead,
-  Song, and *+ more*), the pad, **LOOP IT**, Undo, Pause and *Your loops*.
+- To begin with: five tabs (Drums, Bass, Chords, Lead, Song, and *+ more*),
+  the pad, **LOOP IT**, Undo, Pause and *Your loops*. Pages whose pads hold
+  fine-tuning (Bass's rail, Chords' rhythms, Arp's panels) zoom onto the
+  part that plays, with *▸ MORE: …* on the pad's edge. NEXT says what to do
+  now and does it when clicked: loop, hear all of a part's sounds, add the
+  next part (its tab lit), see every instrument, make the track. Chords
+  name the plain chords and call the other rows by mood.
+- Everything comes out, for good, when the player unfolds a control
+  (*More controls* under the pad, *▸ MORE* on it) or makes a first track:
+  all eleven tabs, every control on the pad and under it (in plain words:
+  PLAY OVER, BRIGHTNESS, HOLD NOTES…), tempo, key, metronome, quantise,
+  loop length, record, the guide, the tutorial, and FILE: save, open,
+  export and start over in one menu.
+
+A player who already has a song kept from the last quit starts with
+everything out.
+
+**LOOP IT**, Undo, Pause and *Your loops*.
   Pages whose pads hold fine-tuning (Bass's rail, Chords' rhythms, Arp's
   panels) zoom onto the part that plays; *▸ IN STUDIO* on the pad's edge
   opens Studio with the page whole, as *More controls* under the pad does.

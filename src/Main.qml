@@ -463,48 +463,6 @@ ApplicationWindow {
                             Layout.preferredHeight: panel.tutorial ? (win.readoutsCompact ? 96 : 108) : win.readoutsCompact ? 112 : 128
                             title: qsTr("Transport")
                             color: win.amber
-                            // How much shows: Play, Shape, Studio, always in reach
-                            // here at the top. The keys work at every level.
-                            Column {
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                width: 92
-                                spacing: 4
-                                visible: !backend.tutorialActive
-                                Repeater {
-                                    // Play and Studio: the levels 0 and 2.
-                                    model: [qsTr("Play"), qsTr("Studio")]
-                                    delegate: Rectangle {
-                                        id: levelChip
-                                        required property int index
-                                        required property string modelData
-                                        width: parent.width
-                                        height: win.readoutsCompact ? 26 : 32
-                                        readonly property int level: index === 0 ? 0 : 2
-                                        color: win.lv === level ? win.amber : levelMouse.containsMouse ? Qt.rgba(1, 0.69, 0, 0.18) : "transparent"
-                                        border.color: win.amber
-                                        border.width: 1
-                                        opacity: win.lv === level || levelMouse.containsMouse ? 1 : 0.7
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: modelData
-                                            color: win.lv === levelChip.level ? "#0a0806" : win.amber
-                                            font.family: win.mono
-                                            font.pixelSize: 12
-                                            font.weight: Font.Bold
-                                            font.letterSpacing: 1
-                                            font.capitalization: Font.AllUppercase
-                                        }
-                                        MouseArea {
-                                            id: levelMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: backend.uiLevel = levelChip.level
-                                        }
-                                    }
-                                }
-                            }
                             Column {
                                 spacing: 2
                                 Text {
@@ -517,7 +475,7 @@ ApplicationWindow {
                                 // Compact: the chord on the key's line.
                                 Text {
                                     // Clear of the level chips on the right.
-                                    width: parent.parent.width - (backend.tutorialActive ? 0 : 100)
+                                    width: parent.parent.width
                                     elide: Text.ElideRight
                                     text: qsTr("Key %1 %2").arg(backend.key).arg(backend.mode)
                                           + (win.readoutsCompact && backend.tutorialActive ? "  ·  " + qsTr("Chord %1").arg(backend.chord) : "")

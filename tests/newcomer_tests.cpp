@@ -24,7 +24,7 @@ class NewcomerTests : public QObject {
                 "aStyleSetsTheSoundsAndTheTempo theNextLoopGoesInTheFirstEmptySlot "
                 "levelZeroFoldsTheSecondRowOnInstrumentPagesOnly theNextStepFollowsThePlayer "
                 "coveredControlsIgnoreFingersAndTheMouseOpensStudio clickingNextDoesWhatItSays oneMakeATrackIsEnough "
-                "nextShowsEveryInstrumentOnce")
+                "nextShowsEveryInstrumentOnce theFirstTrackBringsEveryControlOut")
 private slots:
     // Each instrument page lists its sounds, says which is chosen, and
     // chooses one as ← → would.
@@ -325,6 +325,23 @@ private slots:
             QVERIFY(s.nextAction().kind != Session::NextAction::AllParts);
         });
         QVERIFY(ran);
+    }
+
+    // A newcomer's window opens for good once the first track is made.
+    void theFirstTrackBringsEveryControlOut() {
+        int before = -1, after = -1;
+        testkit::watch("page 0 1\n"
+                       "tap 0.5 0.05 0.5\ntap 1.0 0.25 0.5\ntap 1.5 0.05 0.5\ntap 2.0 0.25 0.5\n"
+                       "key 2.5 Space\npage 4.0 0\nkey 4.2 I\nend 5\n",
+                       [&](double t, Session &s) {
+                           if (t < 0.2)
+                               s.setLevel(0);
+                           if (t >= 4.0 && before < 0)
+                               before = s.level();
+                           after = s.level();
+                       });
+        QCOMPARE(before, 0);
+        QCOMPARE(after, 2);
     }
 };
 

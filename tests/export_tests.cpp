@@ -469,6 +469,44 @@ private slots:
             }
         }
         QVERIFY(heard > 8);
+
+        // And the other way: every hit the drums and the bass play on a beat
+        // is in the MIDI, the first of each drop (the ONE a muted part comes
+        // back on) included. A hit is a beat where the stem jumps up out of
+        // what was sounding just before it.
+        auto level = [](const Wav &w, int64_t from, int64_t to) {
+            double e = 0;
+            for (int64_t i = std::max<int64_t>(0, from); i < std::min<int64_t>(to, int64_t(w.l.size())); ++i)
+                e += double(w.l[size_t(i)]) * w.l[size_t(i)] + double(w.r[size_t(i)]) * w.r[size_t(i)];
+            return std::sqrt(e / double(std::max<int64_t>(1, to - from)));
+        };
+        for (int k = 0; k < 2; ++k) {
+            const Wav &w = stems[size_t(k)];
+            const QString name = QLatin1String(names[k]);
+            const Smf::Track *track = nullptr;
+            for (const auto &t : m.tracks)
+                if (t.name == name)
+                    track = &t;
+            QVERIFY(track);
+            const double loud = level(w, 0, int64_t(w.l.size()));
+            int hits = 0;
+            QStringList missing;
+            for (int64_t beat = 0; beat * 24000 < int64_t(w.l.size()) && beat < r.bars * 4; ++beat) {
+                const int64_t at = beat * 24000;
+                const double before = level(w, at - 2400, at), after = level(w, at, at + 2400);
+                if (!(after > 3 * before && after > 0.2 * loud))
+                    continue;
+                ++hits;
+                bool found = false;
+                for (const auto &n : track->notes)
+                    found |= std::llabs(n.tick - beat * m.ppq) <= 24;
+                if (!found)
+                    missing << QStringLiteral("bar %1 beat %2").arg(beat / 4 + 1).arg(beat % 4 + 1);
+            }
+            qInfo().noquote() << name << "hits heard on the beat:" << hits;
+            QVERIFY2(hits > r.bars, qPrintable(name));
+            QVERIFY2(missing.isEmpty(), qPrintable(name + QStringLiteral(" plays, the MIDI hasn't: ") + missing.join(", ")));
+        }
     }
 
     void aCancelledExportLeavesNothing() {

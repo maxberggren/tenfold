@@ -18,6 +18,7 @@ Rectangle {
     Keys.onReleased: event => event.accepted = true
     // A short window: everything closer together, so it all fits.
     readonly property bool compact: height < 760
+    readonly property int rowHeight: compact ? 36 : 44
     property color tint: "#2EE6FF"
     readonly property color amber: "#FFB000"
     readonly property color green: "#39FF88"
@@ -76,8 +77,17 @@ Rectangle {
     }
     component Toggle: PanelButton {
         Layout.fillWidth: true
-        Layout.preferredHeight: dialog.compact ? 36 : 44
+        Layout.preferredHeight: dialog.rowHeight
         labelSize: 14
+    }
+    // A file setting: what it is, and what it does in its corner; on a
+    // short window (a button too low for two lines) both on one line.
+    component Choice: Toggle {
+        property string caption: ""
+        property string note: ""
+        label: dialog.compact && note !== "" ? caption + " · " + note : caption
+        key: dialog.compact ? "" : note
+        labelSize: dialog.compact ? 13 : 14
     }
 
     PanelBox {
@@ -118,7 +128,7 @@ Rectangle {
                     spacing: 8
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 44
+                        Layout.preferredHeight: dialog.rowHeight
                         color: "transparent"
                         border.color: dialog.tint
                         border.width: 1
@@ -135,7 +145,7 @@ Rectangle {
                     }
                     PanelButton {
                         Layout.preferredWidth: 150
-                        Layout.preferredHeight: 44
+                        Layout.preferredHeight: dialog.rowHeight
                         label: qsTr("Choose…")
                         color: dialog.tint
                         onClicked: backend.pickExportFolder()
@@ -197,12 +207,12 @@ Rectangle {
                         onClicked: dialog.song = false
                     }
                     PanelButton {
-                        Layout.preferredWidth: 56; Layout.preferredHeight: 44
+                        Layout.preferredWidth: 56; Layout.preferredHeight: dialog.rowHeight
                         label: "−"; color: dialog.green
                         onClicked: { dialog.song = false; dialog.bars = Math.max(1, dialog.bars - (dialog.bars > 4 ? 4 : 1)) }
                     }
                     PanelButton {
-                        Layout.preferredWidth: 56; Layout.preferredHeight: 44
+                        Layout.preferredWidth: 56; Layout.preferredHeight: dialog.rowHeight
                         label: "+"; color: dialog.green
                         onClicked: { dialog.song = false; dialog.bars = Math.min(512, dialog.bars + (dialog.bars >= 4 ? 4 : 1)) }
                     }
@@ -242,35 +252,37 @@ Rectangle {
                     columns: Math.max(2, Math.min(3, Math.floor(column.width / 240)))
                     columnSpacing: 8
                     rowSpacing: 8
-                    Toggle {
-                        label: qsTr("Individual voices"); key: qsTr("pads · stems · layers")
+                    Choice {
+                        caption: dialog.compact ? qsTr("Voices") : qsTr("Individual voices")
+                        note: qsTr("pads · stems · layers")
                         color: dialog.amber; active: dialog.voices
                         onClicked: dialog.voices = !dialog.voices
                     }
-                    Toggle {
-                        label: qsTr("Full mix"); key: qsTr("as heard")
+                    Choice {
+                        caption: qsTr("Full mix"); note: qsTr("as heard")
                         color: dialog.amber; active: dialog.mix
                         onClicked: dialog.mix = !dialog.mix
                     }
-                    Toggle {
-                        label: qsTr("MIDI file"); key: qsTr("drums bass chords lead arp")
+                    Choice {
+                        caption: qsTr("MIDI file"); note: dialog.compact ? qsTr("5 parts") : qsTr("drums bass chords lead arp")
                         color: dialog.amber; active: dialog.midi
                         onClicked: dialog.midi = !dialog.midi
                     }
-                    Toggle {
-                        label: qsTr("Tails"); key: dialog.tails ? qsTr("ring out") : qsTr("cut at the end")
+                    Choice {
+                        caption: qsTr("Tails"); note: dialog.tails ? qsTr("ring out") : qsTr("cut at the end")
                         color: dialog.amber; active: dialog.tails
                         onClicked: dialog.tails = !dialog.tails
                     }
-                    Toggle {
-                        label: dialog.preFader ? qsTr("Pre-fader") : qsTr("Post-fader")
-                        key: dialog.preFader ? qsTr("dry, no room") : qsTr("mix, room, sends")
+                    Choice {
+                        caption: dialog.preFader ? qsTr("Pre-fader") : qsTr("Post-fader")
+                        note: dialog.preFader ? qsTr("dry, no room") : dialog.compact ? qsTr("as mixed") : qsTr("mix, room, sends")
                         color: dialog.amber; active: !dialog.preFader
                         onClicked: dialog.preFader = !dialog.preFader
                     }
-                    Toggle {
-                        label: qsTr("Master glue")
-                        key: dialog.preFader ? "—" : dialog.master ? qsTr("stems add up to the mix") : qsTr("clean, headroom")
+                    Choice {
+                        caption: dialog.compact ? qsTr("Glue") : qsTr("Master glue")
+                        note: dialog.preFader ? "—" : dialog.master ? (dialog.compact ? qsTr("sum = mix") : qsTr("stems add up to the mix"))
+                                                                   : qsTr("clean, headroom")
                         color: dialog.amber; active: dialog.master && !dialog.preFader
                         opacity: dialog.preFader ? 0.4 : 1
                         onClicked: if (!dialog.preFader) dialog.master = !dialog.master

@@ -107,7 +107,17 @@ struct Studio::Stems {
     float lowK[kBlock] = {}, glue[kBlock] = {}, lim[kBlock] = {}, roomDuck[kBlock] = {};
     float echoGain[kBlock][2] = {}, shimGain[kBlock] = {};
     float driveL[kBlock] = {}, driveR[kBlock] = {}; // what the drive added to the mix
-    bool audible[kMaxParts] = {true, true, true, true, true, true, true, true, true};
+    // Each part's channel settings as the mixer has them this moment (Mute
+    // and Solo set by the Song page take effect from the start of the block
+    // they fall due in), for whether a note is heard.
+    std::vector<const float *> channels;
+    bool audible(int part) const {
+        bool anySolo = false;
+        for (const float *ch : channels)
+            anySolo |= ch[Solo] > 0.5f;
+        const float *ch = channels[size_t(part)];
+        return ch[Mute] < 0.5f && (!anySolo || ch[Solo] > 0.5f);
+    }
     float wet = 1, mgain = 1, master[MasterCount] = {};
     float echoSeconds = 0.5f;
 };
@@ -280,7 +290,7 @@ public:
         AudioContext *s = nullptr;
         StemSink *sink = nullptr;
         int part = 0;
-        const bool *audible = nullptr; // whether the mix hears the part (no mute, no solo elsewhere)
+        const Studio::Stems *stems = nullptr; // whether the mix hears the part (no mute, no solo elsewhere)
         const Transport &transport() const override { return s->transport(); }
         const Harmony &harmony() const override { return s->harmony(); }
         double now() const override { return s->now(); }
@@ -293,7 +303,10 @@ public:
         void note(int key, float midi, float velocity, int offset, int length) override {
             // A note the mix doesn't hear (the Song page has the part
             // muted) isn't in the MIDI either: it only ends what its key held.
-            if (audible && !*audible) {
+            // Judged by the mute as it stands now, as the block this note
+            // plays in hears it: a part brought back on the ONE of a drop
+            // has its mute lifted before that block's notes are played.
+            if (stems && !stems->audible(part)) {
                 if (length > 0)
                     return;
                 midi = -1;
@@ -322,9 +335,10 @@ public:
         float bufL[kBlock] = {}, bufR[kBlock] = {};
     };
 
-    FanOut(std::unique_ptr<PartEngine> inner, AudioContext *studio, StemSink *sink, int part, const bool *audible)
+    FanOut(std::unique_ptr<PartEngine> inner, AudioContext *studio, StemSink *sink, int part,
+           const Studio::Stems *stems)
         : m_inner(std::move(inner)) {
-        m_ctx.audible = audible;
+        m_ctx.stems = stems;
         m_ctx.s = studio;
         m_ctx.sink = sink;
         m_ctx.part = part;
@@ -1836,7 +1850,6 @@ void Studio::renderBlock(float *outL, float *outR, int n) {
         p.rms += (std::sqrt(sq / float(2 * n)) - p.rms) * 0.1f;
         anyDirect |= p.direct;
         if (st) {
-            st->audible[pi] = audible;
             st->panL[pi] = panL;
             st->panR[pi] = panR;
             st->filt[pi] = filt;
@@ -2136,9 +2149,11 @@ void Studio::exportStems(StemSink *sink, const StemOptions &options) {
     Stems &st = *d->stems;
     st.sink = sink;
     st.opt = options;
+    for (auto &p : m_parts)
+        st.channels.push_back(p->channelTarget);
     for (int i = 0; i < int(m_parts.size()); ++i) {
         PartState &p = *m_parts[size_t(i)];
-        p.engine = std::make_unique<FanOut>(std::move(p.engine), d.get(), sink, i, &st.audible[i]);
+        p.engine = std::make_unique<FanOut>(std::move(p.engine), d.get(), sink, i, &st);
         st.taps.push_back(makeTap(i, false, p.bufL, p.bufR, m_rate));
         st.tapL.push_back(st.taps.back()->outL);
         st.tapR.push_back(st.taps.back()->outR);

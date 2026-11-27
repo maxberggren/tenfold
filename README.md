@@ -91,8 +91,7 @@ window shows; every key works at both.
 - **Studio** is everything: all eleven tabs, every control on the pad and
   under it (in plain words: PLAY OVER, BRIGHTNESS, HOLD NOTES…), tempo,
   key, metronome, quantise, loop length, record, the guide, the tutorial,
-  the meters, and the song's file (save, open, export, start over) in one
-  menu.
+  and FILE: save, open, export and start over in one menu.
 
 A first start begins at Play; a player who already has a song kept from
 the last quit begins at Studio.

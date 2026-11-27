@@ -33,6 +33,9 @@ ApplicationWindow {
     property bool helpVisible: false
     // A screenshot's: the notice stays up (tenfold screenshot --notice).
     property bool pinNotice: false
+    // A screenshot's: the FILE menu open (tenfold screenshot --file-menu).
+    property bool showFileMenu: false
+    onShowFileMenuChanged: if (showFileMenu) fileMenu.open()
     property bool exportVisible: false
     // The sound browser over the pad (SOUND, or S... the button only: S is a key on pages).
     property bool soundsVisible: false
@@ -585,8 +588,10 @@ ApplicationWindow {
                                 }
                             }
 
+                            // (The lamps and the DSP readout are gone: the buttons
+                            // say whether the pad is taken and what records.)
                             Column {
-                                visible: win.lv >= 2
+                                visible: false
                                 Layout.fillWidth: true
                                 spacing: win.readoutsCompact ? 4 : 6
                                 StatusLamp { label: qsTr("Trackpad grabbed"); on: win.playing; color: win.green }
@@ -598,7 +603,7 @@ ApplicationWindow {
                             // The readouts: a lit heading over them, or (compact)
                             // at the start of their line.
                             Item {
-                                visible: win.lv >= 2
+                                visible: false
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: win.readoutsCompact ? 32 : 60
                                 Rectangle {
@@ -789,18 +794,6 @@ ApplicationWindow {
                                     onClicked: backend.undoTake()
                                 }
                                 PanelButton {
-                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: win.lv >= 2 || backend.recording
-                                    label: backend.recording
-                                           ? (backend.recordingVideo ? qsTr("Video %1") : qsTr("Rec %1"))
-                                             .arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
-                                           : qsTr("Record")
-                                    // Shift+click (Ctrl+Shift+R): the picture too.
-                                    key: backend.recording ? "Ctrl R" : "Ctrl R · ⇧ video"; color: win.red; active: backend.recording
-                                    hint: backend.tutorialActive && backend.tutorialButton === "record"
-                                    onClicked: modifiers => win.record(modifiers)
-                                }
-                                PanelButton {
                                     // The transport. Every loop stops at once, remembered;
                                     // again, they play on together from a downbeat.
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
@@ -905,6 +898,27 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                                // Studio, in pairs a row: record and the guide, tempo, key, click and quantise.
+                                PanelButton {
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: win.lv >= 2 || backend.recording
+                                    label: backend.recording
+                                           ? (backend.recordingVideo ? qsTr("Video %1") : qsTr("Rec %1"))
+                                             .arg(new Date(backend.recordSeconds * 1000).toISOString().substr(14, 5))
+                                           : qsTr("Record")
+                                    // Shift+click (Ctrl+Shift+R): the picture too.
+                                    key: backend.recording ? "Ctrl R" : "Ctrl R · ⇧ video"; color: win.red; active: backend.recording
+                                    hint: backend.tutorialActive && backend.tutorialButton === "record"
+                                    onClicked: modifiers => win.record(modifiers)
+                                }
+                                PanelButton {
+                                    // Beside Export, so Open and Save share the next row
+                                    // (with the tutorial, Export hides and it sits beside Undo).
+                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
+                                    visible: win.lv >= 2
+                                    label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
+                                    onClicked: win.helpVisible = !win.helpVisible
+                                }
                                 PanelButton {
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     visible: win.lv >= 1 && !backend.tutorialActive // the keys still work; the tutorial needs the room
@@ -943,30 +957,33 @@ ApplicationWindow {
                                     label: qsTr("Quantise"); key: "Ctrl G"; color: win.amber; active: backend.quantise
                                     onClicked: backend.toggleQuantise()
                                 }
-                                PanelButton {
-                                    // Beside Export, so Open and Save share the next row
-                                    // (with the tutorial, Export hides and it sits beside Undo).
-                                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    visible: win.lv >= 2
-                                    label: qsTr("Guide"); key: "?"; color: win.cyan; active: win.helpVisible
-                                    onClicked: win.helpVisible = !win.helpVisible
-                                }
-                                // The song's file: save, open, export, start over, in one menu.
+                                // FILE: save, open, export, start over, in a menu as the console
+                                // draws its own (the Song page's right-click menu).
                                 PanelButton {
                                     id: fileButton
+                                    Layout.columnSpan: 2
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
                                     visible: win.lv >= 2 && !backend.tutorialActive // the keys still work
-                                    label: backend.exporting ? qsTr("Export %1%").arg(Math.round(backend.exportProgress * 100)) : qsTr("Song file ▾")
+                                    label: backend.exporting ? qsTr("Export %1%").arg(Math.round(backend.exportProgress * 100)) : qsTr("File  ▾")
                                     key: "Ctrl S · O · E"; color: win.cyan; active: fileMenu.visible || backend.exporting
-                                    onClicked: fileMenu.popup(fileButton, 0, fileButton.height)
-                                    Menu {
+                                    onClicked: fileMenu.visible ? fileMenu.close() : fileMenu.open()
+                                    ConsoleMenu {
                                         id: fileMenu
-                                        MenuItem { text: qsTr("Save song") + "    " + backend.keys("Ctrl S"); onTriggered: backend.saveSong() }
-                                        MenuItem { text: qsTr("Save as…") + "    " + backend.keys("Ctrl Shift S"); onTriggered: backend.saveSongAs() }
-                                        MenuItem { text: qsTr("Open song…") + "    " + backend.keys("Ctrl O"); onTriggered: backend.openSong() }
-                                        MenuItem { text: qsTr("Export stems and MIDI…") + "    " + backend.keys("Ctrl E"); onTriggered: win.exportVisible = true }
-                                        MenuSeparator {}
-                                        MenuItem { text: qsTr("Start over") + "    " + backend.keys("Ctrl N ×2"); onTriggered: backend.startOver() }
+                                        // Up from the button, which sits low in the panel.
+                                        y: -implicitHeight - 4
+                                        width: fileButton.width
+                                        title: qsTr("The song")
+                                        color: win.cyan
+                                        items: [
+                                            { label: qsTr("Save"), key: "Ctrl S", action: () => backend.saveSong() },
+                                            { label: qsTr("Save as…"), key: "Ctrl Shift S", action: () => backend.saveSongAs() },
+                                            { label: qsTr("Open…"), key: "Ctrl O", action: () => backend.openSong() },
+                                            { label: qsTr("Open the last one"), key: "Ctrl Shift O", action: () => backend.reopenLastSong() },
+                                            { label: "" },
+                                            { label: qsTr("Export…"), key: "Ctrl E", action: () => { win.exportVisible = true } },
+                                            { label: "" },
+                                            { label: qsTr("Start over"), key: "Ctrl N ×2", danger: true, action: () => backend.startOver() }
+                                        ]
                                     }
                                 }
                                 PanelButton {

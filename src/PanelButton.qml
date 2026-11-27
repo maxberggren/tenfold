@@ -14,6 +14,8 @@ Item {
     property bool beckon: false
     // A smaller line under the label (where the button is tall enough).
     property string note: ""
+    // How far the glow reaches out round it.
+    property int glowSpread: 11
     // With the keys held as it was clicked (Shift+click on Record: video).
     signal clicked(int modifiers)
 
@@ -25,7 +27,7 @@ Item {
         Rectangle {
             required property int index
             anchors.fill: parent
-            anchors.margins: -5 - 6 * index
+            anchors.margins: -Math.round(button.glowSpread * (index === 0 ? 0.45 : 1))
             color: "transparent"
             border.color: button.color
             border.width: 3

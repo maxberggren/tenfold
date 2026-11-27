@@ -176,7 +176,7 @@ class ArrangeTests : public QObject {
     Q_CLASSINFO("dev",
                 "fingersPlayAndStayFinite aSceneLaunchesOnTheBar aMouseClickStopsAClipAndAnotherStartsIt "
                 "aRecordedSongReplaysBarByBarFromAnyPage deleteClearsAClipAndCtrlZBringsItBack "
-                "aSongFileOfNonsenseOpensSane")
+                "aSongFileOfNonsenseOpensSane withoutPadsTheBreakdownIsTheVocalAlone")
 private slots:
     // Shift held, a tap on another loop of a part that plays: the two play
     // together from the next bar, layered into a free slot; both originals

@@ -534,13 +534,16 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     Layout.minimumHeight: win.playing ? 30 : backend.tutorialActive || win.compact ? 52 : 84
                                     Layout.maximumHeight: win.playing ? 60 : 112
-                                    Layout.preferredHeight: win.playing ? buttons.bh : backend.tutorialActive ? 64 : 96
+                                    Layout.preferredHeight: win.playing ? buttons.bh : backend.tutorialActive || win.compact ? 60 : 96
                                     label: win.playing ? qsTr("Release pad")
                                          : waiting ? (backend.padNeedsPassword ? qsTr("Waiting for your password…") : qsTr("Waiting for the trackpad…"))
                                          : failed ? qsTr("▶  Retry the trackpad")
                                          : qsTr("▶  Take the trackpad")
-                                    // As big as fits on one line.
-                                    labelSize: win.playing ? 16 : Math.max(14, Math.min(backend.tutorialActive ? 19 : 22, Math.floor((width - 24) / 13)))
+                                    // As big as fits on one line (a letter is about 0.65 of
+                                    // the size across).
+                                    labelSize: win.playing ? 16 : Math.max(12, Math.min(backend.tutorialActive ? 19 : 22, Math.floor((width - 24) / (0.65 * label.length))))
+                                    // Little glow where there's little room round it.
+                                    glowSpread: win.compact ? 4 : 11
                                     note: win.playing ? ""
                                         : failed ? backend.error
                                         : waiting ? qsTr("Click to call it off.")
@@ -568,10 +571,11 @@ ApplicationWindow {
                                     // The transport. Every loop stops at once, remembered;
                                     // again, they play on together from a downbeat.
                                     Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 30; Layout.maximumHeight: 60; Layout.preferredHeight: buttons.bh
-                                    label: backend.loopsPaused ? qsTr("▶  Play") : qsTr("❚❚  Pause")
-                                    // Esc too (Enter always), while there's no pad to give back (nor a
-                                    // tutorial to leave): the shorter key, then.
-                                    key: win.playing || backend.tutorialActive ? "Enter" : "Esc"; color: win.green; active: backend.loopsPaused
+                                    label: backend.loopsPaused ? qsTr("▶ Play") : qsTr("❚❚ Pause")
+                                    // Enter always; Esc too while Esc would pause (no pad
+                                    // taken or being taken, no tutorial to leave): the
+                                    // shorter key, then.
+                                    key: win.playing || backend.padState === Backend.Starting || backend.tutorialActive ? "Enter" : "Esc"; color: win.green; active: backend.loopsPaused
                                     onClicked: backend.togglePause()
                                 }
                                 PanelButton {

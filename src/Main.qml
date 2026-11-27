@@ -550,8 +550,9 @@ ApplicationWindow {
                             PanelBox {
                                 visible: win.lv < 2
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: nextText.implicitHeight + 34
-                                id: nextBox
+                                // Room for three lines from the start: a longer step never
+                                // moves the buttons under it.
+                                Layout.preferredHeight: Math.max(nextText.implicitHeight, 3 * nextText.font.pixelSize * 1.4) + 34
                                 title: qsTr("Next")
                                 color: win.pageColor
                                 // A click does what it says: loop, open the part it names,
@@ -576,9 +577,14 @@ ApplicationWindow {
                                     id: nextText
                                     width: parent.width
                                     // Once a couple of loops go round: the trackpad, if not taken yet.
+                                    // Only on an instrument's page, where fingers would play it.
                                     readonly property bool padTip: !win.playing && backend.partLoops.length >= 2
                                                                    && backend.padState !== Backend.Starting
-                                    text: win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.")
+                                                                   && backend.page < backend.arrangePage
+                                    // The trackpad couldn't be taken: why, where it can be read
+                                    // (the small button has no room for it).
+                                    text: backend.padState === Backend.Failed ? qsTr("The trackpad can't be taken: %1").arg(backend.error)
+                                          : win.soundsVisible ? qsTr("Click a sound to play with it. Esc keeps the one you had.")
                                           : backend.nextStep + (padTip ? "\n" + qsTr("Try PLAY WITH THE TRACKPAD: every finger plays.") : "")
                                     color: win.pageColor
                                     font.family: win.mono
@@ -748,7 +754,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true; Layout.fillHeight: true
                                     // At Play the hero: what the window has left over, within reason.
                                     Layout.minimumHeight: win.lv === 0 && win.room >= 560 ? 64 : 44; Layout.maximumHeight: win.lv === 0 ? 260 : 120
-                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 400 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0))) : 64
+                                    Layout.preferredHeight: win.lv === 0 ? Math.max(win.room < 560 ? 44 : 64, Math.min(260, win.room - 430 - (yourLoops.visible ? yourLoops.Layout.preferredHeight + 6 : 0))) : 64
                                     labelSize: win.lv === 0 ? 26 : 20
                                     color: st === 4 ? win.red : win.pageColor
                                     // While the browser shows, Space keeps a sound there: LOOP steps back.
@@ -776,7 +782,9 @@ ApplicationWindow {
                                     color: win.pageColor
                                     labelSize: win.lv === 0 ? 24 : 20
                                     opacity: hasLoops ? 1 : 0.55
-                                    active: hasLoops && backend.songBars === 0
+                                    // Lit while there are loops to make it from: making it changes
+                                    // the words, never the colour.
+                                    active: hasLoops
                                     label: backend.songBars > 0 ? qsTr("Make it again") : qsTr("Make a track")
                                     note: !hasLoops ? qsTr("Make some loops first, then press.")
                                         : backend.songBars > 0 ? qsTr("Another track from the same loops.")

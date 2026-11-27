@@ -91,8 +91,12 @@ void TouchSource::start() {
     if (pid == 0) {
         dup2(toChild[0], STDIN_FILENO);
         dup2(fromChild[1], STDOUT_FILENO);
+        // Direct: this very program again, through /proc/self/exe, which
+        // still runs it when the file on disk was replaced since it started
+        // (an update, a rebuild): its path would then name the new one, or
+        // nothing. (pkexec needs the path, which polkit checks.)
         if (direct)
-            execl(self, self, "helper", devicePath.c_str(), (char *)nullptr);
+            execl("/proc/self/exe", self, "helper", devicePath.c_str(), (char *)nullptr);
         else
             execlp("pkexec", "pkexec", self, "helper", devicePath.c_str(), (char *)nullptr);
         _exit(127);

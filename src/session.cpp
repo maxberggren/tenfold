@@ -946,12 +946,18 @@ void Session::paint(QPainter &painter, const QRectF &pad, double time) {
         console::text(painter, lr, legend, pc.color, 13, true, Qt::AlignCenter);
         const auto choices = p.spec.control->soundChoices();
         const int chosen = p.spec.control->soundChoice();
+        qreal after = lr.right() + 8;
         if (chosen >= 0 && chosen < int(choices.size()))
-            console::variation(painter, edge, choices[size_t(chosen)].name);
-        const QString line = QStringLiteral("▸ IN STUDIO: %1").arg(zoom.what.toUpper());
+            after = console::variation(painter, edge, choices[size_t(chosen)].name);
+        // Right of the sound's tag and left of the beat lights; where the
+        // whole line won't fit, just the way there.
         const QFont f = console::font(11, true);
+        const qreal limit = pad.right() - 80;
+        QString line = QStringLiteral("▸ IN STUDIO: %1").arg(zoom.what.toUpper());
+        if (console::textWidth(f, line) + 16 > limit - after - 8)
+            line = QStringLiteral("▸ MORE IN STUDIO");
         const qreal tw = console::textWidth(f, line) + 16;
-        m_studioTag = QRectF(pad.right() - tw - 80, console::tabY(edge) - 10, tw, 20);
+        m_studioTag = QRectF(std::max(after + 8, limit - tw), console::tabY(edge) - 10, tw, 20);
         const bool over = m_mouseOver && m_studioTag.contains(m_mousePx);
         painter.fillRect(m_studioTag, Qt::black);
         painter.setPen(QPen(console::alpha(pc.color, over ? 1.0f : 0.5f), 1, Qt::DashLine));
